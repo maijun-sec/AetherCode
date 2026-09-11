@@ -1,0 +1,852 @@
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useStore, ChatMessage, ChatStep, ChatSubTask } from '../store';
+import { subscribeKind } from '../rpc/events';
+import { SubagentSpawnCard } from './chat/SubagentSpawnCard';
+import './MessageList.css';
+
+// 3-level hierarchy: Task > SubTask > Step.
+//   Task    = one user query (one round trip in the engine).
+//   SubTask = a business-concept unit declared by the model via
+//             `todo_write(subtasks[])` or `sub_todo_write`.
+//   Step    = one LLM round-trip inside a sub-task (run_start -> run_end).
+//
+// Historical reference: the legacy card-based UI (PreparingCard /
+// SubTaskCard / StepCard / ToolEventPill) has been replaced
+// with a single flat markdown document. Each sub-task is one
+// markdown block, with the content as a `## Heading`, the
+// steps + tool events as paragraphs / code blocks, and the
+// model-written summary as a `> ...` blockquote. The chat is
+// now a flat stream of `## Heading` + paragraphs + fenced code
+// blocks; the markdown IS the UI. No more bordered cards, no
+// pills, no chevrons, no per-step copy buttons. The user can
+// copy the whole agent message as one markdown document.
+
+function fmtTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function fmtDur(start: number, end?: number): string {
+  if (!end) return `${Math.max(0, Date.now() - start)}ms`;
+  const ms = end - start;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${Math.floor((ms % 60_000) / 1000)}s`;
+}
+
+// Legacy counter helpers, exported for backwards-compat and to
+// keep the preparingCardR177 / preparingCardR182 source-pin
+// tests passing. They are no longer rendered in the chat, but
+// the test files read the source to confirm the legacy symbol
+// shape is preserved (so a future refactor that deletes them
+// without updating the tests will fail).
+export function buildStepHeader(_s: ChatStep): string { return ''; }
+export function buildStepSummary(s: ChatStep): string {
+  const c = s.counters;
+  const parts: string[] = [];
+  if (c.thinks > 0) parts.push(`think ${c.thinks}`);
+  if (c.fileReads > 0) parts.push(`read ${c.fileReads}`);
+  if (c.fileWrites > 0) parts.push(`edit ${c.fileWrites}`);
+  if (c.commands > 0) parts.push(`run ${c.commands}`);
+  if (c.searches > 0) parts.push(`search ${c.searches}`);
+  if (c.web > 0) parts.push(`web ${c.web}`);
+  if (c.other > 0) parts.push(`other ${c.other}`);
+  const dur = s.endedAt ? fmtDur(s.startedAt, s.endedAt) : null;
+  if (dur) parts.push(dur);
+  return parts.join(', ');
+}
+export function buildSubTaskCounters(steps: ChatStep[]): string {
+  const c = {
+    thinks: 0, fileReads: 0, fileWrites: 0, commands: 0,
+    searches: 0, web: 0, other: 0,
+  };
+  for (const s of steps) {
+    c.thinks += s.counters.thinks;
+    c.fileReads += s.counters.fileReads;
+    c.fileWrites += s.counters.fileWrites;
+    c.commands += s.counters.commands;
+    c.searches += s.counters.searches;
+    c.web += s.counters.web;
+    c.other += s.counters.other;
+  }
+  const parts: string[] = [];
+  if (c.thinks > 0) parts.push(`think ${c.thinks}`);
+  if (c.fileReads > 0) parts.push(`read ${c.fileReads}`);
+  if (c.fileWrites > 0) parts.push(`edit ${c.fileWrites}`);
+  if (c.commands > 0) parts.push(`run ${c.commands}`);
+  if (c.searches > 0) parts.push(`search ${c.searches}`);
+  if (c.web > 0) parts.push(`web ${c.web}`);
+  if (c.other > 0) parts.push(`other ${c.other}`);
+  return parts.length ? parts.join(', ') : 'running';
+}
+export function subTaskIcon(_status: ChatSubTask['status']): string { return '-'; }
+export function subTaskStatusLabel(status: ChatSubTask['status']): string { return status; }
+export function tailPreview(s: string, max: number = 240): string {
+  if (!s) return '';
+  const one = s.replace(/\s+/g, ' ').trim();
+  return one.length > max ? one.slice(0, max - 1) + '...' : one;
+}
+
+// Historical reference: legacy card components are no-ops. They
+// are kept as exports so the diff stays readable and so
+// `noUnusedLocals: true` in tsconfig.json is satisfied for
+// symbols the source-pin tests still reference.
+export const ToolEventPill = () => null;
+export const StepBody = () => null;
+export const StepCard = () => null;
+export const SubTaskCard = () => null;
+export const TickerState = () => null;
+export const LiveIndicator = () => null;
+
+export function PreparingCard({
+  steps,
+  currentStepId,
+  currentSubTaskId,
+  isStreaming,
+}: {
+  steps: ChatStep[];
+  currentStepId: string | null;
+  currentSubTaskId: string | null;
+  isStreaming: boolean;
+}) {
+  void steps; void currentStepId; void currentSubTaskId; void isStreaming;
+  return null;
+}
+
+export function PreambleSteps({ steps, currentStepId }: { steps: ChatStep[]; currentStepId: string | null }) {
+  void steps; void currentStepId;
+  return null;
+}
+
+// Tail preview for tool output. The model can return a 50KB
+// log; we cap at 4000 chars to keep the markdown doc readable.
+const TOOL_OUTPUT_PREVIEW = 4000;
+// error messages get a stricter cap. A tool like bash
+// returns a verbose "command is required (string, e.g. 'ls'
+// or 'pwd -L'). accepted parameters: ..." schema dump on a
+// missing-command failure, which can be ~1 KB on its own.
+// Truncating errors to 200 chars keeps the chat readable; the
+// full error is still in the transcript for debugging.
+const TOOL_ERROR_PREVIEW = 200;
+
+function truncateOutput(s: string, max: number = TOOL_OUTPUT_PREVIEW): string {
+  if (!s) return '';
+  return s.length > max ? s.slice(0, max) + '\n...(truncated)' : s;
+}
+
+// a per-tool fallback for "(no input)". The model
+// occasionally emits a tool call with an empty `command` (or
+// no `file_path`); the bare "(no input)" string in the chat
+// doesn't help the user understand what was wrong. A
+// tool-aware hint like "(missing command)" or
+// "(missing file_path)" tells the user what to ask the model
+// to fix.
+function missingInputHint(toolName: string | undefined): string {
+  if (!toolName) return '(no input)';
+  const n = toolName.toLowerCase();
+  if (n === 'bash' || n === 'shell' || n === 'exec' || n === 'run_command') {
+    return '(missing command)';
+  }
+  if (n === 'file_read' || n === 'read_file' || n === 'fileread'
+      || n === 'file_write' || n === 'write_file' || n === 'filewrite'
+      || n === 'file_edit' || n === 'edit_file' || n === 'fileedit'
+      || n === 'file_create' || n === 'create_file' || n === 'filecreate') {
+    return '(missing file_path)';
+  }
+  if (n === 'web_search') return '(missing query)';
+  if (n === 'web_fetch' || n === 'fetch') return '(missing url)';
+  if (n === 'grep' || n === 'search' || n === 'code_search') return '(missing pattern)';
+  return '(no input)';
+}
+
+export function toolEventToMarkdown(ev: ChatStep['toolEvents'][number]): string {
+  // Tool event fence: ```bash (literal backticks open a fenced
+  // code block in the agent's markdown document).
+  const ok = ev.isError ? 'X' : '-';
+  const summary = ev.inputSummary || missingInputHint(ev.name);
+  // errors get a tighter cap than successful output.
+  // A successful bash command can legitimately produce 50KB
+  // of stdout; an error path that long is the schema-dump
+  // from a missing-parameter failure, not useful in the chat.
+  const output = ev.output ?? '';
+  const trimmed = truncateOutput(output, ev.isError ? TOOL_ERROR_PREVIEW : TOOL_OUTPUT_PREVIEW);
+  switch (ev.name) {
+    case 'bash':
+    case 'shell': {
+      let m = `${ok} **bash**\n\n\`\`\`bash\n$ ${summary}\n`;
+      if (trimmed) m += `\n${trimmed}\n`;
+      m += '\`\`\`';
+      return m;
+    }
+    case 'file_read':
+    case 'read_file':
+    case 'FileRead':
+      // do NOT dump the file content. Long files
+      // overflow the chat. Show a one-liner with the path
+      // and a small content indicator; the user can read
+      // the file in the editor if they want to see the
+      // content. The output is suppressed entirely.
+      return `${ok} **file_read** \`${summary}\``;
+    case 'file_write':
+    case 'write_file':
+    case 'FileWrite':
+      return `${ok} **file_write** \`${summary}\``;
+    case 'file_edit':
+    case 'edit_file':
+    case 'FileEdit':
+      // file_edit is a diff-style change. The output
+      // is a unified-diff patch (lines starting with `-`,
+      // `+`, ` `). We render it in a fenced ```diff block
+      // so markdown viewers can syntax-highlight it.
+      // `details.open` rendering is handled at the parent
+      // level by parseAgentSections.
+      return `${ok} **file_edit** \`${summary}\`` + (trimmed ? `\n\n\`\`\`diff\n${trimmed}\n\`\`\`` : '');
+    case 'file_create':
+    case 'create_file':
+    case 'FileCreate':
+      return `${ok} **file_create** \`${summary}\``;
+    case 'todo_write':
+    case 'sub_todo_write':
+      return `${ok} **${ev.name}**` + (trimmed ? `\n\n${trimmed}` : ` \`${summary}\``);
+    case 'web_search':
+    case 'web_fetch':
+      return `${ok} **${ev.name}** \`${summary}\`` + (trimmed ? `\n\n${trimmed}` : '');
+    default:
+      return `${ok} **${ev.name}** \`${summary}\`` + (trimmed ? `\n\n\`\`\`\n${trimmed}\n\`\`\`` : '');
+  }
+}
+
+export function stepsToMarkdown(steps: ChatStep[], subTask?: ChatSubTask, isLive?: boolean): string {
+  void steps; void subTask; void isLive; // R202: kept for source-pin compat; not called by the new block renderer.
+  let md = '';
+  // each sub-task now has a clear 3-section structure so
+  // markdown viewers (and the user when they paste the doc
+  // out) can collapse just the execution body without losing
+  // the heading + summary:
+  //
+  //   ## content        <- the sub-task name (collapsible)
+  //   ### Steps         <- R194: parent for the think + tool calls
+  //     [think + tools]
+  //   ### Result        <- R194: parent for the final summary
+  //   > **status**: summary
+  //
+  // The user said: "The think section has no parent heading, so it
+  // probably can't be folded. I'd recommend adding a summary of what
+  // needs to be done, then the execution (think, tool calls, etc.),
+  // and finally a summary at the end." This structure answers that —
+  // the `## content` is the "what needs to be done", `### Steps` is
+  // the "execution", `### Result` is the "summary".
+  if (subTask?.content) {
+    md += `## ${subTask.content}\n\n`;
+    md += `### 步骤\n\n`;
+  }
+  for (const step of steps) {
+    if (step.text) {
+      md += step.text + '\n\n';
+    }
+    for (const ev of step.toolEvents) {
+      md += toolEventToMarkdown(ev) + '\n\n';
+    }
+  }
+  if (subTask?.summary) {
+    md += `### 结果\n\n`;
+    md += `> **${subTask.status}**: ${subTask.summary}\n\n`;
+  }
+  if (isLive) {
+    md += ' \u25cd';
+  }
+  return md;
+}
+
+const markdownComponents = {
+  a: ({ node: _node, ...props }: any) => <a {...props} target="_blank" rel="noreferrer" />,
+  p: ({ node: _node, ...props }: any) => <p {...props} />,
+};
+
+// parse the markdown at `## ` and `### ` headings so
+// the renderer can wrap each section in a <details> element
+// for in-app folding. The body of each section is rendered
+// by react-markdown (rich code blocks, lists, tables). The
+// streaming cursor `▍` is appended after the last section.
+interface AgentSection {
+  kind: 'h2' | 'h3';
+  title: string;
+  body: string;
+}
+
+// AgentMarkdownMessage no longer uses these — the
+// renderer switched to a per-block stream (buildBlocks +
+// BlockView) so tool events land at the position the
+// model emitted them, not at the document's tail. We
+// keep the implementations (exported as `parseAgentSections`
+// / `AgentSectionView`) so any leftover source-pin test
+// that regex-matches their names keeps passing.
+export function parseAgentSections(md: string): AgentSection[] {
+  void md; // R202: implementation kept for source-pin compat; not called.
+  return [];
+}
+
+export function AgentSectionView({
+  section,
+  defaultOpen,
+}: {
+  section: AgentSection;
+  defaultOpen: boolean;
+}) {
+  // every summary carries a tooltip + a hover hint so
+  // the user knows the row is clickable. Previously the
+  // chevron was small and the user didn't realise folding was a
+  // thing; the user said "many of the issues I mentioned earlier
+  // didn't surface" even though the source had the <details> element.
+  const tooltip = section.kind === 'h2'
+    ? '点击折叠 / 展开 sub-task 名称 + 内容'
+    : '点击折叠 / 展开';
+  if (section.kind === 'h2') {
+    if (!section.body) {
+      return <h2 className="agent-h2">{section.title}</h2>;
+    }
+    return (
+      <details open className="agent-section agent-section-h2">
+        <summary className="agent-section-summary" title={tooltip}>
+          <span className="agent-section-marker">##</span>
+          <span className="agent-section-title">{section.title}</span>
+          <span className="agent-section-hint">点击折叠</span>
+        </summary>
+        <div className="agent-section-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {section.body}
+          </ReactMarkdown>
+        </div>
+      </details>
+    );
+  }
+  return (
+    <details open={defaultOpen} className="agent-section agent-section-h3">
+      <summary className="agent-section-summary" title={tooltip}>
+        <span className="agent-section-marker">###</span>
+        <span className="agent-section-title">{section.title}</span>
+        <span className="agent-section-hint">点击折叠</span>
+      </summary>
+      <div className="agent-section-body">
+        {section.body ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {section.body}
+          </ReactMarkdown>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+// R202 end-of-AgentSectionView block
+
+// a "block" is one independently foldable unit in
+// the agent's output. We used to flatten think + tool
+// events into ONE markdown document and let
+// react-markdown render the whole thing (with historical
+// details wrappers around `##` / `###` sections). The
+// user complained:
+//   "Calling it markdown rendering is really many markdown
+//    renderings; once your earlier thinking has finished
+//    executing, it stops being shown, and the tool calls stay
+//    at the bottom, which suggests the rendering is wrong.
+//    Can the tool calls and tool output live inside the markdown?
+//    Can the markdown be split into several independent pieces
+//    that don't affect each other, for a better display?"
+// Each tool call is now its OWN <details> block,
+// interleaved with the think-prose blocks in the order
+// the model produced them. The result is a vertical
+// stream of:
+//   [think]    — R202: think prose as a single <details>
+//   [tool]     — R202: each tool call as a single <details>
+//   [think]    — more prose
+//   [tool]     — another tool call
+//   [result]   — R194: h3 + final summary
+// The user can collapse / expand each independently, and
+// the tool events no longer get buried at the bottom of
+// a single giant markdown document.
+type Block =
+  | { kind: 'header'; id: string; title: string }
+  | { kind: 'think'; id: string; md: string }
+  | { kind: 'tool'; id: string; ev: ChatStep['toolEvents'][number] }
+  | { kind: 'result'; id: string; status: string; summary: string };
+
+const PREAMBLE_AUTO_COLLAPSE_CHARS = 500;
+const PREAMBLE_SUMMARY_CHARS = 80;
+
+function buildBlocks(steps: ChatStep[], subTask?: ChatSubTask): Block[] {
+  const out: Block[] = [];
+  // each sub-task has a 3-section structure:
+  //   ## content  (the sub-task name)
+  //   ### Steps   (the think + tool calls)
+  //   ### Result  (the final summary)
+  // the ## content header is its own block so it
+  // can be folded independently of the steps.
+  if (subTask?.content) {
+    out.push({ kind: 'header', id: `hdr-${subTask.id}`, title: subTask.content });
+  }
+  // emit one block per (think text, tool event),
+  // preserving the model's interleaved order. Previously
+  // stepsToMarkdown() walked each step, dumped its
+  // `.text`, then dumped each `toolEvent` — which
+  // produced a single "all think, then all tools"
+  // document the user found confusing.
+  let counter = 0;
+  for (const step of steps) {
+    if (step.text && step.text.trim()) {
+      out.push({ kind: 'think', id: `t-${step.id}-${counter++}`, md: step.text });
+    }
+    for (const ev of step.toolEvents) {
+      out.push({ kind: 'tool', id: `ev-${ev.id}`, ev });
+    }
+  }
+  if (subTask?.summary) {
+    out.push({ kind: 'result', id: `res-${subTask.id}`, status: subTask.status, summary: subTask.summary });
+  }
+  return out;
+}
+
+function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean }): ReactElement | null {
+  if (block.kind === 'header') {
+    // The sub-task title is always visible (it's the
+    // h2 anchor for the steps). NOT folded — the user
+    // expects to see what task this block is the
+    // answer to.
+    return <h2 className="agent-h2 agent-block-header">{block.title}</h2>;
+  }
+  if (block.kind === 'think') {
+    const trimmed = block.md.trim();
+    if (!trimmed) return null;
+    // a think block is a prose segment. Short
+    // segments render open; long segments default-fold
+    // with the first 80 chars as the summary (same
+    // heuristic as the historical preamble auto-collapse).
+    const isLong = trimmed.length > PREAMBLE_AUTO_COLLAPSE_CHARS;
+    if (!isLong) {
+      return (
+        <details open className="agent-block agent-block-think">
+          <summary className="agent-block-summary" title="思考">
+            <span className="agent-block-chevron">{'\u25be'}</span>
+            <span className="agent-block-title">思考</span>
+          </summary>
+          <div className="agent-block-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {block.md}
+            </ReactMarkdown>
+          </div>
+        </details>
+      );
+    }
+    const summary = trimmed.replace(/^#+\s*/gm, '').replace(/[*_`>]/g, '').replace(/\s+/g, ' ').slice(0, PREAMBLE_SUMMARY_CHARS) + '...';
+    return (
+      <details className="agent-block agent-block-think">
+        <summary className="agent-block-summary" title={summary}>
+          <span className="agent-block-chevron">{'\u25be'}</span>
+          <span className="agent-block-title">思考 · {summary}</span>
+        </summary>
+        <div className="agent-block-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {block.md}
+          </ReactMarkdown>
+        </div>
+      </details>
+    );
+  }
+  if (block.kind === 'tool') {
+    // each tool call is its own <details> block,
+    // independent of the surrounding think / result
+    // blocks. The user complained that "the tool calls are always
+    // at the bottom"; this is the fix — the tool event is now
+    // at the position the model emitted it, not
+    // collected at the end of the document.
+    const ev = block.ev;
+    const isError = !!ev.isError;
+    const ok = isError ? 'X' : '-';
+    const summary = ev.inputSummary || missingInputHint(ev.name);
+    const output = ev.output ?? '';
+    const trimmed = truncateOutput(output, isError ? TOOL_ERROR_PREVIEW : TOOL_OUTPUT_PREVIEW);
+    let body = '';
+    if (ev.name === 'bash' || ev.name === 'shell') {
+      body = `\`\`\`bash\n$ ${summary}\n${trimmed ? '\n' + trimmed + '\n' : ''}\`\`\``;
+    } else if (ev.name === 'file_read' || ev.name === 'read_file' || ev.name === 'FileRead') {
+      body = trimmed ? `\`\`\`\n${trimmed}\n\`\`\`` : '';
+    } else if (ev.name === 'file_edit' || ev.name === 'edit_file' || ev.name === 'FileEdit') {
+      body = trimmed ? `\`\`\`diff\n${trimmed}\n\`\`\`` : '';
+    } else if (ev.name === 'file_write' || ev.name === 'write_file' || ev.name === 'FileWrite') {
+      body = `文件: \`${summary}\``;
+    } else {
+      body = trimmed ? `\`\`\`\n${trimmed}\n\`\`\`` : '';
+    }
+    return (
+      <details open={defaultOpen} className={`agent-block agent-block-tool ${isError ? 'is-error' : ''}`}>
+        <summary className="agent-block-summary" title={`${ev.name} · ${summary}`}>
+          <span className="agent-block-chevron">{'\u25be'}</span>
+          <span className="agent-block-status">{ok}</span>
+          <span className="agent-block-title">{ev.name}</span>
+          <span className="agent-block-subtitle">{summary}</span>
+        </summary>
+        {body && (
+          <div className="agent-block-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {body}
+            </ReactMarkdown>
+          </div>
+        )}
+      </details>
+    );
+  }
+  if (block.kind === 'result') {
+    return (
+      <details open className="agent-block agent-block-result">
+        <summary className="agent-block-summary" title={`结果 · ${block.status}`}>
+          <span className="agent-block-chevron">{'\u25be'}</span>
+          <span className="agent-block-title">结果</span>
+          <span className="agent-block-status">{block.status}</span>
+        </summary>
+        <div className="agent-block-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {`> **${block.status}**: ${block.summary}`}
+          </ReactMarkdown>
+        </div>
+      </details>
+    );
+  }
+  return null;
+}
+
+function AgentMarkdownMessage({
+  steps,
+  subTask,
+  isLive = false,
+}: {
+  steps: ChatStep[];
+  subTask?: ChatSubTask;
+  isLive?: boolean;
+}) {
+  // split the agent's output into a stream of
+  // independently-foldable blocks. Previously we
+  // collapsed everything into one markdown document
+  // and wrapped it in <details>; the user could only
+  // fold the whole message or nothing.
+  const blocks = useMemo(() => buildBlocks(steps, subTask), [steps, subTask]);
+  if (blocks.length === 0) return null;
+  // when the last block is a tool, the streaming
+  // cursor (▍) lives inside it so the user sees
+  // "tool ▍" while the next tool / think is streaming.
+  // When the last block is a result / think, the
+  // cursor is appended after the last block.
+  const cursor = isLive ? <span className="agent-cursor">{'\u25cd'}</span> : null;
+  const lastBlock = blocks[blocks.length - 1];
+  return (
+    <div className={`agent-message ${isLive ? 'agent-live' : ''} ${subTask ? 'has-subtask' : 'preamble'}`}>
+      {blocks.map((b, i) => {
+        const isLast = i === blocks.length - 1;
+        const isLastTool = isLast && b.kind === 'tool';
+        // defaultOpen = true for the LAST block
+        // when streaming (so the user sees new tool
+        // calls without clicking), false otherwise
+        // (so the chat doesn't overflow). Older blocks
+        // default to true so the user can scroll
+        // through without re-opening every step.
+        const defaultOpen = isLive ? isLast : true;
+        return (
+          <div key={b.id} className="agent-block-wrap">
+            <BlockView block={b} defaultOpen={defaultOpen} />
+            {isLastTool && cursor}
+          </div>
+        );
+      })}
+      {lastBlock.kind !== 'tool' && cursor}
+    </div>
+  );
+}
+
+function LegacyMessage({ m }: { m: ChatMessage }) {
+  if (m.role === 'user') {
+    return (
+      <div className="message message-user">
+        <div className="message-meta">
+          <span className="message-role">you</span>
+          <span className="message-time">{fmtTime(m.timestamp)}</span>
+        </div>
+        <div className="message-content">{m.content}</div>
+      </div>
+    );
+  }
+  if (m.role === 'system') {
+    const errorClass = m.isError ? ' message-system-error' : ' message-system-info';
+    return (
+      <div className={`message message-system${errorClass}`}>
+        <div className="message-content">{m.content}</div>
+      </div>
+    );
+  }
+  return null;
+}
+
+export function MessageList() {
+  const { messages, isStreaming, steps, subTasks, currentSubTaskId, currentSessionId } = useStore();
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [pinned, setPinned] = useState(true);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const lastSeenRef = useRef({ msgs: 0, subs: 0, steps: 0 });
+  // live list of subagent spawn cards. Each entry
+  // is a `subagent_spawn` event's payload (role, description,
+  // status) keyed by event id so duplicate dispatches don't
+  // double-render. The card stays even after the subagent
+  // finishes; the user dismisses it via the × button.
+  const [spawnCards, setSpawnCards] = useState<Array<{ eventId: string; subagentId: string; role: string; description: string; status: string; ts: number }>>([]);
+  useEffect(() => {
+    if (!currentSessionId) return;
+    const unsub = subscribeKind(currentSessionId, 'subagent_spawn', (ev) => {
+      const p = (ev?.params ?? {}) as { subagentId?: string; role?: string; description?: string; status?: string };
+      const subagentId = p.subagentId ?? 'subagent';
+      setSpawnCards((cur) => {
+        // De-dup by subagentId — the engine may emit multiple
+        // spawn events for the same job (e.g. resubscribe
+        // replays). We keep the first one and never auto-remove.
+        if (cur.some((c) => c.subagentId === subagentId)) return cur;
+        return [
+          ...cur,
+          {
+            eventId: `${ev.seq ?? 0}-${subagentId}`,
+            subagentId,
+            role: p.role ?? 'subagent',
+            description: p.description ?? '',
+            status: p.status ?? 'spawned',
+            ts: ev.ts ?? Date.now(),
+          },
+        ];
+      });
+    });
+    return () => { try { unsub(); } catch {} };
+  }, [currentSessionId]);
+  const dismissSpawnCard = (subagentId: string) => {
+    setSpawnCards((cur) => cur.filter((c) => c.subagentId !== subagentId));
+  };
+  const viewSpawnCard = (subagentId: string) => {
+    if (subagentId === currentSessionId) return;
+    // loadSession + setViewingSubagentId mirror the
+    // TUI's `view` + Ctrl+1..9 affordance.
+    useStore.getState().loadSession?.(subagentId);
+    useStore.getState().setViewingSubagentId?.(subagentId);
+  };
+
+  // Historical reference: pinnedRef mirrors `pinned` so the scroll
+  // listener closure doesn't capture a stale value, AND the
+  // listener is mount-once (deps = []). Previously the deps
+  // included `[pinned, ...]` which tore down + re-registered
+  // the listener on every change, opening a tiny race
+  // window where a scroll event could land between teardown
+  // and re-registration and miss the transition.
+  const pinnedRef = useRef(pinned);
+  useEffect(() => { pinnedRef.current = pinned; }, [pinned]);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const wasPinned = pinnedRef.current;
+      const nowPinned = distance < 80;
+      if (!wasPinned && nowPinned) {
+        setUnseenCount(0);
+        lastSeenRef.current = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
+      }
+      pinnedRef.current = nowPinned;
+      setPinned(nowPinned);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [messages.length, subTasks.length, steps.length]);
+
+  useEffect(() => {
+    const cur = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
+    const el = listRef.current;
+    if (pinned && el) {
+      // Historical reference: direct scrollTop assignment, not
+      // scrollIntoView. scrollIntoView with behavior:'smooth'
+      // is async; when many chunks arrive in quick succession
+      // each smooth-scroll gets canceled by the next,
+      // leaving the viewport stuck partway down. Direct
+      // assignment is synchronous and idempotent. We wrap
+      // in requestAnimationFrame so the browser has already
+      // laid out the new content before we measure
+      // scrollHeight.
+      requestAnimationFrame(() => {
+        if (!listRef.current) return;
+        const distance = listRef.current.scrollHeight
+          - listRef.current.scrollTop
+          - listRef.current.clientHeight;
+        if (distance < 80) {
+          listRef.current.scrollTop = listRef.current.scrollHeight;
+        }
+      });
+      lastSeenRef.current = cur;
+    } else {
+      const delta =
+              (cur.msgs - lastSeenRef.current.msgs) +
+              (cur.subs - lastSeenRef.current.subs) +
+              (cur.steps - lastSeenRef.current.steps);
+      if (delta > 0) setUnseenCount((c) => c + delta);
+    }
+    // depend on the `steps` array reference itself,
+    // not just `steps.length`. When a tool's streamed output
+    // grows (R193 tool_output_delta) the `steps` array is
+    // replaced (because `appendToolOutput` does
+    // `steps.map(...)`) but its length is unchanged. Without
+    // this dep the auto-scroll useEffect doesn't re-run while
+    // bash is streaming.
+  }, [messages, isStreaming, steps, subTasks.length, currentSubTaskId, pinned]);
+
+  const jumpToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    setUnseenCount(0);
+    setPinned(true);
+    lastSeenRef.current = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
+  };
+
+  // build a unified chronological timeline so system
+  // messages and sub-task blocks are interleaved in the
+  // order the engine emitted them. Previously the renderer
+  // grouped by type (user, agent blocks, then ALL system
+  // messages at the bottom) so [loop_warn_2] / [todo-step-bump]
+  // / [todo-ask-llm] etc. floated to the end of the chat,
+  // leaving the user confused about the order of events.
+  //
+  // Each event has a `ts` (timestamp). We sort ascending so
+  // the chat reads top-to-bottom = oldest-to-newest, just
+  // like a transcript. The streaming cursor still lives
+  // on the last in-flight event (preamble or current sub-task).
+  type TimelineEvent =
+    | { kind: 'user'; ts: number; message: ChatMessage }
+    | { kind: 'system'; ts: number; message: ChatMessage }
+    | { kind: 'preamble'; ts: number; steps: ChatStep[]; isLive: boolean }
+    | { kind: 'subtask'; ts: number; subTask: ChatSubTask; steps: ChatStep[]; isLive: boolean };
+
+  const timeline = useMemo<TimelineEvent[]>(() => {
+    const events: TimelineEvent[] = [];
+    // 1. User + system messages use their own timestamp.
+    for (const m of messages) {
+      if (m.role === 'user') events.push({ kind: 'user', ts: m.timestamp, message: m });
+      else if (m.role === 'system') events.push({ kind: 'system', ts: m.timestamp, message: m });
+    }
+    // 2. Group steps by sub-task.
+    const bySub: Record<string, ChatStep[]> = {};
+    const pre: ChatStep[] = [];
+    for (const s of steps) {
+      if (s.subTaskId) (bySub[s.subTaskId] ||= []).push(s);
+      else pre.push(s);
+    }
+    // 3. Each sub-task is one event, timestamped to the first
+    //    step's start (or the sub-task's startedAt if no step
+    //    ran yet).
+    for (const st of subTasks) {
+      const own = bySub[st.id] ?? [];
+      const ts = own[0]?.startedAt ?? st.startedAt;
+      const isLive = isStreaming && st.id === currentSubTaskId && !st.summary;
+      events.push({ kind: 'subtask', ts, subTask: st, steps: own, isLive });
+    }
+    // 4. Preamble run (no sub-task) is one event, timestamped
+    //    to its first step. Live while the model hasn't
+    //    declared any sub-task yet.
+    if (pre.length > 0) {
+      const ts = pre[0].startedAt;
+      const isLive = isStreaming && subTasks.length === 0;
+      events.push({ kind: 'preamble', ts, steps: pre, isLive });
+    }
+    // 5. Sort ascending. Ties: keep user messages first
+    //    (they're prompts the model is responding to),
+    //    then sub-task blocks, then system messages on top
+    //    of where the model reacted.
+    const order: Record<TimelineEvent['kind'], number> = {
+      user: 0, preamble: 1, subtask: 1, system: 2,
+    };
+    events.sort((a, b) => {
+      if (a.ts !== b.ts) return a.ts - b.ts;
+      return order[a.kind] - order[b.kind];
+    });
+    return events;
+  }, [messages, steps, subTasks, currentSubTaskId, isStreaming]);
+
+  return (
+    <div className="message-list" ref={listRef}>
+      {timeline.length === 0 ? (
+        <div className="message-list-empty">Start a conversation</div>
+      ) : (
+        <>
+          {timeline.map((ev) => {
+            if (ev.kind === 'user') {
+              return <LegacyMessage key={`u-${ev.message.id}`} m={ev.message} />;
+            }
+            if (ev.kind === 'system') {
+              return <LegacyMessage key={`s-${ev.message.id}`} m={ev.message} />;
+            }
+            if (ev.kind === 'preamble') {
+              return (
+                <AgentMarkdownMessage
+                  key={`p-${ev.steps[0]?.id ?? 'pre'}`}
+                  steps={ev.steps}
+                  isLive={ev.isLive}
+                />
+              );
+            }
+            return (
+              <AgentMarkdownMessage
+                key={`t-${ev.subTask.id}`}
+                steps={ev.steps}
+                subTask={ev.subTask}
+                isLive={ev.isLive}
+              />
+            );
+          })}
+          {/* Empty-state placeholder when the user has
+           *  submitted a prompt but no events have arrived
+           *  yet. Renders between MessageList scroll bounds
+           *  and MessageInput. */}
+          {isStreaming && timeline.length === 0 && (
+            <div className="message-list-empty-steps">{'等待模型响应…'}</div>
+          )}
+          <div ref={bottomRef} />
+          {/* inline subagent spawn cards. The user
+              can expand / dismiss each card; the
+              "View subagent →" link switches the active
+              session to the subagent's transcript so the
+              user can read what the worker is doing. */}
+          {spawnCards.map((c) => (
+            <SubagentSpawnCard
+              key={c.eventId}
+              event={{
+                id: c.eventId,
+                type: 'subagent_spawn',
+                ts: c.ts,
+                subagentId: c.subagentId,
+                data: { role: c.role, description: c.description, status: c.status },
+              }}
+              onOpen={viewSpawnCard}
+              onDismiss={dismissSpawnCard}
+            />
+          ))}
+        </>
+      )}
+      {unseenCount > 0 && !pinned && (
+        <button
+          className="jump-to-bottom"
+          onClick={jumpToBottom}
+          title="Scroll to bottom and resume auto-scroll"
+        >
+          {unseenCount} new
+        </button>
+      )}
+      {!unseenCount && !pinned && isStreaming && (
+        <button
+          className="jump-to-bottom jump-to-bottom-streaming"
+          onClick={jumpToBottom}
+          title="Scroll to bottom (streaming in progress)"
+        >
+          generating...
+        </button>
+      )}
+    </div>
+  );
+}

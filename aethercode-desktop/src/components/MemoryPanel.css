@@ -1,0 +1,362 @@
+/* Memory browser/editor. Patterned after the TaskList /
+   SessionList style: section header + dense collapsible scope
+   lists + a slide-in editor at the bottom. Densities are tuned
+   for the right panel (max-width 320px) so the file rows can
+   be quite tight. */
+
+.memory-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 14px 4px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  user-select: none;
+}
+
+.memory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  flex-shrink: 0;
+}
+
+.memory-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  padding: 1px 6px;
+  background: var(--bg-input);
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+
+.memory-agent-hint {
+  font-size: 9px;
+  color: var(--text-dim);
+  opacity: 0.7;
+  padding: 0 0 4px 0;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.memory-agent-hint code {
+  background: var(--bg-input);
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: var(--text);
+}
+
+.memory-status {
+  font-size: 10px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.memory-status-info    { background: rgba(93, 169, 255, 0.08); color: var(--text); }
+.memory-status-success { background: rgba(108, 194, 139, 0.08); color: var(--success, #6cc28b); }
+.memory-status-error   { background: rgba(244, 135, 113, 0.08); color: var(--error, #f48771); }
+
+.memory-scope {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4px;
+}
+
+.memory-scope-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+  transition: background 120ms ease;
+}
+.memory-scope-head:hover { background: var(--bg-input); }
+
+.memory-scope-toggle {
+  width: 8px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.memory-scope-label { flex: 1; font-weight: 600; }
+.memory-scope-count {
+  font-family: ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.memory-scope-add {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  transition: all 120ms ease;
+}
+.memory-scope-add:hover {
+  background: var(--bg-input);
+  border-color: var(--accent, #5da9ff);
+  color: var(--accent, #5da9ff);
+}
+
+.memory-files {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0 2px 8px;
+  border-left: 1px solid var(--border-soft, rgba(255, 255, 255, 0.05));
+}
+
+.memory-empty {
+  padding: 4px 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.memory-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-bottom: 1px;
+  transition: background 120ms ease;
+}
+.memory-file:hover { background: var(--bg-input); }
+.memory-file.active {
+  background: var(--bg-input);
+  border-left: 2px solid var(--accent, #5da9ff);
+  padding-left: 4px;
+}
+.memory-file.open .memory-file-open-dot {
+  color: var(--accent, #5da9ff);
+  font-size: 8px;
+  flex-shrink: 0;
+}
+
+.memory-file-row1 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.memory-file-name {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, monospace;
+}
+.memory-file-entry {
+  color: var(--accent, #5da9ff);
+  font-size: 9px;
+}
+
+.memory-file-row2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.memory-file-meta {
+  font-size: 9px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.memory-file-del {
+  background: transparent;
+  border: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+  font-family: inherit;
+}
+.memory-file:hover .memory-file-del { opacity: 0.6; }
+.memory-file-del:hover { color: var(--error, #f48771) !important; opacity: 1 !important; }
+
+/* Editor — appears below the lists when a file is open. */
+.memory-editor {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 200px;
+  max-height: 400px;
+  overflow: hidden;
+}
+
+/* tab bar. Sits at the top of the editor; horizontal
+   scroll when there are more tabs than fit. */
+.memory-editor-tabs {
+  display: flex;
+  overflow-x: auto;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  scrollbar-width: thin;
+}
+.memory-editor-tabs::-webkit-scrollbar { height: 4px; }
+
+.memory-editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-right: 1px solid var(--border-soft, rgba(255, 255, 255, 0.05));
+  white-space: nowrap;
+  user-select: none;
+  transition: background 80ms ease, color 80ms ease;
+  flex-shrink: 0;
+  max-width: 140px;
+}
+.memory-editor-tab:hover {
+  background: var(--bg-input);
+  color: var(--text);
+}
+.memory-editor-tab.active {
+  background: var(--bg);
+  color: var(--text);
+  border-bottom: 2px solid var(--accent, #5da9ff);
+  padding-bottom: 2px;
+  margin-bottom: -1px;
+  font-weight: 600;
+}
+.memory-editor-tab-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.memory-editor-tab-dot {
+  color: var(--accent, #5da9ff);
+  font-size: 10px;
+  line-height: 1;
+}
+.memory-editor-tab-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  font-family: inherit;
+  border-radius: 2px;
+  transition: background 80ms ease, color 80ms ease;
+}
+.memory-editor-tab-close:hover {
+  background: rgba(244, 135, 113, 0.18);
+  color: var(--error, #f48771);
+}
+
+.memory-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.memory-editor-path {
+  flex: 1;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.memory-editor-path code {
+  color: var(--text);
+  background: transparent;
+}
+.memory-editor-dirty {
+  color: var(--accent, #5da9ff);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.memory-editor-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.memory-editor-cancel,
+.memory-editor-save {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms ease;
+}
+.memory-editor-cancel:hover {
+  background: var(--bg-input);
+  color: var(--text);
+}
+.memory-editor-save:not(:disabled):hover {
+  background: var(--accent, #5da9ff);
+  border-color: var(--accent, #5da9ff);
+  color: white;
+}
+.memory-editor-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.memory-editor-text {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  tab-size: 2;
+}

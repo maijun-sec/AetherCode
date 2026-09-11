@@ -1,0 +1,807 @@
+/* ======================================================================
+ * MessageInput.css — prior round: Cursor / Claude Code style input.
+ *
+ * The reference interface shows a single rounded "pill" with the
+ * textarea filling the inside, the "思考" (Thinking) toggle on the
+ * left, the 始终授权 (Always Allow, permission) dropdown and model selector on
+ * the right, and a 32x32 send button anchored to the bottom-right
+ * corner of the textarea.
+ *
+ * The config bar above the input was previously a wide row of
+ * model / perm / tools / workflow / cwd buttons. We keep the same
+ * data flow (every dropdown still uses the same store methods) but
+ * resize the bar so it reads as a thin options strip rather than a
+ * toolbar.
+ * ====================================================================== */
+
+.message-input-container {
+  /* The whole input block sits on a flat surface (no top accent
+   * bar — the new design is "clean white" all the way through).
+   * A 1px hairline keeps the boundary visible. */
+  border-top: 1px solid var(--chat-divider);
+  padding: 14px 24px 12px;
+  background: var(--chat-surface);
+  flex-shrink: 0;
+  box-shadow: 0 -1px 0 rgba(15, 23, 42, 0.04);
+  color: var(--chat-text);
+}
+
+/* a thin, single-row config strip above the input box.
+ * Reduced visual weight from the previous "wide toolbar" look.
+ * The user can still see every option; the strip just takes less
+ * vertical space so the input box itself is the dominant shape. */
+.input-config-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  max-width: 920px;
+  margin-left: auto;
+  margin-right: auto;
+  position: relative;
+  /* the previous `flex-wrap: wrap` pushed the cwd
+   * group onto a second row at common window widths
+   * (~960-1280px) because it had `max-width: 360px` +
+   * `margin-left: auto`. The user said "can the cwd below
+   * be put on the same row as model / perm / workflow, to save vertical space".
+   * Now we keep the strip on ONE row by default
+   * (overflow-x: auto lets the user scroll horizontally
+   * on tiny windows instead of breaking the layout) and
+   * trim the cwd group's max-width so it doesn't dominate
+   * the strip. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* one-time model mismatch banner. Renders
+ * above the input config bar when the localStorage
+ * `enginePrefs.model` differs from the daemon's
+ * canonical `state.model`. The first R176 cut
+ * used 8% opacity amber, which was too subtle on
+ * the dark `--chat-surface` (#252526) — a user
+ * reported the banner "flashed" but they couldn't
+ * see it. Bumped to the canonical
+ * `--chat-warning-soft` (18% opacity) and added
+ * a 3px left accent + soft shadow so the banner
+ * is unmistakable without being alarmist. The
+ * banner disappears the moment the user clicks
+ * "switch" or "keep ${daemonModel}" — it's a
+ * single-decision UI, not a persistent
+ * notification. */
+.model-mismatch-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto 10px;
+  max-width: 920px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--chat-warning-soft);
+  border: 1px solid var(--chat-warning);
+  border-left: 4px solid var(--chat-warning);
+  color: var(--chat-text);
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.model-mismatch-banner-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  line-height: 1;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.4));
+}
+.model-mismatch-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.model-mismatch-banner-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: var(--chat-warning);
+  font-size: 13px;
+}
+.model-mismatch-banner-desc {
+  color: var(--chat-text);
+  word-break: break-word;
+}
+.model-mismatch-banner-desc code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 12px;
+  color: var(--chat-warning);
+  font-weight: 600;
+}
+.model-mismatch-banner-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.model-mismatch-btn {
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+  font-weight: 500;
+}
+.model-mismatch-btn-primary {
+  background: var(--chat-accent);
+  color: var(--chat-on-accent, #fff);
+  border-color: var(--chat-accent);
+}
+.model-mismatch-btn-primary:hover { opacity: 0.9; }
+.model-mismatch-btn-secondary {
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  border-color: var(--chat-divider);
+}
+.model-mismatch-btn-secondary:hover {
+  border-color: var(--chat-accent);
+  color: var(--chat-accent);
+  background: var(--chat-accent-soft);
+}
+
+.config-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  position: relative;
+}
+
+.config-label {
+  color: var(--chat-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+/* pickers / dropdowns rendered as small, pill-shaped
+ * controls with a subtle border. Hover lightens to the
+ * accent-soft tint; click drops the popup as before. */
+.config-select {
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 6px;
+  color: var(--chat-text);
+  padding: 5px 22px 5px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--chat-text-muted) 50%),
+                    linear-gradient(135deg, var(--chat-text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 12px) center, calc(100% - 7px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.config-select:hover:not(:disabled) {
+  border-color: var(--chat-accent);
+  background-color: var(--chat-accent-soft);
+}
+.config-select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* pill-shaped toggle button (思考 / Thinking / Tools / Workflow).
+ * Light surface, hairline border, no background fill. Hover
+ * tints to the accent-soft colour. */
+.config-toggle {
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 14px;
+  color: var(--chat-text);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+.config-toggle:hover:not(:disabled) {
+  border-color: var(--chat-accent);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+.config-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* the "思考" (Thinking) toggle. Visually distinct so the
+ * user can see at a glance whether extended thinking is on. When
+ * active, the pill flips to a soft accent fill. */
+.config-toggle-thinking {
+  /* Inherits .config-toggle layout; the active variant is its
+   * own modifier so we can keep the base rule generic. */
+}
+.config-toggle-thinking.config-toggle-active {
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+  border-color: rgba(99, 102, 241, 0.45);
+  font-weight: 600;
+}
+
+.cwd-group {
+  margin-left: auto;
+  /* shrunk from 360px to 220px. legacy the cwd
+   * pill was 360px wide (long Windows paths) which made
+   * the input-config-bar too wide for one row at common
+   * window widths; the user reported the cwd dropped to
+   * a second line. 220px lets "D:\tmp\abc_2" (12 chars)
+   * fit comfortably and "D:\work\longer-project-name"
+   * (32 chars) ellipsises cleanly. */
+  max-width: 220px;
+  min-width: 0;
+  flex: 0 1 auto;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 6px;
+  padding: 2px 4px;
+  gap: 4px;
+  transition: border-color 0.15s;
+}
+.cwd-group:hover { border-color: var(--chat-accent); }
+
+.cwd-group .config-label {
+  margin-left: 4px;
+  color: var(--chat-accent);
+}
+
+.config-cwd-btn {
+  background: transparent;
+  border: none;
+  color: var(--chat-text);
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  cursor: pointer;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+}
+.config-cwd-btn:hover { background: var(--chat-accent-soft); }
+
+.config-cwd-input {
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-accent);
+  border-radius: 4px;
+  color: var(--chat-text);
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  width: 240px;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.config-pick-btn {
+  background: transparent;
+  border: 1px solid var(--chat-divider);
+  border-radius: 4px;
+  color: var(--chat-text-muted);
+  padding: 3px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 120ms ease;
+}
+.config-pick-btn:hover {
+  color: var(--chat-accent);
+  border-color: var(--chat-accent);
+  background: var(--chat-accent-soft);
+}
+
+/* ----- Popups (tools / workflow / @-mention / slash) -----
+ * Light surface, hairline border, soft shadow. Same popup
+ * contract as the dark theme; just re-skinned. */
+.tools-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 10px;
+  padding: 6px;
+  margin-bottom: 6px;
+  z-index: 10;
+  min-width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.10);
+}
+.tool-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  color: var(--chat-text);
+  transition: background 100ms ease;
+}
+.tool-item:hover { background: var(--chat-accent-soft); }
+.tool-name { font-family: ui-monospace, monospace; }
+
+.tools-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 6px 6px;
+  border-bottom: 1px solid var(--chat-divider);
+  margin-bottom: 4px;
+}
+.tools-popup-title {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.tools-popup-refresh {
+  background: transparent;
+  border: 1px solid var(--chat-divider);
+  color: var(--chat-text-muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 100ms ease;
+}
+.tools-popup-refresh:hover {
+  color: var(--chat-accent);
+  border-color: var(--chat-accent);
+  background: var(--chat-accent-soft);
+}
+.tools-popup-empty {
+  padding: 10px 6px;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  text-align: center;
+}
+.tools-popup-empty-hint {
+  font-size: 10px;
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
+/* the input wrap. Position-relative parent for the
+ * absolutely-positioned corner send button. */
+.message-input-wrap {
+  position: relative;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+/* the input box itself. Big rounded card, light surface,
+ * the user's text fills the inside, the corner send button sits
+ * inside the bottom-right. The 56px right padding clears the
+ * send button + a small gap. */
+.message-input {
+  display: block;
+  width: 100%;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 16px;
+  padding: 14px 56px 14px 18px;
+  font-size: 14.5px;
+  font-family: inherit;
+  resize: none;
+  line-height: 1.55;
+  min-height: 96px;
+  max-height: 240px;
+  outline: none;
+  user-select: text;
+  color: var(--chat-text);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+.message-input:focus {
+  border-color: var(--chat-accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.message-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.message-input::placeholder {
+  color: var(--chat-text-muted);
+  font-style: italic;
+}
+
+/* the corner send button. 32x32 rounded square, accent
+ * fill (purple-indigo) when ready, dim grey when the input is
+ * empty, red pulse when the engine is running (cancel). The
+ * button "floats" inside the rounded textarea's bottom-right
+ * without crowding the border. */
+.message-input-corner {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease, transform 80ms ease;
+}
+.message-input-corner.primary {
+  background: var(--chat-accent);
+  color: white;
+  border-color: var(--chat-accent);
+}
+.message-input-corner.primary:hover:not(:disabled) {
+  background: var(--chat-accent-hover, #4f46e5);
+  border-color: var(--chat-accent-hover, #4f46e5);
+  transform: translateY(-1px);
+}
+.message-input-corner.primary:disabled {
+  background: var(--chat-code-bg);
+  color: var(--chat-text-muted);
+  border-color: var(--chat-divider);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.message-input-corner.cancel {
+  background: var(--chat-error);
+  color: white;
+  border-color: var(--chat-error);
+  animation: chat-cancel-pulse 1.5s ease-in-out infinite;
+}
+.message-input-corner.cancel:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+@keyframes chat-cancel-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* the hint row below the input. Smaller, dimmer, sits
+ * inside the same 920px column. */
+.input-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  max-width: 920px;
+  margin: 8px auto 0;
+  opacity: 0.85;
+}
+.input-hint kbd {
+  background: var(--chat-surface-2);
+  border: 1px solid var(--chat-divider);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  color: var(--chat-text);
+}
+.input-hint-streaming {
+  margin-left: auto;
+  color: var(--chat-accent);
+  font-weight: 600;
+  animation: chat-pulse 1.5s ease-in-out infinite;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.input-hint-streaming::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chat-accent);
+  animation: chat-pulse-dot 1.5s ease-in-out infinite;
+}
+@keyframes chat-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes chat-pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.3); opacity: 0.6; }
+}
+
+/* slash command result pill. */
+.input-hint-cmd {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.2px;
+  max-width: 480px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.input-hint-cmd-info  { background: var(--chat-accent-soft); color: var(--chat-accent); }
+.input-hint-cmd-error { background: var(--chat-error-soft); color: var(--chat-error); }
+
+.input-disconnected {
+  text-align: center;
+  font-size: 11px;
+  color: var(--chat-error);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* workflow picker. */
+.config-toggle-active {
+  background: var(--chat-accent-soft);
+  border-color: rgba(99, 102, 241, 0.45);
+  color: var(--chat-accent);
+  font-weight: 600;
+}
+
+.workflow-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--chat-text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 100ms ease;
+}
+.workflow-item:hover {
+  background: var(--chat-accent-soft);
+}
+.workflow-item-active {
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+.workflow-item-clear {
+  color: var(--chat-text-muted);
+  font-style: italic;
+  border-bottom: 1px solid var(--chat-divider);
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+}
+.workflow-item-clear:hover {
+  background: var(--chat-error-soft);
+  color: var(--chat-error);
+}
+.workflow-item-name {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.workflow-item-desc {
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-style: italic;
+  white-space: normal;
+  word-break: break-word;
+}
+.workflow-item-steps {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.workflow-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-style: italic;
+  line-height: 1.5;
+}
+.workflow-empty code {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  padding: 1px 4px;
+  background: var(--chat-code-bg);
+  border-radius: 3px;
+  color: var(--chat-text);
+}
+
+.workflow-empty-hint {
+  font-size: 10.5px;
+  color: var(--chat-text-muted);
+  margin-top: 4px;
+  font-style: normal;
+  line-height: 1.5;
+}
+.workflow-import-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+  border: 1px solid rgba(99, 102, 241, 0.30);
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  font-style: normal;
+  transition: all 100ms ease;
+}
+.workflow-import-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.22);
+  border-color: rgba(99, 102, 241, 0.55);
+}
+.workflow-import-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.workflow-import-result {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  font-style: normal;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+.workflow-import-result-ok {
+  background: var(--chat-success-soft);
+  border-color: rgba(16, 185, 129, 0.30);
+  color: var(--chat-success);
+}
+.workflow-import-result-partial {
+  background: var(--chat-warning-soft);
+  border-color: rgba(245, 158, 11, 0.30);
+  color: var(--chat-warning);
+}
+.workflow-import-result-error {
+  background: var(--chat-error-soft);
+  border-color: rgba(239, 68, 68, 0.30);
+  color: var(--chat-error);
+}
+.workflow-import-failed {
+  margin: 4px 0 0 0;
+  padding-left: 16px;
+  font-size: 10px;
+  opacity: 0.9;
+}
+.workflow-import-failed code {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  background: var(--chat-code-bg);
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+/* "最近使用" (Recently used) section. */
+.workflow-recent-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+.workflow-recent-label {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 4px 2px 4px;
+  font-weight: 600;
+}
+.workflow-recent-divider {
+  height: 1px;
+  background: var(--chat-divider);
+  margin: 4px 0 2px 0;
+}
+
+/* @-mention file autocomplete dropdown. */
+.mention-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  z-index: 11;
+  max-height: 240px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.10);
+  overflow: hidden;
+}
+.mention-dropdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--chat-divider);
+  background: var(--chat-surface-2);
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mention-dropdown-tag {
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  color: var(--chat-accent);
+  font-weight: 600;
+}
+.mention-dropdown-count {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  opacity: 0.7;
+}
+.mention-dropdown-empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-style: italic;
+  text-align: center;
+}
+.mention-dropdown-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+.mention-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--chat-text);
+  user-select: none;
+  transition: background 80ms ease;
+}
+.mention-dropdown-item:hover,
+.mention-dropdown-item.active {
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+.mention-dropdown-icon {
+  font-size: 12px;
+  color: var(--chat-text-muted);
+  flex: 0 0 auto;
+}
+.mention-dropdown-item:hover .mention-dropdown-icon,
+.mention-dropdown-item.active .mention-dropdown-icon {
+  color: var(--chat-accent);
+}
+.mention-dropdown-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}

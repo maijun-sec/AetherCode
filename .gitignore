@@ -1,0 +1,272 @@
+# ============================================================
+# AetherCode .gitignore
+# ============================================================
+# 
+# 排除 build output、临时文件、IDE 配置、release 资产等
+# 不应该提交到 git 仓的内容。
+#
+# 远端仓: https://github.com/maijun-sec/AetherCode
+# 参考仓库 (claude-code-analysis, oh-my-opencode) 通过 .gitmodules 拉取,
+# 本地 clone 副本请勿提交。
+# ============================================================
+
+# ------------------------------------------------------------
+# Build / target output
+# ------------------------------------------------------------
+target/
+build/
+dist/
+out/
+bin/
+*.class
+*.jar
+*.war
+*.ear
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.pyc
+*.pyo
+*.pdb
+
+# Node / TypeScript
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+*.tsbuildinfo
+.next/
+.nuxt/
+.turbo/
+.parcel-cache/
+
+# Rust / Cargo (aethercode-desktop/src-tauri)
+target/
+**/target/
+Cargo.lock.bak
+**/*.rs.bk
+*.pdb
+*.so
+*.dylib
+
+# Java / Maven
+target/
+.mvn/
+mvnw
+mvnw.cmd
+*.class
+hs_err_pid*
+
+# Gradle (aethercode-acp 可能有)
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# TypeScript
+*.tsbuildinfo
+.eslintcache
+.parcel-cache/
+
+# Bun (oh-my-opencode 等)
+bun.lockb
+
+# ------------------------------------------------------------
+# IDE / editor
+# ------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+.fleet/
+.cursor/
+
+# ------------------------------------------------------------
+# Logs / temp files
+# ------------------------------------------------------------
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.rej
+*.old
+*.pid
+*.seed
+*.pid.lock
+
+# Build/test reports
+test-output/
+surefire-reports/
+failsafe-reports/
+jacoco/
+.coverage
+htmlcov/
+coverage/
+*.lcov
+.nyc_output
+
+# Sandbox / sandbox logs
+sandbox-*.log
+*.sandbox.log
+daemon-*.log
+*.daemon.log
+
+# ------------------------------------------------------------
+# Local environment / secrets
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local
+config.local.*
+secrets.json
+aethercode.token
+*.pem
+*.key
+*.p12
+*.pfx
+keystore.*
+truststore.*
+
+# AetherCode 运行时状态 (daemon logs, sessions, skills, ssd, workflows)
+.aethercode/
+.aethercode/daemon-logs/
+.aethercode/daemon-test/
+.aethercode/sessions/
+.aethercode/skills/
+.aethercode/ssd/
+.aethercode/workflows/
+
+# Windows 保留名 (NUL, CON, PRN, AUX, COM1-9, LPT1-9)
+/NUL
+/CON
+/PRN
+/AUX
+/COM1
+/COM2
+/COM3
+/COM4
+/COM5
+/COM6
+/COM7
+/COM8
+/COM9
+/LPT1
+/LPT2
+/LPT3
+/LPT4
+/LPT5
+/LPT6
+/LPT7
+/LPT8
+/LPT9
+
+# Local m2 / cache
+.m2/
+.maven-cache/
+.cargo-cache/
+
+# Caches
+.cache/
+.tmp/
+.temp/
+.pyc-cache/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.parcel-cache/
+
+# OS / runtime
+.DS_Store
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+.Trash-*
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+
+# ============================================================
+# AetherCode-specific excludes
+# ============================================================
+
+# Release 资产 (出包在 release/, 0.2.64 / 0.2.65 等)
+release/
+release-*/
+*.release.zip
+*.release.tar.gz
+release-checksums.txt
+
+# Pre-submission 临时脚本 (R-round 注释清理 + 中文翻译阶段)
+translate-tmp/
+scripts/redl_p*.py
+scripts/translate_comments.py
+scripts/append_r*_memory.py
+aethercode/translate_*.py
+aethercode/debug_*.py
+**/debug_*.py
+
+# 中间生成的临时报告
+aethercode/R*.tmp
+aethercode/R*.draft
+aethercode-*.log
+
+# Python 临时脚本 (codegen / 翻译)
+**/translate_*.py
+**/extract_pdfs.py
+**/debug_quotes*.py
+**/debug_lengths.py
+**/debug_translate*.py
+
+# 论文 PDF 原始文件 + 中文翻译 (提交到代码仓,作为设计参考)
+# arXiv 公开论文,引用通过论文 URL + 摘要实现
+# 包含原始 PDF (论证基础) + 中文翻译 (设计分析) + 摘要 (速查)
+# 不提交: 临时调试文件 (tmp/, images/, extract_pdfs.py, README.md)
+reference/papers/tmp/
+reference/papers/images/
+reference/papers/extract_pdfs.py
+reference/papers/README.md
+
+# Reference 项目的 clone 副本 (通过 .gitmodules 拉取)
+# 路径改为英文 (projects/ 而不是 参考项目/) 避免 submodule 路径编码问题
+# 注意: submodule 路径必须不在 .gitignore 中,否则 git submodule add 会失败。
+# submodule 内容 (仓库内的文件) 由用户本地的 submodule 拉取决定,
+# 本仓只 track .gitmodules 配置。
+
+# 旧的 clone 副本 (中文目录名, 已删除, 已转 submodule)
+reference/参考项目/
+
+# ============================================================
+# Whitelisted files (force include)
+# ============================================================
+# 重要: 这些 .gitignore 规则排除的目录, 里面有必须保留的子文件,
+# 用 ! 取消忽略。
+!.gitignore
+!README.md
+!LICENSE
+!.gitattributes
+
+# Gradle wrapper (需要在)
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.jar
+
+# Maven wrapper
+!mvnw
+!mvnw.cmd
+!.mvn/wrapper/maven-wrapper.jar

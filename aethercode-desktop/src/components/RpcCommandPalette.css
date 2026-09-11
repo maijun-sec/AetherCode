@@ -1,0 +1,378 @@
+/* RPC command palette. The visual language
+ * mirrors the R88 CommandPalette (same backdrop,
+ * same dialog) so the two feel like the same
+ * widget family, but with extra sections for
+ * params + result. The colour tokens match the
+ * rest of the app — the only new additions are
+ * the .has-error and .is-ok / .is-err state
+ * classes for the params + result panes. */
+
+.rpc-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 10000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  backdrop-filter: blur(2px);
+}
+
+.rpc-palette {
+  width: min(640px, 92vw);
+  max-height: 80vh;
+  background: var(--bg-elev, #1e1e22);
+  color: var(--text, #e0e0e0);
+  border: 1px solid var(--border, #3a3a40);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.rpc-palette-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, #2a2a30);
+}
+
+.rpc-palette-input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 4px 0;
+}
+.rpc-palette-input::placeholder {
+  color: var(--text-dim, #888);
+}
+
+.rpc-palette-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #888);
+  font-size: 11px;
+  background: var(--bg, #15151a);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #2a2a30);
+}
+
+/* tag chip bar. Sits between the search
+ *  row and the method list. Each chip is a
+ *  small toggle button with a count badge;
+ *  clicking adds the tag to the AND-filter
+ *  set. The "is-active" state is the visual
+ *  signal the user's filter is in effect.
+ *  The "clear" button appears only when
+ *  ≥1 chip is active. */
+.rpc-palette-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px 4px;
+  border-bottom: 1px solid var(--border, #2a2a30);
+  background: var(--bg-soft, #1a1a1e);
+}
+.rpc-palette-tag-chip {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border, #2a2a30);
+  background: var(--bg, #15151a);
+  color: var(--text-dim, #888);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.rpc-palette-tag-chip:hover {
+  background: rgba(99, 179, 237, 0.08);
+  border-color: var(--accent, #63b3ed);
+  color: var(--text, #e0e0e0);
+}
+.rpc-palette-tag-chip.is-active {
+  background: var(--accent, #63b3ed);
+  border-color: var(--accent, #63b3ed);
+  color: #0a0a0a;
+}
+.rpc-palette-tag-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  opacity: 0.75;
+}
+.rpc-palette-tag-chip.is-active .rpc-palette-tag-count {
+  opacity: 1;
+}
+.rpc-palette-tag-clear {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px dashed var(--text-dim, #888);
+  background: transparent;
+  color: var(--text-dim, #888);
+  cursor: pointer;
+  margin-left: auto;
+}
+.rpc-palette-tag-clear:hover {
+  border-style: solid;
+  color: var(--text, #e0e0e0);
+}
+
+.rpc-palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  max-height: 220px;
+  flex-shrink: 0;
+}
+
+.rpc-palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 14px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+.rpc-palette-item.active {
+  background: var(--accent-soft, rgba(99, 179, 237, 0.16));
+  color: var(--accent, #63b3ed);
+}
+.rpc-palette-name {
+  flex: 1;
+}
+.rpc-palette-meta {
+  color: var(--text-dim, #888);
+  font-size: 10.5px;
+  margin-left: 8px;
+}
+
+/* section headers (★ pinned / 🕒 recent / all)
+   separate the three logical groupings inside
+   the filtered list. They use small text-dim
+   caps with a count badge so the user can
+   see at a glance "I have 3 pinned + 7 recent
+   + 55 more = 65 methods". */
+.rpc-palette-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #888);
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: default;
+  user-select: none;
+}
+.rpc-palette-section-count {
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* favourite / pin button. A small
+   star at the left of each row. Solid ★
+   (gold) for pinned, hollow ☆ for unpinned.
+   Click toggles — the row slides between
+   the "all" section and the "★ pinned"
+   section on the next render. The
+   stopPropagation in the onClick handler
+   is critical: without it, clicking the
+   star would also select the row, and
+   then the next Enter would fire the
+   method the user just wanted to pin. */
+.rpc-palette-fav-btn {
+  background: transparent;
+  border: 0;
+  padding: 0 6px 0 0;
+  margin: 0;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim, #888);
+  transition: color 0.1s ease, transform 0.08s ease;
+}
+.rpc-palette-fav-btn.is-pinned {
+  color: var(--warning, #ffb86c);
+  text-shadow: 0 0 6px rgba(255, 184, 108, 0.4);
+}
+.rpc-palette-fav-btn.is-unpinned {
+  color: var(--text-dim, #666);
+}
+.rpc-palette-fav-btn.is-unpinned:hover {
+  color: var(--warning, #ffb86c);
+  transform: scale(1.15);
+}
+.rpc-palette-fav-btn.is-pinned:hover {
+  transform: scale(0.95);
+}
+
+/* row variants. Pinned and recent
+   rows get a faint left-border accent
+   so the user can scan the list and
+   tell at a glance which section a row
+   belongs to (the header is enough
+   but the border makes it stick). */
+.rpc-palette-item-fav {
+  border-left: 2px solid var(--warning, #ffb86c);
+  padding-left: 12px;
+}
+.rpc-palette-item-recent {
+  border-left: 2px solid var(--accent, #63b3ed);
+  padding-left: 12px;
+}
+
+.rpc-palette-empty {
+  padding: 16px 14px;
+  color: var(--text-dim, #888);
+  font-style: italic;
+  text-align: center;
+}
+
+.rpc-palette-params {
+  border-top: 1px solid var(--border, #2a2a30);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-soft, #1a1a1e);
+}
+.rpc-palette-label {
+  font-size: 11px;
+  color: var(--text-dim, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.rpc-palette-params-input {
+  background: var(--bg, #15151a);
+  border: 1px solid var(--border, #2a2a30);
+  border-radius: 4px;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  resize: vertical;
+  outline: 0;
+  min-height: 60px;
+}
+.rpc-palette-params-input:focus {
+  border-color: var(--accent, #63b3ed);
+}
+.rpc-palette-params-input.has-error {
+  border-color: var(--error, #f48771);
+  background: rgba(244, 135, 113, 0.06);
+}
+.rpc-palette-params-error {
+  color: var(--error, #f48771);
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.rpc-palette-params-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.rpc-palette-execute {
+  background: var(--accent, #63b3ed);
+  color: #0a0a0a;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.rpc-palette-execute:hover:not(:disabled) {
+  background: var(--accent-hover, #7cb6ee);
+}
+.rpc-palette-execute:disabled {
+  background: var(--border, #2a2a30);
+  color: var(--text-dim, #888);
+  cursor: not-allowed;
+}
+
+.rpc-palette-result {
+  border-top: 1px solid var(--border, #2a2a30);
+  background: var(--bg, #15151a);
+  max-height: 220px;
+  overflow: auto;
+}
+.rpc-palette-result.is-ok {
+  border-left: 3px solid var(--success, #7fe09f);
+}
+.rpc-palette-result.is-err {
+  border-left: 3px solid var(--error, #f48771);
+}
+.rpc-palette-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: var(--text-dim, #888);
+}
+.rpc-palette-result-time {
+  font-variant-numeric: tabular-nums;
+}
+.rpc-palette-result-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim, #888);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.rpc-palette-result-close:hover {
+  color: var(--text, #e0e0e0);
+}
+.rpc-palette-result-body {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text, #e0e0e0);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rpc-palette-footer {
+  display: flex;
+  gap: 16px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border, #2a2a30);
+  background: var(--bg-soft, #1a1a1e);
+  color: var(--text-dim, #888);
+  font-size: 11px;
+}
+.rpc-palette-footer kbd {
+  background: var(--bg, #15151a);
+  border: 1px solid var(--border, #2a2a30);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  margin: 0 1px;
+}

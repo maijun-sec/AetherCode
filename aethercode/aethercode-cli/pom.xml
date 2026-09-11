@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>aethercode-cli</artifactId>
+    <name>AetherCode CLI</name>
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-engine-springai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-tools</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-permission</artifactId>
+        </dependency>
+        <!-- R98: CLI loads .aethercode/config.json to seed the permission matrix. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-memory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-prompts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-compact</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-hooks</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-skills</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-sdk</artifactId>
+        </dependency>
+        <!-- R321: aethercode task CLI (T-380..T-385). Transitive
+             via aethercode-sdk, declared here so the build
+             fails fast if aethercode-tasks is removed. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-tasks</artifactId>
+        </dependency>
+        <!-- Phase 2.1 (T-2-08..T-2-12, Java-B): the workflow/*
+             RPC handlers + the ac workflow lint subcommand live
+             in aethercode-workflows. The CLI depends on it for
+             both the lint command (which talks to the local
+             StubWorkflowService) and the parent class hierarchy. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-workflows</artifactId>
+        </dependency>
+        <!-- Phase 2.2 (T-2-13..T-2-16, Java-B): aethercode-models
+             owns ModelProfile / Pricing / ModelRegistry. The CLI
+             uses it for the model/* subcommands (next phase)
+             and for the cost column in session tokens. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-models</artifactId>
+        </dependency>
+        <!-- R250+3: A2A client. Used by the aethercode a2a ...
+             subcommands (card / send / stream / get / cancel) to
+             talk to remote A2A agents over the synchronous
+             JSON-RPC + SSE wire shape. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-a2a</artifactId>
+        </dependency>
+        <!-- R250+3: A2A ↔ DeepAgent bridge. The CLI doesn't
+             *use* the bridge itself, but `aethercode a2a` will
+             commonly target servers built with the bridge, so
+             we keep the dep so the test code path can wire
+             one up when needed. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-a2a-deepagent-bridge</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer
+                                    implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.aethercode.cli.Main</mainClass>
+                                </transformer>
+                                <transformer
+                                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+

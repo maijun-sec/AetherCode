@@ -1,0 +1,112 @@
+# Phase 2.2 / T-2-14 (design.md §3.7, spec.md §10.1): default shipped
+# provider catalogue. Users can override any model (or add their own)
+# in <userHome>/.aethercode/providers.yaml or <cwd>/.aethercode/providers.yaml.
+# The project layer always takes precedence — see aethercode-models
+# ModelRegistry for the merge rules.
+#
+# Numbers reflect publicly listed rates as of late 2025; the cached
+# column is the prompt-cache rate (10x cheaper on Anthropic, 50% on
+# OpenAI). The local ollama models are free ($0/M) because the
+# compute is on the user's box.
+providers:
+  - name: anthropic
+    models:
+      - name: claude-opus-4-1
+        displayName: "Claude Opus 4.1"
+        contextWindow: 200000
+        maxOutput: 32000
+        capabilities: [vision, tools, json-mode, streaming, prompt-cache]
+        pricing:
+          inputPerMTokensUsd: 15.00
+          outputPerMTokensUsd: 75.00
+          cachedPerMTokensUsd: 1.50
+      - name: claude-sonnet-4
+        displayName: "Claude Sonnet 4"
+        contextWindow: 200000
+        maxOutput: 32000
+        capabilities: [vision, tools, json-mode, streaming, prompt-cache]
+        pricing:
+          inputPerMTokensUsd: 3.00
+          outputPerMTokensUsd: 15.00
+          cachedPerMTokensUsd: 0.30
+      - name: claude-haiku-4
+        displayName: "Claude Haiku 4"
+        contextWindow: 200000
+        maxOutput: 16000
+        capabilities: [vision, tools, json-mode, streaming, prompt-cache]
+        pricing:
+          inputPerMTokensUsd: 0.80
+          outputPerMTokensUsd: 4.00
+          cachedPerMTokensUsd: 0.08
+
+  - name: openai
+    models:
+      - name: gpt-5
+        displayName: "GPT-5"
+        contextWindow: 400000
+        maxOutput: 32000
+        capabilities: [vision, tools, json-mode, streaming, prompt-cache]
+        pricing:
+          inputPerMTokensUsd: 5.00
+          outputPerMTokensUsd: 20.00
+          cachedPerMTokensUsd: 2.50
+      - name: gpt-5-mini
+        displayName: "GPT-5 mini"
+        contextWindow: 400000
+        maxOutput: 16000
+        capabilities: [vision, tools, json-mode, streaming, prompt-cache]
+        pricing:
+          inputPerMTokensUsd: 0.50
+          outputPerMTokensUsd: 2.00
+          cachedPerMTokensUsd: 0.25
+      - name: gpt-4o
+        displayName: "GPT-4o"
+        contextWindow: 128000
+        maxOutput: 16000
+        capabilities: [vision, tools, json-mode, streaming]
+        pricing:
+          inputPerMTokensUsd: 2.50
+          outputPerMTokensUsd: 10.00
+          cachedPerMTokensUsd: 0.00
+
+  - name: google
+    models:
+      - name: gemini-2.5-pro
+        displayName: "Gemini 2.5 Pro"
+        contextWindow: 1000000
+        maxOutput: 64000
+        capabilities: [vision, tools, json-mode, streaming]
+        pricing:
+          inputPerMTokensUsd: 2.50
+          outputPerMTokensUsd: 10.00
+          cachedPerMTokensUsd: 0.00
+      - name: gemini-2.5-flash
+        displayName: "Gemini 2.5 Flash"
+        contextWindow: 1000000
+        maxOutput: 64000
+        capabilities: [vision, tools, json-mode, streaming]
+        pricing:
+          inputPerMTokensUsd: 0.30
+          outputPerMTokensUsd: 1.20
+          cachedPerMTokensUsd: 0.00
+
+  - name: ollama
+    models:
+      - name: llama3.3-70b
+        displayName: "Llama 3.3 70B (local)"
+        contextWindow: 131072
+        maxOutput: 32000
+        capabilities: [tools, json-mode, streaming]
+        pricing:
+          inputPerMTokensUsd: 0.00
+          outputPerMTokensUsd: 0.00
+          cachedPerMTokensUsd: 0.00
+      - name: qwen2.5-coder-32b
+        displayName: "Qwen 2.5 Coder 32B (local)"
+        contextWindow: 131072
+        maxOutput: 32000
+        capabilities: [tools, json-mode, streaming]
+        pricing:
+          inputPerMTokensUsd: 0.00
+          outputPerMTokensUsd: 0.00
+          cachedPerMTokensUsd: 0.00

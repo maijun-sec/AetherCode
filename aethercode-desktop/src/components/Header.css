@@ -1,0 +1,85 @@
+.header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.header-left, .header-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.header-left { flex: 1; overflow: hidden; }
+.header-brand {
+  /* brand 14 → 14.5, weight 600 → 700. The
+   *  brand is the "app" identity; a touch heavier makes
+   *  it the visual anchor of the top bar. */
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: 0.2px;
+  color: var(--accent);
+}
+.header-sep { color: var(--text-dim); opacity: 0.5; }
+.header-task-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px; }
+.header-task-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.task-status-running { background: rgba(0, 120, 212, 0.2); color: var(--accent); }
+.task-status-pending { background: rgba(220, 220, 170, 0.2); color: var(--warning); }
+.task-status-done    { background: rgba(78, 201, 176, 0.2); color: var(--success); }
+.task-status-failed  { background: rgba(244, 135, 113, 0.2); color: var(--error); }
+.task-status-cancelled { background: rgba(133, 133, 133, 0.2); color: var(--text-dim); }
+.header-status { font-size: 12px; font-weight: 500; }
+.header-meta { font-size: 11px; color: var(--text-dim); padding: 3px 8px; background: var(--bg-input); border-radius: 4px; }
+.header-icon-btn { background: transparent; border: none; color: var(--text-dim); font-size: 16px; padding: 4px 8px; cursor: pointer; border-radius: 4px; }
+.header-icon-btn:hover { color: var(--text); background: var(--bg-input); }
+/* pressed state for toggle icon buttons. The Telemetry
+   toggle uses this so the user can see at a glance whether the
+   right panel is currently mounted. A 1px accent border + soft
+   background tint matches the active-tab treatment in
+   RightPanel.css. */
+.header-icon-btn.is-active {
+  color: var(--accent, #63b3ed);
+  background: rgba(99, 179, 237, 0.10);
+  box-shadow: inset 0 0 0 1px rgba(99, 179, 237, 0.30);
+}
+
+/* backpressure pill. Red border + amber background
+ * so it reads as a warning even from across the room.
+ * The button is clickable → calls setConcurrencyProfile("low")
+ * so the user has a one-click "调低并发" affordance. */
+.header-backpressure {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: rgba(244, 135, 113, 0.18);
+  color: #f48771;
+  border: 1px solid rgba(244, 135, 113, 0.45);
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+  transition: background 120ms ease, transform 80ms ease;
+  animation: header-backpressure-pulse 1.6s ease-in-out infinite;
+}
+.header-backpressure:hover {
+  background: rgba(244, 135, 113, 0.30);
+  transform: scale(1.04);
+}
+@keyframes header-backpressure-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 135, 113, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(244, 135, 113, 0.10); }
+}
+
+/* throttle pill (between backpressure and idle).
+ * Amber border, no animation, no click. The user sees
+ * "限流中 · 85%" and knows the engine is still working
+ * but on a slower path. */
+.header-throttle {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: rgba(240, 185, 90, 0.14);
+  color: #f0b95a;
+  border: 1px solid rgba(240, 185, 90, 0.40);
+  letter-spacing: 0.2px;
+}

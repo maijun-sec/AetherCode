@@ -1,0 +1,24 @@
+# AetherCode top-level workspace (T-502).
+#
+# The Java core lives in ./aethercode/ as a Maven multi-module
+# project. The TypeScript modules live alongside it and are
+# published as separate npm packages. Each TS module is listed
+# here so pnpm -r picks them up for build / test / lint.
+#
+# T-500..T-599: cross-cutting integration. This file is the
+# entry point — it lists every TS module that should be
+# considered part of the workspace.
+packages:
+  - aethercode-memory
+  - aethercode-compact
+  - aethercode-themes
+  - aethercode-tui
+  - aethercode-desktop
+
+# R125: aethercode-memory and aethercode-compact use
+# better-sqlite3 (native build). aethercode-tui uses
+# esbuild. The allowBuilds list lets pnpm run the native
+# build step without prompting.
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

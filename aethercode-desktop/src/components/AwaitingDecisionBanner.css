@@ -1,0 +1,77 @@
+/* decision-prompt banner shown when the per-todo controller
+   has hit its max LLM bumps. Stays above the message list. */
+
+.awaiting-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 8px 24px 0 24px;
+  padding: 10px 14px;
+  border: 1px solid rgba(240, 185, 90, 0.4);
+  background: rgba(240, 185, 90, 0.08);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.awaiting-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.awaiting-title {
+  font-weight: 600;
+  color: #f0b95a;
+}
+
+.awaiting-summary {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.awaiting-meta {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.awaiting-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.awaiting-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text);
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.awaiting-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.awaiting-btn.primary {
+  background: rgba(108, 194, 139, 0.15);
+  border-color: rgba(108, 194, 139, 0.5);
+  color: #6cc28b;
+}
+.awaiting-btn.primary:hover {
+  background: rgba(108, 194, 139, 0.25);
+}
+.awaiting-btn.danger {
+  border-color: rgba(244, 135, 113, 0.4);
+  color: #f48771;
+}
+.awaiting-btn.danger:hover {
+  background: rgba(244, 135, 113, 0.12);
+}

@@ -1,0 +1,63 @@
+<idea-plugin>
+    <id>org.aethercode.idea</id>
+    <name>AetherCode</name>
+    <version>0.1.0</version>
+    <vendor email="hi@aethercode.dev" url="https://aethercode.dev">AetherCode</vendor>
+    <description><![CDATA[
+        AetherCode — Java AI agent, hosted in your IDE. Provides a chat ToolWindow
+        backed by the same engine that powers the CLI. R7 brings project / file /
+        plugin / theme awareness so the agent stays in sync with the IDE.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="AetherCode"
+            anchor="right"
+            secondary="false"
+            icon="/icons/aethercode.svg"
+            factoryClass="org.aethercode.idea.AetherCodeToolWindowFactory"/>
+        <completion.contributor
+            id="AetherCodeFileReference"
+            language="any"
+            implementationClass="org.aethercode.idea.input.FileReferenceCompletionContributor"/>
+        <!-- R7: post-open activity wires the four integration services so their
+             listeners are attached before the user opens a file or switches LaF. -->
+        <postStartupActivity
+            id="AetherCodeIntegrationStartup"
+            implementation="org.aethercode.idea.context.IntegrationStartupActivity"/>
+    </extensions>
+
+    <actions>
+        <action id="org.aethercode.idea.OpenPanel"
+                class="org.aethercode.idea.OpenPanelAction"
+                text="Open AetherCode"
+                description="Open the AetherCode chat panel">
+            <keyboard-shortcut first-keystroke="alt A" keymap="$default"/>
+        </action>
+        <action id="org.aethercode.idea.SendSelection"
+                class="org.aethercode.idea.action.SendSelectionToAetherCodeAction"
+                text="Send Selection to AetherCode"
+                description="Send the current editor selection to the AetherCode chat panel as a @file reference">
+            <keyboard-shortcut first-keystroke="alt shift A" keymap="$default"/>
+        </action>
+        <action id="org.aethercode.idea.ConnectToRemoteAgent"
+                class="org.aethercode.idea.bridge.ConnectToRemoteAgentAction"
+                text="Connect to Remote AetherCode Agent…"
+                description="Wire the IDE chat panel to a remote orchestrator over the bridge WebSocket"/>
+        <action id="org.aethercode.idea.DisconnectFromRemoteAgent"
+                class="org.aethercode.idea.bridge.DisconnectFromRemoteAgentAction"
+                text="Disconnect from Remote AetherCode Agent"
+                description="Drop the bridge connection and switch back to the local engine"/>
+        <!-- R7: force a backend re-selection. Useful when the user starts
+             or stops the daemon mid-session and wants AetherCode to
+             re-evaluate which backend to use without restarting the IDE. -->
+        <action id="org.aethercode.idea.ResetBackend"
+                class="org.aethercode.idea.backend.ResetBackendAction"
+                text="Re-select AetherCode Backend"
+                description="Drop the cached backend so AetherCode re-evaluates daemon vs in-process">
+            <keyboard-shortcut first-keystroke="alt shift B" keymap="$default"/>
+        </action>
+    </actions>
+</idea-plugin>

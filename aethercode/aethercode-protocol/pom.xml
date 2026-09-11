@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>aethercode-protocol</artifactId>
+    <name>AetherCode Protocol (R29: JSON-RPC over stdio / HTTP)</name>
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-sdk</artifactId>
+        </dependency>
+        <!-- R321 (T-369): aethercode-protocol now exposes the
+             task/* RPC surface through TaskMethods, which
+             delegates to a SupervisorClient. The dep is
+             transitive via aethercode-sdk but declared
+             explicitly so the build fails fast on a
+             regression that breaks the supervisor's
+             presence. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-tasks</artifactId>
+        </dependency>
+        <!-- T-275: PermissionMethods (permission/check,
+             permission/list, permission/revoke, permission/clear)
+             wires the JSON-RPC surface to the consent flow +
+             grants store + audit log. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-permission</artifactId>
+        </dependency>
+        <!-- T-500 (R-cross-cutting): MemoryMethods + CompactMethods
+             reference LayeredMemoryStore and CompactGate. The deps
+             were already on the classpath transitively via core;
+             we declare them explicitly so a regression in either
+             module's public surface (LayeredMemoryStore moved, or
+             CompactGate renamed) is caught at build time. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-memory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-compact</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <!-- R80: lightweight HTTP+WebSocket server for the multi-client
+             daemon. Javalin is Jetty-based but small enough to keep
+             the shaded jar under 40 MB. -->
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin</artifactId>
+            <version>5.6.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>

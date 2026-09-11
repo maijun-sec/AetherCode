@@ -1,0 +1,6 @@
+[submodule "reference/projects/claude-code-analysis"]
+	path = reference/projects/claude-code-analysis
+	url = https://github.com/maijun-sec/claude-code-analysis.git
+[submodule "reference/projects/oh-my-opencode"]
+	path = reference/projects/oh-my-opencode
+	url = https://github.com/code-yeongyu/oh-my-opencode.git

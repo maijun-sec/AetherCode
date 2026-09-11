@@ -1,0 +1,146 @@
+/* prior round: persistent toast for background
+ * subagent terminal transitions. Mounts at the App
+ * root and floats above everything else. R119 removed
+ * the legacy 4s auto-dismiss — the toast is now
+ * persistent until the user clicks it, presses Esc,
+ * or a new subagent terminal event arrives. */
+
+.subagent-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 44px; /* sit above the StatusBar (28px) + a little gap */
+  z-index: 1100;
+  max-width: 460px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px 10px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
+  cursor: pointer;
+  user-select: none;
+  animation: subagent-toast-in 180ms ease-out;
+}
+
+.subagent-toast:hover {
+  filter: brightness(1.06);
+}
+
+@keyframes subagent-toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.subagent-toast-icon {
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.2;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.subagent-toast-body {
+  flex: 1;
+  word-break: break-word;
+}
+
+.subagent-toast-id {
+  font-weight: 600;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+}
+
+.subagent-toast-status {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.subagent-toast-summary {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.75;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.subagent-toast-close {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.4;
+  flex-shrink: 0;
+  margin-left: 4px;
+  margin-top: 1px;
+}
+
+.subagent-toast:hover .subagent-toast-close {
+  opacity: 0.85;
+}
+
+/* explicit dismiss <button>. The legacy
+ * × glyph was a visual hint but not a focusable
+ * control — keyboard / screen-reader users couldn't
+ * dismiss the toast. The new <button> is a real
+ * focusable element with aria-label="Dismiss
+ * notification". The 4px radius + 1px border
+ * matches the rest of the desktop's tertiary
+ * controls (cf. the StatusBar's "X" buttons). */
+.subagent-toast-dismiss {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 4px;
+  margin-top: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 100ms ease, background 100ms ease, border-color 100ms ease;
+}
+.subagent-toast-dismiss:hover,
+.subagent-toast-dismiss:focus-visible {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.36);
+  outline: none;
+}
+
+/* Tones — match the StatusBar's subagent tone vocabulary. */
+.subagent-toast-success {
+  background: rgba(95, 191, 106, 0.18);
+  color: #c8eccc;
+  border: 1px solid rgba(95, 191, 106, 0.45);
+}
+.subagent-toast-success .subagent-toast-icon {
+  color: #5fbf6a;
+}
+
+.subagent-toast-error {
+  background: rgba(244, 135, 113, 0.18);
+  color: #f5cdc5;
+  border: 1px solid rgba(244, 135, 113, 0.55);
+}
+.subagent-toast-error .subagent-toast-icon {
+  color: var(--error);
+}
+
+.subagent-toast-muted {
+  background: rgba(160, 160, 160, 0.14);
+  color: var(--text);
+  border: 1px solid rgba(160, 160, 160, 0.36);
+}
+.subagent-toast-muted .subagent-toast-icon {
+  color: var(--text-dim);
+}

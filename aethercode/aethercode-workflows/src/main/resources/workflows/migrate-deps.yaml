@@ -1,0 +1,95 @@
+# Dependency migration workflow. Reads the project's dependency manifest,
+# finds upgradable versions, and generates a migration patch.
+version: 1
+name: migrate-deps
+description: |
+  Inspect the project's dependency manifest, propose upgrades to the
+  latest known-available versions (patch / minor / major), and emit a
+  migration patch. Dependencies pinned to a specific major version are
+  skipped by default; dependencies that need a major bump must be listed
+  explicitly in allow-major.
+inputs:
+  manifest:
+    type: enum
+    values: [pom-xml, gradle-kts, gradle-groovy]
+    required: false
+    default: pom-xml
+    description: "Which build tool's manifest to read."
+  scope:
+    type: enum
+    values: [patch, minor, major]
+    required: false
+    default: minor
+    description: "How aggressive the upgrade is. patch = bug-fix only, minor = feature-additive, major = breaking."
+  exclude:
+    type: string
+    required: false
+    description: "Comma-separated dependency coordinates (groupId:artifactId) to skip. Useful for libraries you control."
+  allow-major:
+    type: string
+    required: false
+    description: "Comma-separated dependency coordinates to allow a major bump for. Empty means no major bumps."
+  dry-run:
+    type: boolean
+    required: false
+    default: true
+    description: "If true, print the proposed manifest and exit without writing. If false, write the new manifest in place."
+skills:
+  - maven
+  - gradle
+  - semver
+prompts:
+  - role: system
+    content: |
+      You are a release engineer. Read the {{manifest}}
+      manifest in the current project. For every
+      dependency:
+
+      1. Skip any coordinate in {{exclude}} verbatim.
+      2. Compute the latest version that matches {{scope}}
+         (patch / minor / major) and is not blocked by a
+         pinned major.
+      3. For coordinates in {{allow-major}}, also consider
+         the latest major version.
+      4. Skip SNAPSHOT, alpha, beta, RC, and milestone
+         versions unless every stable version is older
+         than 6 months.
+
+      Output a unified diff against the current manifest.
+      If {{dry-run}} is true, just print the proposed
+      manifest. If false, write the new manifest and
+      report the SHA-256 of the new file.
+
+      Hard rules:
+      - Never remove a dependency without listing it under
+        "removed:" with a reason.
+      - Never reorder dependencies inside a block. Reuse
+        the existing order so the diff is reviewable.
+      - When a major bump changes a public API the project
+        uses, list the call sites in the report even if
+        you can't auto-fix them.
+  - role: user
+    content: |
+      Migrate deps in {{manifest}} to {{scope}} scope.
+      Exclude: {{exclude}}.
+      Allow major: {{allow-major}}.
+      Dry run: {{dry-run}}.
+outputs:
+  diff:
+    type: string
+    description: "Unified diff of the manifest after migration."
+  upgrade-list:
+    type: list
+    item-type: object
+    item-schema:
+      coordinate: string
+      from: string
+      to: string
+      scope: string
+      breaking: boolean
+  removed:
+    type: list
+    item-type: object
+    item-schema:
+      coordinate: string
+      reason: string

@@ -1,0 +1,85 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>aethercode-evals</artifactId>
+    <name>AetherCode Evals</name>
+    <description>
+        Java 21 port of the `deepagents-evals` AI agent evaluation framework
+        (libs/evals/ in the Python monorepo): continual-learning-bench adapter,
+        eval CLI / radar / trial summary, harbor failure / stats / langgraph
+        agent, and Harbor task adapters for Context-Bench and DRBench.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                R-radar-2: the evals module is self-contained (no other
+                module depends on it), so compile + test in the normal
+                `mvn test` cycle. Tests are pure-Java and don't shell
+                out to uv / pytest; the ShellRunner seam in Cli keeps
+                that side effect under test control.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <!-- DrbenchAdapter / ContextbenchAdapter tests require
+                             python-side fixtures; left out of the unit cycle. -->
+                        <exclude>**/Drbench*Test.java</exclude>
+                        <exclude>**/Contextbench*Test.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

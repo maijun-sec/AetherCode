@@ -1,0 +1,300 @@
+/* T-453 (Phase 5 R5): TaskWindow (desktop) styles.
+ *
+ * Visual language matches the existing modal-overlays
+ * (ThemeSettings / SettingsPanel): a fixed full-viewport
+ * backdrop, a centred panel with rounded corners, a
+ * header bar, a two-column body (list + detail), and a
+ * small footer.
+ */
+
+.task-window-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.task-window-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+
+.task-window {
+  width: 90vw;
+  max-width: 900px;
+  height: 80vh;
+  max-height: 720px;
+  background: var(--bg, #1e1e1e);
+  color: var(--fg, #e6e6e6);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.task-window-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #444);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.task-window-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.task-window-count {
+  flex: 1;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.task-window-close {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.task-window-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.task-window-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.task-window-list {
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border, #444);
+}
+
+.task-window-filters {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #444);
+  flex-wrap: wrap;
+}
+
+.task-filter-chip {
+  background: transparent;
+  border: 1px solid var(--border, #555);
+  color: inherit;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.task-filter-chip.active {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  border-color: var(--accent, #4a9eff);
+}
+
+.task-window-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.task-window-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.task-window-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.task-window-row.focused {
+  background: rgba(74, 158, 255, 0.18);
+  border-left: 3px solid var(--accent, #4a9eff);
+  padding-left: 9px;
+}
+
+.task-window-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.task-window-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-window-row-desc {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-window-row-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.task-window-row-id {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.task-window-empty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 13px;
+}
+
+.task-window-detail {
+  flex: 1;
+  padding: 16px 20px;
+  overflow: auto;
+  min-width: 0;
+}
+
+.task-window-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.task-window-detail-title {
+  font-size: 14px;
+  font-weight: 500;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-window-detail-status {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.task-window-detail-fields {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 6px 12px;
+  margin: 0 0 16px 0;
+  font-size: 12px;
+}
+
+.task-window-detail-fields dt {
+  opacity: 0.5;
+}
+
+.task-window-detail-fields dd {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-window-detail-fields code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+}
+
+.task-window-copy {
+  background: transparent;
+  border: 1px solid var(--border, #555);
+  color: inherit;
+  padding: 1px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.task-window-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.task-window-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.task-window-cancel,
+.task-window-attach {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  border: 0;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.task-window-cancel:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.4);
+  cursor: not-allowed;
+}
+
+.task-window-cancel:not(:disabled):hover,
+.task-window-attach:hover {
+  filter: brightness(1.1);
+}
+
+.task-window-detail-empty {
+  opacity: 0.5;
+  font-size: 13px;
+  text-align: center;
+  padding: 48px 0;
+}
+
+.task-window-toast {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.task-window-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border, #444);
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.task-window-help {
+  display: block;
+  text-align: center;
+}

@@ -1,0 +1,26 @@
+// Phase 3: RpcContext — the React-side wrapper around `JsonRpcClient`.
+//
+// Components consume the client via `useRpc()`. Tests wrap the tree
+// in `<RpcProvider value={clientForMock(server)}>` so the entire
+// surface swaps to the in-memory mock without touching component
+// code.
+
+import { createContext, type ReactNode } from 'react';
+import type { JsonRpcClient } from './client';
+
+export type RpcClient = JsonRpcClient;
+
+export const JsonRpcClientContext = createContext<RpcClient | null>(null);
+
+export interface RpcProviderProps {
+  client: RpcClient;
+  children: ReactNode;
+}
+
+export function RpcProvider({ client, children }: RpcProviderProps) {
+  return (
+    <JsonRpcClientContext.Provider value={client}>
+      {children}
+    </JsonRpcClientContext.Provider>
+  );
+}

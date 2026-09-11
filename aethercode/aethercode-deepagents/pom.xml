@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>aethercode-deepagents</artifactId>
+    <name>AetherCode DeepAgents</name>
+    <description>
+        Java 21 port of the deepagents-main Python library. Carved out of
+        aethercode-core during Phase M2 (deepagents-java -> AetherCode merge).
+        R1 (deepagents-m2-fix-r1) repaired the cross-reference imports so
+        the module compiles against aethercode-core (the canonical owner of
+        AgentState, Message, AIMessage, ModelProfile, NvidiaProviderProfile, etc.).
+
+        R211 (deepagents-integration) moved the general-purpose pieces
+        (middleware, backends, GlobMatcher) into aethercode-core. The phantom
+        aethercode-runtime module is still present (skipped from compilation)
+        as the future home for langchain_core-style foundational types; this
+        module now only carries the deepagents-specific pieces: graph
+        (langgraph4j-based agent loop), langchain_compat (Python langchain
+        compat layer), chat (chat-model adapter), and tools (langchain4j-style
+        Tool interface distinct from aethercode-core.tool.Tool).
+
+        Sub-packages: graph, langchain_compat, middleware (deepagents-only),
+        chat, tools.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-runtime</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.bsc.langgraph4j</groupId>
+            <artifactId>langgraph4j-core</artifactId>
+            <version>1.8.9</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>1.19.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

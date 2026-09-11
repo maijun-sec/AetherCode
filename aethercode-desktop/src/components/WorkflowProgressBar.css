@@ -1,0 +1,297 @@
+/* workflow progress bar.
+ *
+ * Mounts above the message list when a workflow is running.
+ * The head shows the workflow name + "step N/total" counter;
+ * the step pill row shows per-step status. Colour scheme:
+ *
+ *   pending  — grey / muted (the default before the executor
+ *              touches the step)
+ *   running  — blue with a slow pulse animation
+ *   ok       — green
+ *   error    — red
+ *
+ * The bar is intentionally narrow when no step is running
+ * (~48px tall). When a step is running, it grows to show
+ * the nested activity list (prior round).
+ *
+ * nested activity list
+ *
+ * The nested list renders below the running step pill (not
+ * to the right — the bar would overflow on narrow windows).
+ * The list uses a "fork" / "tab" connector on the left
+ * edge to make it visually clear that the events belong to
+ * the running step. Each row is a single line:
+ *
+ *   ◐ Bash: ls -la
+ *   ✓ Read: src/main.ts (1240 chars)
+ *
+ * Rows are colour-coded by event kind:
+ *   tool_use   — blue (in flight, animated)
+ *   tool_ok    — green
+ *   tool_err   — red
+ *   run_start  — blue (a new turn began)
+ *   run_end    — dim (the turn finished)
+ *   note       — dim (SideNote from the engine)
+ *   text       — dim (text delta; usually suppressed)
+ *   unknown    — dim (unparseable class name)
+ *
+ * The row uses the same monospace font as the parent bar
+ * so the icon column aligns vertically across multiple
+ * rows even when summary widths vary. The summary is
+ * truncated with ellipsis when it overflows the row
+ * (the unprocessed raw message is in the `title` attribute
+ * for hover).
+ */
+
+.workflow-progress-bar {
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: linear-gradient(180deg,
+    rgba(99, 179, 237, 0.08) 0%,
+    rgba(99, 179, 237, 0.04) 100%);
+  border: 1px solid rgba(99, 179, 237, 0.30);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary, #e6e6e6);
+  transition: background 200ms ease, border-color 200ms ease;
+}
+
+.workflow-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.workflow-progress-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: rgba(147, 197, 253, 0.98);
+  letter-spacing: 0.01em;
+}
+
+.workflow-progress-state {
+  font-size: 11px;
+  color: var(--text-muted, rgba(230, 230, 230, 0.55));
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-progress-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflow-progress-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(230, 230, 230, 0.06);
+  border: 1px solid rgba(230, 230, 230, 0.12);
+  font-size: 11px;
+  color: var(--text-secondary, rgba(230, 230, 230, 0.75));
+  cursor: default;
+  user-select: none;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+/* clickable pill. Done / error / running pills
+ * become buttons. The hover lifts the border and adds a
+ * subtle outer ring so the user knows they're interactive
+ * without breaking the bar's compact rhythm. Keyboard
+ * focus uses the same accent ring as the input bar. */
+.workflow-progress-pill-clickable {
+  cursor: pointer;
+}
+.workflow-progress-pill-clickable:hover {
+  border-color: var(--accent, #5da9ff);
+  box-shadow: 0 0 0 1px rgba(99, 179, 237, 0.20);
+}
+.workflow-progress-pill-clickable:focus {
+  outline: none;
+  border-color: var(--accent, #5da9ff);
+  box-shadow: 0 0 0 2px rgba(99, 179, 237, 0.45);
+}
+.workflow-progress-pill-clickable:active {
+  transform: scale(0.97);
+}
+
+.workflow-progress-icon {
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-progress-label {
+  font-weight: 500;
+}
+
+.workflow-progress-type {
+  font-size: 10px;
+  color: var(--text-muted, rgba(230, 230, 230, 0.50));
+  font-style: italic;
+}
+
+.workflow-progress-pending {
+  opacity: 0.65;
+}
+
+.workflow-progress-running {
+  background: rgba(99, 179, 237, 0.18);
+  border-color: rgba(99, 179, 237, 0.55);
+  color: rgba(186, 219, 252, 0.98);
+  animation: workflow-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes workflow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 179, 237, 0.18); }
+  50%      { box-shadow: 0 0 0 3px rgba(99, 179, 237, 0.30); }
+}
+
+.workflow-progress-ok {
+  background: rgba(108, 194, 139, 0.18);
+  border-color: rgba(108, 194, 139, 0.50);
+  color: rgba(180, 222, 195, 0.98);
+}
+
+.workflow-progress-error {
+  background: rgba(220, 38, 38, 0.18);
+  border-color: rgba(220, 38, 38, 0.55);
+  color: rgba(252, 165, 165, 0.98);
+}
+
+/* nested activity list under a running
+ * step pill. We use `position: absolute` so the
+ * list floats below the pill without pushing
+ * other pills in the row around (preserves the
+ * single-row layout for done/pending pills).
+ *
+ * The "tab" connector (a small vertical line on
+ * the left) tells the user the events belong to
+ * the step above. The list is indented to align
+ * with the pill's label text.
+ */
+.workflow-progress-nested {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin: 4px 0 0 0;
+  padding: 4px 0 4px 12px;
+  list-style: none;
+  min-width: 240px;
+  max-width: 480px;
+  background: rgba(20, 22, 28, 0.95);
+  border: 1px solid rgba(99, 179, 237, 0.40);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-secondary, rgba(230, 230, 230, 0.85));
+  z-index: 5;
+  /* The "tab" connector: a small vertical
+   * line on the left edge that meets the
+   * running pill above. Uses the same blue
+   * as the running pill so the eye traces
+   * parent → children without thinking. */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
+  /* We don't want the nested list to push
+   * other content. Position absolute on the
+   * parent pill means the list floats above
+   * the message list. The running pill needs
+   * position: relative for this to anchor
+   * correctly (see below). */
+  animation: workflow-nested-fadein 120ms ease-out;
+}
+
+@keyframes workflow-nested-fadein {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* anchor the nested list to the
+ * running pill. The pill already has flex
+ * layout for its icon / label / type; the
+ * nested list positions itself relative to
+ * the pill's top-left corner. */
+.workflow-progress-running {
+  position: relative;
+}
+
+.workflow-progress-nested-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 3px;
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}
+
+.workflow-progress-nested-row + .workflow-progress-nested-row {
+  margin-top: 1px;
+}
+
+.workflow-progress-nested-icon {
+  flex: 0 0 14px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary, rgba(230, 230, 230, 0.55));
+}
+
+.workflow-progress-nested-name {
+  flex: 0 0 auto;
+  font-weight: 500;
+  color: var(--text-primary, #e6e6e6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+}
+
+.workflow-progress-nested-summary {
+  flex: 1 1 auto;
+  color: var(--text-tertiary, rgba(230, 230, 230, 0.55));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+
+/* per-kind colours. The icon column
+ * drives the colour; the name + summary inherit
+ * from the row. We mirror the parent pill's
+ * colour scheme so the user learns the legend
+ * once: blue = in flight, green = ok, red =
+ * error, dim = informational. */
+.workflow-progress-nested-tool_use .workflow-progress-nested-icon {
+  color: rgba(99, 179, 237, 0.98);
+  animation: workflow-pulse 1.6s ease-in-out infinite;
+}
+
+.workflow-progress-nested-tool_ok .workflow-progress-nested-icon {
+  color: rgba(108, 194, 139, 0.98);
+}
+
+.workflow-progress-nested-tool_err .workflow-progress-nested-icon {
+  color: rgba(220, 38, 38, 0.98);
+}
+
+.workflow-progress-nested-run_start .workflow-progress-nested-icon {
+  color: rgba(99, 179, 237, 0.98);
+}
+
+.workflow-progress-nested-run_end .workflow-progress-nested-icon,
+.workflow-progress-nested-note .workflow-progress-nested-icon,
+.workflow-progress-nested-text .workflow-progress-nested-icon,
+.workflow-progress-nested-unknown .workflow-progress-nested-icon {
+  color: var(--text-muted, rgba(230, 230, 230, 0.40));
+}

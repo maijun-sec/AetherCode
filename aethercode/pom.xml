@@ -1,0 +1,394 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.aethercode</groupId>
+    <artifactId>aethercode-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>AetherCode Parent</name>
+    <description>Java port of Claude Code: AI agent platform with TUI and IDEA plugin.</description>
+
+    <modules>
+        <module>aethercode-core</module>
+        <module>aethercode-engine-springai</module>
+        <module>aethercode-permission</module>
+        <module>aethercode-memory</module>
+        <module>aethercode-mcp</module>
+        <module>aethercode-skills</module>
+        <module>aethercode-hooks</module>
+        <module>aethercode-compact</module>
+        <module>aethercode-prompts</module>
+        <module>aethercode-config</module>
+        <module>aethercode-tools</module>
+        <module>aethercode-bridge</module>
+        <module>aethercode-protocol</module>
+        <module>aethercode-sdk</module>
+        <module>aethercode-models</module>
+        <module>aethercode-workflows</module>
+        <module>aethercode-cli</module>
+        <module>aethercode-tasks</module>
+            <module>aethercode-acp</module>
+        <module>aethercode-code</module>
+        <module>aethercode-evals</module>
+        <module>aethercode-examples</module>
+        <module>aethercode-partner-quickjs</module>
+        <module>aethercode-runtime</module>
+        <module>aethercode-talon</module>
+            <module>aethercode-deepagents</module>
+        <!-- R241: A2A (Agent2Agent) protocol — Google's open
+             agent-to-agent communication standard. Independent
+             module so the host app can pull A2A in or out. -->
+        <module>aethercode-a2a</module>
+        <!-- R250+2: bridge between aethercode-a2a and
+             aethercode-deepagents. Keeps aethercode-a2a
+             independent of the deepagent runtime so the protocol
+             module stays publishable on its own. -->
+        <module>aethercode-a2a-deepagent-bridge</module>
+        <!-- R-mod-1: AI agent orchestration infrastructure (V,
+             self-correct, multi-agent, runtime, perf). Scaffolded
+             as a separate module so the source can move out of
+             aethercode-evals in a follow-up round. -->
+        <module>aethercode-orchestration</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- core libs -->
+        <jackson.version>2.17.2</jackson.version>
+        <okhttp.version>4.12.0</okhttp.version>
+        <slf4j.version>2.0.13</slf4j.version>
+        <logback.version>1.5.6</logback.version>
+        <picocli.version>4.7.6</picocli.version>
+        <jline.version>3.26.2</jline.version>
+        <!-- R20-A: Lanterna 3.1.x — full-screen TUI framework. JLine 3 stays
+             for input (line editor + history + completion); Lanterna handles
+             the display layer (alt-buffer, panels, repaint, colors). -->
+        <lanterna.version>3.1.3</lanterna.version>
+        <junit.version>5.10.3</junit.version>
+        <assertj.version>3.26.3</assertj.version>
+        <mockito.version>5.12.0</mockito.version>
+        <jsoup.version>1.18.1</jsoup.version>
+        <lsp4j.version>0.22.0</lsp4j.version>
+        <sqlite-jdbc.version>3.46.0.0</sqlite-jdbc.version>
+        <snakeyaml.version>2.4</snakeyaml.version>
+
+        <!-- R15: spring-ai as the engine foundation. spring-ai-alibaba sits on top
+             but we only need spring-ai-core + spring-ai-openai for MiniMax (OpenAI
+             compatible). -->
+        <spring-ai.version>1.0.0-M6</spring-ai.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- R15: spring-ai BOM controls all spring-ai artifact versions. -->
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- internal modules -->
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+                <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-acp</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- R241: A2A protocol server. Same as acp — independent
+             of aethercode-tasks so aethercode-tasks can depend
+             on it without cycle. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-a2a</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- R250+2: A2A deepagent bridge — depends on aethercode-a2a
+             and aethercode-deepagents; no cycle. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-a2a-deepagent-bridge</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- R-mod-1: orchestration infrastructure. Currently
+             empty — the source is still in aethercode-evals. The
+             R-mod-2 follow-up will move it and aethercode-evals
+             will then declare this dependency. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-orchestration</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-code</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-evals</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-examples</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-partner-quickjs</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-runtime</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-talon</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- R250+2: deepagent runtime is a sibling of talon
+             and needs to be in dependencyManagement so the
+             aethercode-a2a-deepagent-bridge module can pick
+             it up without hard-coding a version. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-deepagents</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-engine-springai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-permission</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <!-- R98: project-level .aethercode/config.json loader + matrix. -->
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-config</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-memory</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-tasks</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-mcp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-skills</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-hooks</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-compact</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-prompts</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-tools</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-sdk</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-models</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-workflows</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-cli</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- external -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jsr310</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.dataformat</groupId>
+                <artifactId>jackson-dataformat-yaml</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp-sse</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>info.picocli</groupId>
+                <artifactId>picocli</artifactId>
+                <version>${picocli.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline</artifactId>
+                <version>${jline.version}</version>
+            </dependency>
+            <!-- R20-A: full-screen TUI display layer. -->
+            <dependency>
+                <groupId>com.googlecode.lanterna</groupId>
+                <artifactId>lanterna</artifactId>
+                <version>${lanterna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+                <scope>test</scope>
+            </dependency>
+                                  <dependency>
+                                      <groupId>org.mockito</groupId>
+                                      <artifactId>mockito-junit-jupiter</artifactId>
+                                      <version>${mockito.version}</version>
+                                      <scope>test</scope>
+                                  </dependency>
+                                  <dependency>
+                                      <groupId>org.bsc.langgraph4j</groupId>
+                                      <artifactId>langgraph4j-core</artifactId>
+                                      <version>1.8.9</version>
+                                  </dependency>
+                                  <dependency>
+                                      <groupId>dev.langchain4j</groupId>
+                                      <artifactId>langchain4j-core</artifactId>
+                                      <version>1.19.0</version>
+                                  </dependency>
+            <dependency>
+                <groupId>org.jsoup</groupId>
+                <artifactId>jsoup</artifactId>
+                <version>${jsoup.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.lsp4j</groupId>
+                <artifactId>org.eclipse.lsp4j</artifactId>
+                <version>${lsp4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite-jdbc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <release>21</release>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.3.1</version>
+                    <configuration>
+                        <argLine>-Xmx2g -Xms512m</argLine>
+                        <forkCount>1</forkCount>
+                        <reuseForks>true</reuseForks>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>3.5.3</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

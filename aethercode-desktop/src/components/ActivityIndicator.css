@@ -1,0 +1,112 @@
+/* R82+ Issue 1: status row above the message list that shows
+   "where execution is at". Color-coded by kind, with a small
+   spinner/pulse for in-flight states. */
+
+.activity-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  margin: 8px 24px 0 24px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  user-select: none;
+  transition: opacity 200ms ease, background 200ms ease;
+  background: var(--bg-input);
+  border-color: var(--border-soft, rgba(255, 255, 255, 0.08));
+}
+
+.activity-indicator .activity-label {
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  color: var(--text);
+}
+
+.activity-indicator .activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+  background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
+}
+
+.activity-thinking {
+  color: #5da9ff;
+  background: rgba(93, 169, 255, 0.08);
+  border-color: rgba(93, 169, 255, 0.25);
+}
+.activity-thinking .activity-dot {
+  animation: activity-pulse 1.4s ease-in-out infinite;
+}
+
+.activity-tool {
+  color: #f0b95a;
+  background: rgba(240, 185, 90, 0.08);
+  border-color: rgba(240, 185, 90, 0.25);
+}
+.activity-tool .activity-dot {
+  animation: activity-spin 1.2s linear infinite;
+  border-radius: 0;
+  width: 8px;
+  height: 8px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  background: transparent;
+}
+
+.activity-done {
+  color: #6cc28b;
+  background: rgba(108, 194, 139, 0.08);
+  border-color: rgba(108, 194, 139, 0.25);
+  animation: activity-fade 1.8s ease-in 0.2s forwards;
+  /* fade out by the time the store clears it (2s after run_end) */
+}
+.activity-done .activity-dot {
+  /* solid check, no animation */
+}
+
+.activity-error {
+  color: #f48771;
+  background: rgba(244, 135, 113, 0.08);
+  border-color: rgba(244, 135, 113, 0.3);
+}
+
+/* compaction in flight. Purple to differentiate from
+   thinking (blue) and tool (amber). Uses a slower pulse so the
+   user reads it as "long-running" rather than "active tool
+   call". */
+.activity-compaction {
+  color: #b48dd9;
+  background: rgba(180, 141, 217, 0.08);
+  border-color: rgba(180, 141, 217, 0.3);
+}
+.activity-compaction .activity-dot {
+  animation: activity-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(93, 169, 255, 0.6);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(93, 169, 255, 0);
+    transform: scale(1.15);
+  }
+}
+
+@keyframes activity-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes activity-fade {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0.6; }
+}

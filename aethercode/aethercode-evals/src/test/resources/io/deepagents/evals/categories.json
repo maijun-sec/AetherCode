@@ -1,0 +1,30 @@
+{
+  "categories": [
+    "file_operations",
+    "retrieval",
+    "tool_use",
+    "memory",
+    "conversation",
+    "summarization",
+    "long_horizon",
+    "planning"
+  ],
+  "radar_categories": [
+    "file_operations",
+    "retrieval",
+    "tool_use",
+    "memory",
+    "conversation",
+    "summarization"
+  ],
+  "labels": {
+    "file_operations": "File ops",
+    "retrieval": "Retrieval",
+    "tool_use": "Tool use",
+    "memory": "Memory",
+    "conversation": "Conversation",
+    "summarization": "Summarization",
+    "long_horizon": "Long-horizon",
+    "planning": "Planning"
+  }
+}

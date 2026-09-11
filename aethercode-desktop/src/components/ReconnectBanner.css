@@ -1,0 +1,72 @@
+.reconnect-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  animation: reconnect-banner-slide 0.18s ease-out;
+}
+
+.reconnect-banner-warn {
+  background: linear-gradient(180deg, #5a4a1f 0%, #4a3e1a 100%);
+  color: #f0d99c;
+  border-bottom-color: #6e5a26;
+}
+
+.reconnect-banner-error {
+  background: linear-gradient(180deg, #5a2a2a 0%, #4a1f1f 100%);
+  color: #f4a097;
+  border-bottom-color: #6e3333;
+}
+
+.reconnect-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.reconnect-banner-label {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.reconnect-banner-detail {
+  font-size: 11px;
+  opacity: 0.78;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reconnect-banner-actions {
+  flex: 0 0 auto;
+  margin-left: 12px;
+}
+
+.reconnect-banner-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+.reconnect-banner-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+@keyframes reconnect-banner-slide {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}

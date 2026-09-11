@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssd-demo"
+version = "0.1.0"
+description = "Small SSD (Single Shot MultiBox Detector) object-detection inference demo."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ssd-demo contributors" }]
+keywords = ["ssd", "object-detection", "demo", "torchvision", "pytorch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Runtime deps — spec NFR-3 hard ceiling is 6; we are at 4.
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.20,<0.22",
+    "pillow>=10.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Dev deps — do NOT count against the NFR-3 runtime budget.
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+# Matches spec FR-8 CLI shape: `python -m ssd_demo --input ...`
+ssd-demo = "ssd_demo.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ssd_demo*"]
+
+[tool.setuptools.package-data]
+ssd_demo = ["py.typed"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "smoke: end-to-end smoke tests that download weights and load the full model",
+]

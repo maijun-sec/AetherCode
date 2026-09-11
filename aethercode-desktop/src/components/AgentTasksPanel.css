@@ -1,0 +1,196 @@
+/* styles for the live todo list rendered in the
+   RightPanel "Plan" tab. Kept narrow so the panel still fits
+   in 320px; long content wraps instead of overflowing. */
+
+.agent-tasks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text, #1f2328);
+}
+
+.agent-tasks-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agent-tasks-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #57606a);
+}
+.agent-tasks-summary {
+  font-size: 12px;
+  color: var(--text-dim, #57606a);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tasks-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-tasks-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elev-2, #eaeef2);
+  overflow: hidden;
+}
+.agent-tasks-progress-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--accent, #1f6feb) 0%,
+    #2ea043 100%
+  );
+  transition: width 200ms ease-out;
+}
+.agent-tasks-progress-pct {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #57606a);
+  min-width: 36px;
+  text-align: right;
+}
+
+.agent-tasks-current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-elev-1, #f6f8fa);
+  border-left: 3px solid var(--accent, #1f6feb);
+}
+.agent-tasks-current-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent, #1f6feb);
+}
+.agent-tasks-current-content {
+  font-size: 13px;
+  color: var(--text, #1f2328);
+}
+
+.agent-tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-task-row {
+  padding: 4px 0;
+  border-radius: 4px;
+}
+.agent-task-row.is-current {
+  background: var(--bg-elev-1, #f6f8fa);
+  padding: 4px 8px;
+  margin: 0 -8px;
+}
+.agent-task-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.agent-task-content {
+  flex: 1;
+  word-break: break-word;
+  color: var(--text, #1f2328);
+}
+.agent-task-substats {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, #57606a);
+  flex-shrink: 0;
+}
+
+.agent-subtasks {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 1px dashed var(--border, #d0d7de);
+  margin-left: 8px;
+}
+.agent-subtask-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--text-dim, #57606a);
+}
+.agent-subtask-content {
+  flex: 1;
+  word-break: break-word;
+}
+.agent-subtask-summary {
+  font-size: 11px;
+  color: var(--text-dim, #57606a);
+  font-style: italic;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-task-status,
+.agent-subtask-status {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.agent-task-status-pending,
+.agent-subtask-status-pending { color: var(--text-dim, #8c959f); }
+.agent-task-status-in-progress,
+.agent-subtask-status-in-progress { color: var(--accent, #1f6feb); }
+.agent-task-status-completed,
+.agent-subtask-status-completed { color: #2ea043; }
+.agent-task-status-cancelled,
+.agent-task-status-skipped,
+.agent-subtask-status-skipped { color: var(--text-dim, #8c959f); }
+.agent-subtask-status-failed { color: #cf222e; }
+
+.agent-task-row.is-current .agent-task-content {
+  font-weight: 500;
+}
+
+.agent-tasks-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-dim, #57606a);
+}
+.agent-tasks-empty-icon {
+  font-size: 32px;
+  opacity: 0.6;
+}
+.agent-tasks-empty-text {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.agent-tasks-empty-text code {
+  font-size: 11px;
+  padding: 1px 4px;
+  background: var(--bg-elev-2, #eaeef2);
+  border-radius: 3px;
+}

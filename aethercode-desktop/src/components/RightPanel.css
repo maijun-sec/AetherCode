@@ -1,0 +1,131 @@
+.right-panel {
+  grid-area: right;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+  /* switch from overflow: hidden to overflow-y: auto.
+     The right panel has 7 sections; even at 1080p, the
+     fixed-height sections (progress + context + tokens +
+     prompts header) consume ~400px, and the 3 flex-1
+     sections (traces / perms / memory) compete for the
+     remaining ~280px. On a 720p laptop the row height
+     is ~600px, and 7 sections simply don't fit. Hidden
+     overflow silently clipped traces / perms / memory /
+     prompts out of view (prior round regression). Scrolling
+     gives the user a way to reach every section. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+.right-section {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+/* progress / context / tokens are the 3 most
+   important live sections (the user looks at them
+   while a query is active). Pin them with flex: 0 0 auto
+   so they always render at their natural height. The
+   min-height values account for the section header
+   (16-20px) + content (~30-60px) + 10px padding. */
+.right-progress { flex: 0 0 auto; min-height: 80px; }
+.right-context  { flex: 0 0 auto; min-height: 110px; }
+.right-tokens   { flex: 0 0 auto; min-height: 100px; }
+/* traces / perms / memory are flex 1 1 0 with
+   min-height: 0 — they share whatever space is left
+   after the 3 pinned sections + prompts, in equal
+   proportion. Their own internal panels scroll. */
+.right-traces   { flex: 1 1 0; min-height: 0; }
+.right-perms    { flex: 1 1 0; min-height: 0; }
+.right-memory   { flex: 1 1 0; min-height: 0; padding: 0; overflow: hidden; }
+/* prompt history stays at the bottom with a
+   capped max-height, but no longer forces a min-height
+   so the flex-1 sections can take the rest. */
+.right-prompts  { flex: 0 0 auto; max-height: 35%; min-height: 0; padding: 0; overflow-y: auto; }
+
+/* tab toggle between telemetry (the existing
+   sections above) and the Kanban board. Tabs are
+   the only way to swap views without growing the
+   right-panel surface area. */
+.right-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.right-tab {
+  background: transparent;
+  color: var(--text-secondary, #a0a0a8);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.right-tab:hover {
+  color: var(--text-primary, #e6e6e6);
+}
+.right-tab.active {
+  background: var(--bg-elevated, #1a1a1d);
+  color: var(--text-primary, #e6e6e6);
+  border-color: var(--border);
+  position: relative;
+  top: 1px;
+}
+/* badge on the Subagents tab when one or more
+ * background jobs are running. Cyan to match the
+ * StatusBar's running tone; small enough not to crowd
+ * the tab label. */
+.right-tab-badge {
+  display: inline-block;
+  margin-left: 4px;
+  min-width: 14px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+  border-radius: 7px;
+  background: rgba(99, 179, 237, 0.18);
+  color: var(--accent, #63b3ed);
+  border: 1px solid rgba(99, 179, 237, 0.40);
+  text-align: center;
+  vertical-align: middle;
+}
+/* close-tab button. Pushed to the right edge of the tab
+   strip so the user has a visible affordance to dismiss the
+   panel (it would be surprising for a panel that takes up a
+   third of the window to have no close button). The `flex:
+   1 1 auto` on this sibling fills the gap, so the button
+   stays anchored to the right edge regardless of how many
+   tabs are visible. */
+.right-tab-close {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim, #a0a0a8);
+  border-color: transparent;
+}
+.right-tab-close:hover {
+  color: var(--error, #f48771);
+  border-color: rgba(244, 135, 113, 0.4);
+}
+/* Kanban fills the rest of the right panel
+   when its tab is active. min-height: 0 lets the
+   board's inner scroll handle tall task lists. */
+.right-kanban {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  border-bottom: none;
+  display: flex;
+  flex-direction: column;
+}

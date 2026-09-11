@@ -1,0 +1,24 @@
+# ssd-demo local state — do NOT commit.
+# Mirrors the patterns the host repo's top-level .gitignore would
+# add once we wire this package into the parent .gitignore (T-NNN).
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Downloaded model weights (~135 MB cached from download.pytorch.org)
+weights/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

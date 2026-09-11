@@ -1,0 +1,301 @@
+/* step detail modal.
+ *
+ * Same backdrop + centered card pattern as
+ * WorkflowEditorModal (prior round). The interior is a vertical
+ * stack:
+ *   - header pill (icon + id + status badge + type)
+ *   - meta row (workflow name + runId, duration + event count
+ *     + start time)
+ *   - scrollable event timeline (each event shows the icon,
+ *     kind, name, summary, relative + wall time, and a
+ *     collapsible raw payload)
+ *   - footer with "Copy raw" + Esc hint
+ *
+ * The colour palette mirrors WorkflowProgressBar so the two
+ * views read as the same data: blue = in flight, green = ok,
+ * red = error, dim = informational. */
+
+.step-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 32px 24px;
+  animation: step-detail-fade 160ms ease-out;
+}
+
+@keyframes step-detail-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.step-detail-modal {
+  width: min(680px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated, #1e1e22);
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.step-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2f);
+  background: rgba(99, 179, 237, 0.06);
+}
+
+.step-detail-title {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 14px;
+}
+.step-detail-icon {
+  font-size: 16px;
+  color: rgba(186, 219, 252, 0.95);
+}
+.step-detail-name {
+  font-weight: 600;
+  color: rgba(230, 230, 230, 0.98);
+}
+.step-detail-type {
+  font-size: 11px;
+  color: var(--text-dim, rgba(230, 230, 230, 0.55));
+  padding: 1px 6px;
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 3px;
+}
+.step-detail-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+.step-detail-badge-ok      { background: rgba(186, 230, 99, 0.20); color: rgba(217, 245, 169, 0.98); }
+.step-detail-badge-error   { background: rgba(245, 101, 101, 0.20); color: rgba(254, 178, 178, 0.98); }
+.step-detail-badge-running { background: rgba(99, 179, 237, 0.20); color: rgba(186, 219, 252, 0.98); }
+.step-detail-badge-pending { background: rgba(160, 174, 192, 0.10); color: var(--text-dim, rgba(230, 230, 230, 0.55)); }
+
+.step-detail-close {
+  background: transparent;
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 4px;
+  color: var(--text-secondary, rgba(230, 230, 230, 0.75));
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.step-detail-close:hover {
+  background: rgba(244, 135, 113, 0.18);
+  border-color: var(--error, #f48771);
+  color: rgba(252, 165, 165, 0.98);
+}
+
+.step-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2f);
+  background: rgba(0, 0, 0, 0.10);
+  font-size: 11.5px;
+  font-family: ui-monospace, monospace;
+}
+.step-detail-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.step-detail-meta-label {
+  color: var(--text-dim, rgba(230, 230, 230, 0.45));
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.step-detail-meta-value {
+  color: rgba(230, 230, 230, 0.92);
+  font-variant-numeric: tabular-nums;
+}
+.step-detail-meta-dim {
+  color: var(--text-dim, rgba(230, 230, 230, 0.30));
+}
+
+.step-detail-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 12px 16px;
+  min-height: 0;
+}
+
+.step-detail-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-dim, rgba(230, 230, 230, 0.55));
+  font-size: 12px;
+  font-style: italic;
+}
+
+.step-detail-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-detail-event {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid var(--border, #2a2a2f);
+}
+.step-detail-event-tool_use  { border-left-color: rgba(99, 179, 237, 0.7); }
+.step-detail-event-tool_ok   { border-left-color: rgba(186, 230, 99, 0.7); }
+.step-detail-event-tool_err  { border-left-color: rgba(245, 101, 101, 0.7); }
+.step-detail-event-run_start { border-left-color: rgba(99, 179, 237, 0.5); background: rgba(99, 179, 237, 0.05); }
+.step-detail-event-run_end   { border-left-color: rgba(160, 174, 192, 0.5); background: rgba(160, 174, 192, 0.04); }
+.step-detail-event-note      { border-left-color: rgba(252, 211, 77, 0.5); }
+.step-detail-event-text      { border-left-color: rgba(160, 174, 192, 0.4); }
+.step-detail-event-unknown   { border-left-color: var(--text-dim, rgba(230, 230, 230, 0.30)); }
+
+.step-detail-event-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.step-detail-event-icon {
+  font-size: 13px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.step-detail-event-kind {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim, rgba(230, 230, 230, 0.55));
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.step-detail-event-name {
+  font-weight: 500;
+  color: rgba(230, 230, 230, 0.95);
+  flex-shrink: 0;
+}
+.step-detail-event-summary {
+  color: rgba(230, 230, 230, 0.78);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.step-detail-event-time {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim, rgba(230, 230, 230, 0.45));
+  flex-shrink: 0;
+}
+.step-detail-event-rel {
+  color: rgba(186, 219, 252, 0.85);
+  font-weight: 500;
+}
+
+.step-detail-event-raw {
+  margin-top: 2px;
+  font-size: 11px;
+}
+.step-detail-event-raw summary {
+  cursor: pointer;
+  color: var(--text-dim, rgba(230, 230, 230, 0.45));
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+  user-select: none;
+  padding: 2px 0;
+}
+.step-detail-event-raw summary:hover {
+  color: rgba(186, 219, 252, 0.85);
+}
+.step-detail-event-raw pre {
+  margin: 4px 0 0 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.30);
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 4px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: rgba(186, 219, 252, 0.85);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.step-detail-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border, #2a2a2f);
+  background: rgba(0, 0, 0, 0.18);
+}
+.step-detail-foot-hint {
+  font-size: 11px;
+  color: var(--text-dim, rgba(230, 230, 230, 0.45));
+  font-family: ui-monospace, monospace;
+}
+.step-detail-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--border, #2a2a2f);
+  background: var(--bg-input, #16161a);
+  color: var(--text, #e6e6e6);
+  cursor: pointer;
+  font-family: inherit;
+}
+.step-detail-btn:hover:not(:disabled) {
+  background: var(--bg, #14141a);
+  border-color: var(--accent, #5da9ff);
+}
+.step-detail-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.step-detail-btn-copy {
+  background: rgba(99, 179, 237, 0.10);
+  border-color: rgba(99, 179, 237, 0.4);
+  color: rgba(186, 219, 252, 0.98);
+}
+.step-detail-btn-copy:hover:not(:disabled) {
+  background: rgba(99, 179, 237, 0.20);
+  border-color: var(--accent, #5da9ff);
+}

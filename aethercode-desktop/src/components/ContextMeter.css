@@ -1,0 +1,120 @@
+/* ContextMeter. Compact progress bar with colour tier cues
+   (green < 50% / amber 50-80% / red > 80%). Shows used/window
+   in human-friendly units (1.2k / 200k). */
+
+.context-meter {
+  display: flex !important;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  /* the previous 70px wasn't enough — when the right
+     panel is squeezed (small window / low-resolution laptop),
+     the flex item got compressed below 30px and the track
+     collapsed. 100px gives the meter (header + 12px track +
+     detail label + 6px gap) stable room to breathe even on
+     a 600px-tall viewport. !important wins over any
+     cascade that may have set min-height: 0 in the past. */
+  min-height: 100px !important;
+  flex-shrink: 0 !important;
+  position: relative;
+  z-index: 0;
+  /* Defensive: if a child ever overflows (React render
+     error, deferred styles, etc.), clip instead of
+     overlapping the TokenUsage grid below. */
+  overflow: hidden;
+}
+
+.context-track {
+  position: relative;
+  display: block !important;
+  /* bumped from 8px to 12px so the bar is visible
+     on a 4K monitor at 100% scale, and never visually
+     "disappears" into a 1px line under any DPI. */
+  min-height: 12px !important;
+  height: 12px;
+  background: var(--bg-input);
+  border-radius: 4px;
+  overflow: hidden;
+  /* explicit flex sizing so the track never collapses
+     to 0 even if the .context-meter parent runs short.
+     !important wins over any cascade. */
+  flex: 0 0 12px !important;
+  margin: 2px 0;
+}
+.context-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  transition: width 250ms ease, background 200ms ease;
+  border-radius: 4px;
+}
+
+/* Tier colour cues. */
+.context-green .context-fill {
+  background: linear-gradient(90deg, #6cc28b, #8ed1a3);
+}
+.context-amber .context-fill {
+  background: linear-gradient(90deg, #f4c471, #f4a371);
+}
+.context-red .context-fill {
+  background: linear-gradient(90deg, #f48771, #d36c5a);
+  animation: context-pulse 2s ease-in-out infinite;
+}
+@keyframes context-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}
+
+.context-warn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  color: white;
+  font-weight: 600;
+  text-shadow: 0 0 2px rgba(0,0,0,0.5);
+  letter-spacing: 0.3px;
+}
+
+.context-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.context-tier-label {
+  font-weight: 500;
+}
+.context-green .context-tier-label { color: #6cc28b; }
+.context-amber .context-tier-label { color: #f4c471; }
+.context-red .context-tier-label   { color: #f48771; }
+
+.context-history-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}
+.context-history-btn:hover { color: var(--text); }
+
+.context-history {
+  list-style: none;
+  margin: 4px 0 0 0;
+  padding: 4px 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.context-history-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 1px 0;
+  color: var(--text-dim);
+}
+.context-history-time { color: var(--text-dim); }
+.context-history-saved { color: #6cc28b; }

@@ -1,0 +1,333 @@
+/* workflow editor modal.
+ *
+ * Same modal surface as the MemoryPanel editor tab — a
+ * centered card with a sticky footer (cancel / save) and
+ * a monospace textarea for the YAML body. The backdrop
+ * dims the rest of the app so the user can focus.
+ *
+ * prior round UX upgrade: now includes a "step palette" row
+ * (shell / agent / skill / parallel / gate templates), a
+ * step list preview below the textarea, and an indent-
+ * guide background pattern on the textarea. The body
+ * stays raw YAML (the daemon's WorkflowReader is the
+ * source of truth on save); the preview is a best-effort
+ * regex/indent walker that catches the common cases. */
+
+.workflow-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 32px 24px;
+  animation: workflow-editor-fade 160ms ease-out;
+}
+
+@keyframes workflow-editor-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.workflow-editor-modal {
+  width: min(720px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated, #1e1e22);
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.workflow-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2f);
+  background: rgba(99, 179, 237, 0.06);
+}
+
+.workflow-editor-title {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(186, 219, 252, 0.98);
+}
+
+.workflow-editor-close {
+  background: transparent;
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 4px;
+  color: var(--text-secondary, rgba(230, 230, 230, 0.75));
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.workflow-editor-close:hover {
+  background: rgba(244, 135, 113, 0.18);
+  border-color: var(--error, #f48771);
+  color: rgba(252, 165, 165, 0.98);
+}
+
+.workflow-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.workflow-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workflow-editor-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: var(--text-dim, rgba(230, 230, 230, 0.55));
+}
+
+.workflow-editor-name {
+  background: var(--bg-input, #16161a);
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 4px;
+  color: var(--text, #e6e6e6);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  outline: none;
+}
+.workflow-editor-name:focus {
+  border-color: var(--accent, #5da9ff);
+}
+
+.workflow-editor-hint {
+  font-size: 11px;
+  color: var(--text-muted, rgba(230, 230, 230, 0.55));
+  font-style: italic;
+  margin-top: 2px;
+}
+.workflow-editor-hint code {
+  font-family: ui-monospace, monospace;
+  background: rgba(99, 179, 237, 0.10);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: rgba(186, 219, 252, 0.98);
+}
+
+.workflow-editor-textarea {
+  background: var(--bg, #14141a);
+  border: 1px solid var(--border, #2a2a2f);
+  border-radius: 4px;
+  color: var(--text, #e6e6e6);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 240px;
+  outline: none;
+  /* indent guides. The background is two
+   * layered linear-gradients at 2ch (2-space indent)
+   * and 4ch (4-space indent). The font is mono so 1ch
+   * is exactly one column, and the pattern repeats
+   * horizontally. Subtle — 6% alpha — so it doesn't
+   * fight the syntax the user is reading. */
+  background-image:
+    linear-gradient(to right, rgba(99, 179, 237, 0.06) 1px, transparent 1px),
+    linear-gradient(to right, rgba(99, 179, 237, 0.04) 1px, transparent 1px);
+  background-size: 2ch 100%, 4ch 100%;
+  background-attachment: local, local;
+  background-position: 0 0, 0 0;
+  background-repeat: repeat, repeat;
+  /* tab = 2 spaces so the indent guides line up with
+   * real indentation. Mono fonts honour this directly. */
+  tab-size: 2;
+}
+.workflow-editor-textarea:focus {
+  border-color: var(--accent, #5da9ff);
+}
+
+/* insert-step palette — a row of small buttons
+ * that drop a well-formed step snippet at the cursor.
+ * Sits above the textarea so the user has the templates
+ * in view while typing. */
+.workflow-editor-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 8px 0;
+}
+.workflow-editor-palette-btn {
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #2a2a2f);
+  background: rgba(99, 179, 237, 0.06);
+  color: rgba(186, 219, 252, 0.92);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.workflow-editor-palette-btn:hover {
+  background: rgba(99, 179, 237, 0.16);
+  border-color: var(--accent, #5da9ff);
+  color: rgba(219, 234, 254, 1);
+}
+.workflow-editor-palette-btn:active {
+  transform: translateY(1px);
+}
+
+/* step list preview. Each row is a small
+ * monospace pill; click jumps the textarea scroll to
+ * the line of the matching `- id:` row. The type column
+ * is colour-coded by step type so the user can scan
+ * "where are the gates" or "where are the parallel
+ * blocks" at a glance. */
+.workflow-editor-steplist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.workflow-editor-steplist-item {
+  display: grid;
+  grid-template-columns: 24px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.workflow-editor-steplist-item:hover {
+  background: rgba(99, 179, 237, 0.10);
+  border-color: rgba(99, 179, 237, 0.4);
+}
+.workflow-editor-steplist-num {
+  color: var(--text-dim, rgba(230, 230, 230, 0.45));
+  text-align: right;
+}
+.workflow-editor-steplist-id {
+  color: rgba(230, 230, 230, 0.92);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-editor-steplist-type {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+.workflow-editor-steplist-line {
+  color: var(--text-dim, rgba(230, 230, 230, 0.35));
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+/* Type-specific colours. The shell / agent / skill /
+ * parallel / gate palette — match the badge palette used
+ * in the WorkflowProgressBar pill type column so the
+ * two views read as the same data. */
+.workflow-editor-steplist-shell .workflow-editor-steplist-type {
+  background: rgba(99, 179, 237, 0.18);
+  color: rgba(186, 219, 252, 0.98);
+}
+.workflow-editor-steplist-agent .workflow-editor-steplist-type {
+  background: rgba(186, 230, 99, 0.18);
+  color: rgba(217, 245, 169, 0.98);
+}
+.workflow-editor-steplist-skill .workflow-editor-steplist-type {
+  background: rgba(252, 211, 77, 0.18);
+  color: rgba(254, 230, 165, 0.98);
+}
+.workflow-editor-steplist-parallel .workflow-editor-steplist-type {
+  background: rgba(244, 162, 97, 0.18);
+  color: rgba(254, 215, 170, 0.98);
+}
+.workflow-editor-steplist-gate .workflow-editor-steplist-type {
+  background: rgba(245, 101, 101, 0.18);
+  color: rgba(254, 178, 178, 0.98);
+}
+.workflow-editor-steplist-delay .workflow-editor-steplist-type {
+  background: rgba(160, 174, 192, 0.18);
+  color: rgba(203, 213, 224, 0.98);
+}
+.workflow-editor-steplist-unknown .workflow-editor-steplist-type {
+  background: rgba(160, 174, 192, 0.10);
+  color: var(--text-dim, rgba(230, 230, 230, 0.45));
+}
+
+.workflow-editor-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted, rgba(230, 230, 230, 0.55));
+  font-variant-numeric: tabular-nums;
+}
+.workflow-editor-stat { white-space: nowrap; }
+.workflow-editor-stat-dirty {
+  color: rgba(252, 211, 77, 0.95);
+  font-weight: 500;
+}
+.workflow-editor-warn { color: rgba(252, 165, 165, 0.95); }
+.workflow-editor-err  { color: var(--error, #f48771); font-weight: 500; }
+
+.workflow-editor-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border, #2a2a2f);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.workflow-editor-btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 16px;
+  border-radius: 5px;
+  border: 1px solid var(--border, #2a2a2f);
+  background: var(--bg-input, #16161a);
+  color: var(--text, #e6e6e6);
+  cursor: pointer;
+  font-family: inherit;
+}
+.workflow-editor-btn:hover:not(:disabled) {
+  background: var(--bg, #14141a);
+  border-color: var(--accent, #5da9ff);
+}
+.workflow-editor-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.workflow-editor-btn-save {
+  background: var(--accent, #5da9ff);
+  color: white;
+  border-color: var(--accent, #5da9ff);
+}
+.workflow-editor-btn-save:hover:not(:disabled) {
+  background: var(--accent-hover, #4a96ec);
+  border-color: var(--accent-hover, #4a96ec);
+}

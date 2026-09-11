@@ -1,0 +1,524 @@
+{
+  "port": 17962,
+  "total_cases": 104,
+  "total_pass": 104,
+  "total_fail": 0,
+  "by_rpc": {
+    "http.healthz": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "http.api.methods": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "ping": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "engineHealth": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getState": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listSkills": {
+      "count": 4,
+      "pass": 4,
+      "fail": 0,
+      "errors": []
+    },
+    "getSkillBody": {
+      "count": 3,
+      "pass": 3,
+      "fail": 0,
+      "errors": []
+    },
+    "addSkill": {
+      "count": 3,
+      "pass": 3,
+      "fail": 0,
+      "errors": []
+    },
+    "reloadSkills": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "fs.check": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "reloadRegistries": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listWorkflows": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "writeWorkflow": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "getWorkflow": {
+      "count": 3,
+      "pass": 3,
+      "fail": 0,
+      "errors": []
+    },
+    "runWorkflow": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listCwdFiles": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "deleteWorkflow": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listTools": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listToolActions": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getContextInfo": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "reloadAgents": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listAgents": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getAgentBody": {
+      "count": 3,
+      "pass": 3,
+      "fail": 0,
+      "errors": []
+    },
+    "createAgent": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "updateAgent": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "deleteAgent": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listMemory": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getMemory": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "setMemory": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "deleteMemory": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "compressProjectMemory": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "viewAuditLog": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listSessions": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "createSession": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "loadSession": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "deleteSession": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getTranscript": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listTasks": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "createTask": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "updateTaskStatus": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listModels": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setModel": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listProviders": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "switchProvider": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getSystemPrompt": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setSystemPrompt": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getSystemPromptSection": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listProjects": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "switchProject": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getEngineStats": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setConcurrencyProfile": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getPermissionStatus": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setAutoApproveLowRisk": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setAutoApproveMediumHigh": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getPermissionModeSuggestion": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getSkipStats": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setSkipConfirmation": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setPermissionMode": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "setLoopDetectorThresholds": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "loopAck": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getPhaseBudget": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setPhase": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setPhaseBudget": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getMetrics": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "query": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getTraces": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getTrace": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "summary": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "compact": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listEngines": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "getActiveEngine": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setActiveEngine": {
+      "count": 2,
+      "pass": 2,
+      "fail": 0,
+      "errors": []
+    },
+    "createEngine": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "deleteEngine": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listWorktrees": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "addWorktree": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "removeWorktree": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "listChildren": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "registerChild": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "unregisterChild": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "healthCheckChild": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setAutoRestart": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "setContinuationStopped": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "subagentCancel": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "retrySubTask": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    },
+    "cancel": {
+      "count": 1,
+      "pass": 1,
+      "fail": 0,
+      "errors": []
+    }
+  }
+}

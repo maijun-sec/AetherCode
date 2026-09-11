@@ -1,0 +1,178 @@
+/* simplified 2-column grid. The previous 280+1fr+320 layout
+ * gave the chat a 680px wide column at the default 1280px window,
+ * which on a 3-pane setup made the message list feel cramped. We
+ * now default-hide the right panel (telemetry / kanban / agents /
+ * subagents live in a popover drawer instead) so the chat gets
+ * 1160px on a 1440x900 window. The right panel can be summoned
+ * via the "📊 Telemetry" toggle in the header — when open, the
+ * grid stretches to 280+1fr+320, matching the legacy behaviour
+ * for users who actively want it. */
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  grid-template-rows: 60px 1fr 28px;
+  grid-template-areas:
+    "header header"
+    "left   center"
+    "status status";
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+               'Microsoft YaHei', Roboto, sans-serif;
+  /* typography refactor. Bumped base from 13px →
+   * 14px to match VSCode / Cursor / Claude Code. The CJK
+   * fallback chain (PingFang SC → Microsoft YaHei) keeps
+   * Chinese characters readable on Windows + Mac. */
+  font-size: 14px;
+  line-height: 1.6;
+  /* tabular-nums on by default for any element
+   * that doesn't override. Aligns numeric labels (time,
+   * counts, KB / MB) on a monospace grid. */
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  /* a touch of negative letter-spacing at the
+   * base level tightens Latin text without crowding CJK. */
+  letter-spacing: -0.005em;
+  overflow: hidden;
+}
+/* when the user explicitly opens the right panel (Header's
+ * "📊 Telemetry" toggle), the grid re-expands to 3 columns. The
+ * `right-panel-hidden` class is the default state. */
+.app.right-panel-open {
+  grid-template-columns: 280px 1fr 320px;
+  grid-template-areas:
+    "header header header"
+    "left   center right"
+    "status status status";
+}
+
+.center {
+  grid-area: center;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+.center > * { min-height: 0; }
+
+/* ----------------------------------------------------------------------
+ * Chat-area palette (re-tuned R172).
+ *
+ * R107 originally made .center a Cursor / Claude Code-style LIGHT
+ * surface inside a dark app. User feedback: "both sides are dark, the middle
+ * is white — it doesn't look good" — the light card sandwiched between dark panels
+ * looked broken, not clean. We re-bind .center to a DARK palette
+ * aligned with global.css (--bg #1e1e1e, --bg-elevated #252526,
+ * --bg-input #3c3c3c) so the three columns read as one surface.
+ *
+ * The chat CSS files (MessageList.css, MessageInput.css, chat.css)
+ * still use --bg / --bg-elevated / --bg-input / --text / --text-dim
+ * / --border / --accent / --success / --error / --warning and the
+ * --chat-* tokens, so a single re-skin at the .center scope is
+ * enough — no per-class edits required.
+ *
+ * The --border-soft alias keeps the old "rgba(255,255,255,0.08)" usage
+ * in the existing CSS from breaking: we re-bind it to a 1px-on-dark
+ * hairline so cards still get a subtle outline.
+ * -------------------------------------------------------------------- */
+.center {
+  /* Dark surface palette (matches global.css :root). */
+  --bg: #1e1e1e;
+  --bg-elevated: #252526;
+  --bg-input: #2d2d30;
+  --border: #3c3c3c;
+  --border-soft: rgba(255, 255, 255, 0.08);
+  --text: #d4d4d4;
+  --text-dim: #858585;
+  --accent: #0078d4;
+  --accent-hover: #1188e4;
+  --success: #16a34a;
+  --error: #ef4444;
+  --warning: #f59e0b;
+  /* Chat-specific tokens (dark variant). Used by the chat cards
+   * and tool pills; we re-declare them at the .center scope so a
+   * future global-theme switch in the store can re-skin the chat
+   * without touching the CSS files. */
+  --chat-surface: #252526;
+  --chat-surface-2: #2d2d30;
+  --chat-code-bg: #1a1a1a;
+  --chat-user-bubble: #1f3a5f;
+  --chat-user-bubble-border: #2d4f7a;
+  --chat-text: #d4d4d4;
+  --chat-text-muted: #9ca3af;
+  --chat-divider: #3c3c3c;
+  --chat-accent-soft: rgba(0, 120, 212, 0.18);
+  --chat-accent: #4ea3e8;
+  --chat-success-soft: rgba(22, 163, 74, 0.18);
+  --chat-success: #4ade80;
+  --chat-error-soft: rgba(239, 68, 68, 0.18);
+  --chat-error: #f87171;
+  --chat-warning-soft: rgba(245, 158, 11, 0.18);
+  --chat-warning: #fbbf24;
+  color: var(--chat-text);
+}
+
+/* light-theme override for the chat area.
+ * The dark-mode token set above re-binds
+ * --chat-* at the .center scope so the chat
+ * surface reads as one block with the side
+ * panels. The light-theme mirror does the
+ * same with the GitHub-style palette so
+ * users opting into the white background
+ * still get a unified centre column.
+ *
+ * The data-theme attribute is mirrored from
+ * the store's `theme` field via setTheme()
+ * — App.tsx doesn't need to read the store
+ * for this scope to re-skin.
+ *
+ * the original R209 selector
+ * (`.center[data-theme="light"]`) did NOT
+ * match — the data-theme attribute lives on
+ * the <html> root, not on the <div class="center">
+ * element. CSS therefore fell through to the
+ * dark-mode .center block above and the chat
+ * column stayed black while the side panels
+ * went light. The fix is a descendant
+ * selector: `:root[data-theme="light"] .center`
+ * matches because the attribute is on the
+ * ancestor. The same fix is applied to the
+ * chat internals (.message-content,
+ * .agent-message, .message-list, etc.) so a
+ * chat card on a light background reads as a
+ * light card, not a dark card with light
+ * surrounding chrome. */
+:root[data-theme="light"] .center {
+  --bg: #ffffff;
+  --bg-elevated: #f6f8fa;
+  --bg-input: #f0f2f5;
+  --border: #d0d7de;
+  --border-soft: rgba(31, 35, 40, 0.10);
+  --text: #1f2328;
+  --text-dim: #6e7781;
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  --success: #1a7f37;
+  --error: #cf222e;
+  --warning: #9a6700;
+  --chat-surface: #ffffff;
+  --chat-surface-2: #f6f8fa;
+  --chat-code-bg: #f0f2f5;
+  --chat-user-bubble: #ddf4ff;
+  --chat-user-bubble-border: #b6e3ff;
+  --chat-text: #1f2328;
+  --chat-text-muted: #6e7781;
+  --chat-divider: #d0d7de;
+  --chat-accent-soft: rgba(9, 105, 218, 0.12);
+  --chat-accent: #0969da;
+  --chat-success-soft: rgba(26, 127, 55, 0.12);
+  --chat-success: #1a7f37;
+  --chat-error-soft: rgba(207, 34, 46, 0.12);
+  --chat-error: #cf222e;
+  --chat-warning-soft: rgba(154, 103, 0, 0.14);
+  --chat-warning: #9a6700;
+}

@@ -1,0 +1,376 @@
+.status-bar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  /* status bar 10 → 11px. The 10px was so small
+   *  the user had to squint; 11 is still "footnote" but
+   *  comfortably readable. */
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  height: 28px;
+  user-select: none;
+}
+
+/* compact mode. When the user clicks the "···" toggle
+   the footer gets a `.status-bar-compact` class; every
+   `.status-item` *without* a `data-priority="true"`
+   attribute collapses to `display: none`. The priority
+   set is the "at a glance" view defined in StatusBar.tsx:
+   connection state, model, permission mode, streaming
+   indicator, loop-warn (always), auto-approve low-risk,
+   subagent live status, memory badge, and the in-flight
+   count. The version chip ("AetherCode Desktop R107")
+   and the non-priority diagnostic badges (port, skip
+   counter, suggestion, skip-stats, tools count, running
+   count, auto-approve elevated, pre-warm) all hide in
+   compact mode but are still in the DOM, so the
+   source-pin StatusBar tests (prior round / R126) keep
+   passing.
+
+   We use the `data-priority` attribute selector instead
+   of a `status-priority` class so the prior round
+   source-pin tests still see the exact className strings
+   they were written against. */
+.status-bar.status-bar-compact .status-item:not([data-priority="true"]):not(.status-toggle-compact) {
+  display: none;
+}
+
+/* the compact toggle itself. Sits flush with the right
+   edge of the bar. A pill button so it reads as interactive
+   without the user having to read the title. */
+.status-item.status-toggle-compact {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 6px;
+  min-width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+.status-item.status-toggle-compact:hover {
+  background: var(--bg-input);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.status-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+}
+
+.status-item.streaming {
+  color: var(--accent);
+  font-weight: 500;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* skip-confirmation badge. Warm yellow to draw attention
+   without alarming — the user explicitly opted in via the
+   "no confirmation needed for next N rounds" prompt pattern. */
+.status-item.status-skip {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* skip-confirmation adoption stat (consumed / prompts).
+   A more muted variant of the skip badge — same hue family
+   but no bold weight, so the active "skip N rounds" badge
+   stays the primary signal. */
+.status-item.status-skip-stats {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* skip-low warning badge. Same hue family as
+   status-skip but redder and pulsing, so the "low!"
+   alarm stands out from the regular skip counter. */
+.status-item.status-skip-low {
+  color: var(--error, #f44336);
+  font-weight: 700;
+  animation: skip-low-pulse 1s ease-in-out infinite alternate;
+}
+
+/* loop detector badge. Two tiers map to two
+   colour ramps — amber for tier 1 (warn, detector is
+   climbing) and red for tier 2 (about to stop, user
+   MUST click Continue / Stop). Both tiers get a soft
+   background tint + 1px border so the badge reads as
+   "interactive, click me" rather than a passive label.
+   The status-loop-warn button re-uses the standard
+   .status-item layout (padding 0 6px, vertical-align
+   baseline) so the badge sits flush with the other
+   status items in the bar. */
+.status-item.status-loop-warn {
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.status-item.status-loop-warn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.status-item.status-loop-tier-1 {
+  color: #f0b95a;
+  background: rgba(240, 185, 90, 0.10);
+  border-color: rgba(240, 185, 90, 0.35);
+}
+.status-item.status-loop-tier-2 {
+  color: #f48771;
+  background: rgba(244, 135, 113, 0.12);
+  border-color: rgba(244, 135, 113, 0.45);
+  /* Tier 2 is the "engine is about to stop" tier, so
+   * the pulse mirrors the skip-low pulse — a slow
+   * breath that draws the eye without feeling
+   * jittery. Same 1s ease-in-out alternate. */
+  animation: skip-low-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes skip-low-pulse {
+  from { opacity: 0.85; }
+  to   { opacity: 1.0; }
+}
+
+/* permission-mode suggestion. Cyan/teal so it
+   reads as a "tip" rather than a status indicator. */
+.status-item.status-permission-suggestion {
+  color: var(--info, #4dd0e1);
+  font-weight: 500;
+  cursor: help;
+}
+
+.status-item.prewarm {
+  color: #f0b95a;
+  font-weight: 500;
+  background: rgba(240, 185, 90, 0.08);
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(240, 185, 90, 0.25);
+  max-width: 240px;
+}
+
+/* subagent live indicator. Four tones — running
+ * (cyan / accent), success (green, completed), error
+ * (red, failed), muted (grey, cancelled / idle). The
+ * running tone pulses like the streaming pill so the
+ * user notices an in-flight background subagent. */
+.status-item.subagent {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  max-width: 240px;
+  font-weight: 500;
+}
+.status-item.subagent-running {
+  color: var(--accent);
+  background: rgba(99, 179, 237, 0.10);
+  border-color: rgba(99, 179, 237, 0.35);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.status-item.subagent-success {
+  color: #5fbf6a;
+  background: rgba(95, 191, 106, 0.08);
+  border-color: rgba(95, 191, 106, 0.28);
+}
+.status-item.subagent-error {
+  color: var(--error);
+  background: rgba(244, 135, 113, 0.10);
+  border-color: rgba(244, 135, 113, 0.38);
+}
+.status-item.subagent-muted,
+.status-item.subagent-idle {
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+.subagent-count {
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+/* memory badge. Three colour tiers via class
+ * suffixes. The throttled / backpressure tiers add a 1px
+ * border and a soft background tint to make the warning
+ * impossible to miss. */
+.status-mem {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  letter-spacing: 0.1px;
+}
+.status-mem-ok {
+  color: var(--text-dim);
+}
+.status-mem-throttled {
+  color: #f0b95a;
+  background: rgba(240, 185, 90, 0.08);
+  border-color: rgba(240, 185, 90, 0.30);
+  font-weight: 500;
+}
+.status-mem-backpressure {
+  color: #f48771;
+  background: rgba(244, 135, 113, 0.12);
+  border-color: rgba(244, 135, 113, 0.45);
+  font-weight: 600;
+  animation: status-mem-pulse 1.6s ease-in-out infinite;
+}
+@keyframes status-mem-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 135, 113, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(244, 135, 113, 0.10); }
+}
+.status-mem-profile {
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+/* concurrency in-flight pill. Shown only when
+ *  at least one query / branch is in flight, so the
+ *  bar stays clean during normal use. */
+.status-inflight {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(99, 179, 237, 0.06);
+  border: 1px solid rgba(99, 179, 237, 0.18);
+}
+
+/* auto-approve-low-risk toggle button. Always
+ *  visible (so the user can see the flag state without
+ *  opening Settings). Two visual tiers:
+ *    - default (✓): subtle green tint, the badge the
+ *      user sees most of the time.
+ *    - .is-disabled (✗): muted grey, makes the "I
+ *      turned this off" state unmistakable. */
+.status-auto-approve {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(127, 224, 159, 0.30);
+  background: rgba(127, 224, 159, 0.06);
+  color: var(--success, #7fe09f);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.status-auto-approve:hover {
+  background: rgba(127, 224, 159, 0.12);
+  border-color: rgba(127, 224, 159, 0.50);
+}
+.status-auto-approve:focus-visible {
+  outline: 1px solid var(--success, #7fe09f);
+  outline-offset: 1px;
+}
+.status-auto-approve.is-disabled {
+  color: var(--text-dim);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.10);
+}
+.status-auto-approve.is-disabled:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.status-auto-approve-count {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(127, 224, 159, 0.18);
+  color: var(--success, #7fe09f);
+  font-weight: 500;
+}
+.status-auto-approve.is-disabled .status-auto-approve-count {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+}
+
+/* medium+high-risk auto-approve badge.
+   Distinct amber tone (vs the green low-risk
+   badge) because enabling this means
+   bash / file_write run without prompting —
+   a step up in trust from low-risk-only.
+   The triangle ▲ is intentional: a power
+   user toggling on headless mode wants the
+   bar to look "elevated" so the visual
+   language matches the policy. The
+   .is-disabled state (▽) keeps the same
+   position / shape so the layout doesn't
+   jump when the user toggles. */
+.status-auto-approve-elevated {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 184, 108, 0.10);
+  color: var(--warning, #ffb86c);
+  border: 1px solid rgba(255, 184, 108, 0.32);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.status-auto-approve-elevated:hover {
+  background: rgba(255, 184, 108, 0.18);
+  border-color: rgba(255, 184, 108, 0.50);
+}
+.status-auto-approve-elevated:focus-visible {
+  outline: 1px solid var(--warning, #ffb86c);
+  outline-offset: 1px;
+}
+.status-auto-approve-elevated.is-disabled {
+  color: var(--text-dim);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.10);
+}
+.status-auto-approve-elevated.is-disabled:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.status-auto-approve-elevated .status-auto-approve-count {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(255, 184, 108, 0.22);
+  color: var(--warning, #ffb86c);
+  font-weight: 500;
+}
+.status-auto-approve-elevated.is-disabled .status-auto-approve-count {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

@@ -1,0 +1,113 @@
+/* SessionControl fallback styles for the action button group.
+ *
+ * The three action buttons (Continue / Pause / Stop) sit side by side in a
+ * single row; the palette matches the global CSS variables, and the disabled
+ * state does not rely on the browser's default gray. Although the component
+ * is no longer mounted in the main UI, these styles still serve embedded
+ * callers (e.g. Subagent notice cards, paused-task banners). */
+
+.session-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.session-control-btn {
+  /* Reset the native button's default appearance (rounded corners, font) so it blends with the dark theme. */
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-input, #2d2d30);
+  color: var(--text, #d4d4d4);
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* State-transition timing: background, text, and border color animate in lockstep over the same duration for a coherent look. */
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+
+.session-control-btn:hover:not(:disabled) {
+  background: var(--bg-elevated, #252526);
+  border-color: var(--accent, #4ea3e8);
+  color: var(--accent, #4ea3e8);
+}
+
+.session-control-btn:focus-visible {
+  outline: 1px solid var(--accent, #4ea3e8);
+  outline-offset: 1px;
+}
+
+.session-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--text-dim, #858585);
+}
+
+/* Per-action coloring: the hover state uses color to hint at risk level
+ * (Continue → success green, Pause → warning orange, Stop → error red);
+ * the resting state only shows a faint border + text color to avoid
+ * long-term visual noise. */
+.session-control-resume:not(:disabled) {
+  border-color: rgba(127, 224, 159, 0.30);
+  color: var(--success, #7fe09f);
+}
+
+.session-control-resume:hover:not(:disabled) {
+  background: rgba(127, 224, 159, 0.10);
+  border-color: var(--success, #7fe09f);
+  color: var(--success, #7fe09f);
+}
+
+.session-control-pause:not(:disabled) {
+  border-color: rgba(255, 184, 108, 0.30);
+  color: var(--warning, #ffb86c);
+}
+
+.session-control-pause:hover:not(:disabled) {
+  background: rgba(255, 184, 108, 0.10);
+  border-color: var(--warning, #ffb86c);
+  color: var(--warning, #ffb86c);
+}
+
+.session-control-stop:not(:disabled) {
+  border-color: rgba(244, 135, 113, 0.30);
+  color: var(--error, #f48771);
+}
+
+.session-control-stop:hover:not(:disabled) {
+  background: rgba(244, 135, 113, 0.10);
+  border-color: var(--error, #f48771);
+  color: var(--error, #f48771);
+}
+
+/* Inline error notice: sits to the right of the button group, injected by the component on failure, and ellipsized when too long. */
+.session-control-error {
+  color: var(--error, #f48771);
+  font-size: 11px;
+  margin-left: 6px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Light theme overrides: reuse the global light palette — no separate hover / disabled rules needed. */
+:root[data-theme="light"] .session-control-btn {
+  --bg-input: #f6f8fa;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --text-dim: #6e7781;
+  background: var(--bg-input);
+  color: var(--text);
+  border-color: var(--border);
+}

@@ -1,0 +1,1823 @@
+/* ======================================================================
+ * MessageList.css — prior round: flat markdown chat.
+ *
+ * The agent's output is now one markdown document per sub-task
+ * (AgentMarkdownMessage). No bordered cards, no pills, no
+ * chevrons — the markdown IS the UI. The .agent-message rules
+ * below style the new flat document. Legacy .subtask-card /
+ * .step-card / .preparing-card / .step-tool classes are kept
+ * in this file (the prior round/prior round/R98 source-pin tests
+ * still read this file) but they are no longer rendered.
+ * ====================================================================== */
+
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  position: relative;  /* anchor for the jump-to-bottom pill */
+  background: var(--bg);
+  color: var(--chat-text);
+}
+
+/* The empty-state hero: when the user hasn't said anything yet,
+ * show a single, centered "Start a conversation…" line. */
+.message-list-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--chat-text-muted);
+  font-style: italic;
+  font-size: 14px;
+}
+
+/* The "wait for the model" placeholder shown after the user
+ * sent something but before the first sub-task / step arrived. */
+.message-list-empty-steps {
+  text-align: center;
+  color: var(--chat-text-muted);
+  font-style: italic;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+/* ----- prior round-up: jump-to-bottom button. Now a
+ *  circular button with a clear ↓ arrow (matches the
+ *  example image where the user can see a scroll-to-bottom
+ *  affordance at all times). Sits 16px above the message
+ *  input, right-aligned. ----- */
+.jump-to-bottom {
+  position: absolute;
+  bottom: 32px;
+  right: 24px;
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  border: 1px solid var(--chat-divider);
+  border-radius: 22px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18);
+  transition: background 120ms ease, transform 80ms ease, border-color 120ms ease;
+  z-index: 5;
+  letter-spacing: 0.1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.jump-to-bottom:hover {
+  background: var(--chat-accent-soft);
+  border-color: var(--chat-accent);
+  transform: translateY(-1px);
+}
+.jump-to-bottom-streaming {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: var(--chat-success);
+  animation: jump-to-bottom-pulse 2.0s ease-in-out infinite;
+}
+@keyframes jump-to-bottom-pulse {
+  0%, 100% { box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18), 0 0 0 0 rgba(16, 185, 129, 0.0); }
+  50%      { box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18), 0 0 0 6px rgba(16, 185, 129, 0.18); }
+}
+
+/* ======================================================================
+ * prior round: AgentMarkdownMessage (flat markdown stream)
+ *
+ * Each agent block (preamble run + per-sub-task) is a single
+ * <div class="agent-message"> wrapping a <ReactMarkdown> document.
+ * No border, no padding box, no card chrome — the markdown IS
+ * the UI. The user can copy the whole block as one markdown
+ * document.
+ * ====================================================================== */
+
+.agent-message {
+  width: 100%;
+  max-width: 820px;
+  align-self: flex-start;
+  /* 14px / 1.65 → 16px / 1.75. The agent's prose
+     is the main reading surface — every chat turn ends
+     with a long markdown body. 16px is the sweet spot
+     for full-window reading; 1.75 line-height keeps
+     long paragraphs from running together. */
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--chat-text);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.agent-message > *:first-child { margin-top: 0; }
+.agent-message > *:last-child  { margin-bottom: 0; }
+
+/* prior round: collapsible sections. Each ## content /
+   ### Steps / ### Result becomes a <details> element. R196
+   made the fold affordance much more obvious: bigger
+   chevron, hover background, "click to fold" tooltip on
+   the summary. The user reported that "many of the issues
+   previously mentioned" persisted — they couldn't tell the headings were clickable.
+   The R205 chevron was 10px and a low-contrast
+   colour; the new one is 14px, accent-coloured, and the
+   whole summary row gets a soft background on hover. */
+.agent-section {
+  margin: 0.4em 0;
+}
+.agent-section-h2 { margin-top: 0.2em; }
+.agent-section-h3 { margin-left: 0.4em; }
+
+.agent-section-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-weight: 600;
+  color: var(--chat-text-strong);
+  border-radius: 4px;
+  transition: background 120ms ease, color 120ms ease;
+  /* visible fold affordance — the whole row is
+   *  clickable, with a hover background. The chevron is
+   *  the visual cue that this is a fold toggle. */
+}
+.agent-section-summary::-webkit-details-marker { display: none; }
+.agent-section-summary::marker { display: none; content: ''; }
+.agent-section-summary:hover {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--chat-accent);
+}
+.agent-section-summary::before {
+  content: "▾";
+  display: inline-block;
+  font-size: 14px;
+  color: var(--chat-accent);
+  transition: transform 140ms ease;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+.agent-section:not([open]) > .agent-section-summary::before {
+  transform: rotate(-90deg);
+}
+
+.agent-section-marker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+.agent-section-title {
+  font-size: 14px;
+  flex: 1;
+}
+.agent-section-h2 > .agent-section-summary .agent-section-title {
+  font-size: 1.25em;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid var(--chat-divider);
+}
+.agent-section-h3 > .agent-section-summary .agent-section-title {
+  font-size: 0.85em;
+  color: var(--chat-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* subtle "click to fold" hint at the right edge of
+   the summary, so the user knows the row is clickable.
+   Hidden on small screens / when the section is empty. */
+.agent-section-hint {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.agent-section-summary:hover .agent-section-hint {
+  opacity: 0.7;
+}
+
+.agent-section-body {
+  padding: 6px 0 6px 22px;
+  border-left: 1px solid var(--chat-divider);
+  margin-left: 6px;
+}
+.agent-section-h3 > .agent-section-body {
+  padding-left: 20px;
+}
+
+/* independent block layout. Each think / tool /
+ * result is its own <details> block in the agent's
+ * stream. The summary row uses flex to align the
+ * chevron + status icon + tool name + one-line
+ * summary, with hover / focus styling that mirrors
+ * the .agent-section summary row so the user gets a
+ * consistent fold affordance across both the
+ * H2/H3 section style and the block style. */
+.agent-block-wrap { margin: 0.3em 0; }
+.agent-block {
+  margin: 0;
+}
+.agent-block-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border: 1px solid transparent;
+  font-size: 12px;
+}
+.agent-block-summary::-webkit-details-marker { display: none; }
+.agent-block-summary::marker { display: none; content: ''; }
+.agent-block-summary:hover {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--chat-accent);
+  border-color: rgba(99, 102, 241, 0.18);
+}
+.agent-block-chevron {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  color: var(--chat-accent);
+  font-size: 11px;
+  flex: 0 0 auto;
+  transition: transform 0.15s;
+}
+.agent-block:not([open]) > .agent-block-summary .agent-block-chevron {
+  transform: rotate(-90deg);
+}
+.agent-block-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  flex: 0 0 auto;
+  min-width: 14px;
+  text-align: center;
+}
+.agent-block-title {
+  font-weight: 600;
+  font-size: 12px;
+  flex: 0 0 auto;
+  text-transform: lowercase;
+  letter-spacing: 0.2px;
+}
+.agent-block-subtitle {
+  color: var(--chat-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.agent-block-body {
+  padding: 6px 0 6px 22px;
+  border-left: 1px solid var(--chat-divider);
+  margin-left: 8px;
+  font-size: 13px;
+}
+.agent-block-body pre {
+  background: var(--chat-code-bg, #0f172a);
+  color: var(--chat-text, #1f2328);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  margin: 0.3em 0;
+}
+.agent-block-body pre code { background: transparent; padding: 0; }
+.agent-block-body p { margin: 0.3em 0; }
+.agent-block-body ul,
+.agent-block-body ol { margin: 0.3em 0 0.3em 1.4em; }
+.agent-block-body li { margin: 0.1em 0; }
+.agent-block-body code:not(pre code) {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--chat-accent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+/* per-block-kind accents. */
+.agent-block-think { color: var(--chat-text); }
+.agent-block-tool {
+  border-left: 2px solid var(--chat-accent);
+  background: rgba(99, 102, 241, 0.04);
+  border-radius: 0 4px 4px 0;
+  margin-left: 4px;
+  padding-left: 4px;
+}
+.agent-block-tool.is-error {
+  border-left-color: var(--error, #ef4444);
+  background: rgba(239, 68, 68, 0.06);
+}
+.agent-block-result {
+  border-left: 2px solid var(--success, #6cc28b);
+  background: rgba(108, 194, 139, 0.06);
+  border-radius: 0 4px 4px 0;
+  margin-left: 4px;
+  padding-left: 4px;
+}
+.agent-block-header {
+  margin: 0.2em 0 0.1em 0;
+  font-size: 1.1em;
+}
+
+/* file_read / file_edit / file_write inline code in
+   the agent message — the "ok" emoji at the start of each
+   tool line. We make tool lines stand out a bit so the
+   user can scan them quickly. */
+.agent-section-body pre {
+  background: var(--chat-code-bg, #0f172a);
+  color: var(--chat-text, #1f2328);
+  padding: 10px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.4em 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.agent-section-body pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+/* the streaming cursor sits at the end of the live
+   document as a separate inline element. We give it a
+   subtle pulse so the user can see the stream is alive. */
+.agent-cursor {
+  display: inline-block;
+  color: var(--chat-accent);
+  margin-left: 2px;
+  animation: agent-cursor-pulse 1.1s ease-in-out infinite;
+  font-weight: 500;
+}
+@keyframes agent-cursor-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+.agent-message p { margin: 0.55em 0; }
+.agent-message ul,
+.agent-message ol { margin: 0.55em 0; padding-left: 1.4em; }
+.agent-message li { margin: 0.15em 0; }
+.agent-message li > p { margin: 0.1em 0; }
+
+.agent-message code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: rgba(148, 163, 184, 0.16);
+  padding: 0.06em 0.32em;
+  border-radius: 3px;
+}
+.agent-message pre {
+  background: var(--chat-code-bg, #0f172a);
+  color: var(--chat-text, #1f2328);
+  padding: 12px 14px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.agent-message pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.agent-message blockquote {
+  margin: 0.6em 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--chat-accent);
+  color: var(--chat-text-muted);
+  background: rgba(99, 102, 241, 0.06);
+}
+.agent-message table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 13px;
+}
+.agent-message th,
+.agent-message td {
+  border: 1px solid var(--chat-divider);
+  padding: 4px 10px;
+  text-align: left;
+}
+.agent-message th { background: rgba(148, 163, 184, 0.08); font-weight: 600; }
+.agent-message hr { border: none; border-top: 1px solid var(--chat-divider); margin: 1em 0; }
+.agent-message a { color: var(--chat-accent); text-decoration: none; }
+.agent-message a:hover { text-decoration: underline; }
+
+/* prior round: the streaming cursor is a literal U+25CD
+ * character at the end of the live document. We give the
+ * last character a soft pulse so the user can see the
+ * stream is alive even on idle text. */
+.agent-message.agent-live { color: var(--chat-text); }
+.agent-message.agent-live::after {
+  /* The \25CD is already inside the document; this ::after is
+   * only used as a visual hint when the user agent's text
+   * rendering is slow. Most engines render the inline
+   * character directly. */
+  content: "";
+}
+
+/* ======================================================================
+ * Message bubbles (user / assistant / system)
+ * ====================================================================== */
+
+.message {
+  max-width: 760px;
+  width: fit-content;
+  user-select: text;
+}
+
+/* The shared bubble body — used by .message-content inside both
+ * .message-user (right-aligned bubble) and .message-system (centered
+ * notice). The assistant stream renders into .step-text, which has
+ * its own rich typography rules below. */
+.message-content {
+  /* 14px / 1.65 → 16px / 1.75. Matches the
+     scale of .step-text and .message-assistant
+     .md-body so the chat reads as one consistent
+     surface. The user sees .message-content in
+     their own bubbles and system messages. */
+  font-size: 16px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--chat-text);
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.message-role {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: var(--chat-text-muted);
+}
+
+.message-time {
+  color: var(--chat-text-muted);
+  opacity: 0.7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ----- User message: right-aligned blue-tinted bubble -----
+ * Cursor / Claude Code convention: the user bubble sits in the
+ * right margin, has a soft indigo background, and uses the
+ * "rounded except one corner" trick to point at the user. */
+.message-user {
+  align-self: flex-end;
+  max-width: 600px;
+}
+.message-user .message-content {
+  background: var(--chat-user-bubble);
+  border: 1px solid var(--chat-user-bubble-border);
+  color: var(--chat-text);
+  padding: 10px 14px;
+  border-radius: 14px;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.message-user .message-role { color: var(--chat-accent); }
+
+/* ----- Assistant legacy bubble (kept for backward compat) -----
+ * The active stream lives inside .subtask-card > .step-card, not
+ * in a .message-assistant wrapper. This class is only used by
+ * non-streaming legacy assistant text that arrived as a ChatMessage. */
+.message-assistant {
+  align-self: flex-start;
+  max-width: 760px;
+}
+.message-assistant .message-role { color: var(--chat-success); }
+
+/* ----- System notice (centered) ----- */
+.message-system {
+  align-self: center;
+  max-width: 100%;
+}
+/* split the system message palette into an error
+ * variant (red) and an info variant (neutral grey).
+ * legacy both were red — a benign "[task] task u-abc
+ * started" event looked identical to a real "[Stream
+ * stale]" alert, and the two sat jammed together
+ * looking like one big error. The new info variant
+ * keeps the same shape and font so the chat rhythm
+ * doesn't change, just the colour. */
+.message-system .message-content {
+  color: var(--chat-error);
+  font-style: italic;
+  font-size: 12px;
+  padding: 6px 12px;
+  background: var(--chat-error-soft);
+  border: 1px solid rgba(220, 38, 38, 0.20);
+  border-radius: 8px;
+}
+.message-system-info .message-content {
+  color: var(--chat-text-muted);
+  background: rgba(148, 163, 184, 0.10);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+.message-system-info .message-content:hover {
+  background: rgba(148, 163, 184, 0.16);
+}
+
+/* give consecutive system messages real visual
+ * separation. The shared .message-list gap (16px) is
+ * too tight when both adjacent messages are red error
+ * banners — the eye reads them as a single block.
+ * Doubling the margin when the next sibling is also a
+ * system notice makes each event feel discrete. The
+ * first / last system messages in a run still use the
+ * parent's 16px gap, so the chat doesn't suddenly grow
+ * taller overall. */
+.message-system + .message-system {
+  margin-top: 8px;
+}
+/* a faint divider between two adjacent error
+ * system pills so the eye tracks them as separate
+ * events. The top border on the second one sits
+ * between the two pills, not on top of the first.
+ * We only apply the divider when BOTH siblings are
+ * the red error variant; an info next to an error
+ * is already visually distinct. */
+.message-system-error + .message-system-error .message-content {
+  border-top-width: 1px;
+  border-top-color: rgba(220, 38, 38, 0.35);
+}
+
+/* ======================================================================
+ * Assistant markdown body (rendered inside a step's .step-text)
+ * ====================================================================== */
+.step-text {
+  /* 13.5px / 1.6 → 15.5px / 1.7. .step-text is
+     the "thinking" stream — the model's reasoning,
+     tool results, and intermediate text. The user
+     reads this more often than the final answer, so
+     it gets the same scale as .message-content. */
+  font-size: 15.5px;
+  line-height: 1.7;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: var(--chat-text);
+}
+
+/* streaming cursor. A blinking thin block (▍) that
+ * follows the most recent character. The cursor must remain
+ * visible even when there's no text yet (the engine often
+ * starts streaming before the first token arrives). */
+.step-text-streaming {
+  white-space: pre-wrap;
+  color: var(--chat-text);
+}
+.step-text-streaming::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -2px;
+  background: var(--chat-accent);
+  animation: chat-cursor-blink 1.0s steps(2, end) infinite;
+}
+@keyframes chat-cursor-blink {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Markdown body resets — kill the default <p> margin so the
+ * bubble doesn't get visually crowded, and tighten list spacing. */
+.step-text > p:first-child { margin-top: 0; }
+.step-text > p:last-child { margin-bottom: 0; }
+.step-text p { margin: 0.5em 0; }
+
+.step-text h1,
+.step-text h2,
+.step-text h3,
+.step-text h4 {
+  margin: 0.8em 0 0.3em 0;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--chat-text);
+}
+.step-text h1 { font-size: 1.45em; letter-spacing: -0.01em; }
+.step-text h2 { font-size: 1.25em; letter-spacing: -0.01em; }
+.step-text h3 { font-size: 1.08em; }
+.step-text h4 { font-size: 1.0em; }
+
+.step-text ul,
+.step-text ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+.step-text li { margin: 0.2em 0; }
+.step-text li > p { margin: 0.1em 0; }
+
+/* Inline code: subtle pill on a code-grey surface. */
+.step-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--chat-code-bg);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--chat-divider);
+  color: #be185d;
+}
+
+/* Code blocks: monospace, padded, subtle border. The theme
+ * uses a light surface (#f1f5f9) so the contrast with the
+ * chat background is gentle but the block still reads as
+ * "code". For bash / json / ts / java we don't have a true
+ * highlighter, so we tint a couple of structural tokens
+ * (numbers, booleans, comments) on top of the surface. */
+.step-text pre {
+  background: var(--chat-code-bg);
+  border: 1px solid var(--chat-divider);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0.6em 0;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--chat-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.step-text pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Subset of token tinting for languages where the absence of
+ * a highlighter is most painful. Tones are tuned to read
+ * against the light #f1f5f9 surface; they're not a real
+ * Pygments pass but they add structure on a quick scan. */
+.step-text pre.language-bash,
+.step-text pre code.language-bash { color: #1f2937; }
+.step-text pre .tok-comment   { color: #6b7280; font-style: italic; }
+.step-text pre .tok-string    { color: #047857; }
+.step-text pre .tok-keyword   { color: #6d28d9; font-weight: 600; }
+.step-text pre .tok-number    { color: #b45309; }
+.step-text pre .tok-builtin   { color: #1d4ed8; }
+
+.step-text blockquote {
+  margin: 0.6em 0;
+  padding: 0.3em 0.9em;
+  border-left: 3px solid var(--chat-accent);
+  color: var(--chat-text-muted);
+  background: var(--chat-accent-soft);
+  border-radius: 0 6px 6px 0;
+}
+
+.step-text a {
+  color: var(--chat-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.step-text table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.92em;
+  width: auto;
+  max-width: 100%;
+  border: 1px solid var(--chat-divider);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.step-text th,
+.step-text td {
+  border: 1px solid var(--chat-divider);
+  padding: 6px 10px;
+  text-align: left;
+}
+.step-text th {
+  background: var(--chat-surface-2);
+  font-weight: 600;
+  color: var(--chat-text);
+}
+
+.step-text hr {
+  border: 0;
+  border-top: 1px solid var(--chat-divider);
+  margin: 0.9em 0;
+}
+
+.step-text input[type="checkbox"] {
+  margin-right: 0.4em;
+}
+
+.message-assistant .md-body {
+  /* 14.5px / 1.7 → 16px / 1.8. Same scale as
+     .message-content — these are the two surfaces
+     where the user reads the model's answer. */
+  font-size: 16px;
+  line-height: 1.8;
+  word-break: break-word;
+  color: var(--chat-text);
+}
+.message-assistant .md-body > p:first-child { margin-top: 0; }
+.message-assistant .md-body > p:last-child  { margin-bottom: 0; }
+.message-assistant .md-body p { margin: 0.5em 0; }
+.message-assistant .md-body h1,
+.message-assistant .md-body h2,
+.message-assistant .md-body h3,
+.message-assistant .md-body h4 {
+  margin: 0.7em 0 0.3em 0;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--chat-text);
+}
+.message-assistant .md-body h1 { font-size: 1.35em; }
+.message-assistant .md-body h2 { font-size: 1.2em; }
+.message-assistant .md-body h3 { font-size: 1.08em; }
+.message-assistant .md-body h4 { font-size: 1.0em; }
+.message-assistant .md-body ul,
+.message-assistant .md-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+.message-assistant .md-body li { margin: 0.15em 0; }
+.message-assistant .md-body li > p { margin: 0.1em 0; }
+.message-assistant .md-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--chat-code-bg);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--chat-divider);
+  color: #be185d;
+}
+.message-assistant .md-body pre {
+  background: var(--chat-code-bg);
+  border: 1px solid var(--chat-divider);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0.6em 0;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--chat-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.message-assistant .md-body pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.message-assistant .md-body blockquote {
+  margin: 0.5em 0;
+  padding: 0.3em 0.9em;
+  border-left: 3px solid var(--chat-accent);
+  color: var(--chat-text-muted);
+  background: var(--chat-accent-soft);
+  border-radius: 0 6px 6px 0;
+}
+.message-assistant .md-body a {
+  color: var(--chat-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.message-assistant .md-body table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.92em;
+  width: auto;
+  max-width: 100%;
+  border: 1px solid var(--chat-divider);
+}
+.message-assistant .md-body th,
+.message-assistant .md-body td {
+  border: 1px solid var(--chat-divider);
+  padding: 6px 10px;
+  text-align: left;
+}
+.message-assistant .md-body th {
+  background: var(--chat-surface-2);
+  font-weight: 600;
+}
+.message-assistant .md-body hr {
+  border: 0;
+  border-top: 1px solid var(--chat-divider);
+  margin: 0.9em 0;
+}
+.message-assistant .md-body input[type="checkbox"] {
+  margin-right: 0.4em;
+}
+
+/* ======================================================================
+ * Step cards — each LLM round-trip is a single step. Renders as a
+ * light-surface card with a left-edge status bar matching the
+ * sub-task risk.
+ * ====================================================================== */
+.step-card {
+  /* prior round-up: the user wanted "a cleaner look" and showed
+   * a clean example (white-background) where each step is a
+   * thin row, not a bordered card. We strip the border, the
+   * background, and the box-shadow — the step now reads as
+   * a flat trace item, just like the example. The only
+   * visual cue is the step head's hover state and the
+   * subtle dot indicator. */
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  /* previously `width: fit-content; max-width: 760px;` made
+   * the step card hug its content and never fill the parent
+   * .subtask-card / .preparing-body. The user complained: "I
+   * can't see all the content inside, and the frame is a bit narrow — it should fill the available width".
+   * Now we fill the full width of the parent so the user can
+   * actually read the full streamed tool output and the
+   * assistant text — no right-side clipping, no narrow
+   * centred column. The min-width: 0 guard is required for
+   * long <pre> children (the step-tool-output) so the inner
+   * block can shrink / wrap instead of forcing the flex
+   * parent to expand. */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-self: stretch;
+  transition: opacity 200ms ease;
+  overflow: visible;
+}
+.step-card.step-active {
+  /* No box-shadow, no green border — just a subtle
+   * background tint so the user can find "the row that's
+   * working right now" without it being a card. */
+  background: rgba(16, 185, 129, 0.04);
+}
+.step-card.step-done { opacity: 0.9; }
+
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+  background: transparent;
+  min-height: 26px;
+}
+.step-head:hover { background: rgba(255, 255, 255, 0.025); }
+
+.step-head-icon {
+  width: 14px;
+  text-align: center;
+  color: var(--chat-text-muted);
+  font-size: 10px;
+}
+
+/* drag handle for steps. Same visual language as the
+   sub-task handle so the two feel like the same primitive. */
+.step-head-drag {
+  width: 10px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.step-head:hover .step-head-drag { opacity: 0.9; color: var(--chat-accent); }
+.step-card.step-dragging .step-head-drag { opacity: 1; color: var(--chat-accent); }
+.step-card[draggable="true"] { cursor: grab; }
+.step-card[draggable="true"]:active { cursor: grabbing; }
+.step-card.step-dragging {
+  opacity: 0.5;
+  border-left: 2px solid var(--chat-accent);
+}
+.step-card.step-drop-target {
+  outline: 2px dashed var(--chat-accent);
+  outline-offset: 2px;
+  transform: translateY(-1px);
+  transition: transform 80ms ease;
+}
+
+.step-head-title {
+  flex: 1;
+  font-weight: 500;
+  color: var(--chat-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step-head-reason {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--chat-error-soft);
+  color: var(--chat-error);
+}
+
+.step-head-dur {
+  color: var(--chat-text-muted);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-body {
+  /* prior round-up: trim the body padding. The step is now
+   * a flat trace item, so the body is just a slightly
+   * indented child column. No top border (the head has
+   * its own hover/active background) and a smaller gap
+   * so 6-8 tool items don't dominate the chat. */
+  padding: 2px 6px 6px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: none;
+}
+
+/* ======================================================================
+ * Step tool events — flat single-line trace items, no heavy borders.
+ * Previously this was a bordered "terminal pill" with code-bg
+ * background — but the user (R193 follow-up) said the style was
+ * "cramped / ugly" and showed a clean example: a single
+ * line of monospace text with a small icon ("Terminal" / "Thinking"
+ * / "Search") and the command/path inline. We mirror that:
+ * no background fill, no border, no padding box, just a 1-line
+ * row that the user can hover/click to expand for full output.
+ * ====================================================================== */
+.step-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 2px;
+}
+
+.step-tool {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  transition: background 80ms ease;
+  /* Indent so the icon lines up under the step head's first letter. */
+  padding-left: 4px;
+}
+.step-tool:hover { background: rgba(255, 255, 255, 0.025); }
+.step-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 22px;
+}
+.step-tool-status {
+  font-weight: 700;
+  font-size: 11px;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.step-tool.tool-status-ok    .step-tool-status { color: var(--chat-success); }
+.step-tool.tool-status-error .step-tool-status { color: var(--chat-error); }
+
+.step-tool-name {
+  color: var(--chat-text-muted);
+  font-weight: 500;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.step-tool-input {
+  color: var(--chat-text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.step-tool-copy {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--chat-text-muted);
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  font-family: inherit;
+  transition: all 80ms ease;
+  margin-left: 2px;
+  opacity: 0;
+}
+.step-tool:hover .step-tool-copy { opacity: 1; }
+.step-tool-copy:hover {
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+.step-tool-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  color: var(--chat-text-muted);
+  font-size: 10px;
+  opacity: 0.7;
+}
+.step-tool-output {
+  margin: 0;
+  padding: 4px 6px 4px 22px;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: var(--chat-text-muted);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  /* was `max-height: 240px` — for a `mvn --version` output
+   *  that's plenty, but for `mvn test` output (compiler lines,
+   * Surefire summaries, etc.) 240px is barely 8 lines and the
+   * user has to scroll a tiny inner box to see the tail. The
+   * user's explicit ask: "I can't see all the content inside" — they
+   * want the full content visible without an inner scroll. We
+   * bump to 600px (~30 lines at 12px), still bounded so a 100KB
+   * log doesn't dominate the chat. */
+  max-height: 600px;
+  border-left: 2px solid var(--chat-divider);
+  margin-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* prior round-up: per-step summary line. Same flat-trace
+ * style as the tool pills: no border, no background, just
+ * a 1-line muted footer so the eye reads it as a closing
+ * caption, not a separate card. Renders at the bottom of
+ * an expanded step body, only when the step is done. */
+.step-summary {
+  margin-top: 4px;
+  padding: 4px 6px 2px;
+  font-size: 11.5px;
+  color: var(--chat-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.5;
+  letter-spacing: 0.1px;
+  font-style: italic;
+}
+
+/* ======================================================================
+ * Live indicator (the green pulse that says "engine is working").
+ * The reference interface uses a spinner + "Checking..." label
+ * instead of a static dot. We keep the dot + label combo and add
+ * a proper CSS spinner so the status reads as "actively working",
+ * not "idling with intent to work".
+ * ====================================================================== */
+.step-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--chat-divider);
+  background: var(--chat-surface);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--chat-text);
+  align-self: stretch;
+  /* was `max-width: 760px` — same root cause as the
+   * step-card. The live indicator should fill the parent so
+   * the long "▶ Subtask done" label doesn't get cropped on
+   * a 1080+ wide chat panel. */
+  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+  margin-top: 4px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.step-live-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(99, 102, 241, 0.20);
+  border-top-color: var(--chat-accent);
+  animation: chat-spinner-rotate 0.9s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes chat-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+.step-live-label {
+  font-weight: 500;
+  color: var(--chat-accent);
+  flex-shrink: 0;
+}
+.step-live-detail {
+  color: var(--chat-text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+.step-live-stop {
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  color: var(--chat-error);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.step-live-stop:hover { background: var(--chat-error-soft); border-color: var(--chat-error); }
+
+/* ======================================================================
+ * Sub-task cards (business-concept unit) — 4 sections:
+ *   1. head  (goal + status)
+ *   2. counter (Thinking N times, ...)         ← summary strip, collapsible
+ *   3. body  (step trail)
+ *   4. summary (assistant-written one-liner)
+ * ====================================================================== */
+.subtask-card {
+  border: 1px solid var(--chat-divider);
+  background: var(--chat-surface);
+  border-radius: 12px;
+  padding: 0;
+  max-width: 820px;
+  width: 100%;
+  align-self: stretch;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+/* Status colour cues. Each gets a left-edge accent bar so the
+ * user can scan a long thread of sub-tasks and pick out the
+ * "in progress" / "failed" ones by shape. */
+.subtask-card.subtask-pending     { opacity: 0.85; }
+.subtask-card.subtask-in_progress {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18), 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.subtask-card.subtask-in_progress::before {
+  content: '';
+  position: absolute;
+}
+.subtask-card.subtask-completed   { opacity: 0.98; }
+.subtask-card.subtask-failed      { border-color: rgba(239, 68, 68, 0.45); }
+.subtask-card.subtask-skipped     { opacity: 0.7; border-style: dashed; }
+.subtask-card.subtask-preamble    { border-style: dashed; opacity: 0.85; }
+
+.subtask-card.subtask-active {
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25), 0 0 14px -2px rgba(16, 185, 129, 0.18);
+}
+
+/* collapsed sub-task. The body (step trail) is hidden
+   so the user sees the business minimal unit only. The meta
+   line's border-bottom is suppressed to avoid a double-line
+   against the summary's border-top with empty space between. */
+.subtask-card.subtask-collapsed .subtask-meta {
+  border-bottom-color: transparent;
+}
+.subtask-card.subtask-collapsed.subtask-in_progress .subtask-head {
+  border-bottom-color: transparent;
+}
+
+/* drag-and-drop visual states. */
+.subtask-card.subtask-dragging {
+  opacity: 0.5;
+  border-left: 2px solid var(--chat-accent);
+}
+.subtask-card.subtask-drop-target {
+  outline: 2px dashed var(--chat-accent);
+  outline-offset: 2px;
+  transform: translateY(-1px);
+  transition: transform 80ms ease;
+}
+
+/* Sub-task header. */
+.subtask-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  user-select: none;
+  border-bottom: 1px solid transparent;
+  transition: background 120ms ease;
+  position: relative;
+  color: var(--chat-text);
+}
+.subtask-card.subtask-in_progress .subtask-head { border-bottom-color: rgba(16, 185, 129, 0.18); }
+.subtask-head:hover { background: var(--chat-accent-soft); }
+
+/* affordance bar on the right edge of an in_progress
+   sub-task head. Hidden by default; appears on hover OR
+   keyboard focus. */
+.subtask-head::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+  pointer-events: none;
+}
+.subtask-card.subtask-in_progress .subtask-head:hover::after,
+.subtask-card.subtask-in_progress .subtask-head:focus-within::after {
+  background: var(--chat-accent);
+}
+
+.subtask-head-icon {
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* drag handle. */
+.subtask-head-drag {
+  width: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--chat-text-muted);
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.subtask-head:hover .subtask-head-drag { opacity: 0.9; color: var(--chat-accent); }
+.subtask-card.subtask-dragging .subtask-head-drag { opacity: 1; color: var(--chat-accent); }
+.subtask-card[draggable="true"] { cursor: grab; }
+.subtask-card[draggable="true"]:active { cursor: grabbing; }
+.subtask-icon-pending     { color: var(--chat-text-muted); }
+.subtask-icon-in_progress { color: var(--chat-success); }
+.subtask-icon-completed   { color: var(--chat-success); }
+.subtask-icon-failed      { color: var(--chat-error); }
+.subtask-icon-skipped     { color: var(--chat-text-muted); }
+
+.subtask-head-content {
+  flex: 1;
+  font-weight: 500;
+  color: var(--chat-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subtask-head-status {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--chat-surface-2);
+  color: var(--chat-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border: 1px solid var(--chat-divider);
+}
+.subtask-card.subtask-in_progress .subtask-head-status {
+  background: var(--chat-success-soft);
+  color: var(--chat-success);
+  border-color: rgba(16, 185, 129, 0.30);
+}
+.subtask-card.subtask-completed   .subtask-head-status {
+  background: var(--chat-success-soft);
+  color: var(--chat-success);
+  border-color: rgba(16, 185, 129, 0.30);
+}
+.subtask-card.subtask-failed      .subtask-head-status {
+  background: var(--chat-error-soft);
+  color: var(--chat-error);
+  border-color: rgba(239, 68, 68, 0.30);
+}
+
+.subtask-head-count {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.subtask-head-toggle {
+  width: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--chat-accent);
+  font-weight: 600;
+  transition: transform 150ms ease, color 120ms ease;
+}
+.subtask-head:hover .subtask-head-toggle { color: #4f46e5; }
+
+/* counter strip (the "Thinking N times" summary card).
+ *
+ * This is the user-facing primary affordance for a sub-task:
+ * a one-line summary of what the model did, with a chevron
+ * to expand the underlying step trail. Cursor / Claude Code
+ * style: a subtle background tint, the count on the left,
+ * a ">" or "▾" chevron on the right. Hover state is gentle. */
+.subtask-counter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--chat-divider);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--chat-text);
+  background: var(--chat-surface-2);
+  user-select: none;
+  border-radius: 0;
+}
+.subtask-counter-clickable {
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.subtask-counter-clickable:hover {
+  background: var(--chat-accent-soft);
+}
+.subtask-counter-expanded {
+  background: var(--chat-accent-soft);
+  border-top-color: rgba(99, 102, 241, 0.30);
+}
+.subtask-counter-clickable:focus-visible {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: -2px;
+}
+.subtask-counter-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+  font-feature-settings: 'tnum';
+  color: var(--chat-text);
+}
+.subtask-counter-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.subtask-counter-dur,
+.subtask-counter-tool {
+  white-space: nowrap;
+}
+.subtask-counter-warn {
+  color: var(--chat-warning);
+  white-space: nowrap;
+}
+.subtask-counter-chevron {
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 14px;
+  text-align: center;
+  transition: transform 150ms ease, color 120ms ease;
+}
+.subtask-counter-clickable:hover .subtask-counter-chevron {
+  color: var(--chat-accent);
+}
+.subtask-counter-expanded .subtask-counter-chevron {
+  transform: rotate(0deg);
+  color: var(--chat-accent);
+}
+
+/* progress mini-bar. Renders under the counter row when
+   the sub-task is in_progress. */
+.subtask-progress {
+  display: block;
+  height: 3px;
+  background: rgba(99, 102, 241, 0.10);
+  margin: 0 14px 4px 14px;
+  border-radius: 1.5px;
+  overflow: hidden;
+}
+.subtask-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg,
+    rgba(16, 185, 129, 0.65) 0%,
+    rgba(99, 102, 241, 0.85) 100%);
+  transition: width 240ms ease;
+}
+
+/* animated collapse/expand for the sub-task body. */
+.subtask-body-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease-out;
+}
+.subtask-body-wrap.subtask-body-open {
+  grid-template-rows: 1fr;
+}
+
+/* Sub-task body. */
+.subtask-body {
+  min-height: 0;
+  /* prior round: was `overflow: hidden` — same bug as
+   * the preparing card. The `0fr → 1fr` grid trick needs
+   * `overflow: hidden` on the inner div to collapse
+   * cleanly, but that clips content. We split the
+   * concerns: the outer wrap (`.subtask-body-wrap`)
+   * animates between 0fr and 1fr for the collapse
+   * animation, and the inner body (`.subtask-body`) has
+   * `overflow: auto` so when the body content (think
+   * text + tool events) is taller than the available
+   * 1fr, the user can scroll within the body instead of
+   * having the content clipped. */
+  overflow: auto;
+  padding: 6px 12px 10px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subtask-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Slight indent so the steps read as nested inside the sub-task. */
+  padding-left: 8px;
+  border-left: 2px solid var(--chat-divider);
+  margin-left: 6px;
+}
+
+.subtask-empty {
+  color: var(--chat-text-muted);
+  font-size: 12px;
+  font-style: italic;
+  padding: 4px 6px;
+}
+
+/* Sub-task summary footer. */
+.subtask-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px 12px 14px;
+  border-top: 1px solid var(--chat-divider);
+  background: var(--chat-surface-2);
+  font-size: 12.5px;
+  color: var(--chat-text);
+  line-height: 1.55;
+}
+.subtask-card.subtask-completed .subtask-summary { background: var(--chat-success-soft); }
+.subtask-card.subtask-failed    .subtask-summary { background: var(--chat-error-soft); }
+
+.subtask-summary-icon {
+  color: var(--chat-text-muted);
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.subtask-summary-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+.subtask-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 14px 6px 14px;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  user-select: none;
+  border-bottom: 1px solid var(--chat-divider);
+}
+.subtask-card.subtask-done .subtask-meta { opacity: 0.7; }
+
+.subtask-meta-dur {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+}
+.subtask-card.subtask-in_progress .subtask-meta-dur { color: var(--chat-success); }
+
+.subtask-meta-tool {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--chat-text-muted);
+}
+
+.subtask-meta-error {
+  flex-shrink: 0;
+  color: var(--chat-error);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+/* prior round: hint shown in the meta line when the sub-task body
+   is collapsed and has at least one step. */
+.subtask-meta-expand-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--chat-accent);
+  font-weight: 500;
+  font-style: normal;
+  opacity: 0.85;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+}
+
+/* Mini progress bar (X/Y of the soft threshold). */
+.subtask-meta-progress {
+  flex-shrink: 0;
+  width: 80px;
+  height: 6px;
+  background: var(--chat-code-bg);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  transition: height 200ms ease;
+}
+.subtask-meta-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #10b981, #6366f1);
+  transition: width 200ms ease;
+}
+.subtask-meta-progress-fill[style*="100%"] {
+  background: linear-gradient(90deg, #ef4444, #f97316);
+}
+
+/* Action buttons (right side of the meta line). */
+.subtask-actions {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 4px;
+}
+.subtask-action-btn {
+  background: transparent;
+  border: 1px solid var(--chat-divider);
+  color: var(--chat-text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  transition: all 120ms ease;
+}
+.subtask-action-btn:hover {
+  background: var(--chat-accent-soft);
+  color: var(--chat-text);
+  border-color: var(--chat-accent);
+}
+.subtask-action-btn.subtask-action-retry {
+  border-color: rgba(16, 185, 129, 0.40);
+  color: var(--chat-success);
+}
+.subtask-action-btn.subtask-action-retry:hover {
+  background: var(--chat-success-soft);
+  border-color: var(--chat-success);
+}
+
+/* Step count at/over the soft threshold. Switches to warning
+   colour so the user knows the engine is about to ask for a
+   decision. */
+.subtask-head-count-max {
+  color: var(--chat-warning);
+  font-weight: 600;
+}
+
+/* failed-state footer (used when no explicit summary is
+   present, e.g. an early error before the model wrote one). */
+.subtask-summary-error {
+  background: var(--chat-error-soft);
+}
+.subtask-summary-error .subtask-summary-icon { color: var(--chat-error); }
+
+/* ======================================================================
+ * PreparingCard (compact preamble)
+ * ======================================================================
+ * Replaces the old PreambleSteps box that always rendered every
+ * step card expanded. The new design is a single-row card with
+ * a pulsing dot, a status label, live counter chips (🧠 3 · 📄 1
+ * · ⚡ 5 · 🔍 1), an elapsed timer, a stop button (while
+ * streaming) and a chevron for click-to-expand.
+ *
+ * The card tints amber / orange / red when the run goes stale
+ * (30s / 2m / 5m). The legacy top-level StaleWarning banner
+ * is gone — staleness is inline, so the user sees the
+ * indicator next to the live counters it relates to instead
+ * of a floating banner above an empty MessageList.
+ */
+.preparing-card {
+  display: flex;
+  flex-direction: column;
+  margin: 8px 0;
+  border: 1px solid var(--chat-divider);
+  border-radius: 8px;
+  background: var(--chat-surface-2);
+  font-size: 12.5px;
+  color: var(--chat-text);
+  /* prior round: was `overflow: hidden` — when the body
+   * has a long <think> block (e.g. 1k+ chars of model
+   * thinking), the content is clipped and the user can't
+   * see anything below the visible viewport. The
+   * message-list container is scrollable, but only if
+   * content actually grows the message-list's
+   * scrollHeight — and a child with `overflow: hidden`
+   * never pushes the parent. We change to `overflow:
+   * visible` so the body can grow; the body itself gets
+   * its own max-height + overflow: auto (see
+   * `.preparing-body`) so the user can scroll WITHIN the
+   * card if the think text is huge. */
+  overflow: visible;
+  transition: border-color 200ms ease, background 200ms ease;
+}
+.preparing-card.preparing-live {
+  border-color: rgba(78, 163, 232, 0.35);
+}
+.preparing-card.preparing-done {
+  border-color: var(--chat-divider);
+  background: var(--chat-surface);
+  opacity: 0.92;
+}
+.preparing-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease;
+}
+.preparing-head:hover { background: rgba(255, 255, 255, 0.025); }
+.preparing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chat-accent);
+  box-shadow: 0 0 0 3px rgba(78, 163, 232, 0.18);
+  flex-shrink: 0;
+}
+.preparing-live .preparing-dot {
+  animation: preparing-pulse 1.4s ease-in-out infinite;
+}
+.preparing-done .preparing-dot {
+  background: var(--chat-success);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+  animation: none;
+}
+@keyframes preparing-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.4); opacity: 0.7; }
+}
+.preparing-label {
+  font-weight: 500;
+  color: var(--chat-text);
+  flex-shrink: 0;
+}
+.preparing-counters {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 11.5px;
+  color: var(--chat-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preparing-elapsed {
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.preparing-stop {
+  background: transparent;
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  color: var(--chat-error, #f43f5e);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  transition: background 120ms ease;
+}
+.preparing-stop:hover { background: rgba(244, 63, 94, 0.10); }
+.preparing-chevron {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+.preparing-done .preparing-chevron { display: none; }
+
+/* Stale tier colours. Mirrors the old StaleWarning's
+ * 30s/2m/5m escalation. prior round folded the banner
+ * into this single card so the user sees the staleness
+ * in context with the live counters. */
+.preparing-card.preparing-stale-30s {
+  border-color: rgba(244, 196, 113, 0.45);
+  background: rgba(244, 196, 113, 0.06);
+}
+.preparing-card.preparing-stale-30s .preparing-dot {
+  background: #f4c471;
+  box-shadow: 0 0 0 3px rgba(244, 196, 113, 0.22);
+}
+.preparing-card.preparing-stale-30s .preparing-elapsed { color: #f4c471; }
+
+.preparing-card.preparing-stale-2m {
+  border-color: rgba(244, 163, 113, 0.55);
+  background: rgba(244, 163, 113, 0.08);
+}
+.preparing-card.preparing-stale-2m .preparing-dot {
+  background: #f4a371;
+  box-shadow: 0 0 0 3px rgba(244, 163, 113, 0.26);
+}
+.preparing-card.preparing-stale-2m .preparing-elapsed { color: #f4a371; }
+
+.preparing-card.preparing-stale-5m {
+  border-color: rgba(244, 135, 113, 0.65);
+  background: rgba(244, 135, 113, 0.10);
+}
+.preparing-card.preparing-stale-5m .preparing-dot {
+  background: #f48771;
+  box-shadow: 0 0 0 4px rgba(244, 135, 113, 0.30);
+  animation: preparing-pulse 0.9s ease-in-out infinite;
+}
+.preparing-card.preparing-stale-5m .preparing-elapsed { color: #f48771; }
+
+.preparing-body {
+  border-top: 1px solid var(--chat-divider);
+  padding: 8px 12px 4px;
+  background: var(--chat-surface);
+  /* prior round: when the body has a long <think>
+   * block (model's internal reasoning, often 500-2000
+   * chars), the body grows unbounded and either:
+   *   (a) pushes the message-list's bottom off-screen
+   *       and the user has to scroll the chat panel
+   *       to find the latest content, OR
+   *   (b) gets clipped by the viewport if the chat
+   *       panel is short (the user's "tiny box" complaint
+   *       — they see only the top of the think text).
+   *
+   * Bounded max-height with internal scrolling gives
+   * the user a way to read the full think text without
+   * having to scroll the whole chat panel. 50vh is
+   * enough for ~30 lines of think text at 12.5px;
+   * anything longer gets its own scrollbar.
+   *
+   * `overflow: auto` (not `hidden`) is required so the
+   * browser shows a scrollbar when the content
+   * overflows — otherwise the user gets the same
+   * "content is invisible" complaint we just fixed. */
+  max-height: 50vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

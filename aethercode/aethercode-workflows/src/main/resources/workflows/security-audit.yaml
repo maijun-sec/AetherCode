@@ -1,0 +1,68 @@
+# Security audit workflow (Phase 2.1 / spec.md §11.1).
+# Walks the project looking for common vulnerability classes and
+# reports each finding with a CWE id, file:line, and a fix recipe.
+version: 1
+name: security-audit
+description: |
+  Run a security audit on the project. Look for common vulnerability
+  classes (input validation, injection, broken auth, hard-coded
+  secrets, unsafe deserialisation, SSRF, race conditions) and report
+  each finding as a CWE-tagged item with a fix recipe.
+inputs:
+  focus:
+    type: enum
+    values: [all, web, cli, library, data-pipeline, mobile]
+    required: false
+    default: all
+    description: "Where to focus the audit."
+  depth:
+    type: enum
+    values: [quick, standard, deep]
+    required: false
+    default: standard
+    description: "How thorough the audit should be."
+  output:
+    type: enum
+    values: [inline, file]
+    required: false
+    default: inline
+    description: "Where to put the report."
+skills:
+  - security-audit
+  - cwe-classifier
+prompts:
+  - role: system
+    content: |
+      You are a security auditor. You will walk the project, identify
+      vulnerability patterns, and report each finding as a CWE-tagged
+      item. The report must include:
+        - CWE id (e.g. CWE-89, CWE-79, CWE-22)
+        - Severity (low / medium / high / critical)
+        - File:line
+        - A short description of the issue
+        - A concrete fix recipe
+        - Confidence (low / medium / high)
+
+      Bias toward high-confidence findings. False positives are
+      expensive; missing a real issue is worse, but only call out
+      things you actually saw in the code.
+  - role: user
+    content: |
+      Working directory: {{cwd}}
+      Today: {{date}}
+      OS: {{os}}
+      Focus area: {{inputs.focus}}
+      Audit depth: {{inputs.depth}}
+      Output: {{inputs.output}}
+todos:
+  - "Map the project: identify entrypoints, data flow, and trust boundaries"
+  - "Scan for input validation issues (CWE-20, CWE-89, CWE-79, CWE-78, ...)"
+  - "Scan for authentication / authorization issues (CWE-285, CWE-287, CWE-862, ...)"
+  - "Scan for secrets and unsafe storage (CWE-798, CWE-312, ...)"
+  - "Scan for unsafe deserialisation, SSRF, race conditions (CWE-502, CWE-918, CWE-362, ...)"
+  - "Write the report at {{inputs.output}}"
+limits:
+  wallClockMs: 14400000
+  tokens: 6000000
+  calls: 300
+  fileWrites: 5000

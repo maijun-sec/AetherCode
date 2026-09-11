@@ -1,0 +1,140 @@
+# AetherCode — Java + TS test (T-504).
+#
+# Runs the full test suite for both languages. The Java side
+# uses Maven Surefire; the TS side uses pnpm -r test (vitest
+# for aethercode-memory, aethercode-compact, aethercode-themes,
+# aethercode-desktop; node --test for aethercode-tui).
+#
+# The matrix is intentionally one job per language so a test
+# failure on one side doesn't mask the other side's green
+# status.
+
+name: test
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: "21"
+  NODE_VERSION: "20"
+  MAVEN_OPTS: "-Xmx2g -Xms512m"
+
+jobs:
+  # ----------------------------------------------------------------
+  # Java core — full test suite
+  # ----------------------------------------------------------------
+  java-test:
+    name: Java · test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: aethercode/**/pom.xml
+
+      # Run the whole tree, including the new T-500
+      # cross-cutting test class
+      # (org.aethercode.protocol.methods.CrossCuttingMethodsT500Test).
+      - name: Run all tests
+        working-directory: aethercode
+        run: mvn -B -ntp test
+
+      # Surface the new-method test by name so a regression
+      # in T-500 is loud in the CI summary.
+      - name: Pin T-500 cross-cutting test
+        working-directory: aethercode
+        run: mvn -B -ntp -Dtest=CrossCuttingMethodsT500Test -pl aethercode-protocol test
+
+      - name: Pin R124 METHOD_TAGS contract
+        working-directory: aethercode
+        run: mvn -B -ntp -Dtest=AetherCodeMethodsR124Test -pl aethercode-protocol test
+
+      # Permission + Tasks were the two existing new-RPC
+      # families; pin them so a refactor that drops their
+      # registration is caught.
+      - name: Pin Permission + Task methods
+        working-directory: aethercode
+        run: |
+          mvn -B -ntp -Dtest=PermissionMethodsTest -pl aethercode-protocol test
+          mvn -B -ntp -Dtest=TaskMethodsTest       -pl aethercode-protocol test
+
+      - name: Publish Surefire report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-surefire-reports
+          path: aethercode/**/target/surefire-reports
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ----------------------------------------------------------------
+  # TypeScript modules — vitest + node --test
+  # ----------------------------------------------------------------
+  ts-test:
+    name: TS · test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.12.0
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Run all TS tests
+        run: pnpm -r --workspace-concurrency=2 test
+
+      - name: Vitest coverage (memory)
+        if: always()
+        run: pnpm --filter aethercode-memory test -- --reporter=default || true
+
+      - name: Publish TS test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-test-output
+          path: |
+            aethercode-memory/coverage
+            aethercode-compact/coverage
+            aethercode-themes/coverage
+            aethercode-tui/dist/test
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Phase 6 (T-505, T-506): run the perf benchmarks
+      # so a regression in TUI frame budget or LLM
+      # round-trip p99 fails CI loudly. The bench scripts
+      # already exit non-zero on a budget breach.
+      - name: Run TUI frame budget benchmark (T-505)
+        run: node scripts/bench-tui.mjs
+
+      - name: Run LLM round-trip benchmark (T-506)
+        run: node scripts/bench-llm.mjs
+
+      # Phase 6 final: E2E smoke test (T-500..T-510).
+      # Verifies the workspace, RPC registration, TUI
+      # components, security helper, perf budgets.
+      - name: Run E2E smoke test
+        run: node scripts/smoke-test.mjs

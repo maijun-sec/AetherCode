@@ -1,0 +1,175 @@
+/* R82+ Issue 2: turn-grouped execution log. The old CSS was
+   flat-row oriented; we now have collapsible turn cards with
+   nested tool steps. */
+
+.trace-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 11px;
+}
+
+.trace-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 8px 0;
+  text-align: center;
+}
+
+.trace-items {
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* Each turn is a card that expands on click. The collapsed row
+   is one line: status · title · duration. The expanded view
+   shows the individual tool steps + an optional "show raw"
+   JSON panel. */
+.turn {
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+  border-radius: 5px;
+  margin: 0 0 6px 0;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+.turn:hover { border-color: var(--accent, #5da9ff); }
+.turn-status-error { border-color: rgba(244, 135, 113, 0.35); }
+.turn-status-running { border-style: dashed; }
+
+.turn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.turn-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex: 0 0 14px;
+  font-size: 11px;
+}
+.turn-status-ok    .turn-icon { color: var(--success, #6cc28b); }
+.turn-status-error .turn-icon { color: var(--error, #f48771); }
+.turn-status-running .turn-icon { color: var(--accent, #5da9ff); }
+
+.turn-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.turn-title {
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.turn-sub {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.turn-dur {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  flex: 0 0 auto;
+}
+
+.turn-detail {
+  border-top: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+  padding: 6px 8px 8px 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.turn-time {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.turn-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 10px;
+  padding: 4px 0;
+}
+
+.turn-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 4px 0;
+}
+.turn-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.turn-step:hover { background: var(--bg-input); }
+.step-icon {
+  width: 10px;
+  text-align: center;
+  font-weight: 600;
+  flex: 0 0 10px;
+  font-size: 10px;
+}
+.step-status-ok    .step-icon { color: var(--success, #6cc28b); }
+.step-status-error .step-icon { color: var(--error, #f48771); }
+.step-status-running .step-icon { color: var(--accent, #5da9ff); }
+.step-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.step-dur {
+  color: var(--text-dim);
+  font-size: 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  flex: 0 0 auto;
+}
+
+.turn-debug-row {
+  margin-top: 4px;
+}
+.turn-debug-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+}
+.turn-debug-btn:hover { color: var(--accent, #5da9ff); }
+
+/* Raw JSON panel — kept for debugging, hidden by default. */
+.trace-detail.mono {
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+  border-radius: 3px;
+  font-size: 10px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-dim);
+}

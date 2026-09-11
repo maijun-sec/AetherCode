@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>aethercode-sdk</artifactId>
+    <name>AetherCode SDK</name>
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-engine-springai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-tools</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-permission</artifactId>
+        </dependency>
+        <!-- R98: SDK uses the permission matrix type in the Builder. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-prompts</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-hooks</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-compact</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-tasks</artifactId>
+        </dependency>
+        <dependency>
+            <!-- R19-B: SDK wires MemoryRecall into the per-query system prompt. -->
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-memory</artifactId>
+        </dependency>
+        <dependency>
+            <!-- R132: SDK exposes the McpManager so the engine
+                 builder / setter can plug in the live MCP client
+                 registry. The dep is intentionally light: the
+                 SDK only needs the type, not the whole
+                 transport layer (which is in aethercode-mcp's
+                 stdio / sse / socket / ws subpackages). -->
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>

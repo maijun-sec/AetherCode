@@ -1,0 +1,492 @@
+/* ======================================================================
+ * chat.css — prior round: Cursor / Claude Code style chat cards.
+ *
+ * The five chat sub-components (SummaryFooter, ToolCallCard,
+ * FileDiffCard, PlanCard, SubagentSpawnCard) all share the same
+ * surface language: white card, hairline border, 8-12px radius,
+ * left-edge accent for status, gentle shadow. Their collapsed
+ * head is a single row with icon / title / pill / chevron;
+ * their expanded body is the rich content (args list, diff
+ * lines, plan steps, …).
+ *
+ * Colors are read from the chat-scoped variables (--chat-*,
+ * --chat-surface, --chat-divider, etc.) declared in App.css.
+ * ====================================================================== */
+
+/* ----------------------------------------------------------------------
+ * SummaryFooter — T-4-11
+ * -------------------------------------------------------------------- */
+.summary-footer {
+  border: 1px solid var(--chat-divider);
+  background: var(--chat-surface);
+  border-radius: 10px;
+  margin: 8px 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.summary-footer-missing {
+  border-style: dashed;
+  opacity: 0.9;
+}
+.summary-footer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--chat-text-muted);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.summary-footer-icon { font-size: 12px; }
+.summary-footer-title { font-weight: 600; color: var(--chat-text); }
+.summary-footer-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+.summary-footer-badge-pending {
+  background: var(--chat-warning-soft);
+  color: var(--chat-warning);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+}
+.summary-footer-badge-failed {
+  background: var(--chat-error-soft);
+  color: var(--chat-error);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+}
+.summary-footer-badge-missing {
+  background: var(--chat-surface-2);
+  color: var(--chat-text-muted);
+  border: 1px solid var(--chat-divider);
+}
+.summary-footer-body {
+  color: var(--chat-text);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.summary-footer-pending {
+  font-style: italic;
+  color: var(--chat-text-muted);
+}
+.summary-footer-fallback {
+  color: var(--chat-text);
+  opacity: 0.85;
+}
+
+/* ----------------------------------------------------------------------
+ * ToolCallCard — T-4-12
+ * -------------------------------------------------------------------- */
+.tool-call-card {
+  border: 1px solid var(--chat-divider);
+  border-radius: 10px;
+  margin: 6px 0;
+  background: var(--chat-surface);
+  font-size: 12.5px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 120ms ease;
+}
+.tool-call-card:hover { border-color: rgba(99, 102, 241, 0.45); }
+
+.tool-call-card-error {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+.tool-call-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--chat-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease;
+}
+.tool-call-card-head:hover { background: var(--chat-accent-soft); }
+.tool-call-card-icon { font-size: 12px; }
+.tool-call-card-name { font-weight: 600; }
+.tool-call-card-category {
+  font-size: 10px;
+  color: var(--chat-text-muted);
+  font-family: ui-monospace, monospace;
+  padding: 1px 6px;
+  background: var(--chat-surface-2);
+  border-radius: 4px;
+  border: 1px solid var(--chat-divider);
+}
+.tool-call-card-risk {
+  font-size: 9.5px;
+  font-family: ui-monospace, monospace;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  margin-left: auto;
+}
+.tool-call-card-toggle {
+  margin-left: 8px;
+  color: var(--chat-text-muted);
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.tool-call-card-body {
+  padding: 10px 14px 12px 14px;
+  border-top: 1px solid var(--chat-divider);
+  background: var(--chat-surface-2);
+}
+.tool-call-card-section { margin-bottom: 10px; }
+.tool-call-card-section:last-child { margin-bottom: 0; }
+.tool-call-card-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--chat-text-muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.tool-call-card-duration {
+  font-family: ui-monospace, monospace;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--chat-text-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+.tool-call-card-args { margin: 0; padding: 0; }
+.tool-call-card-arg-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  font-size: 11.5px;
+  padding: 2px 0;
+  align-items: start;
+}
+.tool-call-card-arg-key {
+  font-family: ui-monospace, monospace;
+  color: var(--chat-text-muted);
+  font-weight: 500;
+}
+.tool-call-card-arg-val {
+  color: var(--chat-text);
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.tool-call-card-result {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+  white-space: pre-wrap;
+  max-height: 280px;
+  overflow: auto;
+  color: var(--chat-text);
+  line-height: 1.5;
+}
+.tool-call-card-result-error {
+  color: var(--chat-error);
+  background: var(--chat-error-soft);
+  border-color: rgba(239, 68, 68, 0.30);
+}
+.tool-call-card-result-expand {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--chat-text-muted);
+}
+.tool-call-card-consent-pill {
+  display: inline-block;
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: ui-monospace, monospace;
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
+  border: 1px solid rgba(99, 102, 241, 0.30);
+  font-weight: 500;
+}
+.tool-call-card-risk-low { background: var(--chat-success-soft); }
+.tool-call-card-risk-medium { background: var(--chat-warning-soft); }
+.tool-call-card-risk-high { background: rgba(251, 146, 60, 0.15); }
+.tool-call-card-risk-critical { background: var(--chat-error-soft); }
+
+/* ----------------------------------------------------------------------
+ * FileDiffCard — T-4-13
+ * -------------------------------------------------------------------- */
+.file-diff-card {
+  border: 1px solid var(--chat-divider);
+  border-radius: 10px;
+  margin: 6px 0;
+  background: var(--chat-surface);
+  font-size: 12.5px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.file-diff-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--chat-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease;
+}
+.file-diff-card-head:hover { background: var(--chat-accent-soft); }
+.file-diff-card-icon { font-size: 12px; }
+.file-diff-card-path { font-family: ui-monospace, monospace; font-weight: 500; }
+.file-diff-card-add {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--chat-success);
+  padding: 1px 6px;
+  background: var(--chat-success-soft);
+  border-radius: 4px;
+  font-weight: 600;
+}
+.file-diff-card-del {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--chat-error);
+  padding: 1px 6px;
+  background: var(--chat-error-soft);
+  border-radius: 4px;
+  font-weight: 600;
+}
+.file-diff-card-toggle {
+  margin-left: auto;
+  color: var(--chat-text-muted);
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+}
+.file-diff-card-body {
+  border-top: 1px solid var(--chat-divider);
+  background: var(--chat-surface-2);
+  padding: 6px 10px 10px 10px;
+}
+.file-diff-card-pre {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--chat-text);
+}
+.file-diff-card-line { white-space: pre; padding: 0 4px; }
+.file-diff-card-line-add { background: var(--chat-success-soft); color: var(--chat-success); }
+.file-diff-card-line-del { background: var(--chat-error-soft); color: var(--chat-error); }
+.file-diff-card-line-meta { color: var(--chat-text-muted); }
+.file-diff-card-line-ctx { color: var(--chat-text); }
+.file-diff-card-empty {
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  font-style: italic;
+  padding: 6px 0;
+}
+.file-diff-card-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.file-diff-card-copy {
+  font-size: 10.5px;
+  padding: 3px 10px;
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-divider);
+  border-radius: 6px;
+  color: var(--chat-text);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  transition: all 100ms ease;
+}
+.file-diff-card-copy:hover {
+  background: var(--chat-accent-soft);
+  border-color: var(--chat-accent);
+  color: var(--chat-accent);
+}
+
+/* ----------------------------------------------------------------------
+ * PlanCard — T-4-14
+ * -------------------------------------------------------------------- */
+.plan-card {
+  border: 1px solid var(--chat-divider);
+  border-radius: 10px;
+  margin: 6px 0;
+  background: var(--chat-surface);
+  font-size: 12.5px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.plan-card-done {
+  opacity: 0.85;
+  border-style: dashed;
+}
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--chat-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease;
+}
+.plan-card-head:hover { background: var(--chat-accent-soft); }
+.plan-card-icon { font-size: 12px; }
+.plan-card-title { font-weight: 600; }
+.plan-card-done-pill {
+  font-size: 9.5px;
+  font-family: ui-monospace, monospace;
+  padding: 2px 8px;
+  background: var(--chat-success-soft);
+  color: var(--chat-success);
+  border: 1px solid rgba(16, 185, 129, 0.40);
+  border-radius: 999px;
+  font-weight: 600;
+}
+.plan-card-toggle {
+  margin-left: auto;
+  color: var(--chat-text-muted);
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+}
+.plan-card-steps {
+  margin: 0;
+  padding: 8px 14px 12px 40px;
+  list-style: decimal;
+  border-top: 1px solid var(--chat-divider);
+  background: var(--chat-surface-2);
+  color: var(--chat-text);
+}
+.plan-card-step {
+  padding: 3px 0;
+  color: var(--chat-text);
+  line-height: 1.55;
+  font-size: 13px;
+}
+.plan-card-step-empty { font-style: italic; color: var(--chat-text-muted); }
+.plan-card-step-num {
+  font-family: ui-monospace, monospace;
+  color: var(--chat-text-muted);
+  margin-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.plan-card-step-text { white-space: pre-wrap; }
+
+/* ----------------------------------------------------------------------
+ * SubagentSpawnCard — T-4-15
+ * -------------------------------------------------------------------- */
+.subagent-spawn-card {
+  border: 1px solid var(--chat-divider);
+  border-radius: 10px;
+  background: var(--chat-surface);
+  margin: 6px 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.subagent-spawn-card.open { border-color: rgba(99, 102, 241, 0.45); }
+.subagent-spawn-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--chat-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease;
+}
+.subagent-spawn-header:hover { background: var(--chat-accent-soft); }
+.subagent-spawn-icon { font-size: 12px; color: var(--chat-accent); }
+.subagent-spawn-role {
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+  color: var(--chat-accent);
+}
+.subagent-spawn-id {
+  font-family: ui-monospace, monospace;
+  color: var(--chat-text-muted);
+  font-size: 11.5px;
+}
+.subagent-spawn-status {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+}
+.subagent-spawn-status-spawned  { background: var(--chat-accent-soft); color: var(--chat-accent); border: 1px solid rgba(99, 102, 241, 0.30); }
+.subagent-spawn-status-running  { background: var(--chat-success-soft); color: var(--chat-success); border: 1px solid rgba(16, 185, 129, 0.30); }
+.subagent-spawn-status-done     { background: var(--chat-success-soft); color: var(--chat-success); border: 1px solid rgba(16, 185, 129, 0.30); }
+.subagent-spawn-status-failed   { background: var(--chat-error-soft); color: var(--chat-error); border: 1px solid rgba(239, 68, 68, 0.30); }
+.subagent-spawn-caret { color: var(--chat-text-muted); font-size: 11px; }
+.subagent-spawn-body {
+  padding: 10px 14px 12px 14px;
+  border-top: 1px solid var(--chat-divider);
+  background: var(--chat-surface-2);
+  color: var(--chat-text);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.subagent-spawn-body p { margin: 0 0 8px 0; }
+.subagent-spawn-link {
+  background: var(--chat-accent);
+  color: white;
+  border: 1px solid var(--chat-accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  transition: background 100ms ease;
+}
+.subagent-spawn-link:hover { background: var(--chat-accent-hover, #4f46e5); }

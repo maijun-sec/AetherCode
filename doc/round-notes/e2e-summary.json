@@ -1,0 +1,38 @@
+{
+  "total": 13,
+  "pass": 13,
+  "fail": 0,
+  "by_group": {
+    "skill-e2e": {
+      "pass": 5,
+      "fail": 0,
+      "cases": [
+        "install_reverse_skill",
+        "listSkills_includes_new_skill",
+        "writeWorkflow_invoke_skill",
+        "runWorkflow_invoke_skill",
+        "side_note_references_skill"
+      ]
+    },
+    "mcp-e2e": {
+      "pass": 4,
+      "fail": 0,
+      "cases": [
+        "listTools_includes_mcp_echo",
+        "reloadRegistries_includes_mcp",
+        "query_calls_mcp_tool",
+        "query_output_contains_reversed_string"
+      ]
+    },
+    "workflow-e2e": {
+      "pass": 4,
+      "fail": 0,
+      "cases": [
+        "writeWorkflow_combo",
+        "shell_step_wrote_marker",
+        "workflow_steps_all_referenced",
+        "workflow_reaches_terminal_state"
+      ]
+    }
+  }
+}

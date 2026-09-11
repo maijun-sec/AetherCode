@@ -1,0 +1,85 @@
+.end-of-task-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin: 0.5rem 0.75rem 0.5rem 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(72, 199, 142, 0.45);
+  background: linear-gradient(180deg, rgba(72, 199, 142, 0.08) 0%, rgba(72, 199, 142, 0.04) 100%);
+  border-radius: 8px;
+  animation: end-of-task-in 220ms ease-out;
+  position: relative;
+}
+
+.end-of-task-icon {
+  font-size: 1.4rem;
+  color: rgb(72, 199, 142);
+  line-height: 1;
+  flex-shrink: 0;
+  padding-top: 0.05rem;
+}
+
+.end-of-task-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.end-of-task-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary, #ddd);
+  margin-bottom: 0.25rem;
+}
+
+.end-of-task-summary {
+  font-size: 0.85rem;
+  color: var(--text-secondary, #aaa);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.end-of-task-bytool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.end-of-task-tool-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  background: rgba(72, 199, 142, 0.15);
+  color: rgb(120, 220, 170);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.end-of-task-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #888);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: background-color 120ms ease;
+}
+
+.end-of-task-close:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #ddd);
+}
+
+@keyframes end-of-task-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -1,0 +1,26 @@
+# Test baseline shipped in src/test/resources. Mirrors the real
+# providers.yaml's shape but with a minimal catalogue so the
+# ModelRegistryTest can assert specific merge behaviour without
+# depending on the (slower-to-edit) real file.
+providers:
+  - name: anthropic
+    models:
+      - name: claude-test-small
+        displayName: "Claude Test Small"
+        contextWindow: 100000
+        maxOutput: 8000
+        capabilities: [tools]
+        pricing:
+          inputPerMTokensUsd: 1.0
+          outputPerMTokensUsd: 2.0
+          cachedPerMTokensUsd: 0.1
+  - name: stub
+    models:
+      - name: stub-only
+        contextWindow: 1000
+        maxOutput: 500
+        capabilities: [tools]
+        pricing:
+          inputPerMTokensUsd: 0.5
+          outputPerMTokensUsd: 1.0
+          cachedPerMTokensUsd: 0.0

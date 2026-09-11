@@ -1,0 +1,304 @@
+package org.aethercode.core.providers;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * in-memory index of every
+ * {@link ProviderSpec} AetherCode can talk to.
+ *
+ * <p>Loaded from {@code <userHome>/.aethercode/providers.yaml}
+ * (or any explicit path passed to the constructor).
+ * When the file is missing, the registry falls back
+ * to a sensible default set: {@code minmax}
+ * (the original target), plus {@code glm}, {@code qwen},
+ * {@code deepseek} — these are the Chinese brands the
+ * user has on their shortlist. Foreign brands
+ * ({@code anthropic}, {@code openai}, {@code gemini})
+ * are listed but documented as
+ * "unverified — bring your own tests".
+ *
+ * <p>The registry is the source of truth for the
+ * desktop's Settings provider picker; the daemon
+ * exposes the list via the {@code listProviders} RPC.
+ *
+ * <p>For tests, construct an instance directly with
+ * {@link #ProviderRegistry(List)} (in-memory).
+ */
+public final class ProviderRegistry {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ProviderRegistry.class);
+
+    private final Map<String, ProviderSpec> byName;
+
+    private ProviderRegistry(Map<String, ProviderSpec> byName) {
+        this.byName = Map.copyOf(byName);
+    }
+
+    /** In-memory registry from a list of specs. The
+     *  first spec whose name matches a later one
+     *  wins (so a user override in providers.yaml
+     *  beats a bundled default). */
+    public ProviderRegistry(List<ProviderSpec> specs) {
+        this.byName = index(specs);
+    }
+
+    /** Load from a YAML file. Missing file → bundled
+     *  defaults (the four Chinese brands the user
+     *  signed off on, plus the foreign brands as
+     *  "untested"). Malformed YAML → empty list +
+     *  a warning log; the renderer falls back to a
+     *  "no providers" empty state. */
+    public static ProviderRegistry loadFrom(Path yamlFile) {
+        if (yamlFile == null || !Files.exists(yamlFile)) {
+            LOG.info("providers.yaml not found at {} — using bundled defaults", yamlFile);
+            return new ProviderRegistry(bundledDefaults());
+        }
+        try {
+            String raw = Files.readString(yamlFile);
+            return parse(raw);
+        } catch (IOException e) {
+            LOG.warn("failed to read providers.yaml at {}: {} — using empty registry",
+                    yamlFile, e.getMessage());
+            return new ProviderRegistry(List.of());
+        }
+    }
+
+    /** Parse from a raw YAML string. Public for
+     *  tests; the file-based loadFrom is the
+     *  normal path. */
+    public static ProviderRegistry parse(String yaml) {
+        if (yaml == null || yaml.isBlank()) {
+            return new ProviderRegistry(List.of());
+        }
+        try {
+            ObjectMapper om = new ObjectMapper(new YAMLFactory());
+            YamlShape shape = om.readValue(yaml, YamlShape.class);
+            List<ProviderSpec> specs = new ArrayList<>();
+            if (shape != null && shape.providers != null) {
+                for (ProviderYaml py : shape.providers) {
+                    specs.add(py.toSpec());
+                }
+            }
+            return new ProviderRegistry(specs);
+        } catch (Exception e) {
+            LOG.warn("failed to parse providers.yaml: {}", e.getMessage());
+            return new ProviderRegistry(List.of());
+        }
+    }
+
+    public List<ProviderSpec> list() {
+        return List.copyOf(byName.values());
+    }
+
+    public Optional<ProviderSpec> get(String name) {
+        if (name == null) return Optional.empty();
+        return Optional.ofNullable(byName.get(name));
+    }
+
+    /** The first provider in the list — used when
+     *  no explicit provider was chosen. The bundled
+     *  default is {@code minmax} (the project's
+     *  original target); a custom providers.yaml
+     *  can override by listing their preferred
+     *  provider first. */
+    public Optional<ProviderSpec> defaultProvider() {
+        if (byName.isEmpty()) return Optional.empty();
+        return Optional.of(byName.values().iterator().next());
+    }
+
+    private static Map<String, ProviderSpec> index(List<ProviderSpec> specs) {
+        // LinkedHashMap to preserve insertion order
+        // (matters for defaultProvider).
+        Map<String, ProviderSpec> out = new LinkedHashMap<>();
+        for (ProviderSpec p : specs) {
+            // Later wins on collision (so a user
+            // override in providers.yaml beats the
+            // bundled default of the same name).
+            out.put(p.name(), p);
+        }
+        return out;
+    }
+
+    // ---- YAML shape ----
+
+    /** Internal type for YAML deserialisation. The
+     *  on-the-wire shape is one level deep:
+     *  {@code providers: [{name, type, baseUrl, ...}]}. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class YamlShape {
+        public List<ProviderYaml> providers;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class ProviderYaml {
+        public String name;
+        public String type;
+        public String baseUrl;
+        public String apiKeyEnv;
+        public String defaultModel;
+        public List<ModelYaml> models;
+
+        ProviderSpec toSpec() {
+            List<ModelSpec> ms = new ArrayList<>();
+            if (models != null) {
+                for (ModelYaml my : models) {
+                    int out = my.maxOutput != null && my.maxOutput > 0
+                            ? my.maxOutput
+                            : my.context;  // conservative default
+                    ms.add(new ModelSpec(
+                            my.id,
+                            my.inputPer1k,
+                            my.outputPer1k,
+                            my.context,
+                            out,
+                            Boolean.TRUE.equals(my.isDefault)));
+                }
+            }
+            return new ProviderSpec(
+                    name, type, baseUrl,
+                    apiKeyEnv, defaultModel, ms);
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class ModelYaml {
+        public String id;
+        public double inputPer1k;
+        public double outputPer1k;
+        public int context;
+        /** R136.4: max output tokens the model supports.
+         *  Optional in YAML; if absent, defaults to
+         *  {@code context} (the conservative ceiling). */
+        public Integer maxOutput;
+        /** YAML key "default" is a Java reserved word;
+         *  {@link JsonProperty} maps the wire name
+         *  to this field. The field name itself is
+         *  the Java-idiomatic {@code isDefault}. */
+        @JsonProperty("default")
+        public Boolean isDefault;
+    }
+
+    // ---- Bundled defaults ----
+
+    /** Sensible default provider set. The user can
+     *  override any of these by writing
+     *  {@code ~/.aethercode/providers.yaml}. Foreign
+     *  brands are listed but their pricing is a
+     *  best-effort estimate — AetherCode doesn't run
+     *  a real test against them, the user is on
+     *  their own. */
+    public static List<ProviderSpec> bundledDefaults() {
+        List<ProviderSpec> out = new ArrayList<>();
+        // minmax — the project's original target.
+        // M3 is the bundled default. M3 is
+        // the only model in this set that actually
+        // drives tool calls reliably — the previous
+        // default MiniMax-Text-01 hallucinates tool
+        // calls in markdown (describes `file_write`
+        // payloads inside ```json blocks instead of
+        // issuing the wire-format tool_use message),
+        // which surfaces to the user as "the task
+        // failed silently". Text-01 is still listed
+        // for users who want it, just not as default.
+        out.add(new ProviderSpec(
+                "minmax", "openai-compat",
+                "https://api.minimaxi.com/v1",
+                "MINIMAX_API_KEY",
+                "MiniMax-M3",
+                List.of(
+                        // R136.4: MiniMax M3 family advertises 1M context
+                        // and 512K output (API guarantees at least 512K
+                        // available, max output 512K). Pin both so the
+                        // chat-completion `max_tokens` param doesn't cap
+                        // the model at 1024 like the R15 hardcoded default.
+                        new ModelSpec("MiniMax-M3",       0.001, 0.008, 1_000_000, 512_000, true),
+                        new ModelSpec("MiniMax-Text-01",  0.001, 0.008, 1_000_000, 512_000, false),
+                        new ModelSpec("MiniMax-M1",       0.001, 0.008, 1_000_000, 512_000, false)
+                )));
+        // glm (智谱)
+        out.add(new ProviderSpec(
+                "glm", "openai-compat",
+                "https://open.bigmodel.cn/api/paas/v4",
+                "GLM_API_KEY",
+                "glm-4-plus",
+                List.of(
+                        new ModelSpec("glm-4-plus",  0.0007, 0.0007, 128_000, 128_000, true),
+                        new ModelSpec("glm-4-air",  0.0001, 0.0001, 128_000, 128_000, false),
+                        new ModelSpec("glm-4-flash", 0.0001, 0.0001, 128_000, 128_000, false)
+                )));
+        // qwen (通义千问, DashScope OpenAI-compat)
+        out.add(new ProviderSpec(
+                "qwen", "openai-compat",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "DASHSCOPE_API_KEY",
+                "qwen-plus",
+                List.of(
+                        new ModelSpec("qwen-plus",      0.0008, 0.002, 128_000, 128_000, true),
+                        new ModelSpec("qwen-turbo",     0.0003, 0.0006, 1_000_000, 1_000_000, false),
+                        new ModelSpec("qwen-max",       0.0002, 0.0006, 128_000, 128_000, false),
+                        new ModelSpec("qwen-coder-plus", 0.0008, 0.002, 128_000, 128_000, false)
+                )));
+        // deepseek
+        out.add(new ProviderSpec(
+                "deepseek", "openai-compat",
+                "https://api.deepseek.com",
+                "DEEPSEEK_API_KEY",
+                "deepseek-chat",
+                List.of(
+                        new ModelSpec("deepseek-chat",     0.00027, 0.0011, 64_000, 64_000, true),
+                        new ModelSpec("deepseek-reasoner", 0.00055, 0.00219, 64_000, 64_000, false)
+                )));
+        // Foreign brands — listed, untested.
+        // AetherCode doesn't run a real test against
+        // these. The user provides the API key; if
+        // the upstream API changes shape, things
+        // break silently. Output ceilings use the
+        // published vendor numbers.
+        out.add(new ProviderSpec(
+                "anthropic", "openai-compat",
+                "https://api.anthropic.com/v1",
+                "ANTHROPIC_API_KEY",
+                "claude-sonnet-4-5",
+                List.of(
+                        ModelSpec.free("claude-sonnet-4-5", 200_000, 64_000),
+                        ModelSpec.free("claude-opus-4-1",   200_000, 64_000),
+                        ModelSpec.free("claude-haiku-4-5",  200_000, 64_000)
+                )));
+        out.add(new ProviderSpec(
+                "openai", "openai-compat",
+                "https://api.openai.com/v1",
+                "OPENAI_API_KEY",
+                "gpt-4o",
+                List.of(
+                        ModelSpec.free("gpt-4o",      128_000, 16_384),
+                        ModelSpec.free("gpt-4o-mini", 128_000, 16_384),
+                        ModelSpec.free("o1",         200_000, 100_000),
+                        ModelSpec.free("o3-mini",    200_000, 100_000)
+                )));
+        out.add(new ProviderSpec(
+                "gemini", "openai-compat",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "GEMINI_API_KEY",
+                "gemini-2.5-pro",
+                List.of(
+                        ModelSpec.free("gemini-2.5-pro",   1_000_000, 64_000),
+                        ModelSpec.free("gemini-2.5-flash", 1_000_000, 64_000)
+                )));
+        return Collections.unmodifiableList(out);
+    }
+}

@@ -1,0 +1,90 @@
+.settings-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.settings-panel { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; width: 480px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column; user-select: none; }
+.settings-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.settings-header h2 { font-size: 16px; font-weight: 600; }
+.settings-close { background: transparent; border: none; font-size: 22px; line-height: 1; padding: 0 8px; color: var(--text-dim); cursor: pointer; }
+.settings-close:hover { color: var(--text); }
+.settings-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; flex: 1; overflow-y: auto; }
+.settings-field { display: flex; flex-direction: column; gap: 6px; }
+.settings-field > span { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.3px; }
+.settings-field select, .settings-field input { width: 100%; }
+.settings-error { color: var(--error); font-size: 12px; padding: 8px 12px; background: rgba(244, 135, 113, 0.1); border-radius: 4px; }
+/* restart-daemon button. Reddish to make
+   the user double-check the confirm() before
+   clicking. Sits next to the auto-restart
+   supervisor toggle in the Advanced section. */
+.settings-restart-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(244, 135, 113, 0.15);
+  color: var(--text-primary, #ddd);
+  border: 1px solid rgba(244, 135, 113, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 120ms ease;
+}
+.settings-restart-btn:hover { background: rgba(244, 135, 113, 0.25); }
+
+/* loop-detection field group. The section
+ * has a master checkbox + two sliders instead of
+ * the usual <select> dropdown — the inline
+ * variants flatten the layout so the two sliders
+ * sit side-by-side with the checkbox on a single
+ * column. The slider itself is the standard
+ * <input type="range">; we just label it cleanly
+ * and keep the value <code> for the tabular
+ * read-out. */
+.settings-field-group {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+.settings-field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.settings-field-inline input[type="range"] {
+  flex: 1;
+  cursor: pointer;
+}
+.settings-field-inline input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.settings-field-inline input[type="checkbox"] {
+  width: auto !important;
+  margin: 0;
+}
+.settings-slider-label {
+  min-width: 110px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.settings-slider-label code {
+  font-family: ui-monospace, monospace;
+  color: var(--accent, #4ea3ff);
+  font-size: 12px;
+  background: rgba(78, 163, 255, 0.10);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+/* small grey hint under a settings field.
+   Used by the concurrency-profile dropdown to show
+   "1q / 4t / 2b in flight" alongside the current
+   selection. */
+.settings-hint {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-feature-settings: 'tnum';
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.settings-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }

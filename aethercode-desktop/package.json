@@ -1,0 +1,43 @@
+{
+    "name":  "aethercode-desktop",
+    "version":  "0.2.34",
+    "private":  true,
+    "description":  "AetherCode Desktop App 鈥?local UI for the multi-protocol daemon",
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "vite",
+                    "build":  "tsc -b \u0026\u0026 vite build",
+                    "preview":  "vite preview",
+                    "tauri":  "tauri",
+                    "tauri:dev":  "tauri dev",
+                    "tauri:build":  "tauri build",
+                    "test":  "vitest run",
+                    "test:watch":  "vitest",
+                    "typecheck":  "tsc -b --noEmit"
+                },
+    "dependencies":  {
+                         "@tanstack/react-query":  "^5.102.8",
+                         "@tauri-apps/api":  "^2.0.0",
+                         "@tauri-apps/plugin-dialog":  "^2.0.0",
+                         "@tauri-apps/plugin-shell":  "^2.0.0",
+                         "react":  "^19.0.0",
+                         "react-dom":  "^19.0.0",
+                         "react-markdown":  "^9.1.0",
+                         "react-router-dom":  "^6.30.6",
+                         "remark-gfm":  "^4.0.1",
+                         "zustand":  "^5.0.0"
+                     },
+    "devDependencies":  {
+                            "@tauri-apps/cli":  "^2.0.0",
+                            "@testing-library/jest-dom":  "^6.10.0",
+                            "@testing-library/react":  "^16.3.3",
+                            "@types/node":  "^26.2.0",
+                            "@types/react":  "^19.0.0",
+                            "@types/react-dom":  "^19.0.0",
+                            "@vitejs/plugin-react":  "^4.3.0",
+                            "jsdom":  "^25.0.1",
+                            "typescript":  "~5.7.0",
+                            "vite":  "^6.0.0",
+                            "vitest":  "^2.1.0"
+                        }
+}

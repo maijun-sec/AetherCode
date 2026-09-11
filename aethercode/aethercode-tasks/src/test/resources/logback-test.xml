@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Test-only logback config. Two reasons it exists:
+  1. Keep logs out of System.out so tests that capture the
+     CLI's stdout (e.g. TaskCliTest) can assert on it.
+  2. Silence the noisy DEBUG chatter from SupervisorClient /
+     SupervisorSocket that pollutes the surefire report
+     otherwise.
+-->
+<configuration>
+  <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+    <target>System.err</target>
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Default: INFO and above to stderr. -->
+  <root level="INFO">
+    <appender-ref ref="STDERR" />
+  </root>
+
+  <!-- Specific loggers we want to keep quiet during tests. -->
+  <logger name="org.aethercode.tasks.supervisor.SupervisorClient" level="WARN"/>
+  <logger name="org.aethercode.tasks.supervisor.SupervisorSocket" level="WARN"/>
+  <logger name="org.aethercode.tasks.supervisor.SupervisorProcess" level="WARN"/>
+  <logger name="org.aethercode.tasks.supervisor.AutoRestartPolicy" level="WARN"/>
+  <logger name="org.aethercode.protocol" level="WARN"/>
+</configuration>

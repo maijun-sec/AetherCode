@@ -1,0 +1,117 @@
+/* Agent editor modal. Same overlay
+   pattern as the Settings panel but with
+   full-width fields for the body textarea
+   and a name field that locks in "edit"
+   mode (the on-disk path is fixed). */
+
+.agent-editor-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 110;
+}
+.agent-editor {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 720px;
+  max-width: 95vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+.agent-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.agent-editor-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.agent-editor-close {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.agent-editor-close:hover { color: var(--text); }
+.agent-editor-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  overflow-y: auto;
+}
+.agent-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-editor-field > span {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.agent-editor-field input,
+.agent-editor-field select {
+  width: 100%;
+  background: var(--bg-input, #1f1f23);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.agent-editor-field input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.agent-editor-body-text {
+  width: 100%;
+  background: var(--bg-input, #1a1a1d);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  min-height: 200px;
+}
+.agent-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+.agent-editor-footer-right {
+  display: flex;
+  gap: 8px;
+}
+.agent-editor-delete {
+  background: var(--error, #d74a4a);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.agent-editor-delete:hover { opacity: 0.85; }
+.agent-editor-delete:disabled { opacity: 0.4; cursor: not-allowed; }

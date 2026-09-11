@@ -1,0 +1,47 @@
+.task-list { flex: 1 1 auto; display: flex; flex-direction: column; padding: 8px 14px; min-height: 0; overflow: hidden; }
+.task-filters { display: flex; gap: 4px; }
+.filter-chip { font-size: 9px; text-transform: uppercase; padding: 2px 6px; background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); cursor: pointer; }
+.filter-chip:hover { color: var(--text); }
+.filter-chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* the synthetic "current query" row injected at the top of
+   the task list. It's a different colour from real Subagent
+   tasks so the user can see at a glance that this is the
+   user-driven query, not an internal sub-task. */
+.task-item.task-synthetic {
+  border-left: 2px solid var(--accent, #5da9ff);
+  background: rgba(93, 169, 255, 0.04);
+}
+.task-item.task-synthetic .task-desc {
+  font-weight: 500;
+  color: var(--text);
+}
+.task-step, .task-tool {
+  color: var(--text-dim);
+  font-size: 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.task-step-sep { color: var(--text-dim); margin: 0 4px; opacity: 0.5; }
+.task-empty { padding: 12px 0; font-size: 11px; color: var(--text-dim); font-style: italic; text-align: center; }
+.task-items { list-style: none; margin-top: 4px; overflow-y: auto; flex: 1; min-height: 0; }
+.task-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 2px; }
+.task-item:hover { background: var(--bg-input); }
+.task-item.active { background: var(--bg-input); border-left: 2px solid var(--accent); padding-left: 4px; }
+.task-icon { font-size: 8px; margin-top: 3px; }
+.task-icon.task-status-running { color: var(--accent); }
+.task-icon.task-status-pending { color: var(--warning); }
+.task-icon.task-status-done    { color: var(--success); }
+.task-icon.task-status-failed  { color: var(--error); }
+.task-icon.task-status-cancelled { color: var(--text-dim); }
+.task-info { flex: 1; min-width: 0; }
+.task-desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+.task-meta { display: flex; gap: 6px; align-items: center; font-size: 10px; }
+.task-id { color: var(--text-dim); font-family: ui-monospace, monospace; }
+.task-status-label { text-transform: uppercase; letter-spacing: 0.3px; font-size: 9px; font-weight: 600; }
+.task-status-label.task-status-running { color: var(--accent); }
+.task-status-label.task-status-pending { color: var(--warning); }
+.task-status-label.task-status-done    { color: var(--success); }
+.task-status-label.task-status-failed  { color: var(--error); }
+.task-status-label.task-status-cancelled { color: var(--text-dim); }
+.task-stop { font-size: 11px; padding: 2px 6px; background: transparent; border: 1px solid var(--error); color: var(--error); border-radius: 4px; cursor: pointer; margin-top: 2px; }
+.task-stop:hover { background: var(--error); color: white; }

@@ -1,0 +1,256 @@
+/* Sidebar session stack. Patterned after TaskList so
+   the left panel reads as one consistent system: section
+   header + dense list of rows + primary action. */
+
+.session-list {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 14px 6px 14px;
+  max-height: 40%;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-list .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* bump from 10px → 11px so the "SESSIONS"
+     header is actually legible. The legacy cap of
+     10px was a holdover from the dense IDE-rail
+     aesthetic; the user said the sessions looked
+     "比蚂蚁还要小" (smaller than an ant).
+     R223: bump to 12px so the section label is
+     closer in scale to the 15px session labels. */
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  padding: 6px 0;
+  flex-shrink: 0;
+}
+
+.session-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* bump from 9px → 10px. The 9px count was
+     unreadable at arm's length.
+     R223: bump to 11px to match the bumped meta line. */
+  font-size: 11px;
+  padding: 1px 7px;
+  background: var(--bg-input);
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+
+.session-items {
+  list-style: none;
+  margin: 4px 0 0 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.session-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* bump padding from 6px → 8px so the 14px
+     label (also R222) doesn't crowd the row. The
+     legacy 6px padding was tuned for 12px label
+     text; with 14px it produced a cramped look.
+     R223: bump again to 10px so the 15px label
+     (prior round) has comfortable vertical breathing room. */
+  padding: 10px 10px 10px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  /* bump from 12px → 14px.
+     R223: bump again to 15px. The user said
+     "还是小" afterward's 14px — at 15px the
+     label matches the body font-size in
+     global.css (15px / line-height 1.7) so the
+     left rail and the chat column read as one
+     scale. 16px would crowd the 200px-wide
+     LeftPanel rail (sessions are 4-12 chars long
+     and 16px is a touch big for a list item). */
+  font-size: 15px;
+  margin-bottom: 2px;
+  border-left: 2px solid transparent;
+  user-select: none;
+  position: relative;
+  /* 200ms flash for switch confirmation. The .flash class
+     applies a 200ms background animation; we don't set it
+     here — the React component toggles the class. */
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.session-item:hover {
+  background: var(--bg-input);
+}
+
+.session-item.active {
+  background: var(--bg-input);
+  border-left-color: var(--accent, #5da9ff);
+  padding-left: 6px;  /* compensate for the 2px border */
+}
+
+.session-item.flash {
+  animation: session-flash 220ms ease-out;
+}
+@keyframes session-flash {
+  0%   { background: rgba(93, 169, 255, 0.25); }
+  100% { background: var(--bg-input); }
+}
+
+.session-item.stale {
+  opacity: 0.55;
+}
+
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim, #666);
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.session-dot.dot-current {
+  background: var(--text-dim, #666);
+  /* When this is the current session but idle, we want a
+     visible-but-not-bright dot. A thin ring gives it a
+     "selected" feel without screaming for attention. */
+  box-shadow: 0 0 0 1.5px var(--bg-elevated, #1a1a1a);
+}
+
+.session-dot.dot-active {
+  background: var(--accent, #5da9ff);
+  /* same pulse as step-live-dot so the user's eye finds
+     the active session instantly. */
+  animation: session-pulse 1.2s ease-in-out infinite;
+}
+@keyframes session-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(93, 169, 255, 0.6); }
+  50%      { transform: scale(1.25); box-shadow: 0 0 0 4px rgba(93, 169, 255, 0); }
+}
+
+.session-dot.dot-stale {
+  background: var(--border, #333);
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+  color: var(--text);
+  font-weight: 500;
+  /* bump from 12px → 14px. The 12px label was
+     too small relative to the 16px chat body — the
+     user said the session rows looked "smaller than
+     an ant". 14px matches the chat body size and is
+     the minimum that reads comfortably at default
+     DPI.
+     R223: bump again to 15px. The user said 14px
+     was still "小" (small) after the R222 fix.
+     15px matches global.css's body font-size so the
+     left rail and the chat column read as one
+     scale. */
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.session-item.active .session-label {
+  color: var(--accent, #5da9ff);
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* bump from 10px → 11px.
+     R223: bump to 12px so the timestamp / msg count
+     underneath the 15px label has a clear hierarchy
+     gap (15px label vs 12px meta = 3px diff, not
+     4px which was making them look similar). */
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.session-sep { opacity: 0.5; }
+.session-when { font-variant-numeric: tabular-nums; }
+.session-msg { color: var(--text-dim); opacity: 0.7; }
+
+.session-empty {
+  padding: 10px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+}
+
+.session-new-btn {
+  margin-top: 8px;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px dashed var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 4px;
+  color: var(--text-dim);
+  /* 11px was OK but the row text is now 15px (prior round)
+     and 11px for the new-session button looked like a
+     different component. Bump to 13px so it sits a step
+     below the row label (15px) and a step above the
+     count badge (11px). */
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.session-new-btn:hover {
+  background: var(--bg-input);
+  border-color: var(--accent, #5da9ff);
+  color: var(--accent, #5da9ff);
+  border-style: solid;
+}
+
+/* per-row delete button. Hidden on the active row
+   (the user can't delete the current session — they must
+   switch first). The button is a bare × on the right of
+   the row; it gets a red tint on hover so the destructive
+   action is obvious. The 22×22 box keeps it clickable
+   without dominating the row's height. */
+.session-delete-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  align-self: center;
+  background: transparent;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.10));
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 120ms ease;
+  font-family: inherit;
+}
+.session-item:hover .session-delete-btn {
+  opacity: 1;
+}
+.session-delete-btn:hover {
+  background: rgba(252, 129, 129, 0.15);
+  border-color: rgba(252, 129, 129, 0.55);
+  color: rgba(252, 165, 165, 1);
+}

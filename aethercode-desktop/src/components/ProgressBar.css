@@ -1,0 +1,51 @@
+.progress-bar { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.progress-track { height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.progress-fill.streaming { background: linear-gradient(90deg, var(--accent), var(--success), var(--accent)); background-size: 200% 100%; animation: progress-shimmer 2s linear infinite; }
+@keyframes progress-shimmer { from { background-position: 0% 0; } to { background-position: 200% 0; } }
+.progress-detail { color: var(--text-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* adaptive control indicator. A second, smaller progress
+   bar shows the current sub-task's step count against the
+   soft threshold (15). Colour cue: amber when over 50%, red
+   when over 80%, paused when awaiting user decision. */
+.progress-tuning {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-soft, rgba(255, 255, 255, 0.08));
+  font-size: 10px;
+}
+.progress-tuning-bar {
+  height: 3px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+.progress-tuning-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5da9ff, #6cc28b);
+  transition: width 200ms ease;
+}
+.progress-tuning-subtask .progress-tuning-fill {
+  background: linear-gradient(90deg, #5da9ff, #6cc28b);
+}
+.progress-tuning-query .progress-tuning-fill {
+  background: linear-gradient(90deg, #f4c471, #f4a371);
+}
+.progress-tuning-paused .progress-tuning-fill {
+  background: var(--error, #f48771);
+  animation: context-pulse 2s ease-in-out infinite;
+}
+.progress-tuning-label {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.4;
+}
+.progress-tuning-paused .progress-tuning-label { color: var(--error, #f48771); font-weight: 500; }
+
+@keyframes context-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}

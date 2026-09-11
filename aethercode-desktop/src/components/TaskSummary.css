@@ -1,0 +1,106 @@
+.task-summary { padding: 10px 14px; overflow-y: auto; /* 12px → 14px. The task-summary panel sits at the top-left of the chat; the user opens the app and reads this within the first 5 seconds. The legacy 12px base was the same scale as the metadata chips (10-11px), so the whole panel looked like a wall of micro-text. 14px matches the new global button / input scale (prior round) and reads as one scale with the chat body. */ font-size: 14px; }
+.task-summary-empty { color: var(--text-dim); font-style: italic; padding: 8px 0; }
+.section-header { display: flex; align-items: center; justify-content: space-between; /* 10px → 12px. The "CURRENT SESSION" / section headers are visual labels — they should be SMALLER than the body, not the same size. legacy they were 10px, smaller than the body, which is the right rhythm. 12px keeps the "smaller than body" feel while staying readable. */ font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); padding: 8px 0 4px; font-weight: 600; }
+.section-header:not(:first-child) { border-top: 1px solid var(--border); margin-top: 4px; }
+.task-summary-body { display: flex; flex-direction: column; gap: 3px; }
+
+/* single-row chip layout. Replaces the vertical
+ * label→value grid (which ate 24px per row × 7 fields = 168px
+ * of vertical real estate). Now: one flex row that wraps
+ * if the panel is narrow, with each piece as a pill. The
+ * CWD pill ellipsises from the right; everything else
+ * keeps its full text. */
+.task-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  /* 4px 0 2px → 6px 0 4px. Padding grew in
+     lockstep with the font size so the chips have
+     visible breathing room above/below the text. */
+  padding: 6px 0 4px;
+  min-width: 0;
+}
+.task-summary-row-secondary {
+  padding-top: 0;
+  opacity: 0.85;
+}
+.task-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* 2px 6px → 4px 8px. Padding grew so the
+     chip's text has horizontal margin. */
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-elev-2, rgba(255,255,255,0.04));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  /* 11px → 13px. The chip is the primary
+     reading surface in the panel — "BYPASS_PERMISSIONS",
+     "D:\tmp\abc_3", "MiniMax-M3" are the things the
+     user looks at most. 13px is one notch under the
+     panel's 14px base (smaller = metadata feel) but
+     still comfortably readable. */
+  font-size: 13px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.task-pill-icon { font-size: 13px; line-height: 1; }
+.task-pill-label {
+  color: var(--text-dim);
+  /* 10px → 11px. The label sits INSIDE the
+     chip ("📂 cwd", "model", "perm", "id"). legacy
+     it was 10px — 1px smaller than the value, but
+     so small the user couldn't read it. 11px is
+     just-barely-smaller than the value (13px) and
+     reads as a label not as data. */
+  font-size: 11px;
+  text-transform: lowercase;
+  letter-spacing: 0.3px;
+}
+.task-pill-value {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-pill-value.mono { font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace; }
+.task-pill-value.streaming { color: var(--accent); }
+
+/* CWD pill: takes the leftover space (flex: 1 + min-width: 0)
+ * so a long path ellipsises instead of pushing the id/model
+ * pills off the row. The other pills are content-sized. */
+.task-pill-cwd {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.task-pill-cwd .task-pill-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.task-pill-id,
+.task-pill-model,
+.task-pill-perm,
+.task-pill-daemon,
+.task-pill-name,
+.task-pill-uptime { flex: 0 0 auto; }
+
+/* Legacy classes kept so any leftover source-pin / third-party
+ * CSS that still references .task-row etc. doesn't 404
+ * (the old vertical layout is gone but the names are
+ * reserved for one release in case a refactor reintroduces
+ * them). */
+.task-row { display: grid; grid-template-columns: 56px 1fr; gap: 8px; align-items: center; }
+.task-label { color: var(--text-dim); font-size: 11px; text-transform: lowercase; }
+.task-value { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-value.mono { font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace; }
+.task-value.small { font-size: 11px; }
+.task-value.streaming { color: var(--accent); font-size: 11px; }
+.task-status-running { color: var(--accent); }
+.task-status-pending { color: var(--warning); }
+.task-status-done    { color: var(--success); }
+.task-status-failed  { color: var(--error); }
+.task-status-cancelled { color: var(--text-dim); }

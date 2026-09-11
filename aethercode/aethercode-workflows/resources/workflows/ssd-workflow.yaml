@@ -1,0 +1,132 @@
+version: 1
+name: ssd-workflow
+description: |
+  Spec-Spec-Design-Tasks-Dev (SSD) workflow — 4 phases with per-phase
+  conversational confirmation. The first 3 phases produce 3 documents
+  (spec.md / design.md / tasks.md); the 4th executes the tasks.
+
+  Driver: `python .aethercode/daemon-test/ssd.py <feature-name>` (see
+  `doc/项目文档/SSD-WORKFLOW.md`). This YAML is the canonical reference
+  for the phase contracts.
+
+  This is NOT auto-runnable as a workflow kind (the gate steps need a
+  human in the loop). It is the protocol the driver follows.
+inputs:
+  feature:
+    type: string
+    required: true
+    description: "Short feature name, used as a directory under .aethercode/ssd/."
+  intent:
+    type: string
+    required: true
+    description: "Free-form description of the change. Becomes the seed for spec.md."
+  cwd:
+    type: string
+    required: false
+    description: "Project root. Default: current directory."
+skills:
+  - ssd-phases
+prompts:
+  - role: system
+    content: |
+      You are running the SSD (Spec-Spec-Design-Tasks-Dev) workflow.
+      The user is mid-conversation on a single phase; do NOT leap
+      ahead. Only generate the document the phase asks for, in
+      the exact format below, and only with content grounded in
+      the prior phases (or the user's `intent` for phase 1).
+
+      The driver writes the artefact to:
+        <cwd>/.aethercode/ssd/<feature>/<artefact>.md
+      where <artefact> ∈ {spec, design, tasks}. Do NOT mention
+      file paths in the output.
+  - role: user
+    content: |
+      feature = {{feature}}
+      cwd     = {{cwd}}
+      intent  = {{intent}}
+
+      Phase 1: Generate the spec.md content. Required sections:
+        1. Background — why this change is being made (2-4 sentences).
+        2. Goals — bullet list of what success looks like.
+        3. Non-goals — bullet list of what is explicitly out of scope.
+        4. Functional requirements — FR-1, FR-2, ... each with
+           "as a <role>, I want <capability>, so that <value>".
+        5. Non-functional requirements — NFR-1, NFR-2, ... for
+           performance, security, observability, error handling.
+        6. Open questions — list anything you need clarified before
+           the design phase.
+
+      Return ONLY the markdown. No preamble, no closing remark.
+  - role: user
+    content: |
+      feature = {{feature}}
+      cwd     = {{cwd}}
+      intent  = {{intent}}
+      spec_path = <cwd>/.aethercode/ssd/<feature>/spec.md  (already on disk)
+
+      Phase 2: Generate the design.md content. The driver passes
+      the spec.md body as the next system block. Required sections:
+        1. Architecture overview — one diagram (mermaid or ASCII).
+        2. Module-level breakdown — every file/function added,
+           modified, or removed; a one-line summary each.
+        3. Data model — interfaces, classes, schema migrations,
+           wire formats; field-level types where not obvious.
+        4. API surface — every new/changed RPC, CLI flag, or public
+           method, with request/response shape.
+        5. Failure modes & recovery — for each call, the error map
+           and how the system recovers (or surfaces to user).
+        6. Test strategy — unit, E2E, manual; what each one proves.
+
+      Reference the spec.md FR/NFR ids inline so reviewers can
+      trace requirements to design. Return ONLY the markdown.
+  - role: user
+    content: |
+      feature = {{feature}}
+      cwd     = {{cwd}}
+      intent  = {{intent}}
+      spec_path  = <cwd>/.aethercode/ssd/<feature>/spec.md
+      design_path = <cwd>/.aethercode/ssd/<feature>/design.md
+
+      Phase 3: Generate the tasks.md content. Multi-level
+      decomposition:
+        - Phase 1..N (e.g. "Phase 1 — Spec", "Phase 2 — Design" are
+          the just-completed work; only enumerate Phase N+1 onward).
+        - Inside each phase, M Milestones (M1, M2, ...).
+        - Inside each Milestone, K Tasks (T-1, T-2, ...).
+        - Each task has: id, title, files (list of paths it
+          touches), est_minutes (rough estimate), acceptance
+          criteria (1-3 bullets, must be objectively checkable).
+        - Each milestone has: id, title, summary, dependency
+          on prior milestone ids.
+        - Each phase has: id, title, summary, dependencies.
+
+      Format as a markdown table for each level. Reference the
+      design.md file paths verbatim. The task list must be
+      sufficient that a competent engineer + AI pair can execute
+      without re-reading the design.
+
+      Return ONLY the markdown.
+  - role: user
+    content: |
+      feature = {{feature}}
+      cwd     = {{cwd}}
+      tasks_path = <cwd>/.aethercode/ssd/<feature>/tasks.md
+
+      Phase 4: Implement the tasks. The driver will iterate the
+      task list, ask the model to implement one task at a time,
+      and verify the acceptance criteria between tasks. The model
+      must ONLY work on the current task; the driver tracks state
+      and tells the model which task id is current.
+todos:
+  - "Phase 1: Generate spec.md (driver does the LLM call)"
+  - "Phase 1: Wait for human confirmation (driver reads stdin)"
+  - "Phase 2: Generate design.md"
+  - "Phase 2: Wait for human confirmation"
+  - "Phase 3: Generate tasks.md"
+  - "Phase 3: Wait for human confirmation"
+  - "Phase 4: Execute tasks one at a time with per-task status"
+limits:
+  wallClockMs: 1800000
+  tokens: 200000
+  calls: 200
+  fileWrites: 50

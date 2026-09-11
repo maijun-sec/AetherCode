@@ -1,0 +1,76 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AetherCode",
+  "version": "0.2.62",
+  "identifier": "org.aethercode.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AetherCode",
+        "label": "main",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "center": true,
+        "devtools": true,
+        "additionalBrowserArgs": "--remote-debugging-port=9222 --remote-allow-origins=*"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "img-src": [
+          "'self'",
+          "data:",
+          "asset:",
+          "http://asset.localhost"
+        ],
+        "style-src": [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+        "script-src": [
+          "'self'"
+        ],
+        "connect-src": [
+          "'self'",
+          "ws://localhost:*",
+          "http://localhost:*",
+          "ipc:",
+          "http://ipc.localhost"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/aethercode.jar"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}

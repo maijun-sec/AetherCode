@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>aethercode-tasks</artifactId>
+    <name>AetherCode Tasks</name>
+    <description>
+        R17: Per-task context + Agent singleton. Each user query is a Task, subagents
+        spawned via AgentTool get new Task IDs. Context is bound to task ID, not
+        agent identity. Tasks can spawn child tasks (sub-tasks), each isolated.
+
+        R300 (Phase 4): Refactored into a long-running supervisor that owns a
+        SQLite store (`children`, `child_events`, `subagent_state` tables) and a
+        JSON-RPC socket (Unix socket on mac/linux, named pipe on Windows) at
+        `&lt;UserHome&gt;/.aethercode/supervisor.sock`. The supervisor auto-restarts
+        on crash (3-strike) and resumes unfinished children (`running` / `paused`)
+        from persisted state.
+    </description>
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-core</artifactId>
+        </dependency>
+        <!-- Phase 2.1 (T-2-08..T-2-12, Java-B): the workflow/* RPC
+             handlers depend on aethercode-workflows' WorkflowService
+             interface. The dependency runs one way only (aethercode-tasks
+             -> aethercode-workflows); the inverse edge is intentionally
+             absent to avoid a cycle. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-workflows</artifactId>
+        </dependency>
+        <!-- R300: we keep aethercode-tasks free of aethercode-protocol
+             because aethercode-tools -> aethercode-tasks -> aethercode-protocol
+             would cycle through aethercode-sdk. The supervisor's JSON-RPC
+             layer is self-contained in the supervisor sub-package and
+             uses Jackson directly. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <!-- R300: SQLite for the supervisor's child / event store. -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+        </dependency>
+        <!-- R321 (T-380..T-385): the `aethercode task ...` CLI
+             subcommands. picocli is a runtime dep here (not
+             just an aethercode-cli dep) because the TaskCli
+             is published as a subcommand of the aethercode
+             CLI but the class lives in aethercode-tasks. -->
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

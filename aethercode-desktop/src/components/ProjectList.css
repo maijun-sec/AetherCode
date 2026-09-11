@@ -1,0 +1,10 @@
+.project-list { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.section-meta { background: var(--bg-input); padding: 0 6px; border-radius: 8px; font-size: 10px; font-weight: 500; }
+.project-empty { padding: 6px 0; font-size: 11px; color: var(--text-dim); font-style: italic; }
+.project-items { list-style: none; margin-top: 4px; }
+.project-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.project-item:hover { background: var(--bg-input); }
+.project-item.active { background: var(--bg-input); border-left: 2px solid var(--accent); padding-left: 4px; }
+.project-icon { color: var(--text-dim); font-size: 8px; }
+.project-item.active .project-icon { color: var(--accent); }
+.project-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

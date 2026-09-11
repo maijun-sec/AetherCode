@@ -1,0 +1,62 @@
+# TDD feature workflow (Phase 2.1 / spec.md §11.1).
+# Drives a tight red-green-refactor loop: write a failing test,
+# implement to green, refactor for clarity.
+version: 1
+name: tdd-feature
+description: |
+  Write a failing test for the feature, implement it to make the
+  test pass, then refactor the result for clarity.
+inputs:
+  feature:
+    type: string
+    required: true
+    description: "The feature to implement, in one sentence."
+  framework:
+    type: enum
+    values: [junit, pytest, vitest, go-test, other]
+    required: false
+    default: junit
+    description: "The test framework the project already uses."
+  test-file:
+    type: string
+    required: false
+    description: "Where to put the new test. Default: derived from the feature name."
+  source-dir:
+    type: string
+    required: false
+    default: src
+    description: "Root source directory."
+skills:
+  - tdd
+  - code-review
+prompts:
+  - role: system
+    content: |
+      You are a TDD expert. You will write a failing test first, then
+      implement the feature to make it pass, then refactor.
+
+      Strict order:
+      1. RED    — write a single failing test that names the behaviour.
+      2. GREEN  — write the minimum code to make the test pass.
+      3. REFACTOR — clean up without changing behaviour; keep the test green.
+
+      Never write implementation code before the test exists and fails.
+      Never bundle multiple test cases in one turn.
+  - role: user
+    content: |
+      Feature: {{inputs.feature}}
+      Working directory: {{cwd}}
+      Today: {{date}}
+      OS: {{os}}
+      Framework: {{inputs.framework}}
+      Test file: {{inputs.test-file}}
+      Source dir: {{inputs.source-dir}}
+todos:
+  - "Write a failing test for: {{inputs.feature}}"
+  - "Implement the feature to make the test pass"
+  - "Refactor for clarity (tests must stay green)"
+limits:
+  wallClockMs: 14400000
+  tokens: 4000000
+  calls: 200
+  fileWrites: 5000

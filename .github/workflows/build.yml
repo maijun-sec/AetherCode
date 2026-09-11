@@ -1,0 +1,97 @@
+# AetherCode — Java + TS build (T-503).
+#
+# Builds the Java core (Maven multi-module under ./aethercode/)
+# and the TypeScript modules (aethercode-memory, aethercode-compact,
+# aethercode-themes, aethercode-tui, aethercode-desktop) on every
+# push and pull request. The build matrix keeps cache locality
+# per language.
+
+name: build
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+# Cancel any in-flight run for the same branch / PR.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: "21"
+  NODE_VERSION: "20"
+  MAVEN_OPTS: "-Xmx2g -Xms512m"
+
+jobs:
+  # ----------------------------------------------------------------
+  # Java core — multi-module Maven build
+  # ----------------------------------------------------------------
+  java-build:
+    name: Java · build (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # R90: aethercode (parent) builds every module. We keep
+        # the matrix small (1 entry) so the cache works; the
+        # per-module -am is the canonical CI path.
+        module: [""]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: aethercode/**/pom.xml
+
+      - name: Build (compile, no tests)
+        working-directory: aethercode
+        run: mvn -B -ntp -DskipTests install
+
+      - name: Verify packaging
+        working-directory: aethercode
+        run: |
+          mvn -B -ntp -DskipTests help:evaluate -Dexpression=project.version -q -DforceStdout
+          # Confirm the new cross-cutting modules are wired
+          # into the parent pom (T-501).
+          mvn -B -ntp -DskipTests validate
+          grep -q "aethercode-memory"   pom.xml
+          grep -q "aethercode-compact"  pom.xml
+          grep -q "aethercode-permission" pom.xml
+          grep -q "aethercode-tasks"    pom.xml
+          grep -q "aethercode-protocol" pom.xml
+
+  # ----------------------------------------------------------------
+  # TypeScript modules — pnpm-workspace build
+  # ----------------------------------------------------------------
+  ts-build:
+    name: TS · build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.12.0
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build all TS modules
+        run: pnpm -r build
+
+      - name: Typecheck (cross-module)
+        run: pnpm -r typecheck

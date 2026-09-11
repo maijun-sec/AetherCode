@@ -1,0 +1,195 @@
+/* LoopGuardBanner styles.
+ *
+ * The banner is a yellow/orange horizontal strip that mounts
+ * above the message list when the engine's loop detector
+ * fires at tier 1 or 2. It uses the same surface tokens as
+ * the rest of the app (--bg-* / --text-* / --accent-*) and
+ * intentionally stays narrow so it doesn't push the
+ * conversation down.
+ *
+ * Tier-1 is amber (#f59e0b-ish) — the engine is just
+ * flagging a possible loop. Tier-2 is red-orange (#dc2626-ish)
+ * — the engine is one step away from a hard stop. The CSS
+ * uses .loop-guard-tier-1 / .loop-guard-tier-2 selectors
+ * and overrides the stripe colour per tier.
+ *
+ * The .loop-guard-closing class triggers a 200ms fade-out
+ * so the dismiss / acknowledge interactions feel intentional
+ * instead of abruptly disappearing. We use opacity + a
+ * small transform rather than display:none so the transition
+ * actually plays.
+ */
+
+.loop-guard-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  margin: 8px 12px 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg,
+    rgba(245, 158, 11, 0.10) 0%,
+    rgba(245, 158, 11, 0.06) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: var(--text-primary, #e6e6e6);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: opacity 200ms ease, transform 200ms ease;
+  /* Slide in from above */
+  animation: loop-guard-slide-in 220ms ease-out;
+}
+
+.loop-guard-tier-1 {
+  background: linear-gradient(180deg,
+    rgba(245, 158, 11, 0.10) 0%,
+    rgba(245, 158, 11, 0.06) 100%);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.loop-guard-tier-2 {
+  background: linear-gradient(180deg,
+    rgba(220, 38, 38, 0.14) 0%,
+    rgba(220, 38, 38, 0.08) 100%);
+  border-color: rgba(220, 38, 38, 0.55);
+}
+
+.loop-guard-closing {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+@keyframes loop-guard-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.loop-guard-icon {
+  font-size: 18px;
+  line-height: 1.3;
+  color: rgba(245, 158, 11, 0.95);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.loop-guard-tier-2 .loop-guard-icon {
+  color: rgba(248, 113, 113, 0.95);
+}
+
+.loop-guard-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.loop-guard-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #e6e6e6);
+  margin-bottom: 2px;
+}
+
+.loop-guard-tier-1 .loop-guard-title {
+  color: rgba(252, 211, 77, 0.98);
+}
+
+.loop-guard-tier-2 .loop-guard-title {
+  color: rgba(252, 165, 165, 0.98);
+}
+
+.loop-guard-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary, rgba(230, 230, 230, 0.85));
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.loop-guard-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted, rgba(230, 230, 230, 0.55));
+  margin-top: 4px;
+  font-style: italic;
+}
+/* kbd styling for the Ctrl+L hint. A small
+ * monospace box that matches the GitHub-style "press
+ * these keys" look. The 1px border + 1px Y padding
+ * keeps the line height stable across font scales. */
+.loop-guard-hint kbd {
+  display: inline-block;
+  padding: 0 4px;
+  margin: 0 1px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 14px;
+  color: rgba(230, 230, 230, 0.85);
+  background: rgba(0, 0, 0, 0.30);
+  border: 1px solid rgba(230, 230, 230, 0.20);
+  border-radius: 3px;
+  vertical-align: 1px;
+}
+
+.loop-guard-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.loop-guard-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+  font-family: inherit;
+  min-width: 130px;
+  text-align: center;
+}
+
+.loop-guard-btn-continue {
+  background: rgba(245, 158, 11, 0.18);
+  color: rgba(252, 211, 77, 0.98);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.loop-guard-btn-continue:hover {
+  background: rgba(245, 158, 11, 0.32);
+  border-color: rgba(245, 158, 11, 0.7);
+}
+
+.loop-guard-tier-2 .loop-guard-btn-continue {
+  background: rgba(220, 38, 38, 0.22);
+  color: rgba(252, 165, 165, 0.98);
+  border-color: rgba(220, 38, 38, 0.5);
+}
+
+.loop-guard-tier-2 .loop-guard-btn-continue:hover {
+  background: rgba(220, 38, 38, 0.36);
+  border-color: rgba(220, 38, 38, 0.75);
+}
+
+.loop-guard-btn-stop {
+  background: transparent;
+  color: var(--text-secondary, rgba(230, 230, 230, 0.75));
+  border-color: rgba(230, 230, 230, 0.2);
+}
+
+.loop-guard-btn-stop:hover {
+  background: rgba(230, 230, 230, 0.08);
+  color: var(--text-primary, #e6e6e6);
+  border-color: rgba(230, 230, 230, 0.35);
+}
+
+.loop-guard-btn:focus-visible {
+  outline: 2px solid rgba(99, 179, 237, 0.7);
+  outline-offset: 1px;
+}

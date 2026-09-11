@@ -1,0 +1,85 @@
+# Code review workflow. Walks a diff, branch, or uncommitted workspace
+# change and emits a structured review report.
+version: 1
+name: code-review
+description: |
+  Review a code change (a diff, a branch, or uncommitted workspace content),
+  looking for dead code, leaky abstractions, missing tests, unsafe
+  concurrency, and AetherCode-specific patterns. Emits a structured report
+  grouped by file, with each finding tagged by severity and a fix
+  suggestion.
+inputs:
+  target:
+    type: enum
+    values: [working-copy, branch, last-commit, diff-file]
+    required: false
+    default: working-copy
+    description: "Which change set to review."
+  diff:
+    type: string
+    required: false
+    description: "Path to a diff / patch file. Required when target=diff-file."
+  base-branch:
+    type: string
+    required: false
+    default: main
+    description: "Base branch to diff against. Used when target=branch."
+  focus:
+    type: enum
+    values: [all, security, performance, readability, tests]
+    required: false
+    default: all
+    description: "Which review lens to apply."
+  max-findings:
+    type: integer
+    required: false
+    default: 20
+    description: "Cap on reported findings per file. 0 = unbounded."
+skills:
+  - code-review
+  - security-audit-basics
+prompts:
+  - role: system
+    content: |
+      You are a senior reviewer. Read the change set in
+      {{target}} and produce a structured review. Order
+      findings by severity (blocker → critical → major →
+      minor → nit). For each finding, include the file,
+      line range, the snippet, and a one-sentence fix.
+
+      Always close with a verdict: APPROVE / REQUEST CHANGES
+      / NEEDS DISCUSSION. The verdict is a single line at
+      the bottom of your report; everything above it is
+      supporting evidence.
+
+      Hard rules:
+      - Do not invent files or lines. If the diff is empty
+        for a path, say so rather than guess.
+      - Do not suggest stylistic rewrites unless the
+        pattern contradicts the project's existing
+        conventions (read CLAUDE.md / AGENTS.md if present).
+      - When the change crosses module boundaries, flag
+        the dependency direction explicitly.
+  - role: user
+    content: |
+      Review {{target}} ({{base-branch}}).
+      Focus: {{focus}}.
+      Cap findings per file at {{max-findings}}.
+
+outputs:
+  verdict:
+    type: enum
+    values: [APPROVE, REQUEST-CHANGES, NEEDS-DISCUSSION]
+    description: "Final review verdict."
+  findings:
+    type: list
+    item-type: object
+    item-schema:
+      file: string
+      lines: string
+      severity: string
+      category: string
+      fix: string
+  summary:
+    type: string
+    description: "One-paragraph executive summary suitable for the PR description."

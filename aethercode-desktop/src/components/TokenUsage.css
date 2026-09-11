@@ -1,0 +1,17 @@
+.token-usage {
+  display: flex !important;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  /* 90px keeps the section header (16px) + 4 cells
+     in a single grid row (cell height ~60px incl. label +
+     value) visible without compression. flex-shrink: 0
+     stops the right panel's flex 1 sections from squashing
+     this row to nothing on a short viewport. */
+  min-height: 90px !important;
+  flex-shrink: 0 !important;
+}
+.token-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.token-cell { background: var(--bg-input); border-radius: 4px; padding: 8px 4px; text-align: center; min-width: 0; overflow: hidden; }
+.token-label { color: var(--text-dim); font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-value { color: var(--text); font-weight: 500; font-size: 14px; font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

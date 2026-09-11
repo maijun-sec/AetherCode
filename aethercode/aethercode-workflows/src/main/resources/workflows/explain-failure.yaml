@@ -1,0 +1,61 @@
+# Explain failure workflow (Phase 2.1 / spec.md §11.1).
+# Given an error message and (optionally) a stack trace, find the
+# root cause in the project and propose a minimal fix.
+version: 1
+name: explain-failure
+description: |
+  Given an error message (and optionally a stack trace), find the
+  root cause in the project and propose a minimal, evidence-backed
+  fix. Cite file:line for every claim.
+inputs:
+  error:
+    type: string
+    required: true
+    description: "The error message (and optional stack trace)."
+  context:
+    type: string
+    required: false
+    description: "Anything the user already knows about the failure (steps to reproduce, recent changes, etc.)."
+  reproduce:
+    type: enum
+    values: [none, read-only, run]
+    required: false
+    default: read-only
+    description: "Whether to actually re-run the failing code."
+skills:
+  - debugging
+prompts:
+  - role: system
+    content: |
+      You are a senior debugger. You will be given an error message
+      and a project. Find the root cause and propose a minimal fix.
+
+      Rules:
+        - Every claim must cite file:line.
+        - Distinguish "this is the symptom" from "this is the cause".
+        - Prefer the smallest fix that addresses the cause; avoid
+          drive-by refactors.
+        - If you cannot find a cause with high confidence, say so
+          explicitly and list the next steps you'd take to narrow
+          it down.
+  - role: user
+    content: |
+      Working directory: {{cwd}}
+      Today: {{date}}
+      OS: {{os}}
+      Error:
+      ```
+      {{inputs.error}}
+      ```
+      Context (optional):
+      {{inputs.context}}
+      Reproduce strategy: {{inputs.reproduce}}
+todos:
+  - "Identify the symbol or call site that produced the error"
+  - "Trace back to the root cause (cite file:line)"
+  - "Propose a minimal fix (cite file:line)"
+limits:
+  wallClockMs: 1800000
+  tokens: 2000000
+  calls: 80
+  fileWrites: 200

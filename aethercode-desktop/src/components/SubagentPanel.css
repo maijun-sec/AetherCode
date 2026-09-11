@@ -1,0 +1,194 @@
+/* live list of background subagent jobs. Mirrors
+ * the TUI's SubagentPanel styling so the two surfaces feel
+ * coherent. Each row carries a per-row action (Cancel for
+ * RUNNING, Insert result for terminal jobs). The colour
+ * tints match the StatusBar's subagent tone vocabulary. */
+
+.subagent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.subagent-panel-empty {
+  align-items: center;
+  padding: 16px 12px;
+  color: var(--text-dim);
+}
+
+.subagent-panel-empty-msg {
+  margin-top: 6px;
+  font-style: italic;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.subagent-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+
+.subagent-running-badge {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  background: rgba(99, 179, 237, 0.10);
+  border: 1px solid rgba(99, 179, 237, 0.35);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.subagent-panel-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subagent-panel-row {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.subagent-panel-row-running {
+  border-color: rgba(99, 179, 237, 0.45);
+  background: rgba(99, 179, 237, 0.05);
+}
+
+.subagent-panel-row-completed {
+  border-color: rgba(95, 191, 106, 0.30);
+}
+
+.subagent-panel-row-failed {
+  border-color: rgba(244, 135, 113, 0.45);
+  background: rgba(244, 135, 113, 0.05);
+}
+
+.subagent-panel-row-cancelled {
+  opacity: 0.7;
+}
+
+.subagent-panel-row-top {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+}
+
+.subagent-panel-row-id {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-panel-row-role {
+  color: var(--text-dim);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subagent-panel-row-status {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: lowercase;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.subagent-panel-status-running {
+  color: var(--accent);
+  border-color: rgba(99, 179, 237, 0.45);
+}
+
+.subagent-panel-status-completed {
+  color: #5fbf6a;
+  border-color: rgba(95, 191, 106, 0.45);
+}
+
+.subagent-panel-status-failed {
+  color: var(--error);
+  border-color: rgba(244, 135, 113, 0.55);
+}
+
+.subagent-panel-status-cancelled {
+  color: var(--text-dim);
+}
+
+.subagent-panel-row-elapsed {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.subagent-panel-row-summary {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subagent-panel-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.subagent-panel-btn {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+
+.subagent-panel-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.subagent-panel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.subagent-panel-btn-cancel {
+  color: var(--error);
+  border-color: rgba(244, 135, 113, 0.45);
+}
+
+.subagent-panel-btn-insert {
+  color: var(--accent);
+  border-color: rgba(99, 179, 237, 0.45);
+}

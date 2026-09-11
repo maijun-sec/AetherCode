@@ -1,0 +1,270 @@
+/* Tools & Permission panel. Modal overlay, centred. */
+.tools-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: tools-panel-fade 0.12s ease-out;
+}
+
+@keyframes tools-panel-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.tools-panel {
+  background: var(--bg-elevated, #1e1e1e);
+  color: var(--text, #e0e0e0);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 8px;
+  padding: 18px 22px;
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.tools-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tools-panel-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.close-btn {
+  background: transparent;
+  color: var(--text-dim, #888);
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+}
+.close-btn:hover { color: var(--text, #e0e0e0); }
+
+/* tools-panel header actions. The ↻ refresh
+ * button sits next to the close (×) button so the
+ * header stays compact — we don't want to push the
+ * table down by adding a second row just for a single
+ * button. */
+.tools-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tools-panel-refresh {
+  background: transparent;
+  border: 1px solid var(--border, #3a3a3a);
+  color: var(--text-dim, #888);
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.tools-panel-refresh:hover {
+  color: var(--accent, #4ea3ff);
+  border-color: var(--accent, #4ea3ff);
+  background: rgba(78, 163, 255, 0.08);
+}
+.tools-panel-refresh.is-refreshing {
+  color: var(--accent, #4ea3ff);
+  border-color: var(--accent, #4ea3ff);
+  /* a subtle 1.2s spin while refreshTools is
+   * in flight. The 0.2s linear is enough that the eye
+   * picks up motion but the spinner doesn't feel
+   * jittery. */
+  animation: tools-panel-spin 1.2s linear infinite;
+}
+@keyframes tools-panel-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* meta line under the help text. Shows the
+ * last-refresh time and the current tool count. The
+ * time is right-aligned within the line for a quick
+ * scan; the count is inline so the user can see both
+ * numbers without parsing two separate lines. */
+.tools-panel-meta {
+  font-size: 11px;
+  color: var(--text-dim, #888);
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tools-panel-meta-time {
+  font-family: ui-monospace, monospace;
+  color: var(--text, #e0e0e0);
+}
+
+/* empty state inside the table. legacy-A
+ * the "no tools" message was a single line — easy to
+ * miss. The new state has a headline + a hint line +
+ * an obvious refresh affordance (the ↻ in the header,
+ * which is still spinning if refreshTools is in
+ * flight). */
+.tools-panel-empty-empty {
+  padding: 24px 16px;
+  text-align: center;
+}
+.tools-panel-empty-hint {
+  font-size: 11px;
+  color: var(--text-dim, #888);
+  margin-top: 6px;
+  opacity: 0.8;
+}
+
+.tools-panel-help {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim, #888);
+  margin: 0 0 12px 0;
+}
+.tools-panel-help code {
+  background: var(--bg, #181818);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.tools-panel-filter {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--bg, #181818);
+  color: var(--text, #e0e0e0);
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+.tools-panel-filter:focus {
+  outline: none;
+  border-color: var(--accent, #5a9cff);
+}
+
+.tools-panel-table {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 4px;
+}
+
+.tools-panel-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.6fr;
+  gap: 12px;
+  padding: 8px 10px;
+  align-items: center;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  font-size: 12px;
+}
+.tools-panel-row:last-child { border-bottom: none; }
+
+.tools-panel-row.tools-panel-head {
+  background: var(--bg, #181818);
+  font-weight: 600;
+  color: var(--text-dim, #888);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.col-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tool-name { font-weight: 600; font-family: ui-monospace, monospace; }
+.tool-desc {
+  color: var(--text-dim, #888);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col-op { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.col-op code {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--bg, #181818);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent, #5a9cff);
+}
+.sample-path {
+  color: var(--text-dim, #888);
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ro-badge {
+  display: inline-block;
+  background: rgba(108, 194, 139, 0.18);
+  color: #6cc28b;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.col-action { display: flex; align-items: center; gap: 6px; }
+.action-badge {
+  display: inline-block;
+  color: #181818;
+  font-weight: 700;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.safe-badge {
+  font-size: 10px;
+  color: #6cc28b;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.tools-panel-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim, #888);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.tools-panel-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim, #888);
+}
+.footer-stat code,
+.footer-stat { font-family: ui-monospace, monospace; }
+.footer-hint { font-style: italic; }

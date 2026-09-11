@@ -1,0 +1,32 @@
+// Phase 3: production adapter — wires the new `JsonRpcClient` to the
+// existing Tauri-backed `rpc()` function in `lib/methods.ts`. Tests
+// use `clientForMock()`; the running app uses this so the same query
+// hooks work in both worlds.
+
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { JsonRpcClient, type RpcTransport } from './client';
+import { rpc } from '../lib/methods';
+
+let cachedListen: typeof listen | null = null;
+
+/** Build a transport that talks to the running Tauri process. */
+export function tauriTransport(): RpcTransport {
+  return {
+    async callAsync<R>(method: string, params?: unknown): Promise<R> {
+      return (await rpc<R>(method, params)) as R;
+    },
+    on(event, fn) {
+      // Tauri's `listen` returns a promise resolving to UnlistenFn.
+      // We return a sync unsubscribe that defers until the listen
+      // promise resolves.
+      let unsub: UnlistenFn | null = null;
+      const promise = (cachedListen ?? listen)(event, (e) => fn(e.payload));
+      promise.then((u) => { unsub = u; }).catch(() => { /* event stream missing */ });
+      return () => { if (unsub) unsub(); };
+    },
+  };
+}
+
+export function tauriClient(): JsonRpcClient {
+  return new JsonRpcClient(tauriTransport());
+}

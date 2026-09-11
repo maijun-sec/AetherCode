@@ -1,0 +1,27 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
+*.log
+
+# Test
+coverage/
+.vitest/
+
+# R89 / R92 / R101 WS roundtrip tests (one-off node scripts,
+# kept locally for debugging; never to be committed)
+wstest_*.cjs
+wstest_*.js

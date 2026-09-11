@@ -1,0 +1,62 @@
+# Add changelog workflow (Phase 2.1 / spec.md §11.1).
+# Reads the recent git log, groups commits by area / kind, and
+# appends a "Unreleased" section to the project's CHANGELOG.md.
+version: 1
+name: add-changelog
+description: |
+  Read the recent git history, group commits by area / kind, and
+  append a new entry to the project's CHANGELOG.md (or whatever
+  the project uses). The entry uses Keep-a-Changelog sections
+  (Added / Changed / Fixed / Removed / Security).
+inputs:
+  since:
+    type: string
+    required: false
+    description: "How far back to look: 'last tag', 'N commits', or an ISO date. Default: 'last tag'."
+  changelog:
+    type: string
+    required: false
+    default: CHANGELOG.md
+    description: "Path to the changelog file, relative to cwd."
+  version:
+    type: string
+    required: false
+    description: "Version string for the new entry. Default: today's date."
+  group-by:
+    type: enum
+    values: [kind, area, author, none]
+    required: false
+    default: kind
+    description: "How to group commits in the entry."
+skills:
+  - changelog-writer
+prompts:
+  - role: system
+    content: |
+      You are a release engineer. You will read the recent git log,
+      bucket commits into Keep-a-Changelog sections (Added / Changed
+      / Fixed / Removed / Security / Deprecated), and append a new
+      entry to the project's changelog file.
+
+      Never invent commits. Every line in the new entry must trace
+      back to a real commit hash. If a commit is ambiguous, put it
+      under "Changed" and link to the hash.
+  - role: user
+    content: |
+      Working directory: {{cwd}}
+      Today: {{date}}
+      OS: {{os}}
+      Look back: {{inputs.since}}
+      Changelog file: {{inputs.changelog}}
+      Version: {{inputs.version}}
+      Group by: {{inputs.group-by}}
+todos:
+  - "Read git log (or default branch tip) and group by {{inputs.group-by}}"
+  - "Map each commit to a Keep-a-Changelog section"
+  - "Append the new entry to {{inputs.changelog}}"
+  - "Print a summary of what was added"
+limits:
+  wallClockMs: 3600000
+  tokens: 2000000
+  calls: 80
+  fileWrites: 200

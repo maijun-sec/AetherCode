@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>aethercode-partner-quickjs</artifactId>
+    <name>AetherCode Partner — QuickJS</name>
+    <description>
+        Java 21 native port of the `langchain_quickjs` partner package:
+        sandboxed JavaScript REPL exposed as the `eval` tool inside a
+        deepagents agent. Mirrors the 7 Python source files
+        (`middleware.py`, `_format.py`, `_prompt.py`, `_ptc.py`,
+        `_repl.py`, `_snapshot.py`, `_subagent.py`) 1:1, but uses a
+        Java-native API surface. Actual JavaScript execution is
+        delegated to a pluggable `JsExecutor`; the default binding
+        throws `UnsupportedOperationException` until a GraalVM JS or
+        javax.script backend is wired in.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-runtime</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-tools</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <skipMain>true</skipMain>
+                    <skipTestCompile>true</skipTestCompile>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <skipTests>true</skipTests>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
