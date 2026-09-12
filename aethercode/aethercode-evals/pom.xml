@@ -61,6 +61,26 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-permission</artifactId>
         </dependency>
+        <!--
+            R-sdk-5: tool interface conformance. StandardTools
+            exposes the 17 tools that the TUI tool palette and
+            the agent call loop dispatch to; we verify the
+            factory wires them up correctly and that each tool
+            is identifiable by name (the classifier and the
+            permission reasoner key off tool.name()).
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-tools</artifactId>
+        </dependency>
+        <!--
+            R-sdk-6: JSON-RPC interface conformance. The TUI, the
+            CLI, and the IDE plugin all talk to the engine over
+            JSON-RPC 2.0; we verify the codec, error codes, and
+            dispatcher behave to spec.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-protocol</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
