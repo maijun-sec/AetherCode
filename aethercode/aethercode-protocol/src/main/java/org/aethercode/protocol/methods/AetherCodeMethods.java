@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-*
+/**
+ *
  * registers the AetherCode-specific JSON-RPC methods on a
  * {@link JsonRpcDispatcher} and wires them to a live
  * {@link AetherCodeEngine}.
