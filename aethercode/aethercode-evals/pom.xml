@@ -33,6 +33,34 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-orchestration</artifactId>
         </dependency>
+        <!--
+            R-sdk-1: SDK interface conformance suite. The capability/*
+            test classes verify the *capability* (planning, state, memory)
+            with self-contained models. R-sdk-* verify that the actual
+            AetherCode SDK class (Watchdog, CircuitBreaker, DagPlan, etc.)
+            behaves correctly when consumed by the front-end / CLI / IDE
+            plugin. The two layers are complementary: capability proves
+            the design is sound; SDK proves the implementation matches.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-sdk</artifactId>
+        </dependency>
+        <!--
+            R-sdk-3: Memory interface conformance. Mirrors the SDK
+            dependency above but for the persistence layer that the
+            TUI memory panel and recall scorer consume.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-memory</artifactId>
+        </dependency>
+        <!--
+            R-sdk-4: cost / safety / permission interface. The
+            aethercode-permission module exports CommandAllowlist
+            (bash guard) and PermissionReasoner (3-verdict policy).
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-permission</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
