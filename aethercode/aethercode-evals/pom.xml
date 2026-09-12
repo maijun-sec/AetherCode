@@ -81,6 +81,16 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-protocol</artifactId>
         </dependency>
+        <!--
+            R-sdk-7: A2A schema interface conformance. AetherCode
+            participates in Google's Agent2Agent protocol — the
+            AgentCard is published at /.well-known/agent-card.json
+            and other agents (or our own front-end in a multi-agent
+            mode) consume it to decide which skills to call.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-a2a</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
