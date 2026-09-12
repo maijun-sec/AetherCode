@@ -663,3 +663,178 @@
 
 **维护者**: AetherCode R-round
 **最后更新**: 2026-09-12 (本轮新增 12 篇 paper 摘要)
+
+
+---
+
+## 13. 2026 新论文 (本轮新增 8 篇)
+
+### 13.1 paper 2605.14892 — Beyond Individual Intelligence (LIFE 4 阶段)
+
+**作者**: Shihao Qi, Jie Ma 等 17 人 (西安交大 + Lenovo + Sydney + 华中师大)
+
+**核心**: **LIFE Progression** 4 阶段框架 — Lay / Integrate / Find faults / Evolve, 揭示多 agent 系统从能力建设到自我进化的因果依赖链。
+
+**关键发现**:
+- 4 阶段有**因果依赖** — 没 foundation, integration 易崩; 没 attribution, evolution 难闭环
+- Cross-stage 反馈是研究前沿
+- 89 页综述, 是 multi-agent 演化必读
+
+**AetherCode 对应**:
+- Lay (R-eval-1 + R-sdk-1) ✅
+- Integrate (5 strategy) ✅
+- Find (RuntimeTrace + R-eval-11 + ByzantineDetector) ✅
+- Evolve (ExperienceRecord + ForgettingPolicy + DynamicLinker) ✅ 部分
+- **缺**: Cross-stage 闭环 (Evolve → Lay 反哺)
+
+**兼容实现候选**: `LifeProgressionMonitor` / `CrossStageFeedback` / `FaultAttributionReport`
+
+### 13.2 paper 2510.26352 — Geometry of Dialogue (Team Composition)
+
+**作者**: Kotaro Furuya, Yuichi Kitagawa (Hitachi)
+
+**会议**: AAAI-26 Workshop on LaMAS (Oral)
+
+**核心**: Interaction-Centric Team Composition — pairwise 对话 embedding 构造 language model graph, 社区检测发现协同 cluster, 自动化 team 组建。
+
+**关键发现**:
+- 发现的 cluster 跟 model 已知 specialization **一致**
+- 自动 team 在 benchmark 上**超 random**, 跟手工 curated **相当**
+
+**AetherCode 对应**:
+- `Blackboard` (cross-agent 共享 KV) 部分
+- `MultiAgentOrchestrator` 5 strategy ✅
+- `AgentCard` (capability 描述) ✅
+- `GlobalPlan` (GoalAct 风格) ✅
+
+**兼容实现候选**: `LanguageModelGraph` / `SynergisticTeamFinder`
+
+### 13.3 paper 2602.00994 — DART (Reasoning vs Tool-use Disentangle)
+
+**作者**: Yu Li 等 (Huawei + SJTU + THU)
+
+**会议**: ICLR 2026 Workshop
+
+**核心**: **DART** — 独立 LoRA 分别调 reasoning 和 tool-use, 解决 ARL 中 capability interference。
+
+**关键发现**:
+- CEA 量化发现: reasoning + tool-use 经常**诱导 misaligned gradient**
+- 简单 LoRA 拆分 = 13 benchmark 普遍提升, 接近 2-Agent upper bound
+
+**AetherCode 对应**:
+- `Verifier` (reasoning) + `StandardTools` (tool) 已模块化 ✅
+- ⚠️ 偏 training, 概念可借鉴, 实现需 ML 背景
+
+**兼容实现候选**: `CapabilityInterferenceMetric` / `DisentangledExecutor` / `CEAReport`
+
+### 13.4 paper 2601.11327 — Small Agent Collaboration (ICLR 2026)
+
+**作者**: Agata Zywot, Xinyi Chen, Maarten de Rijke (Amsterdam)
+
+**会议**: ICLR 2026 Workshop on MALGAI
+
+**核心**: **小模型多 agent > 大单 agent** (无 tools 时) — 4B + tools > 32B no tools (GAIA benchmark)
+
+**关键发现**:
+- **Orchestrator 容量是关键** — 投资 orchestrator, sub-agent 可省
+- Sub-agent 别让它 think — orchestrator think, sub-agent do
+- 跟 MAKER (2511.09030) 共识: 极小 LLM + 大量 micro-agent 即可
+
+**AetherCode 对应**:
+- `MultiAgentOrchestrator` orchestrator 决策 ✅
+- `StandardTools` 17 tool + R-eval-10 ✅
+- ⚠️ 当前未专门测 4B vs 32B
+
+**兼容实现候选**: `ModelSizeBenchmark` / `OrchestratorCapacityProfile`
+
+### 13.5 paper 2603.09716 — AutoAgent (Evolving + Elastic Memory)
+
+**作者**: Xiaoxing Wang, Ning Liao 等 (MemTensor + SJTU)
+
+**核心**: **3 组件** — Evolving Cognition / On-the-fly Decision / Elastic Memory, 闭环 cognitive evolution 无需外部 retrain。
+
+**AetherCode 对应**:
+- 4 维 cognition (tool / self / peer / task) ⚠️ 缺显式 class
+- `MultiAgentOrchestrator.run` per-step ✅
+- `SessionMemoryStore` + `ProjectMemoryCompressor` + `LayeredMemoryStore` ✅
+- `DynamicLinker` (R-paper-batch3) ✅
+- `StandardTools` + `AgentFn` unified action space ✅
+
+**兼容实现候选**: `CognitionEvolver` / `ElasticMemoryOrchestrator` / `ClosedLoopEvolutionHook`
+
+### 13.6 paper 2602.08009 — RAPS (Ad-Hoc Networking for MAS)
+
+**作者**: Rui Li, Zeyu Zhang 等
+
+**核心**: **RAPS** — 把多 agent 协调类比为 ad-hoc networking, 用 intent-based pub/sub + Bayesian reputation 解决 scale + robustness。
+
+**关键发现**:
+- 3 axis 一致提升: adaptivity / scalability / robustness
+- 100+ agent 不掉性能
+
+**AetherCode 对应**:
+- `Blackboard` (跨 agent KV) ✅
+- ⚠️ 缺 reputation 机制
+- `ByzantineDetector` (R-paper-batch3) ✅
+- `GlobalPlan.update` ✅
+- ⚠️ 100+ agent 未压测
+
+**兼容实现候选**: `ReputationScore` / `PubSubBlackboard` / `IntentRefiner` / `ScaleBenchmark`
+
+### 13.7 paper 2602.23720 — Auton Framework (Snapchat)
+
+**作者**: Sheng Cao 等 (Snap Inc.)
+
+**核心**: **Auton Framework** = Cognitive Blueprint (declarative spec) + Runtime Engine (execution substrate), 解决 "Integration Paradox"。
+
+**4 大 pillar**:
+- AgenticFormat Standard (YAML/JSON)
+- Deterministic Governance (Constraint Manifold)
+- Cognitive Persistence (Hierarchical memory)
+- 3-Level Self-Evolution
+
+**AetherCode 对应**:
+- `AgentCard` (capability 描述) ✅
+- aethercode-runtime 跟 aethercode-core 分离 ✅
+- `CommandAllowlist` 静态规则 ⚠️ 静态而非 projection
+- `LayeredMemoryStore` + `ForgettingPolicy` ✅
+- ⚠️ 仅 in-context, 缺 meta-prompt + RL
+- `MultiAgentOrchestrator` (并行 agent) ✅
+- ⚠️ 缺 speculative inference, dynamic context pruning ✅ 部分
+
+**兼容实现候选**: `AgenticFormatSchema` / `ConstraintManifold` / `SpeculativePrefetcher` / `ThreeLevelEvolution`
+
+### 13.8 paper 2603.13256 — REDEREF (Training-Free Probabilistic Control)
+
+**作者**: Mohammad Parsa Hosseini 等
+
+**核心**: **REDEREF** — training-free controller, Thompson sampling + reflection reroute + memory priors 改进多 agent 路由效率。
+
+**关键数据**:
+- Token -28%, call -17%, time -19%
+- Recursive retry alone 饱和, 加 belief-guided routing 才有效
+
+**AetherCode 对应**:
+- ⚠️ 无 probabilistic 路由
+- `SelfCorrectionLoop` ✅
+- `CritiqueStrategy` ✅
+- `ExperienceRecord` ✅
+
+**兼容实现候选**: `ThompsonSamplingRouter` / `BeliefState` / `ReflectionDrivenRerouter` / `TrainingFreeController`
+
+---
+
+## 14. 累计 31 篇 paper (主题覆盖 9 大)
+
+| 主题 | 数量 | 代表 paper |
+|---|---:|---|
+| Multi-Agent Architecture | 5 | 2512.08296, 2506.12508, 2601.01743, 2501.06322, 2605.14892 |
+| Tool Use & Reflection | 5 | 2506.04625, 2505.20670, 2608.04719, 2603.22862, 2509.18847 |
+| Planning & Reasoning | 6 | 2503.09572, 2504.16563, 2511.09030, 2410.07869, 2508.17281, 2601.11327 |
+| Memory & Continual | 5 | 2502.12110, 2501.07278, 2512.13564v2, 2508.03341, 2603.09716 |
+| Safety & Alignment | 4 | 2510.05442, 2508.01332, 2508.10146, 2603.13256 |
+| Protocol & Interop | 4 | 2505.02279, 2506.01804, 2502.16750, 2602.08009 |
+| Cognitive Architecture | 3 | 2503.03459, 2505.07087, 2602.23720 |
+| Survey / Holistic | 4 | 2510.25445, s11831-026, 2608.20379, 2602.00994 |
+| Evaluation & Benchmark | 3 | 2512.12791, 2510.22898, 2510.10472, 2510.26352 |
+| **Total** | **31** | |
