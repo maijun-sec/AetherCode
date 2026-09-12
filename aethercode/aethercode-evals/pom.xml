@@ -109,6 +109,35 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-hooks</artifactId>
         </dependency>
+        <!--
+            R-sdk-11..13: Task Scheduler + MCP + Bridge interface
+            conformance. R-AUDIT-SELF-IMPROVEMENT Tier-2 — these
+            modules had 0 SDK interface tests; the front-end's
+            "background task" and "remote peer" surfaces rely on
+            them.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-tasks</artifactId>
+        </dependency>
+        <!--
+            R-sdk-12: MCP (Model Context Protocol) interface
+            conformance. The McpRegistry catalog + McpHealthCheck
+            + AuthRateLimiter are what the TUI's "MCP servers"
+            panel and the OAuth flow consume.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-mcp</artifactId>
+        </dependency>
+        <!--
+            R-sdk-13: Bridge / swarm interface conformance. The
+            bridge module connects the local AetherCode to a
+            peer process (or swarm of teammates) over a
+            reconnecting socket; Blackboard is the shared KV
+            store they coordinate through.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-bridge</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

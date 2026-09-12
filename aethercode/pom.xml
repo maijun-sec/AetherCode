@@ -249,6 +249,11 @@
             </dependency>
             <dependency>
                 <groupId>org.aethercode</groupId>
+                <artifactId>aethercode-bridge</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aethercode</groupId>
                 <artifactId>aethercode-cli</artifactId>
                 <version>${project.version}</version>
             </dependency>
