@@ -838,3 +838,126 @@
 | Survey / Holistic | 4 | 2510.25445, s11831-026, 2608.20379, 2602.00994 |
 | Evaluation & Benchmark | 3 | 2512.12791, 2510.22898, 2510.10472, 2510.26352 |
 | **Total** | **31** | |
+
+
+---
+
+## 15. 2026 论文 batch 5 (本轮新增 10 篇, 累计 41 篇)
+
+### 15.1 paper 2602.07755 — ALMA (Meta-learning Memory Designs)
+
+**作者**: Yiming Xiong, Shengran Hu, Jeff Clune (UBC)
+
+**核心**: 用 Meta Agent 搜索 memory design 代码 (open-ended code space), 替代手工设计。跨 4 域 + 跨 FM 通用。
+
+**AetherCode 对应**: `MemoryPaths` + `MemoryExtractor` 部分 ✅
+
+**兼容实现候选**: `MemoryDesignSpace` / `MetaMemoryAgent`
+
+### 15.2 paper 2606.06787 — AdMem (3 Memory Types)
+
+**作者**: Runzhe Wang (Princeton) + Amazon + Arm
+
+**核心**: Semantic + Episodic + Procedural 3 memory 类型, bi-level (LT/ST), actor/memory/critic 3 agent 协同, reward-based governance。
+
+**AetherCode 对应**: `MemoryExtractor` (semantic) + `ExperienceRecord` (episodic) ✅; procedural ⚠️ 缺
+
+**兼容实现候选**: `ProceduralMemory` (R-paper-batch5 实现) / `MemoryCriticAgent` (R-paper-batch5 实现)
+
+### 15.3 paper 2605.21951 — MoLEM (Latent Memory MoE)
+
+**作者**: Dianzhi Yu 等 (CUHK + NTU + Edinburgh + SJTU + Oxford)
+
+**核心**: 多个 expert 各带 latent memory, router 选 expert, base model 冻结避免 catastrophic forgetting。+10.40% 平均。
+
+**AetherCode 对应**: N/A (偏 training), 概念可借鉴
+
+**兼容实现候选**: `LatentMemoryBank` / `MemoryRouter`
+
+### 15.4 paper 2604.12179 — AgeMem (Unified LT/ST Memory)
+
+**作者**: Yi Yu 等
+
+**核心**: Memory management 暴露为 tools, 3-stage progressive RL, step-wise GRPO。Qwen3-4B + AgeMem = 54.31% (vs A-Mem 45.74%)。
+
+**AetherCode 对应**: `MemoryTools` ✅; `LayeredMemoryStore` ✅; 3-stage RL 缺
+
+**兼容实现候选**: `MemoryManagementTool` / `LongShortMemoryScheduler`
+
+### 15.5 paper 2607.20064 — PRO-LONG (Programmatic Memory)
+
+**作者**: Alexis Fox 等 (Duke)
+
+**核心**: Code agent 用 code 查询 log, ARC-AGI-3 +18.0pp, 4.2-5.8× token 节省。
+
+**AetherCode 对应**: `RuntimeTrace` 部分; code search 缺
+
+**兼容实现候选**: `ProgrammaticMemory` / `CodeSearchBridge` / `LogQueryLanguage`
+
+### 15.6 paper 2601.07577 — TDP (Task-Decoupled Planning)
+
+**作者**: Yunfan Li 等 (中科院计算所)
+
+**核心**: Supervisor / Planner / Executor 3 模块, scoped context, **82% token 节省**。DAG sub-task 隔离。
+
+**AetherCode 对应**: `CentralPlanner` + `GlobalPlan` 部分; 缺 Self-Revision
+
+**兼容实现候选**: `TaskDecoupledPlanner` (R-paper-batch5 实现) / `SelfRevisionHook` / `ScopedContext`
+
+### 15.7 paper 2601.12538 — Agentic Reasoning Survey 2026
+
+**作者**: survey 团队
+
+**核心**: 3 方向 (foundational / self-evolutionary / multi-agent), 2 路径 (in-context / post-training), 5 应用 (research / robot / medical / auto-drive / math)
+
+**AetherCode 对应**: 3 方向全覆盖, in-context 路径主推
+
+### 15.8 paper 2605.22138 — SR2AM (Self-Regulated Simulative Planning)
+
+**作者**: Eric P. Xing 等 (MBZUAI + Petuum)
+
+**核心**: 3 系统 (I reactive + II simulative + III self-regulation), 8B-30B 持平 120B-1T, 25-95% token 节省。
+
+**AetherCode 对应**: `Verifier` (II) + `MultiAgentOrchestrator` (I) 部分; self-regulation 缺
+
+**兼容实现候选**: `SelfRegulationConfigurator` / `SystemIExecutor` / `SystemIISimulator`
+
+### 15.9 paper 2604.05939 — CVA (Context-Value-Action, PKU)
+
+**作者**: TianZe Zhang 等 (北大)
+
+**会议**: Findings of ACL 2026
+
+**核心**: S-O-R model + Schwartz 价值观, Value Verifier 显式建模 dynamic value activation, CVABench 110 万+ 数据。
+
+**AetherCode 对应**: 行为 fidelity 评估有; value 评估缺
+
+**兼容实现候选**: `ValueVerifier` / `HumanBehaviorEvaluator` / `PolarizationDetector`
+
+### 15.10 paper 2608.28978 — Selective Forgetting (Graph Memory)
+
+**作者**: Sam Khanzad 等
+
+**核心**: Graph memory + 3 维 forgetting (recency + frequency + structural importance), 几乎不影响 quality。
+
+**AetherCode 对应**: `ForgettingPolicy` (1 维) 部分; graph 缺
+
+**兼容实现候选**: `GraphMemoryStore` (R-paper-batch5 实现) / `SelectiveForgettingPolicy` (R-paper-batch5 实现, 3 维)
+
+---
+
+## 16. 累计 41 paper (10 主题)
+
+| 主题 | 数量 | 代表 paper |
+|---|---:|---|
+| Multi-Agent Architecture | 5 | 2512.08296, 2506.12508, 2601.01743, 2501.06322, 2605.14892 |
+| Tool Use & Reflection | 5 | 2506.04625, 2505.20670, 2608.04719, 2603.22862, 2509.18847 |
+| Planning & Reasoning | 9 | 2503.09572, 2504.16563, 2511.09030, 2410.07869, 2508.17281, 2601.11327, 2601.07577, 2601.12538, 2605.22138 |
+| Memory & Continual | 9 | 2502.12110, 2501.07278, 2512.13564v2, 2508.03341, 2603.09716, 2602.07755, 2606.06787, 2605.21951, 2604.12179, 2608.28978 |
+| Safety & Alignment | 4 | 2510.05442, 2508.01332, 2508.10146, 2603.13256 |
+| Protocol & Interop | 4 | 2505.02279, 2506.01804, 2502.16750, 2602.08009 |
+| Cognitive Architecture | 4 | 2503.03459, 2505.07087, 2602.23720, 2604.05939 |
+| Survey / Holistic | 4 | 2510.25445, s11831-026, 2608.20379, 2602.00994 |
+| Evaluation & Benchmark | 4 | 2512.12791, 2510.22898, 2510.10472, 2510.26352 |
+| Programmatic / Code Memory | 2 | 2607.20064, 2608.28978 |
+| **Total** | **41** | |
