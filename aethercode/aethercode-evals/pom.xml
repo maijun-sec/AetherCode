@@ -91,6 +91,24 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-a2a</artifactId>
         </dependency>
+        <!--
+            R-sdk-9..10: WorkflowEngine + Hooks interface conformance.
+            Both modules drive the TUI's "workflow run" and "hook
+            system" surfaces; the engine contract is what the user
+            sees as "click a workflow, see progress".
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-workflows</artifactId>
+        </dependency>
+        <!--
+            R-sdk-10: Hooks interface conformance. The hook
+            registry + PhaseTracker + WriteExistingFileGuardHook
+            are the engine's safety net; if any of them breaks,
+            every tool call goes through un-vetted.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-hooks</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
