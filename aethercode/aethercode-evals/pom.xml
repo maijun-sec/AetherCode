@@ -23,6 +23,16 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-core</artifactId>
         </dependency>
+        <!--
+            R-mod-2: orchestration primitives (verifier / selfcorrect /
+            multiagent / runtime / perf) moved to aethercode-orchestration.
+            The capability/* test classes keep using the legacy package
+            (self-contained seam, see R-eval-MASTER-PLAN) so this dependency
+            is currently only pulled in by DeepAgentsSystem + PaperPipeline E2E.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId><artifactId>aethercode-orchestration</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

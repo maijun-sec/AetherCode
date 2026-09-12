@@ -1,20 +1,20 @@
 package org.aethercode.evals.e2e;
 
-import org.aethercode.evals.multiagent.AgentFn;
-import org.aethercode.evals.multiagent.CritiqueStrategy;
-import org.aethercode.evals.multiagent.MultiAgentOrchestrator;
-import org.aethercode.evals.multiagent.MultiAgentOrchestrator.EnsembleResult;
-import org.aethercode.evals.multiagent.MultiAgentOrchestrator.EnsembleResult.AgentOutput;
-import org.aethercode.evals.multiagent.MultiAgentOrchestrator.EnsembleStrategy;
-import org.aethercode.evals.orchestration.AgentRuntime;
-import org.aethercode.evals.orchestration.AgentRuntime.RuntimeResult;
-import org.aethercode.evals.perf.ActionCache;
-import org.aethercode.evals.perf.CostCeiling;
-import org.aethercode.evals.perf.TokenCounter;
-import org.aethercode.evals.selfcorrect.RetryStrategy;
-import org.aethercode.evals.selfcorrect.SelfCorrectionLoop;
-import org.aethercode.evals.verifier.Verifier;
-import org.aethercode.evals.verifier.Verifier.VerificationResult;
+import org.aethercode.orchestration.multiagent.AgentFn;
+import org.aethercode.orchestration.multiagent.CritiqueStrategy;
+import org.aethercode.orchestration.multiagent.MultiAgentOrchestrator;
+import org.aethercode.orchestration.multiagent.MultiAgentOrchestrator.EnsembleResult;
+import org.aethercode.orchestration.multiagent.MultiAgentOrchestrator.EnsembleResult.AgentOutput;
+import org.aethercode.orchestration.multiagent.MultiAgentOrchestrator.EnsembleStrategy;
+import org.aethercode.orchestration.runtime.AgentRuntime;
+import org.aethercode.orchestration.runtime.AgentRuntime.RuntimeResult;
+import org.aethercode.orchestration.perf.ActionCache;
+import org.aethercode.orchestration.perf.CostCeiling;
+import org.aethercode.orchestration.perf.TokenCounter;
+import org.aethercode.orchestration.selfcorrect.RetryStrategy;
+import org.aethercode.orchestration.selfcorrect.SelfCorrectionLoop;
+import org.aethercode.orchestration.verifier.Verifier;
+import org.aethercode.orchestration.verifier.Verifier.VerificationResult;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;

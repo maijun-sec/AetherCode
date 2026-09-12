@@ -1,7 +1,7 @@
 package org.aethercode.evals.clbench.system;
 
-import org.aethercode.evals.orchestration.AgentRuntime;
-import org.aethercode.evals.orchestration.AgentRuntime.RuntimeResult;
+import org.aethercode.orchestration.runtime.AgentRuntime;
+import org.aethercode.orchestration.runtime.AgentRuntime.RuntimeResult;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

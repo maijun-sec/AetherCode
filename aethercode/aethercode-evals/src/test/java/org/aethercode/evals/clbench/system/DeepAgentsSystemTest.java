@@ -8,9 +8,9 @@ import org.aethercode.evals.clbench.system.ClbenchTypes.UsageEvent;
 import org.aethercode.evals.clbench.system.DeepAgentsSystem.DeepAgentFactory;
 import org.aethercode.evals.clbench.system.DeepAgentsSystem.DeepAgentFactory.CreateRequest;
 import org.aethercode.evals.clbench.system.DeepAgentsSystem.DeepAgentFactory.InvokeRequest;
-import org.aethercode.evals.orchestration.AgentRuntime;
-import org.aethercode.evals.verifier.Verifier;
-import org.aethercode.evals.verifier.Verifier.VerificationResult;
+import org.aethercode.orchestration.runtime.AgentRuntime;
+import org.aethercode.orchestration.verifier.Verifier;
+import org.aethercode.orchestration.verifier.Verifier.VerificationResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
