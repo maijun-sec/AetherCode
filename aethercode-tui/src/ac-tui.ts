@@ -216,10 +216,43 @@ async function main(): Promise<number> {
   // - --line forces line mode
   // - --tui forces Ink TUI
   // - default: Ink if both stdin and stdout are TTY, line mode otherwise
+  //
+  // R-tui-flicker-fix followup (2026-09-13): Ink 5.x's
+  // `isRawModeSupported()` only checks `stdin.isTTY`, but on some
+  // Windows terminals (PowerShell ISE, older ConPTY, certain
+  // SSH session hosts) `stdin.isTTY === true` AND
+  // `stdin.setRawMode(true)` STILL throws at the first
+  // `useInput(...)` call. The user reported "TUI opens, shows
+  // help, can't type anything" — which was the Ink error
+  // boundary catching the throw, rendering a degraded frame,
+  // and TUI becoming unresponsive to keystrokes.
+  //
+  // We probe raw-mode support here with a paired setRawMode
+  // (true then false). If the probe throws, the Ink TUI would
+  // crash on the first keystroke; we fall back to line mode
+  // and emit a one-line warning so the user understands why.
   const wantLine = Boolean(v.line);
   const wantTui  = Boolean(v.tui);
   const haveTty  = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  const useLine  = wantLine || (!wantTui && !haveTty);
+  const inkSupportsRaw = (() => {
+    if (!process.stdin.isTTY) return false;
+    if (typeof process.stdin.setRawMode !== "function") return false;
+    try {
+      process.stdin.setRawMode(true);
+      process.stdin.setRawMode(false);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const useLine  = wantLine || (!wantTui && (!haveTty || !inkSupportsRaw));
+  if (!useLine && !inkSupportsRaw && process.stderr.isTTY) {
+    process.stderr.write(
+      "note: Ink raw mode is not supported in this terminal — falling back to line mode.\n" +
+      "      pass --tui to force the full-screen UI (may fail on this host),\n" +
+      "      or run inside Windows Terminal / a ConPTY-capable host for the Ink TUI.\n"
+    );
+  }
 
   const model = v.model as string | undefined;
   const noColor = Boolean(v["no-color"]);
