@@ -1,0 +1,5 @@
+# HuggingFace datasets save_to_disk output - we only need data.jsonl
+# (the JSONL is the canonical source; Arrow is a binary cache)
+data-*.arrow
+dataset_info.json
+state.json
