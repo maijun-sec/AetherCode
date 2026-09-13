@@ -454,13 +454,17 @@ AetherCode 已实现 17 个 paper-compat 兼容类, 全部走 100+ 单测。
 | **Total** | | | **2841** |
 
 **真 LLM 端到端报告** (`BenchmarkReportRealLlmTest` + `EngineQueryRealLlmTest`):
-- **全套 9 benchmark × 5 task = 45 task** 跑 MiniMax-M3, 252s (~5.6s/task):
+- **全套 9 benchmark × 5 task = 45 task** 跑 MiniMax-M3, 1396s (~31s/task):
   - MMLU-philosophy: **5/5 = 100%** (vs mock 25%, vs 1/4 random baseline)
-  - HumanEval: 0/5 = 0% (grading 算法不匹配: LLM 给 full def, expected 是 body)
-  - SWE-bench: 0/5 = 0% (LLM 给 plain text 不是 diff format)
-  - AgentInstruct × 6: 0/5 = 0% (format mismatch, expected 是 Think: + Act: chain, LLM 给 markdown)
-  - **TOTAL: 5/45 = 11.1% pass@1**
-- Mock baseline 3.0% (3.7× 真 LLM 提升) - 主要 gap 来自 grading 算法
+  - SWE-bench: **2/5 = 40%** (file + non-trivial line overlap)
+  - HumanEval: **1/5 = 20%** (extract function body from def+body)
+  - AgentInstruct × 6: 0/5 = 0% (LLM 给 free text, expected 是 Think+Final Answer)
+  - **TOTAL: 8/45 = 17.8% pass@1** (was 11.1% pre-grading-fix, +6.7pp)
+- Mock baseline 3.0% (5.9× 真 LLM 提升)
 - **AetherCodeEngine.query 端到端** (EngineQueryRealLlmTest):
   - 真实 engine + SpringAiChatClient + 26 tool pool (18 standard + 8 paper-compat)
   - 真 LLM 响应 2.5s/query, 9 events, answer='B' (对 "Reply with single letter B" prompt)
+- **Provider-agnostic system prompts** (BenchmarkSystemPrompt):
+  - 6 prompt templates: BASE / MMLU / HUMANEVAL / SWE_BENCH / AGENT_INSTRUCT / GENERIC
+  - all < 1KB, no provider name, no chat-template token
+  - per-benchmark agent 自动选 prompt
