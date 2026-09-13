@@ -24,6 +24,15 @@ import java.util.List;
 /**
  * The default tool pool. Modelled after the TS {@code getAllBaseTools()} — every tool ships
  * with the engine; callers can disable or add via the registry.
+ *
+ * <h2>Paper-compat tools</h2>
+ * The 8 paper-compat tools (architecture / saturation / redflag /
+ * byzantine / voting / plan) live in {@code aethercode-orchestration}
+ * and are NOT exposed here — that would create a module cycle
+ * (tools → orchestration → protocol → sdk → tools). Callers that want
+ * the full set (e.g. the daemon) build the pool themselves: start
+ * from {@link #all()}, then add {@code new PaperCompatTools().buildAll()}.
+ * See {@code org.aethercode.cli.Main.buildEngineForSession}.
  */
 public final class StandardTools {
 

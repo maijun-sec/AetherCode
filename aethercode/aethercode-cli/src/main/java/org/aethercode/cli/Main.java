@@ -437,7 +437,16 @@ public class Main implements Callable<Integer> {
      *  freshness, not whatever the background thread
      *  last observed). */
     AetherCodeEngine buildEngineForSession(String sessionId) {
+        // R-paper-batch7-papercompat-engine: include the 8 paper-compat
+        // tools (architecture / saturation / redflag / byzantine / voting
+        // / plan) on top of the standard 18. A real business process
+        // needs the full set; the LLM can decide at runtime whether to
+        // call them based on the user's prompt. We compose the pool
+        // here (in aethercode-cli) instead of inside StandardTools
+        // because adding a tools → orchestration dependency would
+        // create a module cycle.
         List<Tool> pool = new ArrayList<>(StandardTools.all());
+        pool.addAll(new org.aethercode.orchestration.papercompat.PaperCompatTools().buildAll());
         // working-memory tools. The prior round created the
         // WorkingMemoryBuffer but no one was writing to it. These
         // 4 tools let the model actively curate its own per-query
