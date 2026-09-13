@@ -156,7 +156,7 @@ function missingInputHint(toolName: string | undefined): string {
   }
   if (n === 'web_search') return '(missing query)';
   if (n === 'web_fetch' || n === 'fetch') return '(missing url)';
-  if (n === 'grep' || n === 'search' || n === 'code_search') return '(missing pattern)';
+  if (n === 'grep' || n === 'search' || n === 'code_search' || n === 'glob') return '(missing pattern)';
   return '(no input)';
 }
 
