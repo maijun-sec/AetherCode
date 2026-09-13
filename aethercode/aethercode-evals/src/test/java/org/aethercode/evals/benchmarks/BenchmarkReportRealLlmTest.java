@@ -40,12 +40,19 @@ class BenchmarkReportRealLlmTest {
         );
         BenchmarkLlmAgent agent = new BenchmarkLlmAgent(client);
 
-        int sampleSize = 3;
+        int sampleSize = 30;
         record BenchDef(String name, String dir,
                         java.util.function.Function<java.nio.file.Path, BenchmarkAdapter> factory) {}
         List<BenchDef> defs = List.of(
             new BenchDef("HumanEval",        "openai_openai_humaneval", HumanEvalAdapter::new),
-            new BenchDef("MMLU-philosophy", "mmlu-philosophy",         p -> new MMLUAdapter(p, "philosophy"))
+            new BenchDef("MMLU-philosophy", "mmlu-philosophy",         p -> new MMLUAdapter(p, "philosophy")),
+            new BenchDef("SWE-bench",        "swe-bench-verified",      SweBenchAdapter::new),
+            new BenchDef("AgentInstruct-os",        "agentinstruct-os",        p -> new AgentInstructAdapter(p, "os")),
+            new BenchDef("AgentInstruct-db",        "agentinstruct-db",        p -> new AgentInstructAdapter(p, "db")),
+            new BenchDef("AgentInstruct-alfworld",  "agentinstruct-alfworld",  p -> new AgentInstructAdapter(p, "alfworld")),
+            new BenchDef("AgentInstruct-webshop",  "agentinstruct-webshop",  p -> new AgentInstructAdapter(p, "webshop")),
+            new BenchDef("AgentInstruct-kg",        "agentinstruct-kg",        p -> new AgentInstructAdapter(p, "kg")),
+            new BenchDef("AgentInstruct-mind2web",  "agentinstruct-mind2web",  p -> new AgentInstructAdapter(p, "mind2web"))
         );
 
         int totalPass = 0, totalAttempt = 0;

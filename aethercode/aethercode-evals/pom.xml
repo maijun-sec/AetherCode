@@ -138,6 +138,16 @@
         <dependency>
             <groupId>org.aethercode</groupId><artifactId>aethercode-bridge</artifactId>
         </dependency>
+        <!--
+            R-paper-batch7-engine-e2e: end-to-end tests that wire
+            AetherCodeEngine with the real MiniMax-M3 ChatClient
+            and exercise the actual query() flow.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-engine-springai</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
