@@ -394,6 +394,28 @@ final class DaemonRunner {
         // share the store with the SessionManager so
         // factory-built engines pick it up.
         ensureSessionStore(engine, sessionManager, "http");
+        // R266-desktop-session-title (2026-09-13): install
+        // the LayeredMemoryStore on the HTTP path's
+        // AetherCodeMethods so listSessions can fall back
+        // to session_info.first_prompt when the transcript
+        // is empty (the desktop's lazy-create flow mints a
+        // session via createSession BEFORE the user message
+        // hits disk, so sizeBytes=0 and extractSessionPreview
+        // returns ""). Without this, every fresh session
+        // rendered as "新会话" in the LeftPanel until the
+        // user sent a follow-up message. The stdio path
+        // installs the same store at line 159; the HTTP
+        // path was missing it.
+        try {
+            org.aethercode.memory.LayeredMemoryStore httpMemoryStore =
+                    buildMemoryStore(http.methods(),
+                            java.nio.file.Path.of(System.getProperty("user.home"))
+                                    .resolve(".aethercode"));
+            http.methods().setMemoryStore(httpMemoryStore);
+        } catch (Exception memEx) {
+            LOG.warn("R266d: memory store install failed on http path: {}",
+                    memEx.getMessage());
+        }
         // wire the provider registry from
         // ~/.aethercode/providers.yaml so the renderer's
         // Settings panel can list providers + switch

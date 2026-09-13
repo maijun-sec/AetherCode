@@ -38,10 +38,16 @@ export function EndOfTaskPanel() {
   // clicks X, the panel stays hidden until
   // the next RunEnd.
   const [dismissed, setDismissed] = useState(false);
-  // Auto-dismiss after 12s.
+  // Auto-dismiss after 5 minutes (was 12s — the user reported
+  // "汇总结果 disappears before I can read it" at the 12s
+  // default). The panel is dismissable via the X button for
+  // users who want it gone sooner; the 5-minute window keeps
+  // the chat from accumulating cruft for the user who doesn't
+  // care, while giving the rest of us enough time to actually
+  // read the summary.
   useEffect(() => {
     if (dismissed) return;
-    const t = window.setTimeout(() => setDismissed(true), 12_000);
+    const t = window.setTimeout(() => setDismissed(true), 5 * 60_000);
     return () => window.clearTimeout(t);
   }, [dismissed, lastSessionSummary?.state, lastSessionSummary?.last_activity_at_ms]);
   // Reset dismiss state on every fresh

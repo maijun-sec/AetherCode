@@ -4242,7 +4242,23 @@ public class AetherCodeMethods {
         if (l instanceof Number n && n.intValue() > 0 && n.intValue() <= 500) {
             limit = n.intValue();
         }
-        boolean withPreview = Boolean.TRUE.equals(p.get("withPreview"));
+        // R266-desktop-session-title (2026-09-13): withPreview
+        // now defaults to TRUE. Prior round the default was
+        // false (legacy wire format from R198). The desktop
+        // LeftPanel's SessionListRow renders session title as
+        //   s.title -> s.preview -> "新会话"
+        // and the user reported "task finished, left panel
+        // still says '新会话'" — the desktop was calling
+        // `listSessions()` without `withPreview` so the preview
+        // field came back empty for sessions that had a
+        // transcript. Defaulting withPreview to true means the
+        // TUI's first paint shows the first user prompt as the
+        // title without each call site having to remember the
+        // opt-in. Cost is ~one 4 KB JSONL read per row (the
+        // SessionStore's `list()` already returned a size
+        // summary); for a typical 10-50 sessions this is well
+        // under 1 ms on a warm page cache.
+        boolean withPreview = !Boolean.FALSE.equals(p.get("withPreview"));
         var store = engine.sessionStore();
         if (store == null) {
             return Map.of("sessions", List.of(), "current", engine.appState().sessionId());
@@ -4350,6 +4366,23 @@ public class AetherCodeMethods {
                         }
                     }
                     m.put("preview", preview == null ? "" : preview);
+                    // R266-desktop-session-title (2026-09-13):
+                    // also surface the same text as `title` so
+                    // the desktop's SessionListRow gets a real
+                    // title out of the box. R204 wired the row
+                    // to fall back from `title` -> `preview` ->
+                    // "新会话" but the daemon never actually
+                    // populated the `title` field, so every
+                    // session rendered as "新会话" until the
+                    // user manually renamed it. We treat the
+                    // first user prompt as the canonical title
+                    // (capped at 200 chars to match the preview
+                    // field); the desktop will further truncate
+                    // to 60 chars on render. When the user
+                    // renames a session via setTitle (TODO
+                    // R267), that explicit name wins because the
+                    // frontend takes the `title` field verbatim.
+                    m.put("title", preview == null ? "" : preview);
                 }
                 out.add(m);
             }
