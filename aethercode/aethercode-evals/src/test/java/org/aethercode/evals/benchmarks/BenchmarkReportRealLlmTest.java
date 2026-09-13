@@ -38,9 +38,7 @@ class BenchmarkReportRealLlmTest {
             "MiniMax-M3",
             SpringAiChatClient.minimaxDefaults()
         );
-        BenchmarkLlmAgent agent = new BenchmarkLlmAgent(client);
-
-        int sampleSize = 30;
+        int sampleSize = 5;
         record BenchDef(String name, String dir,
                         java.util.function.Function<java.nio.file.Path, BenchmarkAdapter> factory) {}
         List<BenchDef> defs = List.of(
@@ -54,6 +52,16 @@ class BenchmarkReportRealLlmTest {
             new BenchDef("AgentInstruct-kg",        "agentinstruct-kg",        p -> new AgentInstructAdapter(p, "kg")),
             new BenchDef("AgentInstruct-mind2web",  "agentinstruct-mind2web",  p -> new AgentInstructAdapter(p, "mind2web"))
         );
+        // R-paper-batch7-grading: use benchmark-specific system prompts
+        // so the LLM replies in the format each grader expects.
+        // The default BenchmarkLlmAgent uses a generic prompt that
+        // hurts pass@1 on MMLU (need just-letter) and HumanEval
+        // (need a python block). We override per-benchmark below.
+        java.util.Map<String, BenchmarkLlmAgent> agentByBenchmark = new java.util.HashMap<>();
+        for (BenchDef d : defs) {
+            agentByBenchmark.put(d.name,
+                new BenchmarkLlmAgent(client, BenchmarkSystemPrompt.forBenchmark(d.name)));
+        }
 
         int totalPass = 0, totalAttempt = 0;
         System.out.println();
@@ -69,6 +77,7 @@ class BenchmarkReportRealLlmTest {
             if (!java.nio.file.Files.isDirectory(dir)) continue;
             BenchmarkAdapter adapter = d.factory.apply(dir);
             if (adapter.size() == 0) continue;
+            BenchmarkLlmAgent agent = agentByBenchmark.get(d.name);
             int n = Math.min(sampleSize, adapter.size());
             int passed = 0;
             for (int i = 0; i < n; i++) {

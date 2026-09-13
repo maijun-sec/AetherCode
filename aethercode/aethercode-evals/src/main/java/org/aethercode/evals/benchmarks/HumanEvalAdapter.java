@@ -115,4 +115,108 @@ public final class HumanEvalAdapter implements BenchmarkAdapter, Iterable<Benchm
         if (p.length() > 200) return p.substring(0, 200) + "...";
         return p;
     }
+
+    /**
+     * HumanEval-aware grading.
+     *
+     * <p>The default {@link BenchmarkAdapter#grade} does exact string
+     * match, which fails for any LLM that emits a full {@code def}
+     * (function signature + body) when the canonical solution is
+     * body-only. This override extracts the body from the candidate
+     * output and normalises whitespace before comparison.
+     *
+     * <p>Note: this is a structural check, not an execution check.
+     * Real HumanEval grading runs the test harness against the
+     * candidate; the structural check is the cheap approximation
+     * we use when no Python interpreter is available.
+     */
+    @Override
+    public boolean grade(BenchmarkTask task, String agentOutput) {
+        if (agentOutput == null) return false;
+        String candidate = extractPythonCode(agentOutput);
+        String body = extractFunctionBody(candidate);
+        if (body == null) return false;
+        String expected = task.expectedOutput() == null ? "" : task.expectedOutput().trim();
+        return normalize(body).equals(normalize(expected));
+    }
+
+    /**
+     * Pull the first Python code block from the agent's output.
+     * Handles both {@code ```python ... ```} and bare {@code def}
+     * lines (the LLM sometimes forgets the fence).
+     */
+    static String extractPythonCode(String s) {
+        if (s == null) return "";
+        // Try ```python ... ``` first
+        int start = s.indexOf("```python");
+        if (start >= 0) {
+            start += "```python".length();
+            int end = s.indexOf("```", start);
+            if (end > start) return s.substring(start, end);
+        }
+        // Try ``` ... ``` (any language tag)
+        start = s.indexOf("```");
+        if (start >= 0) {
+            int firstNewline = s.indexOf('\n', start);
+            if (firstNewline > start) start = firstNewline + 1;
+            int end = s.indexOf("```", start);
+            if (end > start) return s.substring(start, end);
+        }
+        // No fence — try to find "def" as the start
+        int defIdx = s.indexOf("def ");
+        if (defIdx >= 0) return s.substring(defIdx);
+        return s;
+    }
+
+    /**
+     * Extract the function body from a Python source string. If the
+     * input already looks like a bare body (no {@code def} line),
+     * return it as-is so the grader can also accept exact-match
+     * candidates (the canonical solution is bare body).
+     */
+    static String extractFunctionBody(String pythonSource) {
+        if (pythonSource == null) return null;
+        int defIdx = pythonSource.indexOf("def ");
+        if (defIdx < 0) {
+            // No def — assume this IS the body (canonical-solution form)
+            return pythonSource;
+        }
+        int colonIdx = pythonSource.indexOf(':', defIdx);
+        if (colonIdx < 0) return null;
+        // Body starts after the colon, on the next line if not on same line
+        int bodyStart = colonIdx + 1;
+        int newline = pythonSource.indexOf('\n', colonIdx);
+        if (newline > colonIdx) {
+            int probe = newline + 1;
+            while (probe < pythonSource.length()) {
+                int lineEnd = pythonSource.indexOf('\n', probe);
+                if (lineEnd < 0) lineEnd = pythonSource.length();
+                String line = pythonSource.substring(probe, lineEnd);
+                if (line.trim().isEmpty()) { probe = lineEnd + 1; continue; }
+                if (!line.startsWith(" ") && !line.startsWith("\t")) {
+                    return "";   // not part of the body
+                }
+                return line + pythonSource.substring(lineEnd);
+            }
+        }
+        return pythonSource.substring(bodyStart);
+    }
+
+    private static String normalize(String s) {
+        if (s == null) return "";
+        // collapse whitespace, drop leading indentation per-line, trim
+        String[] lines = s.replace("\r\n", "\n").split("\n");
+        StringBuilder out = new StringBuilder();
+        for (String line : lines) {
+            String stripped = line.stripTrailing();
+            // strip uniform leading indent (4 spaces common)
+            if (stripped.startsWith("    ")) stripped = stripped.substring(4);
+            if (stripped.startsWith("\t")) stripped = stripped.substring(1);
+            if (!stripped.isEmpty()) {
+                if (out.length() > 0) out.append('\n');
+                out.append(stripped.trim());
+            }
+        }
+        return out.toString();
+    }
 }
