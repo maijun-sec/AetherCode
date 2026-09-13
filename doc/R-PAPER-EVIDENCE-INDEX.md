@@ -418,7 +418,16 @@ AetherCode 已实现 17 个 paper-compat 兼容类, 全部走 100+ 单测。
 | `HeuristicExtractor` | 2603.24639 ERL | `aethercode-memory.heuristic` | 7 |
 | `RetrievalBandit` | 2604.21725 AEL | `aethercode-memory.bandit` | 8 |
 | `PaperCompatRpc (8 RPC methods)` | 8 paper compat RPCs | `orchestration.papercompat` | 15 |
-| **Total** | | | **193** |
+| `WorkflowEval` (3-layer WorFBench scoring) | 2410.07869 WorFBench | `orchestration.verifier` | 5 |
+| `MirrorReflector` (intra+inter reflection) | 2505.20670 MIRROR | `orchestration.verifier` | 5 |
+| `ToolMVRSelector` (3-view tool scoring) | 2506.04625 Tool-MVR | `orchestration.planner` | 6 |
+| `TeamGeometryComposer` (W2 team composition) | 2510.26352 Geometry | `orchestration.multiagent` | 5 |
+| `ModelSizeRouter` (small-vs-large routing) | 2601.11327 Small-vs-Large | `orchestration.planner` | 6 |
+| `SnapBlueprint` (cognitive blueprint) | 2602.23720 Auton | `orchestration.plan` | 4 |
+| `ProbabilisticReasoner` (Dirichlet posterior) | 2603.13256 ReDeReF | `orchestration.verifier` | 5 |
+| `LfmSafetyChecker` (5 LFM safety rules) | 2604.18133 MAS-LFM | `orchestration.security` | 6 |
+| `McpA2aBridge` (MCP↔A2A translation) | 2506.01804 MCP-A2A | `orchestration.runtime` | 6 |
+| **Total** | | | **241** |
 
 ## 12. 中文全文翻译流程
 
@@ -444,7 +453,14 @@ AetherCode 已实现 17 个 paper-compat 兼容类, 全部走 100+ 单测。
 | AgentInstruct-mind2web | 同 | ✅ | 122 |
 | **Total** | | | **2841** |
 
-**真 LLM 端到端报告** (`BenchmarkReportRealLlmTest`):
-- 跑 MiniMax-M3 (via `MINIMAX_API_KEY`) 3 task × 2 benchmark
-- 结果: MMLU 3/3 = 100% pass@1, HumanEval 0/3 = 0% (grading 算法不匹配, 不是模型问题)
-- Mock baseline 3.0% → 真 LLM 50% (TOTAL pass@1)
+**真 LLM 端到端报告** (`BenchmarkReportRealLlmTest` + `EngineQueryRealLlmTest`):
+- **全套 9 benchmark × 5 task = 45 task** 跑 MiniMax-M3, 252s (~5.6s/task):
+  - MMLU-philosophy: **5/5 = 100%** (vs mock 25%, vs 1/4 random baseline)
+  - HumanEval: 0/5 = 0% (grading 算法不匹配: LLM 给 full def, expected 是 body)
+  - SWE-bench: 0/5 = 0% (LLM 给 plain text 不是 diff format)
+  - AgentInstruct × 6: 0/5 = 0% (format mismatch, expected 是 Think: + Act: chain, LLM 给 markdown)
+  - **TOTAL: 5/45 = 11.1% pass@1**
+- Mock baseline 3.0% (3.7× 真 LLM 提升) - 主要 gap 来自 grading 算法
+- **AetherCodeEngine.query 端到端** (EngineQueryRealLlmTest):
+  - 真实 engine + SpringAiChatClient + 26 tool pool (18 standard + 8 paper-compat)
+  - 真 LLM 响应 2.5s/query, 9 events, answer='B' (对 "Reply with single letter B" prompt)
