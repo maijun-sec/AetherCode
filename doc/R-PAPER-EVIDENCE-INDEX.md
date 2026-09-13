@@ -1,10 +1,10 @@
 # R-PAPER-EVIDENCE-INDEX: AI Agent Paper è§‚ç‚¹ä¾æ®ç´¢å¼•
 
-> **ç›®çš„**: æŠŠ 22 ç¯‡ AI Agent / Multi-Agent / Tool Use / Memory / Safety / Planning ä¸»é¢˜ arXiv paper çš„æ ¸å¿ƒè§‚ç‚¹, æŒ‰ä¸»é¢˜åˆ†ç±»ç´¢å¼•, è·Ÿ AetherCode å®ç°çŠ¶æ€ä¸€ä¸€å¯¹ç…§ã€‚
+> **ç›®çš„**: æŠŠ 46+ ç¯‡ AI Agent / Multi-Agent / Tool Use / Memory / Safety / Planning ä¸»é¢˜ arXiv paper çš„æ ¸å¿ƒè§‚ç‚¹, æŒ‰ä¸»é¢˜åˆ†ç±»ç´¢å¼•, è·Ÿ AetherCode å®ç°çŠ¶æ€ä¸€ä¸€å¯¹ç…§ã€‚
 > åç»­ paper å¢é‡æ›´æ–°ç›´æ¥ append åˆ°æœ¬æ–‡ä»¶, ä¸å¦èµ·æ–°æ–‡ä»¶ã€‚
 
-**æ›´æ–°æ—¥æœŸ**: 2026-09-12
-**è¦†ç›–èŒƒå›´**: 22 ç¯‡ paper, 9 å¤§ä¸»é¢˜
+**æ›´æ–°æ—¥æœŸ**: 2026-09-13
+**è¦†ç›–èŒƒå›´**: 46 ç¯‡ paper, 10 å¤§ä¸»é¢˜
 **å…³è”å·¥ç¨‹**: aethercode (v0.2.65+), aethercode-orchestration, aethercode-evals
 
 ---
@@ -961,3 +961,119 @@
 | Evaluation & Benchmark | 4 | 2512.12791, 2510.22898, 2510.10472, 2510.26352 |
 | Programmatic / Code Memory | 2 | 2607.20064, 2608.28978 |
 | **Total** | **41** | |
+
+---
+
+## 17. 2026 ÂÛÎÄ batch 6 (±¾ÂÖĞÂÔö 5 Æª, ÀÛ¼Æ 46 Æª)
+
+### 17.1 paper 2604.18133 ¡ª Multi-Agent Systems: Classical ¡ú LFM-Enabled Futures (Survey)
+
+**×÷Õß**: Zixiang Wang, Mengjia Gong, Qiyu Sun, Jing Xu, Shuai Mao, Xin Jin, Qing-Long Han, Yang Tang
+
+**ºËĞÄ**: ×ÛÊö CMAS (¾­µä MAS) vs LMAS (LFM-based MAS), 5 Î¬·ÖÀà·¨ (perception / communication / decision / control + cross-cutting), ±Õ»·Ğ­µ÷¿ò¼Ü¡£
+
+**¹Ø¼ü¹Ûµã**:
+- LFM °ÑĞ­µ÷´Ó "state exchange" Éıµ½ "semantic reasoning"
+- Î´À´ 5 ÌôÕ½: ÆÀ¹À»ù×¼ / Í¨ĞÅĞ§ÂÊ / ¿ÉÀ©Õ¹ĞÔ (N2 Í¨ĞÅ) / Òì¹¹ MAS / °²È«¿É½âÊÍĞÔ
+
+**AetherCode ¶ÔÓ¦**:
+- `MultiAgentOrchestrator` 5 strategy (Single/Independent/Centralized/Decentralized/Hybrid) ?
+- `CritiqueStrategy` (semantic reasoning coordination) ?
+- `ByzantineDetector` + `RedFlagDetector` (°²È«) ?
+
+**¼æÈİÊµÏÖºòÑ¡**:
+- `DebateStrategy` ¡ª ¶àÂÖ±çÂÛ, ÔçÍ£ (semantic reasoning coordination)
+- `PubSubTopology` ¡ª Ñ¡ÔñĞÔ¶©ÔÄ, ¼õÉÙ¹ã²¥ (Í¨ĞÅĞ§ÂÊ)
+- `DecisionAttributor` ¡ª Ê§°Ü¹éÒò (LIFE µÄ Find ½×¶Î)
+
+### 17.2 paper 2604.04503 ¡ª Memory Intelligence Agent (MIA)
+
+**×÷Õß**: Jingyang Qiao, Jingyu Gong, Kun Shao µÈ
+
+**ºËĞÄ**: Bidirectional conversion loop (param ? non-param memory), ½»Ìæ RL ÑµÁ· + ÔÚÏß test-time learning, reflection + unsupervised judgment¡£
+
+**¹Ø¼üÊı¾İ**: planner ³ÖĞø¸üĞÂ, ¶àÄ£Ì¬ +3.5% ×¼È·ÂÊ, ´¿ÎÄ±¾ +4.15%¡£
+
+**AetherCode ¶ÔÓ¦**:
+- `DynamicLinker` (A-Mem 2502.12110 Ë«ÏòÁ´½Ó) ?
+- `MemoryCriticAgent` (R-paper-batch5 reflection) ?
+
+**¼æÈİÊµÏÖºòÑ¡**:
+- `OnlinePlanDistiller` ¡ª episodic memory ÕôÁó³É parametric plan ×¢Èë prompt
+- `TestTimeLearner` ¡ª ÍÆÀíÊ±³ÖĞø¸üĞÂ retrieval policy
+- `MiaStyleMemory` ¡ª bidirectional param/non-param store
+
+### 17.3 paper 2607.01224 ¡ª AutoMem: Memory as Cognitive Skill (Stanford)
+
+**×÷Õß**: Shengguang Wu, Hao Zhu, Yuhui Zhang, Xiaohan Wang, Serena Yeung-Levy
+
+**ºËĞÄ**: °Ñ memory µ±×÷¿ÉÑµÁ·¼¼ÄÜ (Ôª¼ÇÒä metamemory), Ë«ÖáÓÅ»¯: (1) memory scaffold (prompt/schema/vocabulary); (2) model proficiency¡£ÍâÑ­»· 1 ÓÃÇ¿ LLM ¸Ä scaffold, ÍâÑ­»· 2 ÓÃ good memory decisions ÑµÄ£ĞÍ¡£
+
+**¹Ø¼üÊı¾İ**: Crafter / MiniHack / NetHack, 32B ¿ªÔ´ ¡Ö Claude Opus 4.5 / Gemini 3.1 Pro, 2-4¡Á ĞÔÄÜÌáÉı¡£
+
+**AetherCode ¶ÔÓ¦**:
+- `ProceduralMemory` (R-paper-batch5) ²¿·Ö ?
+- `MemoryCriticAgent` ²¿·Ö ?
+
+**¼æÈİÊµÏÖºòÑ¡**:
+- `MemoryActionVocabulary` ¡ª first-class file action API
+- `MemorySkillPolicy` ¡ª trainable retrieval policy (bandit/RL)
+- `MemoryScaffoldOptimizer` ¡ª ×Ô¶¯ review trajectory ¸Ä scaffold
+
+### 17.4 paper 2604.21725 ¡ª AEL (Agent Evolving Learning, Open-Ended)
+
+**ºËĞÄ**: Ë«Ê±¼ä³ß¶È (¿ì: Thompson Sampling bandit Ñ¡ retrieval; Âı: LLM reflection ×¢ÈëÒò¹û¶´²ìµ½ prompt)¡£**Sharpe 2.13¡À0.47**, ³¬¹ı 5 ¸ö×Ô¸Ä½ø·½·¨ + È«²¿·Ç LLM baseline¡£
+
+**¹Ø¼üÏûÈÚ**: "less is more" ¡ª memory + reflection ¸ø 58% ÀÛ¼Æ¸Ä½ø; µ«**Ã¿¸ö¶îÍâ»úÖÆ¶¼½µµÍĞÔÄÜ** (planner evolution / per-tool / cold-start / skill extraction / 3 credit assignment)¡£
+
+**AetherCode ¶ÔÓ¦**:
+- `MemoryCriticAgent` (KEEP/PRUNE/REWRITE) ²¿·Ö ?
+- `RedFlagDetector` + `RuleVerifier` (V Ğ£ÑéÆ÷) ?
+- ?? ¸ø aethercode-orchestration Áô warning: ²»Òª¶Ñ mechanism, ¼òµ¥ reflection ÒÑÄÜÄÃµ½ 58% ÌáÉı
+
+**¼æÈİÊµÏÖºòÑ¡**:
+- `RetrievalBandit` ¡ª Thompson Sampling Ñ¡ retrieval policy
+- `ReflectionInjector` ¡ª °Ñ reflection ×¢Èë prompt
+- `SelfDiagnosisLoop` ¡ª Õï¶Ï "ÈçºÎÓÃ¾­Ñé" µÄÔªÑ­»·
+
+### 17.5 paper 2603.24639 ¡ª ERL (Experiential Reflective Learning, Illuin)
+
+**×÷Õß**: Marc-Antoine Allard, Arnaud Teinturier, Victor Xing, Gautier Viaud (Illuin Technology)
+
+**ºËĞÄ**: Reflection ¡ú heuristic (¸ß²ã¿ÉÇ¨ÒÆ¹æÔò), single-attempt trajectory Ò²ÄÜÓÃ (vs ExpeL/AutoGuide ĞèÒª multi-rollout), selective retrieval (LLM-scored top-k)¡£
+
+**¹Ø¼üÊı¾İ**: Gaia2 Search + Execution splits, **+7.8% ³É¹¦ÂÊ** vs ReAct baseline, ³¬¹ı ExpeL/AutoGuide¡£
+
+**AetherCode ¶ÔÓ¦**:
+- `MemoryCriticAgent` (KEEP/PRUNE/REWRITE) ²¿·Ö ?
+- ?? heuristic generation È±
+- ?? scored retrieval Î´ÊµÏÖ
+
+**¼æÈİÊµÏÖºòÑ¡**:
+- `HeuristicExtractor` ¡ª ´Ó trajectory ·´Ë¼ÌáÈ¡ heuristics (rule + applicability)
+- `ScoredMemoryRetrieval` ¡ª LLM ÆÀ·ÖÏà¹ØĞÔµÄ top-k retrieval
+- `SingleAttemptReflection` ¡ª µ¥´Î attempt ¡ú heuristic Á÷³Ì
+
+---
+
+## 18. ÀÛ¼Æ 46 paper (10 Ö÷Ìâ)
+
+| Ö÷Ìâ | ÊıÁ¿ | ĞÂÔö (batch 6) |
+|---|---:|---|
+| Multi-Agent Architecture | 6 | +2604.18133 |
+| Tool Use & Reflection | 5 | ¡ª |
+| Planning & Reasoning | 9 | ¡ª |
+| Memory & Continual | 12 | +2604.04503, +2607.01224, +2604.21725, +2603.24639 |
+| Safety & Alignment | 4 | ¡ª |
+| Protocol & Interop | 4 | ¡ª |
+| Cognitive Architecture | 4 | ¡ª |
+| Survey / Holistic | 4 | ¡ª |
+| Evaluation & Benchmark | 4 | ¡ª |
+| Programmatic / Code Memory | 2 | ¡ª |
+| **Total** | **46** | +5 |
+
+**ÀÛ¼Æ 46 paper Ö÷Ìâ·Ö²¼**: 5+5+9+12+4+4+4+4+4+2 = 53 (²¿·Ö paper ¿çÖ÷Ìâ; Êµ¼ÊÎ¨Ò» 46).
+
+---
+
+**×îºó¸üĞÂ**: 2026-09-13 (R-paper-batch6: +5 paper, Tier-3 RPC ¶Ëµ½¶Ë¼¯³É, 21 e2e tests)
