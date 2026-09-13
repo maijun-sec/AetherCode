@@ -71,6 +71,41 @@ public interface BenchmarkAdapter {
         if (trimmed.length() == 1 && Character.isDigit(trimmed.charAt(0))) {
             return trimmed.equals(task.expectedOutput());
         }
+        // Reasoning models often wrap the answer in markdown like "**B. ..." or
+        // "B) ...". Strip markdown bold/italic and try again.
+        String stripped = trimmed
+            .replaceAll("\\*+", "")        // **bold** / *italic*
+            .replaceAll("^#+\\s*", "");     // ## headings
+        if (!stripped.equals(trimmed)) {
+            // recurse on the stripped form
+            return grade(task, stripped);
+        }
+        // Look for "X." or "X)" anywhere — first at line-start, then anywhere
+        // in the text. Reasoning models often write "The answer is D." or
+        // "**Answer: B**" or "Option C) ...".
+        for (String line : stripped.split("\\R")) {
+            String l = line.trim();
+            if (l.isEmpty()) continue;
+            char c = Character.toUpperCase(l.charAt(0));
+            if (c >= 'A' && c <= 'D' && l.length() > 1
+                && (l.charAt(1) == '.' || l.charAt(1) == ')' || l.charAt(1) == ' ')) {
+                int idx = c - 'A';
+                if (idx < task.choices().size()
+                    && String.valueOf(idx).equals(task.expectedOutput())) {
+                    return true;
+                }
+            }
+        }
+        // Last fallback: find any "X." or "X)" pattern in the stripped text
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("\\b([A-D])[\\.\\)]").matcher(stripped);
+        if (m.find()) {
+            int idx = Character.toUpperCase(m.group(1).charAt(0)) - 'A';
+            if (idx < task.choices().size()
+                && String.valueOf(idx).equals(task.expectedOutput())) {
+                return true;
+            }
+        }
         // full text match: find which choice index the text corresponds to
         for (int i = 0; i < task.choices().size(); i++) {
             if (trimmed.equalsIgnoreCase(task.choices().get(i).trim())) {

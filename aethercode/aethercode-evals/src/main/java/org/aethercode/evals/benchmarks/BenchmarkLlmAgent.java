@@ -72,7 +72,11 @@ public final class BenchmarkLlmAgent implements BenchmarkAgent {
                 }
             }
         });
-        return out.toString().trim();
+        String raw = out.toString().trim();
+        // Strip <think>...</think> blocks so the grading logic sees just the answer.
+        // MiniMax-M3 (and most reasoning models) emits a think preamble; the
+        // benchmark grader only cares about the final answer.
+        return raw.replaceAll("(?is)<think>.*?</think>", "").trim();
     }
 
     /** Adapter so this can be used outside the test class too. */

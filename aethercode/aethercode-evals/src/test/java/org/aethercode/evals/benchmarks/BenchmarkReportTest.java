@@ -52,11 +52,14 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class BenchmarkReportTest {
 
-    private static Path resolve(String name) {
+    static Path resolve(String name) {
         Path p1 = Paths.get("reference", "benchmarks", name);
         if (Files.isDirectory(p1)) return p1;
         return Paths.get("D:/work/workspace/idea/engine/AetherCode/reference/benchmarks", name);
     }
+
+    /** package-private alias so other test classes (real-LLM, smoke, …) can reuse. */
+    static Path resolveBenchmarkDir(String name) { return resolve(name); }
 
     private static String abbreviate(String s, int n) {
         if (s == null) return "(null)";
