@@ -51,10 +51,12 @@ class BenchmarkEndToEndRunTest {
      * deterministic answer based on the task (so the harness can
      * be tested without an LLM). Override via system property
      * {@code -Dbenchmark.agent=fancy} to use a smarter agent.
+     *
+     * <p>Note: this used to be a nested interface; moved to
+     * {@link BenchmarkAgent} in the main source set so
+     * {@link BenchmarkLlmAgent} can also implement it.</p>
      */
-    interface Agent {
-        String run(BenchmarkTask task);
-    }
+    interface Agent extends BenchmarkAgent {}
 
     /**
      * Stub agent: returns the canonical answer if it's a free-form
