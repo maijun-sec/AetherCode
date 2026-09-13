@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assumptions.assumeThat;
 
 class FileReadToolTest {
 
@@ -52,6 +53,16 @@ class FileReadToolTest {
      *  outside the per-test temp subdir. */
     @Test
     void readOutsideSandboxRefused(@TempDir Path tmp) throws Exception {
+        // R-paper-batch7-tools-sandbox: this test installs its own
+        // tighter sandbox via the aethercode.cwd system property.
+        // It depends on the sandbox check actually firing — if the
+        // environment exports AETHERCODE_ALLOW_ANY_PATH=1 (used for
+        // local development / CI to opt out of the sandbox) the
+        // check is bypassed and this test fails. We assert the env
+        // var is NOT set in the test JVM so the test is hermetic.
+        assumeThat(System.getenv("AETHERCODE_ALLOW_ANY_PATH"))
+            .as("AETHERCODE_ALLOW_ANY_PATH must not be set for sandbox tests to be meaningful")
+            .isNull();
         String savedCwd = System.getProperty("aethercode.cwd");
         try {
             // Tighten the sandbox to JUST the test's temp dir

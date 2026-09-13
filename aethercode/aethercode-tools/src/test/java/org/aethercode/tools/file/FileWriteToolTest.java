@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assumptions.assumeThat;
 
 /**
  * regression test for the Windows case-insensitive path sandbox.
@@ -109,6 +110,14 @@ class FileWriteToolTest {
 
     @Test
     void writeRefusedForPathOutsideCwd(@TempDir Path tmp) throws Exception {
+        // R-paper-batch7-tools-sandbox: like FileReadToolTest, the
+        // sandbox must be active for this test to be meaningful. If
+        // AETHERCODE_ALLOW_ANY_PATH=1 is in the test env the check
+        // is bypassed and the test asserts the wrong direction. Skip
+        // with a clear message rather than fail.
+        assumeThat(System.getenv("AETHERCODE_ALLOW_ANY_PATH"))
+            .as("AETHERCODE_ALLOW_ANY_PATH must not be set for sandbox tests to be meaningful")
+            .isNull();
         // Sanity: the sandbox must still refuse escapees. This guards
         // against an over-eager R88 fix that just deletes the check.
         String originalCwd = System.getProperty("aethercode.cwd");
