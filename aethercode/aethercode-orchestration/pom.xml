@@ -21,7 +21,7 @@
 
     <dependencies>
         <!--
-            R-paper-batch6-TIER-3-E2E: Tier3Rpc lives in
+            R-paper-batch6-TIER-3-E2E: PaperCompatRpc lives in
             orchestration.protocol because it bridges Tier-3
             paper-compat implementations to JSON-RPC. The bridge
             depends on aethercode-protocol (JsonRpcDispatcher,

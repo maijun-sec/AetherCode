@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * correct. No mocks for the orchestration primitives; the LLM is
  * stubbed via {@link AgentFn} lambda.
  */
-class AgentRuntimeTier3E2ETest {
+class AgentRuntimePaperCompatE2ETest {
 
     @Test
     void redFlagRejectsAndSelfCorrectRescues() {

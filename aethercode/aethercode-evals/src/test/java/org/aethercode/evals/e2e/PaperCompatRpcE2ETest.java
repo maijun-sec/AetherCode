@@ -3,7 +3,7 @@ package org.aethercode.evals.e2e;
 import org.aethercode.protocol.jsonrpc.JsonRpcMessage;
 import org.aethercode.protocol.jsonrpc.JsonRpcRequest;
 import org.aethercode.protocol.jsonrpc.JsonRpcResponse;
-import org.aethercode.orchestration.protocol.Tier3Rpc;
+import org.aethercode.orchestration.papercompat.PaperCompatRpc;
 import org.aethercode.protocol.server.JsonRpcDispatcher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,12 +25,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * TUI) reaches the Tier-3 paper-compat implementation, returns a
  * result, and that the result has the shape a front-end would expect.
  * <p>
- * The dispatcher is wired with the real {@link Tier3Rpc}; no mocks.
+ * The dispatcher is wired with the real {@link PaperCompatRpc}; no mocks.
  */
-class Tier3RpcE2ETest {
+class PaperCompatRpcE2ETest {
 
     private JsonRpcDispatcher dispatcher;
-    private Tier3Rpc tier3;
+    private PaperCompatRpc paperCompat;
     private LinkedBlockingQueue<JsonRpcMessage> sent;
     private AtomicInteger idCounter;
 
@@ -39,8 +39,8 @@ class Tier3RpcE2ETest {
         sent = new LinkedBlockingQueue<>();
         idCounter = new AtomicInteger();
         dispatcher = new JsonRpcDispatcher(sent::offer);
-        tier3 = new Tier3Rpc();
-        tier3.register(dispatcher);
+        paperCompat = new PaperCompatRpc();
+        paperCompat.register(dispatcher);
     }
 
     @AfterEach
@@ -67,7 +67,7 @@ class Tier3RpcE2ETest {
     @Test
     void architectureRecommendE2E() throws Exception {
         // Front-end has TaskFeatures, dispatches RPC, expects a Map back
-        JsonRpcResponse r = dispatch("tier3.architecture.recommend", Map.of(
+        JsonRpcResponse r = dispatch("paperCompat.architecture.recommend", Map.of(
             "parallelizable", true,
             "toolHeavy", true,
             "dynamic", false,
@@ -85,7 +85,7 @@ class Tier3RpcE2ETest {
     @Test
     void saturationAssessE2E() throws Exception {
         // High mean → saturated → "don't bother with multi-agent"
-        JsonRpcResponse r = dispatch("tier3.saturation.assess", Map.of(
+        JsonRpcResponse r = dispatch("paperCompat.saturation.assess", Map.of(
             "runs", List.of(
                 Map.of("successScore", 0.55),
                 Map.of("successScore", 0.60),
@@ -102,7 +102,7 @@ class Tier3RpcE2ETest {
     @Test
     void redFlagInspectE2E() throws Exception {
         // Empty output → HIGH red flag → front-end can show "needs review"
-        JsonRpcResponse r = dispatch("tier3.redflag.inspect", Map.of(
+        JsonRpcResponse r = dispatch("paperCompat.redflag.inspect", Map.of(
             "output", ""
         ));
         assertFalse(r.error() != null);
@@ -122,7 +122,7 @@ class Tier3RpcE2ETest {
         // and the query race. The dispatch() helper polls the
         // response queue so by the time it returns the worker has
         // finished.
-        JsonRpcResponse observeResp = dispatch("tier3.byzantine.observe", Map.of(
+        JsonRpcResponse observeResp = dispatch("paperCompat.byzantine.observe", Map.of(
             "agentId", "rogue-1",
             "output", "x".repeat(100_000),  // overflow
             "success", true
@@ -130,7 +130,7 @@ class Tier3RpcE2ETest {
         assertFalse(observeResp.error() != null, "observe must succeed");
 
         // Then query flagged
-        JsonRpcResponse r = dispatch("tier3.byzantine.flagged", Map.of());
+        JsonRpcResponse r = dispatch("paperCompat.byzantine.flagged", Map.of());
         assertFalse(r.error() != null);
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) r.result();
@@ -143,7 +143,7 @@ class Tier3RpcE2ETest {
     @Test
     void votingFirstToAheadByKE2E() throws Exception {
         // 3 candidates A, B, A. With k=1, we expect A to win.
-        JsonRpcResponse r = dispatch("tier3.voting.firstToAheadByK", Map.of(
+        JsonRpcResponse r = dispatch("paperCompat.voting.firstToAheadByK", Map.of(
             "k", 1,
             "samples", List.of("A", "B", "A")
         ));
@@ -156,7 +156,7 @@ class Tier3RpcE2ETest {
     @Test
     void planExecuteSequenceE2E() throws Exception {
         // Run a plan with 3 skills end-to-end via RPC
-        JsonRpcResponse r = dispatch("tier3.plan.executeSequence", Map.of(
+        JsonRpcResponse r = dispatch("paperCompat.plan.executeSequence", Map.of(
             "skills", List.of("SEARCHING", "WRITING", "FINISH")
         ));
         assertFalse(r.error() != null);
@@ -178,19 +178,19 @@ class Tier3RpcE2ETest {
     @Test
     void byzantineResetE2E() throws Exception {
         // Flag, then reset, then check empty
-        dispatch("tier3.byzantine.observe", Map.of("agentId", "a1", "output", "x".repeat(100_000), "success", true));
-        JsonRpcResponse before = dispatch("tier3.byzantine.flagged", Map.of());
+        dispatch("paperCompat.byzantine.observe", Map.of("agentId", "a1", "output", "x".repeat(100_000), "success", true));
+        JsonRpcResponse before = dispatch("paperCompat.byzantine.flagged", Map.of());
         @SuppressWarnings("unchecked")
         List<String> beforeFlagged = (List<String>) ((Map<String, Object>) before.result()).get("flaggedAgents");
         assertTrue(beforeFlagged.contains("a1"));
 
-        JsonRpcResponse reset = dispatch("tier3.byzantine.reset", Map.of());
+        JsonRpcResponse reset = dispatch("paperCompat.byzantine.reset", Map.of());
         assertTrue(reset.result() != null, "expected non-null result from reset");
         @SuppressWarnings("unchecked")
         Map<String, Object> resetRes = (Map<String, Object>) reset.result();
         assertEquals(true, resetRes.get("ok"));
 
-        JsonRpcResponse after = dispatch("tier3.byzantine.flagged", Map.of());
+        JsonRpcResponse after = dispatch("paperCompat.byzantine.flagged", Map.of());
         @SuppressWarnings("unchecked")
         List<String> afterFlagged = (List<String>) ((Map<String, Object>) after.result()).get("flaggedAgents");
         assertTrue(afterFlagged.isEmpty());

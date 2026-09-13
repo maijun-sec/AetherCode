@@ -1,4 +1,4 @@
-package org.aethercode.orchestration.protocol;
+package org.aethercode.orchestration.papercompat;
 
 import org.aethercode.orchestration.multiagent.CritiqueStrategy;
 import org.aethercode.orchestration.multiagent.HybridStrategy;
@@ -43,41 +43,41 @@ import java.util.Objects;
  * <p>
  * Methods exposed (all take a single Map parameter, return a Map):
  * <ul>
- *   <li>{@code tier3.architecture.recommend} - recommend an architecture
+ *   <li>{@code paperCompat.architecture.recommend} - recommend an architecture
  *       from {@link TaskFeatures} via {@link AgentArchitectureSelector}</li>
- *   <li>{@code tier3.saturation.assess} - assess single-agent capability
+ *   <li>{@code paperCompat.saturation.assess} - assess single-agent capability
  *       saturation via {@link CapabilitySaturationDetector}</li>
- *   <li>{@code tier3.redflag.inspect} - inspect an LLM output for red
+ *   <li>{@code paperCompat.redflag.inspect} - inspect an LLM output for red
  *       flags via {@link RedFlagDetector}</li>
- *   <li>{@code tier3.byzantine.observe} - observe a multi-agent action
+ *   <li>{@code paperCompat.byzantine.observe} - observe a multi-agent action
  *       and update the {@link ByzantineDetector} state</li>
- *   <li>{@code tier3.byzantine.flagged} - read the list of flagged agent
+ *   <li>{@code paperCompat.byzantine.flagged} - read the list of flagged agent
  *       IDs (e.g. for the TUI's "agent health" panel)</li>
- *   <li>{@code tier3.voting.firstToAheadByK} - run a small first-to-ahead
+ *   <li>{@code paperCompat.voting.firstToAheadByK} - run a small first-to-ahead
  *       voting ensemble over a few sample strings</li>
- *   <li>{@code tier3.plan.executeSequence} - run a {@link GlobalPlan} with
+ *   <li>{@code paperCompat.plan.executeSequence} - run a {@link GlobalPlan} with
  *       a {@link HierarchicalExecutor} and return concatenated results</li>
- *   <li>{@code tier3.byzantine.reset} - clear {@link ByzantineDetector}
+ *   <li>{@code paperCompat.byzantine.reset} - clear {@link ByzantineDetector}
  *       state (used between runs / sessions)</li>
  * </ul>
  */
-public final class Tier3Rpc {
+public final class PaperCompatRpc {
 
-    private static final Logger LOG = LoggerFactory.getLogger(Tier3Rpc.class);
+    private static final Logger LOG = LoggerFactory.getLogger(PaperCompatRpc.class);
 
     private final AgentArchitectureSelector architectureSelector;
     private final CapabilitySaturationDetector saturationDetector;
     private final RedFlagDetector redFlagDetector;
     private final ByzantineDetector byzantineDetector;
 
-    public Tier3Rpc() {
+    public PaperCompatRpc() {
         this(new AgentArchitectureSelector(),
              new CapabilitySaturationDetector(),
              new RedFlagDetector(),
              new ByzantineDetector());
     }
 
-    public Tier3Rpc(AgentArchitectureSelector architectureSelector,
+    public PaperCompatRpc(AgentArchitectureSelector architectureSelector,
                     CapabilitySaturationDetector saturationDetector,
                     RedFlagDetector redFlagDetector,
                     ByzantineDetector byzantineDetector) {
@@ -90,19 +90,19 @@ public final class Tier3Rpc {
     /** Register all tier-3 RPC methods on the given dispatcher. */
     public void register(JsonRpcDispatcher dispatcher) {
         Objects.requireNonNull(dispatcher, "dispatcher");
-        dispatcher.register("tier3.architecture.recommend", this::architectureRecommend);
-        dispatcher.register("tier3.saturation.assess", this::saturationAssess);
-        dispatcher.register("tier3.redflag.inspect", this::redflagInspect);
-        dispatcher.register("tier3.byzantine.observe", this::byzantineObserve);
-        dispatcher.register("tier3.byzantine.flagged", this::byzantineFlagged);
-        dispatcher.register("tier3.voting.firstToAheadByK", this::votingFirstToAheadByK);
-        dispatcher.register("tier3.plan.executeSequence", this::planExecuteSequence);
-        dispatcher.register("tier3.byzantine.reset", this::byzantineReset);
+        dispatcher.register("paperCompat.architecture.recommend", this::architectureRecommend);
+        dispatcher.register("paperCompat.saturation.assess", this::saturationAssess);
+        dispatcher.register("paperCompat.redflag.inspect", this::redflagInspect);
+        dispatcher.register("paperCompat.byzantine.observe", this::byzantineObserve);
+        dispatcher.register("paperCompat.byzantine.flagged", this::byzantineFlagged);
+        dispatcher.register("paperCompat.voting.firstToAheadByK", this::votingFirstToAheadByK);
+        dispatcher.register("paperCompat.plan.executeSequence", this::planExecuteSequence);
+        dispatcher.register("paperCompat.byzantine.reset", this::byzantineReset);
     }
 
     /* ---------------- RPC method implementations ---------------- */
 
-    /** tier3.architecture.recommend */
+    /** paperCompat.architecture.recommend */
     public Object architectureRecommend(Object params) {
         Map<String, Object> m = castParams(params);
         TaskFeatures f = new TaskFeatures(
@@ -121,7 +121,7 @@ public final class Tier3Rpc {
         );
     }
 
-    /** tier3.saturation.assess */
+    /** paperCompat.saturation.assess */
     public Object saturationAssess(Object params) {
         Map<String, Object> m = castParams(params);
         @SuppressWarnings("unchecked")
@@ -142,7 +142,7 @@ public final class Tier3Rpc {
         );
     }
 
-    /** tier3.redflag.inspect */
+    /** paperCompat.redflag.inspect */
     public Object redflagInspect(Object params) {
         Map<String, Object> m = castParams(params);
         String output = stringOr(m, "output", "");
@@ -161,7 +161,7 @@ public final class Tier3Rpc {
         );
     }
 
-    /** tier3.byzantine.observe */
+    /** paperCompat.byzantine.observe */
     public Object byzantineObserve(Object params) {
         Map<String, Object> m = castParams(params);
         String agentId = stringOr(m, "agentId", "");
@@ -183,18 +183,18 @@ public final class Tier3Rpc {
         );
     }
 
-    /** tier3.byzantine.flagged */
+    /** paperCompat.byzantine.flagged */
     public Object byzantineFlagged(Object params) {
         return Map.of("flaggedAgents", byzantineDetector.flaggedAgents());
     }
 
-    /** tier3.byzantine.reset */
+    /** paperCompat.byzantine.reset */
     public Object byzantineReset(Object params) {
         byzantineDetector.reset();
         return Map.of("ok", true);
     }
 
-    /** tier3.voting.firstToAheadByK */
+    /** paperCompat.voting.firstToAheadByK */
     public Object votingFirstToAheadByK(Object params) {
         Map<String, Object> m = castParams(params);
         int k = (int) doubleOr(m, "k", 1.0);
@@ -217,7 +217,7 @@ public final class Tier3Rpc {
         );
     }
 
-    /** tier3.plan.executeSequence */
+    /** paperCompat.plan.executeSequence */
     public Object planExecuteSequence(Object params) {
         Map<String, Object> m = castParams(params);
         @SuppressWarnings("unchecked")

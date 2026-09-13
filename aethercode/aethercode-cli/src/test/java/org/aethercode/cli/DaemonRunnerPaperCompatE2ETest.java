@@ -1,7 +1,7 @@
 package org.aethercode.cli;
 
 import org.aethercode.core.tool.Tool;
-import org.aethercode.orchestration.protocol.Tier3Rpc;
+import org.aethercode.orchestration.papercompat.PaperCompatRpc;
 import org.aethercode.protocol.jsonrpc.JsonRpcCodec;
 import org.aethercode.protocol.jsonrpc.JsonRpcMessage;
 import org.aethercode.protocol.jsonrpc.JsonRpcRequest;
@@ -30,8 +30,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * dispatcher the daemon wires with {@link AetherCodeMethods}.
  * <p>
  * What this test is NOT: a unit test of
- * {@link Tier3Rpc#register}. That is covered by
- * {@code Tier3RpcE2ETest} in aethercode-evals.
+ * {@link PaperCompatRpc#register}. That is covered by
+ * {@code PaperCompatRpcE2ETest} in aethercode-evals.
  * <p>
  * What this test IS: a wire-level smoke test. We build the
  * same wiring the daemon builds, then send a real JSON-RPC
@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * DaemonRunner, or breaks the dispatcher hand-off, this
  * test catches it.
  */
-class DaemonRunnerTier3E2ETest {
+class DaemonRunnerPaperCompatE2ETest {
 
     private JsonRpcServer.TestRig rig;
     private JsonRpcCodec codec;
@@ -58,10 +58,10 @@ class DaemonRunnerTier3E2ETest {
 
         // Wire the same way DaemonRunner wires:
         //   1. AetherCodeMethods (the 50+ engine RPCs)
-        //   2. Tier3Rpc (the 8 paper-compat RPCs)
+        //   2. PaperCompatRpc (the 8 paper-compat RPCs)
         AetherCodeMethods methods = new AetherCodeMethods(engine, (SessionManager) null, n -> {});
         methods.registerAll(rig.server.dispatcher());
-        new Tier3Rpc().register(rig.server.dispatcher());
+        new PaperCompatRpc().register(rig.server.dispatcher());
 
         // Drain startup notifications so they don't sit in the
         // response inbox (no engine.start() is called here so
@@ -70,7 +70,7 @@ class DaemonRunnerTier3E2ETest {
         // on otherwise).
         new Thread(() -> {
             try { rig.server.run(); } catch (Exception ignore) {}
-        }, "tier3-e2e-rpc-server").start();
+        }, "paper-compat-e2e-rpc-server").start();
     }
 
     @AfterEach
@@ -96,14 +96,14 @@ class DaemonRunnerTier3E2ETest {
     }
 
     @Test
-    void tier3RedFlagInspectReachableOverJsonRpcWire() throws Exception {
+    void paperCompatRedFlagInspectReachableOverJsonRpcWire() throws Exception {
         // The same JSON-RPC 2.0 wire the front-end uses. The daemon
-        // registered Tier3Rpc alongside AetherCodeMethods, so this
+        // registered PaperCompatRpc alongside AetherCodeMethods, so this
         // method name resolves through the same dispatcher.
-        JsonRpcResponse r = sendAndReceive("tier3.redflag.inspect", Map.of(
+        JsonRpcResponse r = sendAndReceive("paperCompat.redflag.inspect", Map.of(
             "output", ""  // empty → HIGH red flag
         ));
-        assertNull(r.error(), "tier3.redflag.inspect must succeed: " + r.error());
+        assertNull(r.error(), "paperCompat.redflag.inspect must succeed: " + r.error());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) r.result();
         assertEquals(true, result.get("redFlagged"));
@@ -113,15 +113,15 @@ class DaemonRunnerTier3E2ETest {
     }
 
     @Test
-    void tier3ArchitectureRecommendReachableOverJsonRpcWire() throws Exception {
-        JsonRpcResponse r = sendAndReceive("tier3.architecture.recommend", Map.of(
+    void paperCompatArchitectureRecommendReachableOverJsonRpcWire() throws Exception {
+        JsonRpcResponse r = sendAndReceive("paperCompat.architecture.recommend", Map.of(
             "parallelizable", true,
             "toolHeavy", true,
             "dynamic", false,
             "sequential", false,
             "singleAgentBaseline", 0.3
         ));
-        assertNull(r.error(), "tier3.architecture.recommend must succeed: " + r.error());
+        assertNull(r.error(), "paperCompat.architecture.recommend must succeed: " + r.error());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) r.result();
         assertEquals("HYBRID", result.get("architecture"));
@@ -129,29 +129,29 @@ class DaemonRunnerTier3E2ETest {
     }
 
     @Test
-    void tier3VotingFirstToAheadByKReachableOverJsonRpcWire() throws Exception {
-        JsonRpcResponse r = sendAndReceive("tier3.voting.firstToAheadByK", Map.of(
+    void paperCompatVotingFirstToAheadByKReachableOverJsonRpcWire() throws Exception {
+        JsonRpcResponse r = sendAndReceive("paperCompat.voting.firstToAheadByK", Map.of(
             "k", 1,
             "samples", List.of("A", "B", "A")
         ));
-        assertNull(r.error(), "tier3.voting.firstToAheadByK must succeed: " + r.error());
+        assertNull(r.error(), "paperCompat.voting.firstToAheadByK must succeed: " + r.error());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) r.result();
         assertEquals("A", result.get("winner"));
     }
 
     @Test
-    void tier3ByzantineObserveAndFlaggedOverJsonRpcWire() throws Exception {
+    void paperCompatByzantineObserveAndFlaggedOverJsonRpcWire() throws Exception {
         // Observe a malicious agent action
-        JsonRpcResponse obs = sendAndReceive("tier3.byzantine.observe", Map.of(
+        JsonRpcResponse obs = sendAndReceive("paperCompat.byzantine.observe", Map.of(
             "agentId", "rogue-cli",
             "output", "x".repeat(100_000),  // overflow
             "success", true
         ));
-        assertNull(obs.error(), "tier3.byzantine.observe must succeed: " + obs.error());
+        assertNull(obs.error(), "paperCompat.byzantine.observe must succeed: " + obs.error());
 
         // Then query the flagged list
-        JsonRpcResponse flg = sendAndReceive("tier3.byzantine.flagged", Map.of());
+        JsonRpcResponse flg = sendAndReceive("paperCompat.byzantine.flagged", Map.of());
         assertNull(flg.error());
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) flg.result();
