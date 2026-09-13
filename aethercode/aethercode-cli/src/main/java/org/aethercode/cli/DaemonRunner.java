@@ -4,6 +4,7 @@ import org.aethercode.protocol.jsonrpc.JsonRpcNotification;
 import org.aethercode.protocol.methods.AetherCodeMethods;
 import org.aethercode.protocol.server.JsonRpcDispatcher;
 import org.aethercode.protocol.server.JsonRpcServer;
+import org.aethercode.orchestration.protocol.Tier3Rpc;
 import org.aethercode.sdk.AetherCodeEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -117,6 +118,17 @@ final class DaemonRunner {
                 sessionManager,
                 n -> server.notify(n.method(), n.params()));
         methods.registerAll(server.dispatcher());
+
+        // R-paper-batch6-TIER-3-E2E: register the Tier-3 paper-compat
+        // RPC surface on the same dispatcher the front-end (CLI / TUI
+        // / IDEA) already talks to. Without this the Tier-3 classes
+        // are unit-test-only and never reach a real business process.
+        // The bridge is a single Tier3Rpc instance that owns the four
+        // detectors (architecture, saturation, redflag, byzantine) and
+        // exposes them as RPCs.
+        Tier3Rpc tier3 = new Tier3Rpc();
+        tier3.register(server.dispatcher());
+        LOG.info("Tier-3 RPCs registered (8 methods: architecture / saturation / redflag / byzantine / voting / plan)");
 
         // wire a SessionStore if the engine doesn't
         // already have one. legacy, the daemon's

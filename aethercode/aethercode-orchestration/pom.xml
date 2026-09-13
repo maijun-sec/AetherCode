@@ -20,6 +20,21 @@
     </description>
 
     <dependencies>
+        <!--
+            R-paper-batch6-TIER-3-E2E: Tier3Rpc lives in
+            orchestration.protocol because it bridges Tier-3
+            paper-compat implementations to JSON-RPC. The bridge
+            depends on aethercode-protocol (JsonRpcDispatcher,
+            JsonRpcError) and on slf4j for logging.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

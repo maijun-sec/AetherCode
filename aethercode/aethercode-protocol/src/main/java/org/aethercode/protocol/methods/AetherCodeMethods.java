@@ -77,7 +77,8 @@ public class AetherCodeMethods {
     public static final String NOTIFY_TASK_STATE         = "task_state";
     public static final String NOTIFY_LOG                = "log";
     public static final String NOTIFY_PERMISSION_REQUEST = "permission_request";
-    * the {@code kind} value embedded in a
+
+    /** the {@code kind} value embedded in a
      *  {@link #NOTIFY_TASK_STATE} notification when the
      *  in-session todo list changes (the model just called
      *  {@code todo_write}). The desktop's Plan tab subscribes
@@ -86,14 +87,15 @@ public class AetherCodeMethods {
      *  new list (aethercode model: the model sends the entire
      *  list on every call so the renderer never has to diff). */
     public static final String TODO_UPDATE_KIND          = "todo_update";
-    * a session's cwd changed (via switchProject or
+    /**
+     * a session's cwd changed (via switchProject or
      *  the next time the engine's setCwd is called). The
      *  TUI / Desktop uses this to refresh the cwd pill
      *  in the Header and to invalidate any cached
      *  project-memory view. Payload: { sessionId, oldCwd,
      *  newCwd, atMs }. */
     public static final String NOTIFY_CWD_CHANGED        = "cwd_changed";
-    *
+    /**
      * a low-risk tool call was auto-approved by
      * the daemon (the user had {@code autoApproveLowRisk}
      * enabled, default true). Payload: { tool, input,
@@ -135,7 +137,7 @@ public class AetherCodeMethods {
     public static final String TAG_PROJECT      = "project";     // project switch
     public static final String TAG_DIAGNOSTIC   = "diagnostic";  // ping, metrics, traces
 
-    *
+    /**
      * canonical method →tags map. Keys are the
      * exact RPC names the dispatcher understands; values
      * are the tag set surfaced via {@code /api/methods}.
@@ -296,7 +298,7 @@ public class AetherCodeMethods {
         // above already cover them.)
         METHOD_TAGS = java.util.Collections.unmodifiableMap(m);
     }
-    * skip-confirmation counter changed. Payload:
+    /** skip-confirmation counter changed. Payload:
      *  { sessionId, remaining, source ("rpc" | "auto-detect" | "consume" | "clear") }. */
     public static final String NOTIFY_SKIP_CONFIRMATION  = "skip_confirmation";
     // skip-low notification. Fired ONCE per session
@@ -304,7 +306,7 @@ public class AetherCodeMethods {
     // through the waterline (e.g. 6 -> 5 with waterline=5).
     // The UI uses this to show "skip running low, re-arm?".
     public static final String NOTIFY_SKIP_LOW           = "skip_low";
-    * background subagent lifecycle. Fired on every
+    /** background subagent lifecycle. Fired on every
      *  state transition in the {@code SubagentRegistry} —     *  new running, completed, failed, cancelled. The
      *  payload mirrors the registry's {@code SubagentEvent}
      *  fields ({@code jobId, role, status, elapsedMs,
@@ -312,7 +314,7 @@ public class AetherCodeMethods {
      *  recent event without re-querying the daemon. */
     public static final String NOTIFY_SUBAGENT_EVENT    = "subagent_event";
 
-    * Decision string the TUI sends back. Matches {@code
+    /** Decision string the TUI sends back. Matches {@code
      *  ToolPermissionPrompter}'s decision vocabulary plus two
      *  persistence-modifiers used by the TUI:
      *  <ul>
@@ -326,7 +328,7 @@ public class AetherCodeMethods {
     public static final String DECISION_ALWAYS_ALLOW = "always_allow";
     public static final String DECISION_ALWAYS_DENY  = "always_deny";
 
-    * Pending permission asks, keyed by requestId. The {@link
+    /** Pending permission asks, keyed by requestId. The {@link
      *  org.aethercode.protocol.permissions.JsonRpcPermissionPrompter}
      *  creates a CompletableFuture and parks it here when a tool
      *  needs a decision. The {@link #permissionResponse} handler
@@ -335,7 +337,7 @@ public class AetherCodeMethods {
             = new ConcurrentHashMap<>();
 
     private final AetherCodeEngine engine;
-    *
+    /**
      * runtime toggle for "auto-approve low risk
      * tool calls without prompting". The default is
      * true (the legacy init-time heuristic was always-on;
@@ -350,7 +352,7 @@ public class AetherCodeMethods {
      * without a full reconnect.
      */
     private volatile boolean autoApproveLowRisk = true;
-    *
+    /**
      * opt-in flag for "auto-approve medium- AND
      * high-risk tool calls without prompting". Distinct
      * from {@link #autoApproveLowRisk} so a user can
@@ -368,7 +370,7 @@ public class AetherCodeMethods {
      * silently fail to write anything.
      */
     private volatile boolean autoApproveMediumHigh = false;
-    *
+    /**
      * total number of low-risk tool calls
      * auto-approved since the daemon started. Surfaced
      * in the desktop's StatusBar so the user can see
@@ -378,7 +380,7 @@ public class AetherCodeMethods {
      */
     private final java.util.concurrent.atomic.AtomicLong autoApprovedCount
             = new java.util.concurrent.atomic.AtomicLong(0);
-    *
+    /**
      * cumulative count of medium / high-risk
      * tool calls that were auto-approved via the
      * {@link #autoApproveMediumHigh} flag. Tracked
@@ -390,14 +392,14 @@ public class AetherCodeMethods {
      */
     private final java.util.concurrent.atomic.AtomicLong autoApprovedElevatedCount
             = new java.util.concurrent.atomic.AtomicLong(0);
-    * when set, the active engine for any RPC
+    /** when set, the active engine for any RPC
      *  call is fetched from this SessionManager instead
      *  of the {@link #engine} field. The default path
      *  (no manager) keeps using the single engine for
      *  backward compat. */
     private final org.aethercode.sdk.SessionManager sessionManager;
     private final Consumer<JsonRpcNotification> notifier;
-    * 3-layer memory facade. Null when the daemon
+    /** 3-layer memory facade. Null when the daemon
      *  was started without a memory base (e.g. a test
      *  fixture that only exercises the engine). The
      *  memory RPCs ({@code getMemory}, {@code setMemory},
@@ -407,7 +409,7 @@ public class AetherCodeMethods {
      *  when this is null. */
     private volatile org.aethercode.memory.LayeredMemoryStore memoryStore;
     private final Map<String, CompletableFuture<Void>> inFlight = new ConcurrentHashMap<>();
-    * session-level "a run is currently in flight"
+    /** session-level "a run is currently in flight"
      *  set. We refuse a second query for the same session
      *  while the first is still streaming, so the user's
      *  manual "Continue" never races with the boulder hook's
@@ -419,7 +421,7 @@ public class AetherCodeMethods {
     private final Map<String, String> sessionRunLock = new ConcurrentHashMap<>();
     private final AtomicLong runCounter = new AtomicLong();
     private final long startMs = System.currentTimeMillis();
-    * boulder-continuation hook. Wired in the constructor; the
+    /** boulder-continuation hook. Wired in the constructor; the
      *  hook subscribes to {@code AppState.fireSessionIdle} and, when
      *  the todo list still has incomplete items, schedules a 2s
      *  countdown that re-prompts the engine via
@@ -434,14 +436,14 @@ public class AetherCodeMethods {
      *  stored in {@link #perEngineDispatchers} /
      *  {@link #perEngineHooks}. */
     private final org.aethercode.hooks.builtin.TodoContinuationHook continuationHook;
-    * bridge between the engine-agnostic
+    /** bridge between the engine-agnostic
      *  {@link org.aethercode.hooks.builtin.TodoContinuationHook} and
      *  the live {@link AetherCodeEngine} + {@link Consumer<JsonRpcNotification>}.
      *  Created in the constructor; never replaced.
      * this is the dispatcher for the
      *  default engine. */
     private final EngineContinuationDispatcher continuationDispatcher;
-    * per-engine dispatchers / hooks for
+    /** per-engine dispatchers / hooks for
      *  factory-built engines. Keyed by
      *  {@link AetherCodeEngine#appState}'s
      *  sessionId (the wire-level id). The default
@@ -455,7 +457,7 @@ public class AetherCodeMethods {
             new ConcurrentHashMap<>();
     private final Map<String, EngineContinuationDispatcher> perEngineDispatchers =
             new ConcurrentHashMap<>();
-    * provider registry. Wired by the
+    /** provider registry. Wired by the
      *  daemon after construction (the CLI's
      *  Main.buildEngine loads
      *  {@code ~/.aethercode/providers.yaml} and
@@ -468,7 +470,7 @@ public class AetherCodeMethods {
      *  (e.g. when the user picks a different
      *  provider from the Settings panel). */
     private volatile org.aethercode.core.providers.ProviderRegistry providerRegistry;
-    * the current provider+model. Updated by
+    /** the current provider+model. Updated by
      *  {@link #switchProvider} so the daemon can
      *  rebuild its ChatClient on demand. Mirrors
      *  the engine's appState.mainLoopModel field
@@ -477,7 +479,7 @@ public class AetherCodeMethods {
      *  in the Settings panel. */
     private volatile String currentProviderName;
     private volatile String currentModelId;
-    * optional resolver that builds a
+    /** optional resolver that builds a
      *  fresh {@link org.aethercode.core.llm.ChatClient}
      *  from a {@code "provider/model"} string. The
      *  protocol module does NOT depend on
@@ -499,7 +501,7 @@ public class AetherCodeMethods {
         this(engine, null, notifier);
     }
 
-    * constructor that wires an optional
+    /** constructor that wires an optional
      *  SessionManager. The default constructor (single
      *  engine) is preserved for backward compat. */
     public AetherCodeMethods(AetherCodeEngine engine,
@@ -611,7 +613,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * when a SessionManager is present, this
+    /** when a SessionManager is present, this
      *  returns the engine registered for the active
      *  session id; otherwise it returns the constructor
      *  engine. The active session id is the one the
@@ -627,7 +629,7 @@ public class AetherCodeMethods {
         return h == null ? engine : h.engine;
     }
 
-    * resolve the SessionManager to use for
+    /** resolve the SessionManager to use for
      *  RPCs that consult the multi-session surface
      *  (listEngines / createEngine / deleteEngine /
      *  setActiveEngine / getActiveEngine). Prefers
@@ -652,7 +654,7 @@ public class AetherCodeMethods {
         return engine.sessionManager();
     }
 
-    * per-RPC sessionId routing helper.
+    /** per-RPC sessionId routing helper.
      *  Resolves the {@link AetherCodeEngine} that a
      *  given RPC call should target. When
      *  {@code sessionId} is null or blank, returns
@@ -688,7 +690,7 @@ public class AetherCodeMethods {
         return h == null ? null : h.engine;
     }
 
-    * legacy: install the SESSION_IDLE listener
+    /** legacy: install the SESSION_IDLE listener
      *  on an engine. Called from the constructor
      *  (for the default engine) and from the
      *  SessionManager on-create listener (for
@@ -842,7 +844,7 @@ public class AetherCodeMethods {
     // public helpers used by EngineContinuationDispatcher.
     // ------------------------------------------------------------------
 
-    * Push a custom JSON-RPC notification to the client. The
+    /** Push a custom JSON-RPC notification to the client. The
      *  {@code method} is the JSON-RPC method (e.g.
      *  {@code "stream_event"} or
      *  {@code "todo_continuation_countdown"}), the {@code params}
@@ -855,14 +857,14 @@ public class AetherCodeMethods {
                 JsonRpcMessage.VERSION, method, params));
     }
 
-    * Push a structured log entry to the client. Mirrors the
+    /** Push a structured log entry to the client. Mirrors the
      *  shape used by the existing {@code NOTIFY_LOG} emissions
      *  (the TUI's console panel renders these). */
     public void notifyLog(Map<String, Object> payload) {
         notifyCustom(NOTIFY_LOG, payload);
     }
 
-    * Cancel a pending continuation countdown for the session.
+    /** Cancel a pending continuation countdown for the session.
      *  Used by {@link EngineContinuationDispatcher} when the
      *  user clicks "Stop" so the 2s window is cut short instead
      *  of waiting it out. No-op when no countdown is scheduled. */
@@ -870,7 +872,7 @@ public class AetherCodeMethods {
         if (continuationHook != null) continuationHook.cancelPendingCountdown(sessionId);
     }
 
-    *
+    /**
      * try to acquire the session-level run lock
      * for an auto-continue dispatch. Returns the new
      * runId on success, or null when the session is
@@ -899,7 +901,7 @@ public class AetherCodeMethods {
         return newRunId;
     }
 
-    *
+    /**
      * release the session-level run lock. Used
      * by {@link EngineContinuationDispatcher} when
      * the auto-continue run finishes.
@@ -921,31 +923,31 @@ public class AetherCodeMethods {
     //  path the helpers use.
     // -----------------------------------------------------------------
 
-    * Test-only: return the runId currently holding
+    /** Test-only: return the runId currently holding
      *  the session lock (or null if free). */
     public String sessionRunLockForTest(String sessionId) {
         return sessionRunLock.get(sessionId);
     }
 
-    * Test-only: plant an arbitrary lock holder. */
+    /** Test-only: plant an arbitrary lock holder. */
     public void holdSessionLockForTest(String sessionId, String runId) {
         sessionRunLock.put(sessionId, runId);
     }
 
-    * Test-only: free the session lock regardless
+    /** Test-only: free the session lock regardless
      *  of who holds it. */
     public void releaseSessionLockForTest(String sessionId, String runId) {
         sessionRunLock.remove(sessionId, runId);
     }
 
-    * Render a {@link StreamEvent} as a plain Map for the wire.
+    /** Render a {@link StreamEvent} as a plain Map for the wire.
      *  Package-private —exposed so the boulder dispatcher can
      *  reuse the same shape the regular query path uses. */
     static Map<String, Object> eventToMapPublic(StreamEvent ev) {
         return eventToMap(ev);
     }
 
-    * install the provider registry after
+    /** install the provider registry after
      *  construction. The CLI does this once at
      *  startup; a future R-round that supports
      *  live-reload (e.g. when the user edits
@@ -954,7 +956,7 @@ public class AetherCodeMethods {
     public void setProviderRegistry(org.aethercode.core.providers.ProviderRegistry reg) {
         this.providerRegistry = reg;
     }
-    * install a resolver that builds a
+    /** install a resolver that builds a
      *  {@link org.aethercode.core.llm.ChatClient}
      *  from a {@code "provider/model"} string.
      *  The CLI's {@code DaemonRunner} wires this
@@ -971,7 +973,7 @@ public class AetherCodeMethods {
                 resolver == null ? "cleared" : "installed");
     }
 
-    *
+    /**
      * inject the layered memory facade. The
      * {@code DaemonRunner} calls this once at startup
      * with a fully-configured store (USER / PROJECT /
@@ -990,7 +992,7 @@ public class AetherCodeMethods {
         return memoryStore;
     }
 
-    * hold the daemon-scoped {@link org.aethercode.memory.MemoryLifecycle}
+    /** hold the daemon-scoped {@link org.aethercode.memory.MemoryLifecycle}
      *  so {@code DaemonRunner} can stop it on shutdown. The
      *  lifecycle is wired into the engine via
      *  {@link org.aethercode.sdk.AetherCodeEngine#setMemoryLifecycle}
@@ -1007,7 +1009,7 @@ public class AetherCodeMethods {
         return memoryLifecycle;
     }
 
-    * hold the daemon-scoped {@link org.aethercode.memory.MemoryExtractor}
+    /** hold the daemon-scoped {@link org.aethercode.memory.MemoryExtractor}
      *  so {@code DaemonRunner} can stop / swap it on shutdown or settings
      *  change. The lifecycle is wired into the engine via
      *  {@link org.aethercode.sdk.AetherCodeEngine#setMemoryLifecycle}
@@ -1023,7 +1025,7 @@ public class AetherCodeMethods {
         return memoryExtractor;
     }
 
-    * hold the daemon-scoped {@link org.aethercode.core.llm.ChatClient}
+    /** hold the daemon-scoped {@link org.aethercode.core.llm.ChatClient}
      *  used by the lifecycle's Tier-3 strategy extraction. Wired by
      *  {@code DaemonRunner} at startup; null in headless / --print
      *  paths (strategy extraction silently degrades to no-op). */
@@ -1041,7 +1043,7 @@ public class AetherCodeMethods {
     // viewAuditLog RPC
     // ----------------------------------------------------------------
 
-    *
+    /**
      * return recent audit log entries. The TUI "View audit log"
      * button + any external monitor call this RPC.
      *
@@ -1107,7 +1109,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * package-private accessor for the chat client
+    /** package-private accessor for the chat client
      *  resolver. Used by {@code DaemonRunner.buildMemoryStore}
      *  to plumb the LLM client into the
      *  {@link ProjectMemoryCompressor}. Returns null if
@@ -1455,7 +1457,7 @@ public class AetherCodeMethods {
     // setContinuationStopped
     // ------------------------------------------------------------------
 
-    *
+    /**
      * Toggle the per-session "auto-continue stopped" flag. Called
      * by the TUI's countdown toast when the user clicks "Stop",
      * and cleared on the next {@code query} call so the user can
@@ -1492,13 +1494,13 @@ public class AetherCodeMethods {
     // Permission ask over JSON-RPC
     // ------------------------------------------------------------------
 
-    * Internal record of a permission decision the client has made. */
+    /** Internal record of a permission decision the client has made. */
     public record PermissionDecision(String decision, String reason) {
         public boolean isAllow() { return DECISION_ALLOW.equals(decision) || DECISION_ALWAYS_ALLOW.equals(decision); }
         public boolean isPersist() { return DECISION_ALWAYS_ALLOW.equals(decision) || DECISION_ALWAYS_DENY.equals(decision); }
     }
 
-    * Issue a permission ask to the client. Returns a future that the
+    /** Issue a permission ask to the client. Returns a future that the
      *  permissionResponse handler will resolve. If no client is
      *  connected (e.g. tests), returns a future that fails immediately
      *  so the caller can fall back to the in-process policy.
@@ -1540,7 +1542,7 @@ public class AetherCodeMethods {
         return fut;
     }
 
-    *
+    /**
      * number of permission asks that have been issued but
      * not yet answered. Surfaced in the TUI's status bar so the
      * user can see "1 permission pending" when a long-running
@@ -1551,7 +1553,7 @@ public class AetherCodeMethods {
         return pendingPermissions.size();
     }
 
-    *
+    /**
      * snapshot of all pending permission asks, keyed by
      * {@code requestId}. Each entry carries the tool name, input
      * (best-effort), reason and risk level so the TUI can render
@@ -1579,7 +1581,7 @@ public class AetherCodeMethods {
     }
 
     @SuppressWarnings("unchecked")
-    *
+    /**
      * getter for the autoApproveLowRisk flag.
      * The {@link org.aethercode.protocol.permissions.JsonRpcPermissionPrompter}
      * reads this on every permission ask; the value
@@ -1588,7 +1590,7 @@ public class AetherCodeMethods {
      */
     public boolean isAutoApproveLowRisk() { return autoApproveLowRisk; }
     public long getAutoApprovedCount() { return autoApprovedCount.get(); }
-    *
+    /**
      * setter for the autoApproveLowRisk flag.
      * Returns the new value. The store's RPC wiring
      * uses this; the local setter is also exposed for
@@ -1599,7 +1601,7 @@ public class AetherCodeMethods {
         return this;
     }
 
-    *
+    /**
      * getter for the autoApproveMediumHigh flag.
      * Mirrors {@link #isAutoApproveLowRisk} but covers
      * medium / high risk. The
@@ -1609,7 +1611,7 @@ public class AetherCodeMethods {
      */
     public boolean isAutoApproveMediumHigh() { return autoApproveMediumHigh; }
 
-    *
+    /**
      * local setter (Java SDK / tests). Returns
      * the new value for chaining. The wire-level setter
      * is {@code setAutoApproveMediumHigh(Object params)}
@@ -1620,7 +1622,7 @@ public class AetherCodeMethods {
         return this;
     }
 
-    *
+    /**
      * total number of medium / high-risk tool
      * calls auto-approved since the daemon started.
      * Surfaced via the {@code setAutoApproveMediumHigh}
@@ -1647,7 +1649,7 @@ public class AetherCodeMethods {
         return Map.of("ok", true, "requestId", requestId, "decision", decision);
     }
 
-    *
+    /**
      * live status of the permission queue. Returns the
      * current pending count plus a per-ask snapshot (id, done,
      * cancelled, completedExceptionally) so a TUI that joins
@@ -1694,7 +1696,7 @@ public class AetherCodeMethods {
         return Map.of("tasks", out, "count", out.size());
     }
 
-    * serialise a {@link org.aethercode.tasks.Task}
+    /** serialise a {@link org.aethercode.tasks.Task}
      *  to a plain Map for the wire. Same shape as the
      *  engine's private taskToMap so the Kanban board
      *  and the existing TaskList can share an
@@ -1711,7 +1713,7 @@ public class AetherCodeMethods {
         return out;
     }
 
-    * create a new task. The renderer's
+    /** create a new task. The renderer's
      *  Kanban "+" button calls this with a description
      *  and an optional type. The task is created in
      *  PENDING status; the engine's taskPush consumer
@@ -1742,7 +1744,7 @@ public class AetherCodeMethods {
         return Map.of("ok", true, "task", taskToMap(t));
     }
 
-    * transition a task to a new status.
+    /** transition a task to a new status.
      *  The renderer's Kanban drag-drop calls this
      *  with a {@code status} param. Idempotent for
      *  terminal states (the TaskRegistry already
@@ -1770,7 +1772,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * Walk back from {@code startIdx} for a tool_use block whose id
+    /** Walk back from {@code startIdx} for a tool_use block whose id
      *  matches {@code toolUseId}. Stops at the assistant turn boundary
      *  so the lookup is O(tools in current turn). */
     private static String lookupToolName(
@@ -1816,7 +1818,7 @@ public class AetherCodeMethods {
         return Map.of("projects", List.of(current), "current", cwd);
     }
 
-    * extract a friendly project name from a cwd. Strips
+    /** extract a friendly project name from a cwd. Strips
      *  trailing separators, returns the last path segment, and
      *  falls back to the full cwd if no separator is present. */
     private static String projectNameFor(String cwd) {
@@ -1869,7 +1871,7 @@ public class AetherCodeMethods {
             memoryStore.sessionStore().upsertSession(
                     target.appState().sessionId(),
                     newCwd.toString(),
-                    null  firstPrompt is captured on createSession */);
+                    null /* firstPrompt is captured on createSession */);
             // Invalidate the cached project store for
             // the OLD cwd (the new one will lazy-load
             // on the next read). The brief calls this
@@ -1913,7 +1915,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    *
+    /**
      * richer health snapshot than {@link #ping}. Pings
      * are for "is the daemon alive"; engineHealth is for "is
      * the engine stuck, has it errored recently, is a
@@ -2028,7 +2030,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    *
+    /**
      * dedicated RPC for the skip-confirmation adoption
      * stats. Returns the same shape as {@code getState().skipStats}
      * but as a top-level call so the UI can refresh it on a
@@ -2066,7 +2068,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * return the active system prompt as a
+    /** return the active system prompt as a
      *  structured payload. The shape is:
      *  <pre>
      *    {
@@ -2122,7 +2124,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * drill-down for {@code /prompt <name>}. Returns the
+    /** drill-down for {@code /prompt <name>}. Returns the
      *  full text of one section (no truncation) plus its
      *  metadata, or {@code {ok: false, error: "...",
      *  available: [...]}} if no section matches. The match is
@@ -2180,7 +2182,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * per-phase tool-call budget snapshot.
+    /** per-phase tool-call budget snapshot.
      *  Shape: {currentPhase, buckets: [{phase, toolCalls,
      *  costUsd, maxToolCalls, maxCostUsd, remainingToolCalls,
      *  remainingCostUsd}, ...], overBudget: bool}. Returns
@@ -2216,7 +2218,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * transition the tracker to a new phase.
+    /** transition the tracker to a new phase.
      *  Accepts a {@code {name: "..."}} map. A missing /
      *  blank name returns {@code ok: false}. */
     public Object setPhase(Object params) {
@@ -2251,7 +2253,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * reconfigure a phase's cap. Accepts
+    /** reconfigure a phase's cap. Accepts
      *  {@code {phase, maxToolCalls, maxCostUsd}}. Negative
      *  numbers are rejected with {@code ok: false}. A
      *  cap of 0 means "unlimited" (matches the
@@ -2310,7 +2312,7 @@ public class AetherCodeMethods {
     //  single-engine path stays backward-compatible.
     // -------------------------------------------------------------------
 
-    * list every registered session, plus the
+    /** list every registered session, plus the
      *  active session id. The shape is
      *  {@code {ok, activeSessionId, sessions: [{sessionId,
      *  createdAtMs, lastAccessMs, ageMs, idleMs, model,
@@ -2335,7 +2337,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * create a new session. Accepts
+    /** create a new session. Accepts
      *  {@code {sessionId: "..."}} (a string fallback is
      *  tolerated). Returns
      *  {@code {ok, sessionId, created: bool, alreadyExists: bool, active: bool}}.
@@ -2386,7 +2388,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * remove a session. Accepts
+    /** remove a session. Accepts
      *  {@code {sessionId: "..."}}. The default session
      *  is protected —the manager returns false. The
      *  active session is re-set to the default if it
@@ -2422,7 +2424,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * set the active session. The session must
+    /** set the active session. The session must
      *  already exist (callers typically use
      *  {@code createSession} first). Accepts
      *  {@code {sessionId: "..."}}.
@@ -2461,7 +2463,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * read the active session id.
+    /** read the active session id.
      *
      *  <p>legacy: routes through
      *  {@link #effectiveSessionManager()}. */
@@ -2478,7 +2480,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * extract the first non-blank line of
+    /** extract the first non-blank line of
      *  {@code text} as a short preview. Capped at 80
      *  characters so a long line does not blow up the
      *  payload. */
@@ -2493,13 +2495,13 @@ public class AetherCodeMethods {
         return "";
     }
 
-    * return the engine's metrics snapshot. The shape is
+    /** return the engine's metrics snapshot. The shape is
      *  a flat object of long counters + a costUsd double. */
     public Object getMetrics(Object params) {
         return engine.metrics().snapshot();
     }
 
-    * list the model ids known to the engine's
+    /** list the model ids known to the engine's
      *  CostTracker. Shape: {@code {models: ["claude-...", ...]}}.
      *  Each entry also carries the (input, output) USD price per
      *  1k tokens for the settings panel. The first entry is the
@@ -2519,7 +2521,7 @@ public class AetherCodeMethods {
         return Map.of("models", entries, "default", engine.appState().mainLoopModel());
     }
 
-    * return the engine's recent trace spans. The params
+    /** return the engine's recent trace spans. The params
      *  object is optional; if absent or {@code limit} is missing
      *  we default to 10 spans. The shape is
      *  {@code {inFlight, completed, traces: [...]}}. */
@@ -2536,7 +2538,7 @@ public class AetherCodeMethods {
         return engine.traces().snapshot(limit);
     }
 
-    * return a single trace (one root span + all of its
+    /** return a single trace (one root span + all of its
      *  descendants currently retained in the deque). The params
      *  object must contain a {@code traceId} field. The shape is
      *  {@code {traceId, inFlight, completed, spans: [...]}}. */
@@ -2570,7 +2572,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    *
+    /**
      * list each tool together with its current default
      * permission action. The action is computed by:
      * <ol>
@@ -2642,7 +2644,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    *
+    /**
      * produce a representative sample input for a tool so
      * {@link org.aethercode.config.OpKindDetector} can pick the
      * "default" op-kind for {@code listToolActions}. The samples
@@ -2715,7 +2717,7 @@ public class AetherCodeMethods {
         return Map.of("sessionId", target.appState().sessionId(), "mode", mode.name());
     }
 
-    *
+    /**
      * return the cached permission-mode suggestion
      * for the project's root. The shape is:
      * <pre>
@@ -2753,7 +2755,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    *
+    /**
      * set the per-session skip-confirmation counter. The next {@code
      * rounds} tool calls that would otherwise prompt the user are
      * auto-allowed; the counter then returns to 0 and normal confirmation
@@ -2791,7 +2793,7 @@ public class AetherCodeMethods {
                 "remaining", remaining);
     }
 
-    *
+    /**
      * runtime loop-detector threshold tweak. The
      * Settings panel's "Loop Detection" section calls
      * this when the user drags a slider. the legacy
@@ -2852,7 +2854,7 @@ public class AetherCodeMethods {
         );
     }
 
-    *
+    /**
      * toggle the daemon-side "auto-approve low
      * risk tool calls" flag. When enabled (the
      * default), {@code JsonRpcPermissionPrompter}
@@ -2899,7 +2901,7 @@ public class AetherCodeMethods {
         );
     }
 
-    *
+    /**
      * wire-level handler for
      * {@code setAutoApproveMediumHigh}. Same shape as
      * {@link #setAutoApproveLowRisk} (boolean / 0-1)
@@ -2931,7 +2933,7 @@ public class AetherCodeMethods {
         );
     }
 
-    *
+    /**
      * increment the auto-approved counter +
      * emit the notification. Called by
      * {@link org.aethercode.protocol.permissions.JsonRpcPermissionPrompter}
@@ -2966,7 +2968,7 @@ public class AetherCodeMethods {
         return n;
     }
 
-    *
+    /**
      * legacy 3-arg overload retained for the
      * existing test suite (which does not know about
      * risk levels). Defaults {@code riskLevel} to
@@ -3475,7 +3477,7 @@ public class AetherCodeMethods {
                 "decision", decision, "scope", scope);
     }
 
-    *
+    /**
      * where to persist a project- or user-scope rule.
      *   - project: {@code <cwd>/.aethercode/permissions.json}
      *   - user:    {@code ~/.aethercode/permissions.json}
@@ -3496,7 +3498,7 @@ public class AetherCodeMethods {
         return java.nio.file.Paths.get(home, ".aethercode", "permissions.json");
     }
 
-    *
+    /**
      * load existing rules from a persisted file. Returns an
      * empty list if the file doesn't exist or is unreadable —     * permissions.json is best-effort, not load-bearing for
      * the rest of the engine.
@@ -3523,7 +3525,7 @@ public class AetherCodeMethods {
         }
     }
 
-    *
+    /**
      * save the rule list back to a persisted file. We
      * write the list under a top-level "rules" key so future
      * additions (e.g. expiry timestamps, comments) can sit
@@ -3551,7 +3553,7 @@ public class AetherCodeMethods {
         mapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), doc);
     }
 
-    * pull the live allow/deny/ask lists out of a
+    /** pull the live allow/deny/ask lists out of a
      *  ProjectPermissionPolicy. We use reflection on the private
      *  `rules` field rather than adding a public accessor, because
      *  the policy is constructed once and read-only by design. This
@@ -3643,7 +3645,7 @@ public class AetherCodeMethods {
     //                                    stepCount }
     // ------------------------------------------------------------------
 
-    *
+    /**
      * list files under {@code <cwd>/} for the input
      * bar's {@code @}-mention autocomplete. Returns up to
      * {@code max} entries (default 50) sorted by path.
@@ -3767,7 +3769,7 @@ public class AetherCodeMethods {
         }
     }
 
-    *
+    /**
      * legacy: kick off a workflow run. Reads the YAML,
      * builds a {@link org.aethercode.core.workflow.WorkflowExecutor},
      * and runs it on a daemon thread so the RPC can return
@@ -3923,7 +3925,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    * write (or overwrite) a workflow YAML. The
+    /** write (or overwrite) a workflow YAML. The
      *  path-scope check in {@code WorkflowPaths.workflowFile}
      *  already prevents the file from escaping the workflow
      *  dir; we add a "must end in .yaml / .yml" check here for
@@ -3969,7 +3971,7 @@ public class AetherCodeMethods {
                         file.getFileName().toString()));
     }
 
-    * delete a workflow YAML. Idempotent —deleting a
+    /** delete a workflow YAML. Idempotent —deleting a
      *  missing file returns {@code ok=true, removed=false} so
      *  the desktop can safely retry without surfacing an
      *  error. The path-scope check prevents accidental
@@ -4031,7 +4033,7 @@ public class AetherCodeMethods {
     // memoryBase() which honours AETHERCODE_MEMORY_DIR.
     // ------------------------------------------------------------------
 
-    * list memory files in a scope. */
+    /** list memory files in a scope. */
     @SuppressWarnings("unchecked")
     public Object listMemoryFiles(Object params) {
         Map<String, Object> p = asMap(params);
@@ -4077,7 +4079,7 @@ public class AetherCodeMethods {
         return Map.of("files", out, "count", out.size());
     }
 
-    * read a memory file's content. */
+    /** read a memory file's content. */
     @SuppressWarnings("unchecked")
     public Object readMemoryFile(Object params) {
         Map<String, Object> p = asMap(params);
@@ -4102,7 +4104,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * write a memory file's content. Creates the parent dir
+    /** write a memory file's content. Creates the parent dir
      *  if it doesn't exist (first write to an empty scope). */
     @SuppressWarnings("unchecked")
     public Object writeMemoryFile(Object params) {
@@ -4129,7 +4131,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * delete a memory file. Idempotent —non-existent files
+    /** delete a memory file. Idempotent —non-existent files
      *  return ok=true. */
     @SuppressWarnings("unchecked")
     public Object deleteMemoryFile(Object params) {
@@ -4180,7 +4182,7 @@ public class AetherCodeMethods {
         return Map.of("cancelled", true, "runId", runId);
     }
 
-    * cancel a running background subagent by jobId.
+    /** cancel a running background subagent by jobId.
      *  Thin wrapper over {@link
      *  org.aethercode.tools.task.SubagentRegistry#cancel(String)}
      *  —the registry's cancel() interrupts the worker
@@ -4301,7 +4303,7 @@ public class AetherCodeMethods {
                     try {
                         String content = java.nio.file.Files.readString(sidecar).trim();
                         if (!content.isEmpty()) cwd = content;
-                    } catch (Exception ignore) {  fall through to memory store */ }
+                    } catch (Exception ignore) { /* fall through to memory store */ }
                 }
                 if (cwd == null && memoryStore != null) {
                     org.aethercode.memory.SessionMemoryStore.SessionInfo ms =
@@ -4360,7 +4362,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * extract a one-line preview from a session
+    /** extract a one-line preview from a session
      *  transcript. The transcript is JSONL; we read up to
      *  4 KB and stop at the first line whose
      *  {@code "role":"user"} entry has a non-empty
@@ -4440,7 +4442,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * mint a new session, start an empty transcript in
+    /** mint a new session, start an empty transcript in
      *  the store, AND switch the engine to it. Returns the
      *  new session id and message count. The desktop's
      *  `createNewSession` action calls this; the previous
@@ -4612,7 +4614,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * remove a session file from the store. Refuses to
+    /** remove a session file from the store. Refuses to
      *  delete the active session (the user must load another
      *  one first). Returns whether the file was actually
      *  removed. */
@@ -4671,7 +4673,7 @@ public class AetherCodeMethods {
         return null;
     }
 
-    * resolve a memory request's scope to a concrete
+    /** resolve a memory request's scope to a concrete
      *  path-or-key. Returns null on error (the caller wraps
      *  the error into the JSON-RPC response). */
     private org.aethercode.memory.MemoryScope parseScope(Object raw) {
@@ -4682,7 +4684,7 @@ public class AetherCodeMethods {
         catch (IllegalArgumentException e) { return null; }
     }
 
-    * resolve the cwd for a memory request.
+    /** resolve the cwd for a memory request.
      *  Priority: explicit {@code cwd} param > active engine's
      *  appState.cwd() > current process cwd. */
     private java.nio.file.Path resolveCwd(Map<String, Object> p, AetherCodeEngine target) {
@@ -4964,7 +4966,7 @@ public class AetherCodeMethods {
                 "file", file.toString());
     }
 
-    * the chat client the compressor should use.
+    /** the chat client the compressor should use.
      *  Falls back to NOOP if no chat client is wired —
      *  the compressor then produces the tag-only
      *  fallback ("[compressed: N entries]") and the
@@ -5067,7 +5069,7 @@ public class AetherCodeMethods {
         return Map.of("ok", true, "count", count, "reloadedAt", System.currentTimeMillis());
     }
 
-    *
+    /**
      * install a SKILL.md into the user- or project-tier root,
      * then {@link #reloadSkills()}. The desktop's
      * {@code /skill add <name> --scope global|project} slash
@@ -5144,7 +5146,7 @@ public class AetherCodeMethods {
                 "reloadedAt", System.currentTimeMillis());
     }
 
-    * legacy: unified registry reload. Triggers one (or
+    /** legacy: unified registry reload. Triggers one (or
      *  every) registry reloader and broadcasts the result
      *  to every connected client via {@code NOTIFY_REGISTRY_RELOADED}.
      *  When the engine has no {@code RegistryReloadService}
@@ -5320,10 +5322,10 @@ public class AetherCodeMethods {
     // without a manual refresh.
 
     public Object createAgent(Object params) {
-        return writeAgent(params, requireExists*/ false);
+        return writeAgent(params, /* requireExists */ false);
     }
     public Object updateAgent(Object params) {
-        return writeAgent(params, requireExists*/ true);
+        return writeAgent(params, /* requireExists */ true);
     }
 
     @SuppressWarnings("unchecked")
@@ -5434,7 +5436,7 @@ public class AetherCodeMethods {
         }
     }
 
-    * return the engine's in-memory transcript for
+    /** return the engine's in-memory transcript for
      *  the currently-loaded session. Used by the desktop to
      *  back-fill its {@code messages} array after a WS
      *  reconnect (or on the very first launch) —the
@@ -5499,7 +5501,7 @@ public class AetherCodeMethods {
         return resp;
     }
 
-    * resolve a {@code "provider/model"} string to a
+    /** resolve a {@code "provider/model"} string to a
      *  fresh {@link org.aethercode.core.llm.ChatClient}.
      *  Used by the workflow executor's SkillInvoker to
      *  build a per-agent ChatClient for child sessions
@@ -5564,7 +5566,7 @@ public class AetherCodeMethods {
         return resolver.apply(providerModel);
     }
 
-    * switch the active provider + model
+    /** switch the active provider + model
      *  at runtime. The engine rebuilds its
      *  ChatClient on the fly (the next query uses
      *  the new spec); an in-flight query keeps
@@ -5664,7 +5666,7 @@ public class AetherCodeMethods {
         return new JsonRpcProtocolException("invalid params", JsonRpcError.invalidParams(detail));
     }
 
-    * Render a {@link StreamEvent} as a plain Map for the wire. */
+    /** Render a {@link StreamEvent} as a plain Map for the wire. */
     private static Map<String, Object> eventToMap(StreamEvent ev) {
         Map<String, Object> r = new LinkedHashMap<>();
         if (ev instanceof StreamEvent.RunStart rs) {
@@ -5720,7 +5722,7 @@ public class AetherCodeMethods {
         return r;
     }
 
-    *
+    /**
      * pick a one-line summary of a tool's input so the
      * trace panel can answer "what did the tool do?" without keeping
      * the whole input around. Returns a short, human-readable

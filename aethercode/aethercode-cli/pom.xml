@@ -64,6 +64,19 @@
             <groupId>org.aethercode</groupId>
             <artifactId>aethercode-sdk</artifactId>
         </dependency>
+        <!--
+            R-paper-batch6-TIER-3-E2E: the CLI daemon registers the
+            Tier-3 paper-compat RPC surface (architecture.recommend,
+            saturation.assess, redflag.inspect, byzantine.observe,
+            byzantine.flagged, byzantine.reset, voting.firstToAheadByK,
+            plan.executeSequence) so the front-end CLI / TUI / IDEA
+            plugin can call the Tier-3 implementations over the same
+            JSON-RPC dispatcher that handles query / ping / getState.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-orchestration</artifactId>
+        </dependency>
         <!-- R321: aethercode task CLI (T-380..T-385). Transitive
              via aethercode-sdk, declared here so the build
              fails fast if aethercode-tasks is removed. -->
