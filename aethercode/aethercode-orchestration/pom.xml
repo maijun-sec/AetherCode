@@ -39,6 +39,17 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
+        <!--
+            R-paper-batch7-papercompat-tools: PaperCompatTools needs
+            Jackson to parse JSON-string arguments (samples, skills,
+            runs) into List<Object> for the underlying PaperCompatRpc
+            handlers. The parent pom already declares jackson.version
+            so we don't pin it here.
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
