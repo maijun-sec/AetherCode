@@ -744,13 +744,49 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   }, [state.sidebarVisible, client]);
 
   useEffect(() => {
-    const onResize = () => {
-      const rows = process.stdout.rows ?? 24;
-      setH(Math.max(5, rows - 6));
+    // TUI flicker fix (R-2026-09-13-R-tui-flicker): the
+    // `process.stdout.on("resize", ...)` handler was firing on
+    // every ANSI re-render in Windows + Ink 5.x. Ink writes
+    // cursor-position / clear-line sequences to redraw the
+    // frame; the Windows console treats each write as a
+    // potential buffer-shape change and re-emits `"resize"`
+    // even when the actual `rows` count did not change. Each
+    // spurious `resize` triggered `setH(...)` → React
+    // re-render → Ink redraws → spurious resize → setH
+    // → ...  a tight feedback loop the user reported as
+    // "screen flashes, can't read a thing".
+    //
+    // The fix has two parts:
+    //   1. A 80 ms debounce so a burst of resize events (one
+    //      per Ink redraw) collapses into a single setH.
+    //   2. A `lastH` ref guard so we only setH when the
+    //      computed height actually changed — most resize
+    //      events are no-ops on `rows` and now drop on the
+    //      floor.
+    let lastH = 20;
+    let debounceId: ReturnType<typeof setTimeout> | null = null;
+    const apply = (rows: number) => {
+      const next = Math.max(5, rows - 6);
+      if (next === lastH) return;
+      lastH = next;
+      setH(next);
     };
-    onResize();
+    const onResize = () => {
+      if (debounceId !== null) clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        debounceId = null;
+        apply(process.stdout.rows ?? 24);
+      }, 80);
+    };
+    // initial sync without going through the debounce —
+    // the first frame is needed immediately so the layout
+    // doesn't pop on mount.
+    apply(process.stdout.rows ?? 24);
     process.stdout.on("resize", onResize);
-    return () => { process.stdout.off("resize", onResize); };
+    return () => {
+      if (debounceId !== null) clearTimeout(debounceId);
+      process.stdout.off("resize", onResize);
+    };
   }, []);
 
   async function handleSubmit(text: string): Promise<void> {
