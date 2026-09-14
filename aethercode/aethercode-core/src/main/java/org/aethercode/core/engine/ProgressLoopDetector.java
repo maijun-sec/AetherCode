@@ -872,12 +872,32 @@ public final class ProgressLoopDetector {
         // check so an empty-input model is caught even when
         // the user is also pressing Ctrl-C (the
         // userInterrupt branch is a more graceful exit).
+        //
+        // R266i (2026-09-14): the {@code Map.isEmpty()}
+        // check below was the R266h blind spot. A model
+        // that sends {@code {"command": ""}} or
+        // {@code {"command": null}} produces a non-empty
+        // Map (one entry, blank/null value) and slipped
+        // past the detector. The desktop user reported
+        // 16+ consecutive {@code bash (missing command)}
+        // cards with no LoopGuardBanner — the detector
+        // was correctly counting the input as "non-empty"
+        // and resetting the streak to 0 forever.
+        //
+        // The fix is to extend the emptiness check to
+        // "structurally empty" — i.e. every value is
+        // null, blank string, empty Map, or empty
+        // Collection. This matches the user's intuition
+        // ("the model didn't know what to fill in")
+        // without false-positiving on legitimate
+        // empty-arg tools like {@code ls -la} on a
+        // directory (which is {@code {"command": "ls -la"}},
+        // a non-empty value).
         if (batch != null && !batch.isEmpty() && turnCount > 2) {
             boolean allEmpty = true;
             for (ContentBlock.ToolUseBlock b : batch) {
                 if (b == null) continue;
-                Map<String, Object> in = b.input();
-                if (in != null && !in.isEmpty()) {
+                if (!isStructurallyEmpty(b.input())) {
                     allEmpty = false;
                     break;
                 }
@@ -1108,6 +1128,73 @@ public final class ProgressLoopDetector {
             joined = joined == null ? k : (joined + "|" + k);
         }
         return joined;
+    }
+
+    /**
+     * R266i (2026-09-14): detect a "structurally empty" tool input.
+     *
+     * <p>The R266h {@code Map.isEmpty()} check fired only on
+     * literally-empty maps ({@code {}}). A model that emits
+     * {@code {"command": ""}} or {@code {"command": null}} —
+     * a Map with one entry whose value is blank/null — slipped
+     * past the detector, because {@code Map.isEmpty()} returned
+     * {@code false}. On the desktop the user reported 16+ consecutive
+     * {@code bash (missing command)} cards with no
+     * {@code LoopGuardBanner} and no hard-stop: the detector was
+     * treating every card as "non-empty input" and resetting the
+     * empty-input streak to 0 forever.
+     *
+     * <p>"Structurally empty" means: every value in the map is
+     * null, blank string, empty {@link Map}, or empty {@link
+     * java.util.Collection}. This matches the user's intuition
+     * ("the model didn't know what to fill in") without false-positiving
+     * on legitimate empty-arg tools. A real command like
+     * {@code {"command": "ls -la"}} has a non-blank value, so the map
+     * is NOT structurally empty and the detector will reset the
+     * streak as expected.
+     *
+     * <p>Note: this is a structural heuristic, not a schema-aware
+     * check. A future round could plumb the tool's
+     * {@code inputSchema.required} list through {@code recordBatch}
+     * for a tighter "all required fields are missing" definition.
+     * For now this catches the common model-side confusion pattern
+     * (the v0.2.19 real-prompt regression and the user's
+     * 2026-09-14 desktop report) with no false positives on
+     * observed legitimate inputs.
+     */
+    static boolean isStructurallyEmpty(Map<String, Object> input) {
+        if (input == null || input.isEmpty()) {
+            // truly empty / null map
+            return true;
+        }
+        for (Object v : input.values()) {
+            if (v == null) continue;
+            if (v instanceof String s) {
+                if (!s.isBlank()) return false; // non-blank string = real content
+                continue;
+            }
+            if (v instanceof CharSequence cs) {
+                if (cs.length() > 0) return false;
+                continue;
+            }
+            if (v instanceof Map<?, ?> m) {
+                if (!m.isEmpty()) return false; // nested non-empty map = real content
+                continue;
+            }
+            if (v instanceof java.util.Collection<?> c) {
+                if (!c.isEmpty()) return false; // non-empty list = real content
+                continue;
+            }
+            if (v instanceof Object[] arr) {
+                if (arr.length > 0) return false; // non-empty array = real content
+                continue;
+            }
+            // any other non-null value (Integer, Boolean, etc.) is
+            // considered real content — the model wrote SOMETHING
+            // here, even if the value is semantically useless.
+            return false;
+        }
+        return true;
     }
 
     /**
