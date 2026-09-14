@@ -3831,6 +3831,35 @@ export const useStore = create<AppState>((set, get) => {
         if (inFlight.trim().length > 0) writeDraft(oldSid, inFlight);
         else clearDraft(oldSid);
       }
+      // R267 (2026-09-14): flip `currentSessionId` BEFORE
+      // the daemon round-trip. Both the synchronous
+      // `hydrateTranscript` guard and the WS
+      // `transcript_event(sync)` handler check
+      // `sid !== get().currentSessionId` and bail out
+      // when they don't match — pre-fix the switch order
+      // was `loadSession → hydrate → set(currentSessionId)`,
+      // which meant the daemon's sync push arrived with
+      // `sid === NEW` while `get().currentSessionId` was
+      // still `OLD`, and the guard dropped the message
+      // list on the floor. The result was a session switch
+      // that "succeeded" (the left rail updated) but
+      // showed an empty chat because no transcript ever
+      // landed. Fix: commit currentSessionId first, then
+      // let the daemon round-trip + WS push follow.
+      //
+      // We also clear `messages` synchronously to avoid
+      // a "stale frames" flash where the OLD session's
+      // messages render under the NEW sessionId (a
+      // confusing mismatch the user can see in
+      // TaskSummary → messageCount). The async hydrate
+      // refills the array when the daemon's transcript
+      // arrives.
+      set({
+        currentSessionId: sessionId,
+        isStreaming: false,
+        messages: [],
+        currentInput: readDraft(sessionId),
+      });
       // ask the daemon to swap its in-memory
       // transcript to this session, then back-fill our
       // own `messages` array from the daemon. The
@@ -3843,11 +3872,6 @@ export const useStore = create<AppState>((set, get) => {
       try { await rpc.loadSession(sessionId); } catch { /* daemon may not have a SessionStore */ }
       const cached = await get().hydrateTranscript(sessionId);
       void cached; // hydrateTranscript already called set()
-      set({
-        currentSessionId: sessionId,
-        isStreaming: false,
-        currentInput: readDraft(sessionId),
-      });
     },
 
     // back-fill `messages` from the daemon's
