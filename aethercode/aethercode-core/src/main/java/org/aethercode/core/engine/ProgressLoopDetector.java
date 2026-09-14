@@ -127,15 +127,22 @@ public final class ProgressLoopDetector {
         /** how many consecutive turns where the model
          *  emitted a tool call with an empty / missing
          *  input map before the empty_tool_input pattern
-         *  fires. Default 3 — the v0.2.19 real-prompt
-         *  regression showed the model can call bash with
-         *  no `command` 50+ times in a row while "fixing
-         *  the tool call format". 3 empty batches is the
-         *  first "definitely stuck" signal. The hard
-         *  stop fires immediately (not tiered) because a
-         *  confused model can't self-correct and a soft
-         *  warning would just delay the inevitable. */
-        private int emptyInputStreakThreshold = 3;
+         *  fires. Default 2 (R266h, was 3) — the
+         *  v0.2.66 desktop transcript showed the model
+         *  sending empty `{}` 20+ times in a row even
+         *  after the engine returned a precise "command
+         *  is required" error and listed every accepted
+         *  parameter. Each retry costs the user a turn
+         *  (LLM roundtrip + TUI render + the model
+         *  "thinking" it would fix it this time). 2
+         *  consecutive empty batches is the right
+         *  "definitely stuck" signal — by the third
+         *  retry the user has already wasted two
+         *  tool cards. The hard stop fires
+         *  immediately (not tiered) because a confused
+         *  model can't self-correct and a soft warning
+         *  would just delay the inevitable. */
+        private int emptyInputStreakThreshold = 2;
 
         public Builder window(int v) {
             if (v < 1) throw new IllegalArgumentException("window must be >= 1");
@@ -316,9 +323,9 @@ public final class ProgressLoopDetector {
     /** threshold for the empty_tool_input pattern. Per-instance
      *  so {@link Builder#emptyInputStreakThreshold(int)} /
      *  {@link #setEmptyInputStreakThreshold(int)} can override the
-     *  default of 3. Volatile (not final) so the desktop Settings
+     *  default of 2. Volatile (not final) so the desktop Settings
      *  panel can tune it at runtime. */
-    private volatile int emptyInputStreakThreshold = 3;
+    private volatile int emptyInputStreakThreshold = 2;
 
     /** Per-batch fingerprints in arrival order. Capped at {@code window}. */
     private final Deque<String> history = new ArrayDeque<>();

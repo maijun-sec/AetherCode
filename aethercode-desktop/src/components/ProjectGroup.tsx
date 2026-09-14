@@ -86,6 +86,14 @@ export function ProjectGroup({ cwd, sessions, defaultOpen, onNewSession }: Proje
             // button + a 4px gap.
             height={Math.min(200, sessions.length * 72 + 16)}
             emptyMessage="这个项目下没有 session"
+            // R266g: the project <summary> already
+            // shows the project name + session count;
+            // the inner "SESSIONS" header is a
+            // redundant second-level label the user
+            // explicitly asked to remove. The
+            // "+ New Session" button below stays
+            // because it's the per-group create action.
+            hideSectionHeader
             // route the bottom "+ New Session" through the
             // same `onNewSession(cwd)` callback the project
             // header's `＋` uses. legacy the bottom button

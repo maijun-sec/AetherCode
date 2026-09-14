@@ -17,9 +17,33 @@ import static org.junit.jupiter.api.Assertions.*;
 class ProgressLoopDetectorR136Test {
 
     private static ContentBlock.ToolUseBlock toolUse(String name, String path) {
+        // R266h: previously this returned an empty input
+        // map (`Map.of()`) when {@code path} was null —
+        // i.e. {@code toolUse("bash", null)} was a "bash
+        // with no command". That was fine when the
+        // empty_input detector threshold was 3, but
+        // R266h lowered the threshold to 2, and a handful
+        // of tests below exercise a 3-4-5-6 turn bash
+        // sequence to verify the no_file_write_progress
+        // and research_mode patterns (not the empty_input
+        // pattern). Returning an empty input here would
+        // now trip the empty_input path at turn 5 and
+        // mask the pattern the test is actually
+        // asserting. We give the bash calls a populated
+        // input map (`{"command": "echo x"}`) so the
+        // empty_input detector stays out of the way.
+        if (path == null) {
+            if ("bash".equals(name)) {
+                return new ContentBlock.ToolUseBlock(
+                        "id-" + name, name, Map.of("command", "echo x"));
+            }
+            // generic null-path tool: still empty (the
+            // empty_input test in R174 covers that case).
+            return new ContentBlock.ToolUseBlock(
+                    "id-" + name, name, Map.of());
+        }
         return new ContentBlock.ToolUseBlock(
-                "id-" + name, name,
-                path == null ? Map.of() : Map.of("path", path));
+                "id-" + name, name, Map.of("path", path));
     }
 
     private static ProgressLoopDetector.BatchResult result(String name, String out, boolean isError) {

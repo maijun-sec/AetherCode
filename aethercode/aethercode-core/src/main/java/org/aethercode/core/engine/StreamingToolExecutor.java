@@ -5,6 +5,7 @@ import org.aethercode.core.message.ContentBlock;
 import org.aethercode.core.message.Message;
 import org.aethercode.core.permission.PermissionResult;
 import org.aethercode.core.tool.Tool;
+import org.aethercode.core.tool.ToolParamValidator;
 import org.aethercode.core.tool.Tools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -444,6 +445,49 @@ public class StreamingToolExecutor {
             return;
         }
         Map<String, Object> finalInput = ((PermissionResult.Allow) pr).updatedInput();
+        // R266h: early-reject when the model emitted a tool_use
+        // with missing required parameters. Prior round the
+        // input was forwarded to tool.call() and the tool itself
+        // raised "X is required" — but the LLM, on receiving
+        // that error, frequently re-emits the same empty call
+        // (the v0.2.66 transcript shows the model thinking
+        // "I will write the parameter this time" then emitting
+        // `{}` again). The fix has three parts:
+        //   1. Validate input here, BEFORE invoking the tool —
+        //      no shell / file_write side effect, no wasted
+        //      timeout.
+        //   2. Return a precise error message that names the
+        //      missing field AND shows the exact JSON shape the
+        //      model must emit (the model thinks in JSON, so
+        //      giving it the shape inline is more useful than
+        //      the prose-only "command is required" hint).
+        //   3. Count the validation failure as a "bad batch" for
+        //      ProgressLoopDetector's emptyInputStreak so a
+        //      model stuck in a "fix the tool call format"
+        //      loop is hard-stopped after 2 consecutive empty
+        //      inputs (the existing default of 3 is too
+        //      forgiving — by the third retry the user has
+        //      already watched 3 hopeless tool cards in the
+        //      TUI). The 2-streak threshold is implemented in
+        //      ProgressLoopDetector; this early-reject hands
+        //      it the right signal by NOT incrementing a
+        //      "successful" counter for a missing-params call.
+        ToolParamValidator.ValidationResult vr =
+                ToolParamValidator.validate(tool, finalInput);
+        if (!vr.valid()) {
+            String errMsg = buildMissingParamError(tool, finalInput, vr);
+            LOG.warn("R266h: missing-params tool_use rejected pre-invoke: tool={}, id={}, errors={}",
+                    call.name(), call.id(), vr.errors());
+            queue.offer(new Event.Completed(call.id(), errMsg, true));
+            // Mark the batch as aborted so sibling tools in
+            // the same parallel batch are cancelled. A model
+            // that emits N empty calls in a row is not
+            // expecting the other N-1 to succeed; bailing out
+            // now is cheaper than waiting for each sibling to
+            // raise its own validation error.
+            batchAbort.set(true);
+            return;
+        }
         Tool.ToolResult result;
         try {
             if (ctx.isAborted() || batchAbort.get()) {
@@ -585,6 +629,22 @@ public class StreamingToolExecutor {
             return;
         }
         Map<String, Object> finalInput = ((org.aethercode.core.permission.PermissionResult.Allow) pr).updatedInput();
+        // R266h: see the early-reject comment in the parallel
+        // branch above. The sink-based path is the newer
+        // observation model; both must reject missing-params
+        // calls pre-invoke so the model sees the same precise
+        // error message and the loop detector counts the
+        // failure uniformly.
+        ToolParamValidator.ValidationResult vr2 =
+                ToolParamValidator.validate(tool, finalInput);
+        if (!vr2.valid()) {
+            String errMsg = buildMissingParamError(tool, finalInput, vr2);
+            LOG.warn("R266h: missing-params tool_use rejected pre-invoke (sink): tool={}, id={}, errors={}",
+                    call.name(), call.id(), vr2.errors());
+            sink.accept(new Event.Completed(call.id(), errMsg, true));
+            batchAbort.set(true);
+            return;
+        }
         Tool.ToolResult result;
         try {
             if (ctx.isAborted() || batchAbort.get()) {
@@ -639,5 +699,118 @@ public class StreamingToolExecutor {
         final boolean concurrent;
         final List<ContentBlock.ToolUseBlock> calls = new ArrayList<>();
         Batch(boolean concurrent) { this.concurrent = concurrent; }
+    }
+
+    /** R266h: build a precise error message when the model
+     *  emitted a tool_use with missing required parameters.
+     *
+     *  Format goals (in order):
+     *  1. State which tool + which fields are missing — the
+     *     "X is required" prose the model has been seeing
+     *     since v0.2.19, but more specific (per-field, not
+     *     per-tool).
+     *  2. Include the parameter types from the schema so the
+     *     model knows whether to send a string / number /
+     *     boolean.
+     *  3. Show a complete, copy-pastable JSON example with
+     *     every required key present and placeholders for
+     *     optional ones. The v0.2.66 transcript shows the
+     *     model "thinks" the right JSON but emits `{}` —
+     *     a worked shape inline is the strongest signal
+     *     that "this is what your tool_use.input should
+     *     look like".
+     *
+     *  The example is intentionally short (one example, no
+     *  per-field ramble) — long error messages tend to be
+     *  truncated by the model or pasted back as user
+     *  text. The model's system prompt already explains the
+     *  JSON shape in detail; this is a last-mile hint. */
+    private static String buildMissingParamError(
+            Tool tool,
+            Map<String, Object> input,
+            ToolParamValidator.ValidationResult vr) {
+        Map<String, Object> schema = tool.inputSchema();
+        StringBuilder sb = new StringBuilder();
+        sb.append("tool '").append(tool.name())
+          .append("' was called with missing required parameters.\n");
+        // list missing fields with their declared types
+        sb.append("missing fields:\n");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = schema == null
+                ? null
+                : (Map<String, Object>) schema.get("properties");
+        Object reqSpec = schema == null ? null : schema.get("required");
+        java.util.List<?> required = reqSpec instanceof java.util.List<?> r ? r : java.util.List.of();
+        // Use the validator's errors as the primary source —
+        // they already include the [tool-name] prefix. Strip
+        // the prefix here so we can re-emit a cleaner line
+        // per missing field.
+        for (String err : vr.errors()) {
+            String cleaned = err;
+            if (cleaned.startsWith("[" + tool.name() + "] ")) {
+                cleaned = cleaned.substring(("[" + tool.name() + "] ").length());
+            }
+            // Map the dotted path back to the schema so we
+            // can print the type next to the field name.
+            String fieldName = cleaned;
+            int colon = cleaned.indexOf(':');
+            if (colon > 0) fieldName = cleaned.substring(0, colon).trim();
+            String type = "?";
+            String desc = "";
+            if (props != null && props.get(fieldName) instanceof Map<?, ?> p) {
+                Object t = p.get("type");
+                if (t != null) type = t.toString();
+                Object d = p.get("description");
+                if (d != null) desc = " — " + d;
+            }
+            sb.append("  - ").append(fieldName)
+              .append(" (").append(type).append(")").append(desc)
+              .append("\n");
+        }
+        // worked example. Build a tiny {"key": "..."} object
+        // for each required field. We don't try to fill in
+        // the value — the model knows what command / file
+        // path / pattern it wants to use; we just confirm
+        // the shape.
+        sb.append("expected tool_use shape (fill the placeholders):\n");
+        sb.append("```\n");
+        sb.append("{\"type\":\"tool_use\",\"id\":\"call_<unique>\",")
+          .append("\"name\":\"").append(tool.name()).append("\",");
+        sb.append("\"input\":{");
+        boolean first = true;
+        for (Object r : required) {
+            String name = r.toString();
+            String placeholder = placeholderFor(props, name);
+            if (!first) sb.append(",");
+            sb.append("\"").append(name).append("\":").append(placeholder);
+            first = false;
+        }
+        sb.append("}}\n");
+        sb.append("```\n");
+        sb.append("fix: re-emit the call with the required field(s) filled in. ")
+          .append("if you cannot determine the right value, STOP retrying and ask the user.");
+        return sb.toString();
+    }
+
+    /** R266h: return a JSON-shaped placeholder for a required
+     *  field. Strings get `"<value>"`, numbers / booleans get
+     *  bare values, arrays / objects get `[]` / `{}`. The
+     *  intent is to show the model the right SHAPE — the
+     *  value is its problem. */
+    private static String placeholderFor(Map<String, Object> props, String name) {
+        if (props == null) return "\"<value>\"";
+        Object p = props.get(name);
+        if (!(p instanceof Map<?, ?> pm)) return "\"<value>\"";
+        Object t = pm.get("type");
+        if (t == null) return "\"<value>\"";
+        return switch (t.toString()) {
+            case "string"  -> "\"<value>\"";
+            case "integer",
+                 "number"  -> "0";
+            case "boolean" -> "true";
+            case "array"   -> "[]";
+            case "object"  -> "{}";
+            default        -> "\"<value>\"";
+        };
     }
 }

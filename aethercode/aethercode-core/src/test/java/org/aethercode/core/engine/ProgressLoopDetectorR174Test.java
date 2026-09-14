@@ -237,7 +237,15 @@ class ProgressLoopDetectorR174Test {
     @Test
     void setEmptyInputStreakThresholdChangesThreshold() {
         ProgressLoopDetector d = ProgressLoopDetector.builder().build();
-        assertEquals(3, d.emptyInputStreakThreshold(), "default should be 3");
+        // R266h: default was lowered from 3 to 2. The
+        // v0.2.66 desktop transcript showed the model
+        // sending empty `{}` 20+ times in a row even
+        // after the engine returned a precise error
+        // listing every accepted parameter; 3 retries
+        // is too forgiving when each one costs the
+        // user a turn. 2 is the right "definitely
+        // stuck" signal.
+        assertEquals(2, d.emptyInputStreakThreshold(), "default should be 2 (R266h)");
         d.setEmptyInputStreakThreshold(5);
         assertEquals(5, d.emptyInputStreakThreshold());
     }
@@ -287,6 +295,14 @@ class ProgressLoopDetectorR174Test {
                 .window(8).fingerprintThreshold(99)
                 .longOutputThreshold(999_999).longOutputConsecutive(99)
                 .warnBeforeStop(2).build();
+        // R266h: the v0.2.19 regression test was written
+        // when the production default was 3. We pin the
+        // threshold at 3 here so the test continues to
+        // verify the "3 retries then fire" semantics; the
+        // production default was lowered to 2 in R266h
+        // (see setEmptyInputStreakThresholdChangesThreshold
+        // for that assertion).
+        d.setEmptyInputStreakThreshold(3);
         // Use big-output shell to dodge the R138
         // research_mode pre-emption (which would fire on
         // small-output shell). The v0.2.19 real-prompt

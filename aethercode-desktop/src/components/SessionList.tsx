@@ -151,9 +151,20 @@ export interface SessionListProps {
    *  tooltip. The user asked what scope the bottom button
    *  belongs to; the tooltip now spells it out. */
   newSessionLabel?: string;
+  /** R266g: hide the `<div class="section-header">Sessions</div>`
+   *  + count row. ProjectGroup already renders its own
+   *  `<summary>` with the project name + count, so the inner
+   *  header was a redundant "SESSIONS" row the user explicitly
+   *  asked to remove (left rail should only show the project
+   *  listing). When the parent does NOT render its own header
+   *  (e.g. LeftPanel's flat filter view), this prop defaults to
+   *  false and the header is shown as before. The
+   *  "+ New Session" button stays — it's the per-group create
+   *  action. */
+  hideSectionHeader?: boolean;
 }
 
-export function SessionList({ items: propItems, height, emptyMessage, onNewSession, newSessionLabel }: SessionListProps = {}) {
+export function SessionList({ items: propItems, height, emptyMessage, onNewSession, newSessionLabel, hideSectionHeader = false }: SessionListProps = {}) {
   const {
     sessions,
     currentSessionId,
@@ -425,12 +436,20 @@ export function SessionList({ items: propItems, height, emptyMessage, onNewSessi
   );
   return (
     <div className="session-list">
-      <div className="section-header">
-        <span>Sessions</span>
-        <span className="session-count" title={`${baseItems.length} sessions`}>
-          {baseItems.length}
-        </span>
-      </div>
+      {/* R266g: drop the inner "SESSIONS" header + count
+       *  when the parent (ProjectGroup) already provides
+       *  its own summary. The header was redundant —
+       *  project "abc_1" already has a count badge in
+       *  its <summary>, and the user explicitly asked
+       *  to remove the second-level "SESSIONS" row. */}
+      {!hideSectionHeader && (
+        <div className="section-header">
+          <span>Sessions</span>
+          <span className="session-count" title={`${baseItems.length} sessions`}>
+            {baseItems.length}
+          </span>
+        </div>
+      )}
       {listBody}
       <button
         className="session-new-btn"

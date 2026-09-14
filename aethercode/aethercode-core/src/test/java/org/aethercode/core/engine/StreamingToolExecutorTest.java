@@ -90,4 +90,88 @@ class StreamingToolExecutorTest {
         assertThat(events).anyMatch(e -> e instanceof StreamingToolExecutor.Event.Completed
                 && ((StreamingToolExecutor.Event.Completed) e).output().toString().contains("blocked"));
     }
+
+    /**
+     * R266h: when the model emits a tool_use with
+     * missing required parameters, the executor must
+     * reject it pre-invoke (no side effect, no
+     * unnecessary timeout) with a precise error message
+     * that names the missing field and shows the
+     * expected JSON shape. The tool's {@code call()}
+     * function must not be invoked at all.
+     */
+    @Test
+    void missingRequiredParamsRejectedPreInvoke() {
+        AtomicInteger ran = new AtomicInteger();
+        // schema requires "command" (a string)
+        java.util.LinkedHashMap<String, Map<String, Object>> props = new java.util.LinkedHashMap<>();
+        props.put("command", Tools.stringProp("the shell command to run"));
+        Map<String, Object> schema = Tools.objectSchema(props, "command");
+        Tool bash = Tools.build(new ToolDef("bash", "run a shell command", schema,
+                (in, ctx) -> {
+                    ran.incrementAndGet();
+                    return CompletableFuture.completedFuture(Tool.ToolResult.of("ok"));
+                }));
+        AppState st = new AppState("s1", Path.of(""));
+        st.toolPool().add(bash);
+        StreamingToolExecutor exec = new StreamingToolExecutor(PermissionPolicy.allowAll(), 4);
+        // empty input map — the v0.2.66 desktop
+        // transcript showed the model emitting exactly
+        // this 20+ times in a row.
+        var events = exec.run(
+                List.of(new ContentBlock.ToolUseBlock("call_1", "bash", Map.of())),
+                st
+        ).collect(Collectors.toList());
+        // the tool's call() must NOT have run.
+        assertThat(ran.get()).as("call() must not run when required params are missing").isZero();
+        // an Event.Completed must surface with the
+        // precise error message: name the missing
+        // field, show the JSON shape.
+        assertThat(events).anyMatch(e -> e instanceof StreamingToolExecutor.Event.Completed
+                && ((StreamingToolExecutor.Event.Completed) e).isError());
+        String errMsg = events.stream()
+                .filter(e -> e instanceof StreamingToolExecutor.Event.Completed
+                        && ((StreamingToolExecutor.Event.Completed) e).isError())
+                .map(e -> String.valueOf(((StreamingToolExecutor.Event.Completed) e).output()))
+                .findFirst().orElse("");
+        assertThat(errMsg).contains("bash");
+        assertThat(errMsg).contains("command");
+        assertThat(errMsg).contains("expected tool_use shape");
+        assertThat(errMsg).contains("\"name\":\"bash\"");
+        // the placeholders line must show the shape
+        // the model needs to emit (string "<value>").
+        assertThat(errMsg).contains("\"command\":\"<value>\"");
+    }
+
+    /**
+     * R266h: when the model emits a tool_use WITH all
+     * required parameters filled in, the tool's
+     * {@code call()} must run as normal. The
+     * missing-required check must not false-positive
+     * on a legitimate call.
+     */
+    @Test
+    void validInputStillReachesTool() {
+        AtomicInteger ran = new AtomicInteger();
+        java.util.LinkedHashMap<String, Map<String, Object>> props = new java.util.LinkedHashMap<>();
+        props.put("command", Tools.stringProp("the shell command to run"));
+        Map<String, Object> schema = Tools.objectSchema(props, "command");
+        Tool bash = Tools.build(new ToolDef("bash", "run a shell command", schema,
+                (in, ctx) -> {
+                    ran.incrementAndGet();
+                    return CompletableFuture.completedFuture(Tool.ToolResult.of("ran " + in.get("command")));
+                }));
+        AppState st = new AppState("s1", Path.of(""));
+        st.toolPool().add(bash);
+        StreamingToolExecutor exec = new StreamingToolExecutor(PermissionPolicy.allowAll(), 4);
+        var events = exec.run(
+                List.of(new ContentBlock.ToolUseBlock("call_1", "bash",
+                        Map.of("command", "dir"))),
+                st
+        ).collect(Collectors.toList());
+        assertThat(ran.get()).as("call() must run when required params are present").isEqualTo(1);
+        assertThat(events).anyMatch(e -> e instanceof StreamingToolExecutor.Event.Completed
+                && !((StreamingToolExecutor.Event.Completed) e).isError()
+                && ((StreamingToolExecutor.Event.Completed) e).output().toString().contains("ran dir"));
+    }
 }

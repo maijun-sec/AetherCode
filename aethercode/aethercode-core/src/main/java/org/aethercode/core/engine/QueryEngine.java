@@ -1167,6 +1167,48 @@ public class QueryEngine {
                     // `System.getProperty("aethercode.loop.hardStop", "false")
                     //  .equalsIgnoreCase("true")` so the behaviour is
                     // opt-in per daemon, not the surprise default.
+                    //
+                    // R266h (2026-09-14): carve-out for the
+                    // {@code empty_tool_input} pattern. The
+                    // soft-warn policy is the right call for
+                    // fingerprint-style loops (a real model
+                    // sometimes does legitimately repeat the
+                    // same fingerprint while iterating on a
+                    // long task) and for research_mode (a
+                    // model might genuinely be exploring). The
+                    // empty-input pattern is different: a model
+                    // that emits `bash {}` or `glob {}` 2+ times
+                    // in a row is provably not making progress
+                    // — the engine's `StreamingToolExecutor`
+                    // already rejected the call with a precise
+                    // "expected JSON shape" error (R266h) and
+                    // the model is unable to translate that
+                    // hint into a correct call. Continuing
+                    // past the threshold wastes user time and
+                    // pollutes the transcript with more "X is
+                    // required" tool results. We hard-stop
+                    // here and surface a clear RunEnd so the
+                    // LoopGuardBanner can show the user
+                    // "your model is stuck on empty tool
+                    // calls — start a new session or
+                    // rephrase" with a one-click "Reset
+                    // session" action.
+                    if (preInfo != null && "loop_detected".equals(preInfo.kind())
+                            && "empty_tool_input".equals(loopDetector.lastLoopKind())) {
+                        action.accept(new StreamEvent.SideNote(
+                                "empty_tool_input",
+                                "the model sent " + loopDetector.emptyInputStreak()
+                                        + " consecutive tool calls with empty input. "
+                                        + "this is a model-side bug — the engine rejected each call with the expected JSON shape "
+                                        + "but the model could not re-emit a correct call. "
+                                        + "the run is being ended; please start a new session or rephrase your prompt."));
+                        stopReason = "loop_detected: empty_tool_input ("
+                                + loopDetector.emptyInputStreak()
+                                + " consecutive empty tool calls)";
+                        finished = true;
+                        action.accept(new StreamEvent.RunEnd(stopReason, List.of()));
+                        return true;
+                    }
                     if (preInfo != null && preInfo.isWarning()) {
                         // tier-1 (soft) warnings are silent.
                         // previously, every tier-1 hit emitted a
