@@ -183,8 +183,19 @@ class AetherCodeMethodsR159Test {
                 "{\"id\":\"" + id + "\",\"role\":\"user\","
                         + "\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}",
                 StandardCharsets.UTF_8);
+        // R266d (2026-09-13): the listSessions `withPreview`
+        // default is now `true` (was `false` in R159) — the
+        // desktop's LeftPanel refresh path doesn't pass the
+        // flag and we want every RPC consumer to get a
+        // preview by default. This test is asserting the
+        // OPT-OUT path: when the caller explicitly asks
+        // for withPreview=false, the response MUST NOT
+        // carry a preview field. Use that explicit opt-out
+        // here so the test continues to pin the original
+        // "no preview" contract.
         @SuppressWarnings("unchecked")
-        Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of());
+        Map<String, Object> r = (Map<String, Object>) m.listSessions(
+                Map.of("withPreview", false));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> sessions = (List<Map<String, Object>>) r.get("sessions");
         Map<String, Object> row = sessions.stream()

@@ -147,26 +147,36 @@ class JsonRpcPermissionPrompterR126Test {
     }
 
     @Test
-    void mediumRisk_elevatedFlagOn_alwaysAsks() throws Exception {
-        // R130 changed the policy: medium risk is now ALWAYS
-        // asked, even when the elevated flag is on. The user
-        // asked for "medium risk 加 explicit confirm" so an
-        // unattended headless driver surfaces a confirmation
-        // prompt for the things humans care about (writes,
-        // edits, npm install) while high-risk internal reads
-        // still auto-approve. The fake returns Deny so the
-        // test verifies the path through askPermission, not
-        // the short-circuit.
+    void mediumRisk_elevatedFlagOn_autoApproves() throws Exception {
+        // R183 (2026-09-01) re-expanded the auto-allow
+        // short-circuit to cover BOTH medium and high risk.
+        // R130 had narrowed it to high-only ("medium risk +
+        // explicit confirm"), but the probe-test end-to-end
+        // (2026-09-01) showed the narrowing broke headless
+        // runs: file_write always required manual confirmation
+        // even when the user had toggled the auto-allow
+        // switch, the model retried, and the file never
+        // landed. R183 restores the R126 behaviour: a single
+        // toggle covers medium + high (critical risk is still
+        // NEVER auto-approved; rm -rf / sudo / mkfs / dd
+        // still ask).
+        //
+        // The original R130 test name `mediumRisk_elevatedFlagOn_alwaysAsks`
+        // reflected the R130 narrowing. R183 flipped the
+        // behaviour so the test now pins "file_write
+        // auto-approves when the medium-high flag is on".
         RecordingMethods m = new RecordingMethods(true, true,
-                new PermissionDecision(AetherCodeMethods.DECISION_DENY, "user denied"));
+                new PermissionDecision(AetherCodeMethods.DECISION_DENY, "should not be reached"));
         JsonRpcPermissionPrompter p = new JsonRpcPermissionPrompter(m);
         Tool t = tool("file_write");
         PermissionResult r = p.ask(t, Map.of("path", "/tmp/a"), "write").get();
-        assertThat(r).isInstanceOf(PermissionResult.Deny.class);
-        assertThat(m.askCalls()).isEqualTo(1);
-        // No auto-approve counter increment — we went
-        // through the ask path.
-        assertThat(m.recordCalls()).isZero();
+        assertThat(r).isInstanceOf(PermissionResult.Allow.class);
+        // short-circuited, so askPermission is never called.
+        assertThat(m.askCalls()).isZero();
+        // and the auto-approve counter is bumped so the
+        // StatusBar badge can colour-code the elevation.
+        assertThat(m.recordCalls()).isEqualTo(1);
+        assertThat(m.getAutoApprovedElevatedCount()).isEqualTo(1L);
     }
 
     @Test
