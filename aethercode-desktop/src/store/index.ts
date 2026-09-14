@@ -348,6 +348,37 @@ let engineStateTimer: number | null = null;
 // would double-count events (old listener +
 // new listener both push to the same buffer).
 let rpcEventUnsubscribe: (() => void) | null = null;
+
+// R267 desktop polish (2026-09-14): the user's
+// "natural flow" complaint — all thinking on top,
+// all tools at the bottom. Root cause: a single
+// ChatStep accumulates ALL text_delta + ALL
+// tool_use_start events for the entire run, so
+// buildBlocks emits exactly one [think][tool][tool]...
+// group per sub-task regardless of how many
+// model-thinks-between-tools cycles actually
+// happened.
+//
+// Fix: when text_delta arrives immediately after
+// a tool_result, close the current step and open a
+// new one. The renderer then naturally emits one
+// [think][tool] block per model-think-took-tool
+// cycle, matching the user's mental model:
+//
+//   [think1 → tool1 → result1]
+//   [think2 → tool2 → result2]
+//   [final summary think]
+//
+// The flag is module-private because it's pure
+// implementation state, not part of the React
+// tree. It's flipped on tool_result and cleared on
+// text_delta (after we use it to decide whether
+// to open a new step). tool_use_start + tool_result
+// pairs without text between them do NOT clear
+// the flag — the next text_delta is the signal
+// that the model finished its "thinking phase"
+// and started a new one.
+let pendingStepBoundary: boolean = false;
 // per-session draft helpers. The localStorage key is
 // derived from the current sessionId so switching sessions
 // restores the right scratchpad. When the user has no current
@@ -621,6 +652,18 @@ export interface ChatStep {
     output?: string;
     isError?: boolean;
     ts: number;
+    /** R267 desktop polish: raw input from the
+     *  tool_use_start event. Stored so the renderer
+     *  can build a real diff for file_edit
+     *  (old_string + new_string → unified diff)
+     *  without round-tripping back to the daemon —
+     *  the protocol does not currently forward
+     *  attachments through tool_result, so this is
+     *  the only place the desktop has the raw
+     *  before/after text. Undefined for tools whose
+     *  input doesn't need to be replayed (file_read,
+     *  bash, web_search, ...). */
+    input?: Record<string, unknown>;
   }[];
   /** Per-tool-kind counters for the header. */
   counters: {
@@ -852,6 +895,30 @@ interface AppState {
   messages: ChatMessage[];
   isStreaming: boolean;
   currentInput: string;
+  /** R267 desktop polish: a follow-up prompt the user
+   *  typed while the previous run was still streaming.
+   *  The store queues it instead of dropping it (the
+   *  previous behaviour silently ignored the input —
+   *  the user clicked Enter and "nothing happened",
+   *  then got frustrated and clicked again).
+   *
+   *  Lifecycle:
+   *    1. user types + sends while isStreaming=true →
+   *       currentInput → pendingFollowUp, currentInput
+   *       cleared so the user can keep typing the NEXT
+   *       prompt.
+   *    2. current run_end fires →
+   *       pendingFollowUp auto-starts as the next run.
+   *    3. user clicks "cancel" → current run cancelled
+   *       AND pendingFollowUp dropped (the user wanted
+   *       to stop everything, not just this run).
+   *
+   *  Only one slot — second+ queued prompts overwrite
+   *  the previous. The user explicitly said "我会自己
+   *  cancel 前一个, 再提交后一个" (I'll cancel the previous
+   *  one before submitting the next), so a single-slot
+   *  queue matches the user's mental model. */
+  pendingFollowUp: string | null;
   model: string;
   permissionMode: string;
   enabledTools: Set<string> | null;
@@ -1120,6 +1187,12 @@ interface AppState {
   setCurrentInput: (s: string) => void;
   sendMessage: () => Promise<void>;
   cancelQuery: () => Promise<void>;
+  /** R267 desktop polish: drop the queued follow-up
+   *  prompt (if any). Called by the UI's "cancel queued"
+   *  button or when the user manually dismisses the
+   *  queue indicator. Idempotent — safe to call when
+   *  the queue is empty. */
+  cancelPendingFollowUp: () => void;
   switchSession: (sessionId: string) => Promise<void>;
   /** clear currentSessionId locally without calling the
    *  daemon. Used by the SessionList "+" button to start a
@@ -1423,8 +1496,11 @@ interface AppState {
   clearCurrentQuery: () => void;
   /** R83 Issue #6: append text to the current step's body. */
   appendStepText: (text: string) => void;
-  /** R83 Issue #6: push a new tool event into the current step. */
-  pushStepTool: (tool: { id: string; name: string; inputSummary: string; isError?: boolean; ts: number }) => void;
+  /** R83 Issue #6: push a new tool event into the current step.
+   *  R267 polish: also accepts the raw {@code input} so the
+   *  renderer can reconstruct a file_edit diff from old_string +
+   *  new_string without round-tripping back to the daemon. */
+  pushStepTool: (tool: { id: string; name: string; inputSummary: string; isError?: boolean; ts: number; input?: Record<string, unknown> }) => void;
   /** R83 Issue #6: fill in the result of a previously pushed tool
    *  event (matched by id). */
   completeStepTool: (id: string, output: string, isError: boolean) => void;
@@ -1835,6 +1911,11 @@ export const useStore = create<AppState>((set, get) => {
         // when a step is opened while a sub-task is in
         // progress, associate the step with the sub-task so the
         // MessageList can nest it inside the matching SubTaskCard.
+        //
+        // R267 desktop polish: clear the pendingStepBoundary
+        // flag from any prior run so it can't trigger a phantom
+        // step split on the first text_delta of this new run.
+        pendingStepBoundary = false;
         set((s) => {
           let currentStepId = s.currentStepId;
           let steps = s.steps;
@@ -1946,6 +2027,14 @@ export const useStore = create<AppState>((set, get) => {
       case 'text_delta': {
         const text = ev.text ?? '';
         if (!text) return;
+        // R267 desktop polish: split the step on the
+        // tool→text boundary. See pendingStepBoundary
+        // declaration for the full rationale. We
+        // capture the flag value BEFORE set() because
+        // the reducer runs synchronously and we want
+        // to inspect / clear it at most once.
+        const splitStep = pendingStepBoundary;
+        pendingStepBoundary = false;
         set((s) => {
           const msgs = [...s.messages];
           let last = msgs[msgs.length - 1];
@@ -1962,10 +2051,42 @@ export const useStore = create<AppState>((set, get) => {
             ? { kind: 'thinking' as const, label: '✓ Composing…', ts: Date.now() }
             : s.currentActivity;
           // R83 Issue #6: also append to the current step's text.
-          const steps = s.currentStepId
-            ? s.steps.map((st) => st.id === s.currentStepId ? { ...st, text: st.text + text } : st)
-            : s.steps;
-          return { messages: msgs, isStreaming: true, lastChunkTs: Date.now(), currentActivity: activity, steps };
+          //
+          // R267 polish: if the last event was a tool_result
+          // (splitStep === true) and we have a current step,
+          // close it and open a new one so buildBlocks emits
+          // one [think][tool] block per model-think-took-tool
+          // cycle. The new step inherits the current
+          // sub-task so the MessageList still nests it
+          // correctly. We do NOT split when there's no
+          // current step (the run_start handler creates the
+          // first one) so the very first text_delta of a
+          // run keeps the existing behaviour.
+          let currentStepId = s.currentStepId;
+          let steps = s.steps;
+          if (splitStep && currentStepId) {
+            const prev = steps.find((st) => st.id === currentStepId);
+            const parentSubTaskId = prev?.subTaskId ?? null;
+            const newStepId = newId('step');
+            steps = [
+              ...steps.map((st) => st.id === currentStepId
+                ? { ...st, done: true, endedAt: Date.now() }
+                : st),
+              {
+                id: newStepId,
+                subTaskId: parentSubTaskId,
+                startedAt: Date.now(),
+                text,
+                toolEvents: [],
+                counters: { thinks: 1, fileReads: 0, fileWrites: 0, commands: 0, searches: 0, web: 0, other: 0 },
+                done: false,
+              },
+            ];
+            currentStepId = newStepId;
+          } else if (currentStepId) {
+            steps = steps.map((st) => st.id === currentStepId ? { ...st, text: st.text + text } : st);
+          }
+          return { messages: msgs, isStreaming: true, lastChunkTs: Date.now(), currentActivity: activity, steps, currentStepId };
         });
         break;
       }
@@ -1988,6 +2109,18 @@ export const useStore = create<AppState>((set, get) => {
                     toolEvents: [...st.toolEvents, {
                       id: toolId, name: toolName,
                       inputSummary: detail, ts: Date.now(),
+                      // R267 polish: stash the raw input so the
+                      // renderer can build a real file_edit diff
+                      // (old_string + new_string → unified diff).
+                      // The protocol does not forward attachments
+                      // through tool_result, so this is the only
+                      // place the desktop can see the before/after
+                      // text. We stash for ALL tools (cheap — the
+                      // input is already a parsed object) and let
+                      // the renderer pick the ones it cares about.
+                      input: ev.input && typeof ev.input === 'object'
+                        ? (ev.input as Record<string, unknown>)
+                        : undefined,
                     }],
                     counters: { ...counters, [cat]: (counters[cat] ?? 0) + 1 },
                   }
@@ -2052,6 +2185,15 @@ export const useStore = create<AppState>((set, get) => {
           (() => { try { return JSON.stringify(ev.content); } catch { return String(ev.content); } })();
         const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
         const toolId = (ev as any).id ?? null;
+        // R267 desktop polish: signal that the model has just
+        // finished a tool. The next text_delta (if any) will
+        // close the current step and open a new one, producing
+        // the natural "[think][tool][think][tool]..." render
+        // the user expects. The flag is intentionally NOT
+        // cleared here — it survives any subsequent
+        // tool_use_start (back-to-back tools stay in the same
+        // step) and is consumed by the next text_delta.
+        pendingStepBoundary = true;
         // R83 Issue #6: fill in the result of the matching tool
         // event in the current step (matched by tool_use_start id).
         set((s) => {
@@ -2183,6 +2325,37 @@ export const useStore = create<AppState>((set, get) => {
             }));
           }
           set({ currentQuery: null, currentStepId: null });
+        }
+        // R267 polish: if the user queued a follow-up
+        // prompt while this run was in flight, auto-start
+        // it now. We defer the kickoff to a microtask so
+        // the run_end set() above lands first — otherwise
+        // sendMessage sees isStreaming=false but reads
+        // a stale currentQuery/currentStepId from the
+        // closure.
+        //
+        // We DO NOT auto-start if the user paused for a
+        // decision (awaiting_user_decision) — that path
+        // expects the user to read the prompt and
+        // continue manually, and firing an unrelated
+        // follow-up while the engine is paused is
+        // surprising.
+        if (stopReason !== 'awaiting_user_decision') {
+          const queued = get().pendingFollowUp;
+          if (queued) {
+            // clear first so the next run doesn't see
+            // a phantom queued prompt in the optimistic
+            // state. sendMessage will set isStreaming=true
+            // again when its set() fires.
+            set({ pendingFollowUp: null });
+            // populate the input box from the queued
+            // text and fire sendMessage. Going through
+            // the action keeps the lazy-create-session,
+            // activeWorkflow routing, and rpc.query path
+            // in one place instead of duplicating it here.
+            set({ currentInput: queued });
+            void get().sendMessage();
+          }
         }
         break;
       }
@@ -3020,7 +3193,7 @@ export const useStore = create<AppState>((set, get) => {
     lastMemoryRefreshMs: 0,
     lastCwdChangedAt: 0,
     projects: [], currentProjectId: null,
-    messages: [], isStreaming: false, currentInput: '',
+    messages: [], isStreaming: false, currentInput: '', pendingFollowUp: null,
     model: '', permissionMode: 'ask', enabledTools: null,
     metrics: null, traces: [], pendingPermissions: [],
     // no engine stats until the daemon replies.
@@ -3604,7 +3777,28 @@ export const useStore = create<AppState>((set, get) => {
 
     sendMessage: async () => {
       const input = get().currentInput.trim();
-      if (!input || get().isStreaming) return;
+      if (!input) return;
+      // R267 polish: queue the prompt instead of dropping
+      // it when a run is in flight. The user wants the
+      // "natural flow" of "model says it's done → my
+      // next prompt fires immediately", not "I have to
+      // wait for the run to end before the input box
+      // unlocks".
+      //
+      // The current run_end handler auto-promotes
+      // pendingFollowUp to a new run (see case 'run_end'
+      // below). One slot only — overwriting the previous
+      // queued prompt matches the user's explicit
+      // instruction "我会自己 cancel 前一个, 再提交后一个".
+      if (get().isStreaming) {
+        set({ pendingFollowUp: input, currentInput: '' });
+        // also clear the localStorage draft so a refresh
+        // doesn't restore the just-queued text.
+        const sid = get().currentSessionId;
+        if (draftTimer) { window.clearTimeout(draftTimer); draftTimer = null; }
+        clearDraft(sid);
+        return;
+      }
       // if we're in the awaiting-decision state, the user's
       // typed message IS the continuation. Clear the flag so the
       // UI stops showing the decision prompt while the engine
@@ -3812,7 +4006,18 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
-    cancelQuery: async () => { try { await rpc.cancel(); } catch {} set({ isStreaming: false }); },
+    cancelQuery: async () => {
+      // R267 polish: a cancel means "stop everything",
+      // which includes the queued follow-up. The user
+      // explicitly said "我会自己 cancel 前一个, 再提交后一个"
+      // — when they hit cancel they want a clean slate,
+      // not a surprise prompt firing the moment the
+      // daemon tears down.
+      try { await rpc.cancel(); } catch {}
+      set({ isStreaming: false, pendingFollowUp: null });
+    },
+
+    cancelPendingFollowUp: () => set({ pendingFollowUp: null }),
 
     switchSession: async (sessionId: string) => {
       // cancel any pending debounced draft write for the

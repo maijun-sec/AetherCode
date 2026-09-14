@@ -42,6 +42,16 @@ export function MessageInput() {
     sendMessage,
     cancelQuery,
     isStreaming,
+    // R267 polish: queued follow-up + cancel action. When
+    // isStreaming is true and the user types a prompt +
+    // hits Enter, sendMessage parks the text in
+    // pendingFollowUp (so the input box unlocks and the
+    // user can keep typing). The run_end handler in the
+    // store auto-promotes the queued text to the next
+    // run. The cancel button next to the queue pill
+    // drops it without affecting the current run.
+    pendingFollowUp,
+    cancelPendingFollowUp,
     isConnected,
     model,
     permissionMode,
@@ -502,6 +512,40 @@ export function MessageInput() {
 
   return (
     <div className="message-input-container">
+      {/* R267 desktop polish (2026-09-14): the queued
+       *  follow-up pill. Shown ABOVE the config bar so
+       *  the user sees "yes, the engine heard your next
+       *  prompt — it's waiting for the current run to
+       *  end" before they reach for the input box again.
+       *
+       *  The pill has a ✕ that calls
+       *  cancelPendingFollowUp — drops the queued text
+       *  without affecting the in-flight run. The user
+       *  explicitly asked for this: "我会自己 cancel 前一个,
+       *  再提交后一个" — they want control over when the
+       *  queued text fires (sometimes "never, I changed
+       *  my mind"). Single-slot queue matches that
+       *  mental model.
+       *
+       *  The store auto-promotes the queue to a real run
+       *  on run_end, so the user never has to click
+       *  anything to make it fire — only to cancel it. */}
+      {pendingFollowUp && (
+        <div className="followup-pill" title="Runs automatically after the current query finishes. Click ✕ to drop.">
+          <span className="followup-pill-icon" aria-hidden>↪</span>
+          <span className="followup-pill-label">queued:</span>
+          <span className="followup-pill-text">{pendingFollowUp}</span>
+          <button
+            type="button"
+            className="followup-pill-cancel"
+            onClick={cancelPendingFollowUp}
+            aria-label="Drop queued follow-up"
+            title="Drop queued follow-up"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* one-time model mismatch banner.
        * Rendered above the config bar so the user
        * sees it before they pick a model. The

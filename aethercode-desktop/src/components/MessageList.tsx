@@ -217,6 +217,178 @@ export function toolEventToMarkdown(ev: ChatStep['toolEvents'][number]): string 
   }
 }
 
+// ---------------------------------------------------------------------------
+// R267 desktop polish (2026-09-14): snippet-style diff rendering.
+//
+// The user wanted file_edit to look like `git diff -U2`: only show
+// the actually-changed lines (`+` / `-`), collapse long runs of
+// unchanged context (` `) into `... N unchanged lines ...`, and cap
+// the total so a 500-line edit doesn't drown the chat. Previously
+// the renderer just dumped the tool's output (which is the literal
+// "edited /path/to/file (1 replacement)" string from FileEditTool)
+// into a fenced ```diff block — the user saw a "diff" but it was
+// just the success message.
+//
+// Build the unified diff client-side from the raw tool input that
+// the store stashes on every tool_use_start event. file_edit's
+// input has `old_string` + `new_string`; split each by `\n` to get
+// the changed lines, prepend a single `@@` hunk header, and let
+// {@link summarizeDiff} + the inline `DiffSnippetView` component
+// render it in the natural git-diff style.
+// ---------------------------------------------------------------------------
+
+export type DiffSegment =
+  | { kind: 'meta'; text: string }
+  | { kind: 'add'; text: string }
+  | { kind: 'del'; text: string }
+  | { kind: 'ctx'; text: string }
+  | { kind: 'elided'; count: number };
+
+// Keep a maximum of this many segments in a snippet view. Anything
+// beyond gets folded into a single "... N more lines ..." segment.
+const DIFF_MAX_LINES = 50;
+// A run of > this many consecutive context lines gets collapsed
+// into a single "... N unchanged lines ..." segment. We always
+// keep the first 2 + last 2 lines of the run so the user can still
+// see what context the change was in.
+const DIFF_CTX_COLLAPSE_THRESHOLD = 4;
+
+/** Parse a unified diff string into typed segments. Tolerant of
+ *  malformed input — unrecognised lines become 'ctx' so the
+ *  renderer still has something to show. */
+export function summarizeDiff(diff: string): DiffSegment[] {
+  if (!diff) return [];
+  const raw = diff.split(/\r?\n/);
+  const out: DiffSegment[] = [];
+  let i = 0;
+  // eat the leading "--- a/path" / "+++ b/path" headers as
+  // one meta block (the renderer collapses them). We keep the
+  // first "---" so the user can see the file name in the snippet.
+  let sawFileHeader = false;
+  while (i < raw.length) {
+    const line = raw[i];
+    if (line.startsWith('---') && !sawFileHeader) {
+      // single combined meta line: "--- a/path  +++ b/path"
+      out.push({ kind: 'meta', text: line });
+      sawFileHeader = true;
+      i++;
+      // if the next line is "+++ b/path", skip it (already
+      // represented in the meta block).
+      if (i < raw.length && raw[i].startsWith('+++')) i++;
+      continue;
+    }
+    if (line.startsWith('+++') && sawFileHeader) {
+      i++;
+      continue;
+    }
+    if (line.startsWith('@@')) {
+      out.push({ kind: 'meta', text: line });
+      i++;
+      continue;
+    }
+    if (line.startsWith('+')) {
+      out.push({ kind: 'add', text: line });
+      i++;
+      continue;
+    }
+    if (line.startsWith('-')) {
+      out.push({ kind: 'del', text: line });
+      i++;
+      continue;
+    }
+    if (line === '' || line.startsWith(' ') || (!line.startsWith('+') && !line.startsWith('-') && !line.startsWith('@'))) {
+      // Collect runs of context / blank lines.
+      let runStart = i;
+      while (i < raw.length) {
+        const l = raw[i];
+        if (l.startsWith('+') || l.startsWith('-') || l.startsWith('@@')) break;
+        i++;
+      }
+      const runLength = i - runStart;
+      if (runLength <= DIFF_CTX_COLLAPSE_THRESHOLD) {
+        // small run: keep every line
+        for (let j = runStart; j < i; j++) {
+          out.push({ kind: 'ctx', text: raw[j] || ' ' });
+        }
+      } else {
+        // long run: keep first 2 + last 2, elide the middle
+        const keep = 2;
+        for (let j = runStart; j < runStart + keep; j++) {
+          out.push({ kind: 'ctx', text: raw[j] || ' ' });
+        }
+        out.push({ kind: 'elided', count: runLength - 2 * keep });
+        for (let j = i - keep; j < i; j++) {
+          out.push({ kind: 'ctx', text: raw[j] || ' ' });
+        }
+      }
+      continue;
+    }
+    // unknown — treat as ctx so we don't drop it
+    out.push({ kind: 'ctx', text: line });
+    i++;
+  }
+  // cap total segments: keep the head + the tail + a single
+  // "... N more lines ..." elision. The head is more informative
+  // (file header + first hunk) so we bias the cut toward it.
+  if (out.length > DIFF_MAX_LINES) {
+    const headCount = DIFF_MAX_LINES - 5;
+    const tail = out.slice(out.length - 5);
+    const elided = out.length - headCount - tail.length;
+    return [
+      ...out.slice(0, headCount),
+      { kind: 'elided', count: elided },
+      ...tail,
+    ];
+  }
+  return out;
+}
+
+/** Build a unified diff from file_edit's raw input. Returns
+ *  null if the input doesn't have both old_string + new_string
+ *  (the renderer should fall back to the summary one-liner). */
+export function buildEditSnippetFromInput(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const obj = input as Record<string, unknown>;
+  const oldStr = typeof obj.old_string === 'string' ? obj.old_string : null;
+  const newStr = typeof obj.new_string === 'string' ? obj.new_string : null;
+  const path = typeof obj.file_path === 'string' ? obj.file_path : null;
+  if (oldStr == null || newStr == null) return null;
+  const oldLines = oldStr.split(/\r?\n/);
+  const newLines = newStr.split(/\r?\n/);
+  const head = path ? `--- a/${path}\n+++ b/${path}\n` : '';
+  const hunk = `@@ -1,${oldLines.length} +1,${newLines.length} @@`;
+  const body = [
+    ...oldLines.map((l) => `-${l}`),
+    ...newLines.map((l) => `+${l}`),
+  ].join('\n');
+  return head + hunk + '\n' + body;
+}
+
+/** Render a list of diff segments as a snippet. Each segment is
+ *  one <div>, with add/del/ctx/meta styled via a class and
+ *  elided segments rendered as a single muted row. */
+function DiffSnippetView({ segments }: { segments: DiffSegment[] }) {
+  if (segments.length === 0) return null;
+  return (
+    <div className="diff-snippet">
+      {segments.map((seg, i) => {
+        if (seg.kind === 'elided') {
+          return (
+            <div key={i} className="diff-snippet-elided">
+              {'··· '}{seg.count}{' unchanged lines ···'}
+            </div>
+          );
+        }
+        return (
+          <div key={i} className={`diff-snippet-line diff-snippet-${seg.kind}`}>
+            {seg.text || ' '}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function stepsToMarkdown(steps: ChatStep[], subTask?: ChatSubTask, isLive?: boolean): string {
   void steps; void subTask; void isLive; // R202: kept for source-pin compat; not called by the new block renderer.
   let md = '';
@@ -465,13 +637,31 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
     const summary = ev.inputSummary || missingInputHint(ev.name);
     const output = ev.output ?? '';
     const trimmed = truncateOutput(output, isError ? TOOL_ERROR_PREVIEW : TOOL_OUTPUT_PREVIEW);
-    let body = '';
+    let body: ReactElement | string | null = '';
+    // R267 polish: file_edit now renders as a proper git-diff
+    // snippet built client-side from the tool's raw input
+    // (old_string + new_string). The previous code path
+    // dumped the tool's "edited /path (N replacement)" output
+    // into a fenced ```diff block, which the user correctly
+    // flagged as a fake diff. DiffSnippetView is a real React
+    // component with proper +/-/ctx coloring, so we bypass
+    // react-markdown for this case.
+    let diffNode: ReactElement | null = null;
     if (ev.name === 'bash' || ev.name === 'shell') {
       body = `\`\`\`bash\n$ ${summary}\n${trimmed ? '\n' + trimmed + '\n' : ''}\`\`\``;
     } else if (ev.name === 'file_read' || ev.name === 'read_file' || ev.name === 'FileRead') {
       body = trimmed ? `\`\`\`\n${trimmed}\n\`\`\`` : '';
     } else if (ev.name === 'file_edit' || ev.name === 'edit_file' || ev.name === 'FileEdit') {
-      body = trimmed ? `\`\`\`diff\n${trimmed}\n\`\`\`` : '';
+      const diffStr = buildEditSnippetFromInput(ev.input);
+      if (diffStr) {
+        diffNode = <DiffSnippetView segments={summarizeDiff(diffStr)} />;
+      } else {
+        // fallback: the model didn't supply both old_string +
+        // new_string, or the tool input wasn't captured. Show
+        // the raw "edited ..." string so the user still sees
+        // SOMETHING.
+        body = trimmed ? `\`\`\`\n${trimmed}\n\`\`\`` : '';
+      }
     } else if (ev.name === 'file_write' || ev.name === 'write_file' || ev.name === 'FileWrite') {
       body = `文件: \`${summary}\``;
     } else {
@@ -485,7 +675,12 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
           <span className="agent-block-title">{ev.name}</span>
           <span className="agent-block-subtitle">{summary}</span>
         </summary>
-        {body && (
+        {diffNode && (
+          <div className="agent-block-body">
+            {diffNode}
+          </div>
+        )}
+        {!diffNode && body && (
           <div className="agent-block-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {body}

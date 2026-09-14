@@ -1821,3 +1821,55 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* R267 desktop polish (2026-09-14): snippet-style diff rendering
+ * for file_edit tool calls. The user wanted `git diff -U2` style:
+ * +/- in colour, ctx muted, long ctx runs collapsed to
+ * "··· N unchanged lines ···", capped at ~50 visible lines.
+ *
+ * Layout: a monospace block inside .agent-block-body. Each line
+ * is one .diff-snippet-line, prefixed by its kind (add/del/ctx/meta)
+ * so the colour comes from a CSS rule, not an inline marker. The
+ * elided segments are a single muted row that spans the full width.
+ *
+ * Colours follow the user-selected theme via CSS variables; the
+ * defaults match a light/dark aware palette that doesn't fight
+ * the rest of the chat palette. */
+.diff-snippet {
+  font-family: var(--font-mono, ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 6px 0 4px 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--diff-snippet-border, rgba(127, 127, 127, 0.2));
+  background: var(--diff-snippet-bg, rgba(127, 127, 127, 0.06));
+}
+.diff-snippet-line {
+  padding: 0 8px;
+  white-space: pre;
+  overflow-x: auto;
+}
+.diff-snippet-add {
+  background: var(--diff-add-bg, rgba(46, 160, 67, 0.18));
+  color: var(--diff-add-fg, #2ea043);
+}
+.diff-snippet-del {
+  background: var(--diff-del-bg, rgba(248, 81, 73, 0.18));
+  color: var(--diff-del-fg, #f85149);
+}
+.diff-snippet-ctx {
+  color: var(--diff-ctx-fg, rgba(127, 127, 127, 0.85));
+}
+.diff-snippet-meta {
+  color: var(--diff-meta-fg, rgba(127, 127, 127, 0.7));
+  font-style: italic;
+  border-top: 1px solid var(--diff-snippet-border, rgba(127, 127, 127, 0.2));
+  border-bottom: 1px solid var(--diff-snippet-border, rgba(127, 127, 127, 0.2));
+}
+.diff-snippet-elided {
+  color: var(--diff-elided-fg, rgba(127, 127, 127, 0.6));
+  font-style: italic;
+  text-align: center;
+  padding: 2px 8px;
+  background: var(--diff-elided-bg, rgba(127, 127, 127, 0.04));
+}
