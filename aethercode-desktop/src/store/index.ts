@@ -3157,7 +3157,7 @@ export const useStore = create<AppState>((set, get) => {
 
   return {
     daemonInfo: null, isConnected: false, connectionState: 'idle', initError: null,
-    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [],
+    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: true, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [],
     // supervisor auto-restart cached
     // flag. Default false (matches the
     // daemon-side default; opt-in via Settings

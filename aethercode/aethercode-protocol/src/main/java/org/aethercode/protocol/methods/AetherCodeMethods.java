@@ -357,19 +357,31 @@ public class AetherCodeMethods {
      * high-risk tool calls without prompting". Distinct
      * from {@link #autoApproveLowRisk} so a user can
      * leave the safe low-risk shortcut on while keeping
-     * explicit prompts for medium / high. Default false.
-     * Critical risk (rm -rf, sudo, mkfs) is NEVER
-     * auto-approved —it always asks.
+     * explicit prompts for medium / high. Critical risk
+     * (rm -rf, sudo, mkfs) is NEVER auto-approved —it
+     * always asks.
      *
-     * <p>Driven by the {@code AETHERCODE_AUTO_APPROVE_ALL=1}
-     * env var at daemon startup (see {@code Main} /
-     * {@code DaemonRunner}). Headless / scripted runs set
-     * the env var so the daemon short-circuits ALL
-     * non-critical asks —without it, every bash /
-     * file_write would 60s-timeout and the model would
-     * silently fail to write anything.
+     * <p>R268d (2026-09-15): default flipped from
+     * {@code false} to {@code true}. The previous default
+     * caused batch workflows (e.g. "write 6 unit tests"
+     * with file_write × 6) to hang on every permission
+     * ask — the desktop's permission banner would time
+     * out at 5min, LLM would retry, and the task would
+     * never complete unattended. With autoApproveMediumHigh
+     * = true the daemon short-circuits file_write and
+     * bash (safe commands) so an unattended workflow can
+     * run end-to-end. The R89 write-guard still blocks
+     * silent overwrites of existing files, and the risk
+     * classifier still prompts for rm -rf / sudo / mkfs.
+     *
+     * <p>Existing desktop users with
+     * {@code prefs.autoApproveMediumHigh === false} in
+     * localStorage keep their explicit opt-out (the
+     * desktop pushes the persisted value to the daemon on
+     * connect, so the user's choice is preserved). Only
+     * first-time users get the new true default.
      */
-    private volatile boolean autoApproveMediumHigh = false;
+    private volatile boolean autoApproveMediumHigh = true;
     /**
      * total number of low-risk tool calls
      * auto-approved since the daemon started. Surfaced

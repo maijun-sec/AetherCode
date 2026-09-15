@@ -36,12 +36,18 @@ class AetherCodeMethodsR126Test {
     }
 
     @Test
-    void setAutoApproveMediumHigh_defaultFalse(@TempDir Path cwd) {
-        // No env var, no setter call — must default to
-        // false so a daemon never silently auto-approves
-        // high-risk calls without an opt-in.
+    void setAutoApproveMediumHigh_defaultTrue(@TempDir Path cwd) {
+        // R268d (2026-09-15): default flipped from false
+        // to true so unattended batch workflows (file_write
+        // × 6 + bash test runs) can complete without
+        // permission prompts hanging the user at 5min
+        // timeouts. Critical risk (rm -rf / sudo / mkfs /
+        // dd) is NEVER auto-approved regardless of this
+        // flag — the user can still opt back out via the
+        // renderer's setAutoApproveMediumHigh(false) RPC
+        // or the AETHERCODE_AUTO_APPROVE_ALL=0 env var.
         AetherCodeMethods m = methodsWith(cwd, null);
-        assertThat(m.isAutoApproveMediumHigh()).isFalse();
+        assertThat(m.isAutoApproveMediumHigh()).isTrue();
     }
 
     @Test

@@ -62,13 +62,23 @@ class JsonRpcPermissionPrompterR120Test {
     /** Counts the four prompter-relevant interactions. */
     static final class RecordingMethods extends AetherCodeMethods {
         private final AtomicReference<Boolean> flag;
+        private final AtomicReference<Boolean> mediumHighFlag;
         private final AtomicLong count = new AtomicLong(0);
+        private final AtomicLong elevatedCount = new AtomicLong(0);
         private final AtomicInteger recordCalls = new AtomicInteger(0);
         private final AtomicInteger askCalls = new AtomicInteger(0);
         private final PermissionDecision decision;
         RecordingMethods(boolean autoApprove, PermissionDecision decision) {
+            this(autoApprove, false, decision);
+        }
+        // R268d: secondary flag for medium+high short-circuit.
+        // The legacy single-flag constructor above keeps
+        // older tests' semantics (low-risk only auto-approved;
+        // medium/high fall through to askPermission) intact.
+        RecordingMethods(boolean autoApprove, boolean autoApproveMediumHigh, PermissionDecision decision) {
             super(engineFor(), n -> { /* swallow */ });
             this.flag = new AtomicReference<>(autoApprove);
+            this.mediumHighFlag = new AtomicReference<>(autoApproveMediumHigh);
             this.decision = decision;
         }
         private static AetherCodeEngine engineFor() {
@@ -86,6 +96,8 @@ class JsonRpcPermissionPrompterR120Test {
         }
         @Override public boolean isAutoApproveLowRisk() { return flag.get(); }
         void setFlag(boolean v) { flag.set(v); }
+        @Override public boolean isAutoApproveMediumHigh() { return mediumHighFlag.get(); }
+        void setMediumHighFlag(boolean v) { mediumHighFlag.set(v); }
         @Override public long getAutoApprovedCount() { return count.get(); }
         @Override public long recordAutoApproved(String toolName, Map<String, Object> input, String reason, String riskLevel) {
             recordCalls.incrementAndGet();
@@ -156,21 +168,25 @@ class JsonRpcPermissionPrompterR120Test {
     }
 
     @Test
-    void highRisk_bypassesShortCircuit() throws Exception {
-        // bash is classified "high". Even with autoApprove=true,
-        // the prompter must NOT short-circuit — the user still
-        // sees a prompt.
-        RecordingMethods m = new RecordingMethods(true,
-                new PermissionDecision(AetherCodeMethods.DECISION_DENY, "nope"));
+    void highRisk_autoApproveMediumHigh_autoApproves() throws Exception {
+        // R268d (2026-09-15): with autoApproveMediumHigh
+        // = true (the new default), bash (classified "high")
+        // short-circuits to Allow — no user prompt. Critical
+        // risk (rm -rf / sudo / mkfs / dd) is still
+        // short-circuit exempt; see criticalRisk_* tests.
+        // The user can opt back out via the renderer's
+        // setAutoApproveMediumHigh(false) toggle.
+        RecordingMethods m = new RecordingMethods(true, true,
+                new PermissionDecision(AetherCodeMethods.DECISION_DENY, "should not be reached"));
         JsonRpcPermissionPrompter p = new JsonRpcPermissionPrompter(m);
 
         Tool t = tool("bash");
         Map<String, Object> input = Map.of("command", "ls -la");
         PermissionResult r = p.ask(t, input, "run").get();
 
-        assertThat(r).isInstanceOf(PermissionResult.Deny.class);
-        assertThat(m.askCalls()).isEqualTo(1);
-        assertThat(m.recordCalls()).isZero();
+        assertThat(r).isInstanceOf(PermissionResult.Allow.class);
+        assertThat(m.askCalls()).isZero();
+        assertThat(m.recordCalls()).isEqualTo(1);
     }
 
     @Test

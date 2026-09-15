@@ -120,6 +120,14 @@ class JsonRpcPermissionPrompterR181TimeoutTest {
     static final class StubMethods extends AetherCodeMethods {
         StubMethods() {
             super(engineFor(), n -> { /* swallow notifier */ });
+            // R268d: the production default flipped to true
+            // (auto-approve medium + high). The R181 timeout
+            // tests need the prompt to actually reach the
+            // RPC layer so the timeout path can fire, so we
+            // explicitly disable the new auto-approve
+            // short-circuit here.
+            this.setAutoApproveLowRisk(false);
+            this.setAutoApproveMediumHigh(false);
         }
         private static AetherCodeEngine engineFor() {
             try {
