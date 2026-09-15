@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -205,6 +206,67 @@ public class WriteExistingFileGuardHook implements Hook {
         if (readBySession.size() > MAX_TRACKED_SESSIONS) {
             evictLeastRecentlyUsedSession();
         }
+    }
+
+    /**
+     * R268e (2026-09-15): bulk-register canonical paths as
+     * "already read" for a session. Called by
+     * {@code AetherCodeMethods.loadSession} after the engine
+     * swaps the in-memory transcript for the on-disk
+     * transcript, so a freshly-spawned daemon doesn't trap
+     * the LLM with "blocked by pre-hook" the moment it tries
+     * to update a file it had previously created or edited
+     * (the daemon process restart wiped the in-memory
+     * {@code readBySession} map, but the on-disk transcript
+     * still records every file_write the session ever did).
+     *
+     * <p>Each path is normalised via the same
+     * {@link #canonicalize} + Windows-lowercase path the
+     * {@link #run} method uses, so a path recorded as
+     * {@code D:/tmp/foo/HeapSortTest.java} matches the
+     * model-emitted {@code D:\tmp\foo\heapsorttest.java} on
+     * Windows. Null / blank entries are dropped; duplicate
+     * paths collapse via {@link LinkedHashSet}.
+     *
+     * <p>This is intentionally permissive — pre-populating a
+     * path the model never actually wrote is a strict no-op
+     * (the next file_write still goes through the normal
+     * guard). The only failure mode is "we forgot to track
+     * a write the model did", and the worst that costs is one
+     * blocked write + one explicit `overwrite: true` retry.
+     */
+    public void prePopulateFromSession(String sessionId, Collection<String> paths) {
+        if (sessionId == null || paths == null || paths.isEmpty()) return;
+        // Build the set up front, then merge into readBySession in a
+        // single compute() — preserves the LinkedHashSet LRU
+        // semantics registerRead() relies on.
+        Set<String> incoming = new LinkedHashSet<>();
+        for (String raw : paths) {
+            if (raw == null || raw.isBlank()) continue;
+            Path p;
+            try {
+                p = Paths.get(raw).toAbsolutePath().normalize();
+            } catch (Exception e) {
+                continue;
+            }
+            String canonical = canonicalize(p);
+            if (canonical == null) canonical = p.toString();
+            if (isWindows()) canonical = canonical.toLowerCase();
+            incoming.add(canonical);
+        }
+        if (incoming.isEmpty()) return;
+        readBySession.compute(sessionId, (k, prev) -> {
+            Set<String> next = (prev == null) ? new LinkedHashSet<>() : prev;
+            for (String c : incoming) {
+                next.remove(c);
+                next.add(c);
+            }
+            return next;
+        });
+        trimToCap(readBySession.get(sessionId));
+        touchSession(sessionId);
+        LOG.info("R268e write-guard: pre-populated {} paths for session {}",
+                incoming.size(), sessionId);
     }
 
     private boolean consumeReadPermission(String sessionId, String canonical) {

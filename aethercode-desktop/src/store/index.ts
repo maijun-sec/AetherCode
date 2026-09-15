@@ -3471,6 +3471,46 @@ export const useStore = create<AppState>((set, get) => {
           if (state?.sessionId) {
             void get().hydrateTranscript(state.sessionId);
           }
+          // R268e (2026-09-15): auto-restore the most-recent
+          // session when the daemon comes up with NO
+          // currentSessionId. Previously the renderer's
+          // default was `'new'` (mint a fresh session on
+          // launch), which meant a returning user who
+          // didn't manually click a session in the LeftPanel
+          // saw their prompt land in a fresh empty
+          // session — the LLM had no task context, the
+          // chat panel showed no history, and `cwd` /
+          // `currentSessionId` were blank. With the auto-
+          // restore below, the renderer's first paint picks
+          // up the user's most-recent session so the next
+          // prompt lands where the user expects.
+          //
+          // The check is conservative:
+          //   - `currentSessionId` is null (daemon's default
+          //     session is empty — no live work to lose)
+          //   - the session list is non-empty (user has
+          //     done at least one previous session)
+          //   - the most-recent session was used in the
+          //     last 24h (fresh enough that auto-restoring is
+          //     what the user expects; older sessions stay in
+          //     the LeftPanel for manual selection)
+          // If any of these fail, the renderer's existing
+          // behaviour holds (default = 'new').
+          if (!state?.sessionId && (sessions.sessions ?? []).length > 0) {
+            const recent = [...(sessions.sessions ?? [])]
+              .filter((s) => typeof s.lastUsedAt === 'number')
+              .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0))[0];
+            if (recent && recent.id) {
+              const ageMs = Date.now() - (recent.lastUsedAt ?? 0);
+              if (ageMs < 24 * 60 * 60 * 1000) {
+                try {
+                  await get().switchSession(recent.id);
+                } catch (e) {
+                  console.warn('[store] R268e auto-restore failed:', e);
+                }
+              }
+            }
+          }
           // pull available models from the engine (was
           // hardcoded in SettingsPanel, drifted from reality).
           try {

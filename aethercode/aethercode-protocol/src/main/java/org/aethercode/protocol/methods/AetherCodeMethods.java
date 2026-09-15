@@ -4473,6 +4473,30 @@ public class AetherCodeMethods {
         // hydrate localStorage with the same messages.
         try {
             var t = engine.loadSession(sessionId);
+            // R268e (2026-09-15): pre-populate the write-existing-
+            // file guard's readBySession map from the freshly-
+            // loaded transcript. Without this, a daemon restart
+            // wipes the in-memory "paths the model has read"
+            // cache, and the LLM hits "blocked by pre-hook" the
+            // moment it tries to update any file it had previously
+            // written or edited in the same session (the user-
+            // visible symptom is silent retry-loops on file_write
+            // immediately after desktop reconnect). The transcript
+            // itself records every file_write / file_edit this
+            // session ever did, so we replay those paths into the
+            // guard. file_read paths are also included because
+            // reading + writing the same path is the canonical
+            // model loop and we want both arms of it to be pre-
+            // approved.
+            try {
+                prePopulateWriteGuardFromTranscript(sessionId, t);
+            } catch (Exception guardEx) {
+                // best-effort — a failed pre-populate is strictly
+                // worse UX (LLM gets blocked once, retries with
+                // overwrite=true) but never a correctness bug.
+                LOG.warn("R268e: prePopulateWriteGuard failed: {}",
+                        guardEx.getMessage());
+            }
             return Map.of("ok", true, "sessionId", sessionId,
                     "messageCount", t.messages().size());
         } catch (UnsupportedOperationException e) {
@@ -4484,6 +4508,64 @@ public class AetherCodeMethods {
             throw new JsonRpcProtocolException(
                     "loadSession failed: " + e.getMessage(),
                     JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+    }
+
+    /**
+     * R268e (2026-09-15): replay every {@code file_read} /
+     * {@code file_write} / {@code file_edit} tool call from
+     * the freshly-loaded transcript into the
+     * {@link org.aethercode.hooks.builtin.WriteExistingFileGuardHook}'s
+     * {@code readBySession} map, so the guard doesn't trap
+     * the LLM with "blocked by pre-hook" on the next
+     * update of a file the session had previously touched.
+     *
+     * <p>Walks every {@link org.aethercode.core.message.Message}
+     * in {@code t.messages()}, drills into each
+     * {@link org.aethercode.core.message.ContentBlock.ToolUseBlock},
+     * and extracts the path field for the three file-mutating
+     * tools. Other tools (bash, glob, grep, …) are skipped
+     * because they don't update disk state. No-op when the
+     * write guard isn't registered (legacy engines, test
+     * fixtures) or when the engine exposes no hooks.
+     */
+    private void prePopulateWriteGuardFromTranscript(
+            String sessionId,
+            org.aethercode.core.transcript.Transcript t) {
+        // pull every ToolUseBlock from the loaded transcript.
+        java.util.List<String> paths = new java.util.ArrayList<>();
+        if (t != null) {
+            for (org.aethercode.core.message.Message m : t.messages()) {
+                if (m == null || m.content() == null) continue;
+                for (org.aethercode.core.message.ContentBlock b : m.content()) {
+                    if (!(b instanceof org.aethercode.core.message.ContentBlock.ToolUseBlock tu))
+                        continue;
+                    String name = tu.name();
+                    if (!"file_read".equals(name)
+                            && !"file_write".equals(name)
+                            && !"file_edit".equals(name)) continue;
+                    if (tu.input() == null) continue;
+                    Object p = tu.input().get("file_path");
+                    if (p == null) p = tu.input().get("path");
+                    if (p == null) p = tu.input().get("filePath");
+                    if (p == null) continue;
+                    String s = p.toString();
+                    if (!s.isBlank()) paths.add(s);
+                }
+            }
+        }
+        if (paths.isEmpty()) return;
+        // find the WriteExistingFileGuardHook in the engine's
+        // hook registry. The class-keyed dedup in
+        // AetherCodeEngine.Builder.registerBuiltinHookIfAbsent
+        // means there's exactly one instance per engine.
+        org.aethercode.hooks.HookRegistry reg = engine.hookRegistry();
+        if (reg == null) return;
+        for (org.aethercode.hooks.Hook h : reg.snapshot()) {
+            if (h instanceof org.aethercode.hooks.builtin.WriteExistingFileGuardHook guard) {
+                guard.prePopulateFromSession(sessionId, paths);
+                return;
+            }
         }
     }
 

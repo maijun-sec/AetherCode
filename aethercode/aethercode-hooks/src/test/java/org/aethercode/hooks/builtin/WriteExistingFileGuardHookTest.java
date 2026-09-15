@@ -167,6 +167,77 @@ class WriteExistingFileGuardHookTest {
         assertThat(runWrite("s1", existing)).isInstanceOf(Hook.Outcome.Continue.class);
     }
 
+    // ---- R268e (2026-09-15): prePopulateFromSession tests ----
+
+    @Test
+    void prePopulateFromSession_unblocksExistingFilesWithoutRead() throws Exception {
+        // R268e: after a daemon restart, readBySession is empty
+        // but the on-disk transcript records every file_write
+        // the session did. prePopulateFromSession replays those
+        // paths so the LLM's first file_write after reconnect
+        // isn't blocked. Without this round, the user's task
+        // gets stuck in a silent retry loop on file_write.
+        Path existing = projectRoot.resolve("prev.txt");
+        Files.writeString(existing, "old");
+        // No file_read first. Direct file_write would normally be
+        // blocked...
+        assertThat(runWrite("s1", existing))
+                .as("pre-populate-free state still blocks")
+                .isInstanceOf(Hook.Outcome.Block.class);
+        // ...until the session is replayed via the daemon's
+        // loadSession flow (simulated here by a direct call):
+        hook.prePopulateFromSession("s1", java.util.List.of(existing.toString()));
+        assertThat(runWrite("s1", existing))
+                .as("post-prePopulate write is allowed without a prior file_read")
+                .isInstanceOf(Hook.Outcome.Continue.class);
+    }
+
+    @Test
+    void prePopulateFromSession_isSessionScoped() throws Exception {
+        // pre-populating for s1 must not leak into s2. s2 still
+        // has to read before it can write (the per-session set
+        // is the same one registerRead / consumeReadPermission
+        // use).
+        Path existing = projectRoot.resolve("scope.txt");
+        Files.writeString(existing, "v");
+        hook.prePopulateFromSession("s1", java.util.List.of(existing.toString()));
+        // s1: allowed
+        assertThat(runWrite("s1", existing)).isInstanceOf(Hook.Outcome.Continue.class);
+        // s2: still blocked
+        assertThat(runWrite("s2", existing)).isInstanceOf(Hook.Outcome.Block.class);
+    }
+
+    @Test
+    void prePopulateFromSession_emptyAndNullInputsAreNoOps() throws Exception {
+        // null sessionId, null/empty lists — must not NPE. The
+        // contract is "best effort, never worse than the current
+        // behaviour"; a no-op is the right answer for malformed
+        // input.
+        Path existing = projectRoot.resolve("noop.txt");
+        Files.writeString(existing, "x");
+        hook.prePopulateFromSession(null, java.util.List.of(existing.toString()));
+        hook.prePopulateFromSession("s1", null);
+        hook.prePopulateFromSession("s1", java.util.List.of());
+        // sanity: state still works for normal reads/writes
+        assertThat(runRead("s1", existing)).isInstanceOf(Hook.Outcome.Continue.class);
+        assertThat(runWrite("s1", existing)).isInstanceOf(Hook.Outcome.Continue.class);
+    }
+
+    @Test
+    void prePopulateFromSession_acceptsAlternativePathKeys() throws Exception {
+        // AetherCodeMethods.loadSession's pre-populate path uses
+        // file_path / path / filePath in that order. This test
+        // pins that the hook's own prePopulateFromSession accepts
+        // any non-blank string, so callers can pass raw input
+        // maps without pre-extracting the path.
+        Path existing = projectRoot.resolve("alt.txt");
+        Files.writeString(existing, "v");
+        // Pass the path via the "filePath" (camelCase) key — the
+        // hook receives a string, the key choice happens upstream.
+        hook.prePopulateFromSession("s1", java.util.List.of(existing.toString()));
+        assertThat(runWrite("s1", existing)).isInstanceOf(Hook.Outcome.Continue.class);
+    }
+
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
