@@ -3818,6 +3818,30 @@ export const useStore = create<AppState>((set, get) => {
     sendMessage: async () => {
       const input = get().currentInput.trim();
       if (!input) return;
+      // R272 (2026-09-15): reset sub-task / step tracking before
+      // firing off the new query. Without this, the OLD
+      // currentSubTaskId from the previous query leaks into the
+      // new run_start handler — the new step inherits the old
+      // sub-task id, and every text_delta / tool_use for the
+      // new prompt is bucketed into the OLD sub-task card. The
+      // chat panel then renders "all content above the new
+      // prompt" because the old sub-task (with the new step
+      // appended) sits in the timeline at the original prompt's
+      // timestamp.
+      //
+      // We DON'T clear subTasks — the old sub-task cards
+      // stay visible as history. We only break the live
+      // pointer so a fresh step starts with subTaskId=null.
+      // If the model declares a new sub-task for this query
+      // (sub_todo_write), sub_task_start fires and links the
+      // *next* step from there.
+      //
+      // Done BEFORE the isStreaming queue branch below so the
+      // follow-up path gets the same clean slate.
+      set({
+        currentSubTaskId: null,
+        currentStepId: null,
+      });
       // R267 polish: queue the prompt instead of dropping
       // it when a run is in flight. The user wants the
       // "natural flow" of "model says it's done → my
