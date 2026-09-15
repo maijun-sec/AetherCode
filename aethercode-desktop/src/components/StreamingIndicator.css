@@ -1,0 +1,154 @@
+/* R269 (2026-09-15) — middle-of-chat streaming indicator.
+   Two variants: 'empty' (centered, big) and 'footer' (compact,
+   left-aligned, sits above MessageInput). Both share the
+   same color palette as the top-of-page ActivityIndicator
+   (blue=thinking, amber=tool, green=done, red=error) so the
+   user learns the colour language once. */
+
+.streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.streaming-indicator .streaming-dot {
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
+}
+
+.streaming-indicator .streaming-label {
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ---- empty variant: centered hero placeholder ---- */
+.streaming-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: row;
+  padding: 24px 24px;
+  color: #5da9ff;
+  background: rgba(93, 169, 255, 0.04);
+  border: 1px dashed rgba(93, 169, 255, 0.18);
+  border-radius: 12px;
+  margin: 32px 24px;
+  font-size: 14px;
+  min-height: 56px;
+}
+.streaming-empty .streaming-dot {
+  width: 14px;
+  height: 14px;
+  animation: streaming-pulse-large 1.4s ease-in-out infinite;
+}
+
+/* ---- footer variant: pinned above MessageInput ---- */
+.streaming-footer {
+  align-self: flex-start;
+  padding: 8px 14px;
+  margin: 4px 0 0 24px;
+  font-size: 13px;
+  border-radius: 18px;
+  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+  color: var(--text, inherit);
+}
+.streaming-footer .streaming-dot {
+  width: 9px;
+  height: 9px;
+  animation: streaming-pulse 1.4s ease-in-out infinite;
+}
+
+/* ---- colour-coded kinds ---- */
+.streaming-kind-thinking {
+  color: #5da9ff;
+  background: rgba(93, 169, 255, 0.06);
+  border-color: rgba(93, 169, 255, 0.25);
+}
+.streaming-kind-thinking .streaming-dot {
+  animation-name: streaming-pulse-blue;
+}
+
+.streaming-kind-tool {
+  color: #f0b95a;
+  background: rgba(240, 185, 90, 0.06);
+  border-color: rgba(240, 185, 90, 0.28);
+}
+.streaming-kind-tool .streaming-dot {
+  /* spinner for tool calls — same family as the
+     top-of-page ActivityIndicator's tool kind. */
+  border-radius: 50%;
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  background: transparent;
+  animation: streaming-spin 1.1s linear infinite;
+}
+
+.streaming-kind-done {
+  color: #6cc28b;
+  background: rgba(108, 194, 139, 0.06);
+  border-color: rgba(108, 194, 139, 0.28);
+}
+.streaming-kind-done .streaming-dot {
+  /* solid, no animation — the run is over. */
+  animation: none;
+}
+
+.streaming-kind-error {
+  color: #f48771;
+  background: rgba(244, 135, 113, 0.06);
+  border-color: rgba(244, 135, 113, 0.3);
+}
+
+/* ---- animations ---- */
+@keyframes streaming-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 currentColor;
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+    transform: scale(1.18);
+    opacity: 0.78;
+  }
+}
+
+@keyframes streaming-pulse-blue {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(93, 169, 255, 0.7);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(93, 169, 255, 0);
+    transform: scale(1.2);
+  }
+}
+
+@keyframes streaming-pulse-large {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(93, 169, 255, 0.7);
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 14px rgba(93, 169, 255, 0);
+    transform: scale(1.35);
+    opacity: 0.75;
+  }
+}
+
+@keyframes streaming-spin {
+  to { transform: rotate(360deg); }
+}

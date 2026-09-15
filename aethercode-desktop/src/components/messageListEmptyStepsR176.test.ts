@@ -20,46 +20,46 @@ import { fileURLToPath } from 'node:url';
  * for the model to respond" when the model
  * wasn't actually running.
  *
- * <p>The fix gates the placeholder on
- * `isStreaming` so it only shows while a query
- * is actually in flight. R196: the renderer now
- * builds a unified timeline (`messages` + `steps`
- * + `subTasks`), and the placeholder shows only
- * when `timeline.length === 0` AND `isStreaming`.
- * The intent is the same as prior round: never show
- * the placeholder unless a query is in flight.
+ * <p>R196 fixed this by gating the placeholder on
+ * `isStreaming`. R269 (2026-09-15) replaced the
+ * plain "等待模型响应…" inline placeholder with the
+ * <StreamingIndicator> component (two variants:
+ * `empty` and `footer`). The intent is the same:
+ * only render the streaming placeholder while a
+ * query is actually in flight, never on a
+ * session restore.
  */
 const root = (() => {
   if (typeof __dirname !== 'undefined') return join(__dirname, '..', '..');
   return join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 })();
 
-describe('prior round: 等待模型响应… (waiting for model response) placeholder is gated on isStreaming', () => {
+describe('R269: streaming indicator placeholder is gated on isStreaming (replaces R176 等待模型响应… inline block)', () => {
   const src = readFileSync(join(root, 'src', 'components', 'MessageList.tsx'), 'utf-8');
 
-  it('the placeholder is wrapped in isStreaming && timeline.length === 0 (R196 unified timeline)', () => {
-    // prior round original pin was `isStreaming && subTasks.length === 0
-    // && preambleSteps.length === 0`. R196 collapsed those two
-    // length checks into one (`timeline.length === 0`) because
-    // the timeline is now the single source of truth for "do
-    // we have any agent content yet". The placeholder still
-    // requires `isStreaming` so a session restore never shows
-    // the stuck-placeholder. We pin the new shape.
-    const block = src.match(
-      /isStreaming\s*&&\s*timeline\.length === 0[\s\S]*?message-list-empty-steps[\s\S]*?等待模型响应…/,
-    );
-    expect(block).toBeTruthy();
-    expect(block![0]).toContain('等待模型响应…');
+  it('the empty-state branch renders <StreamingIndicator variant="empty"> when isStreaming && timeline.length === 0', () => {
+    // the empty-state ternary now uses StreamingIndicator
+    // when isStreaming is true. Pre-fix: a plain <div> with
+    // 等待模型响应… text. R269: a proper component with
+    // pulse animation + colour-coded kind.
+    expect(src).toMatch(/timeline\.length === 0\s*\?\s*\(\s*isStreaming\s*\?[\s\S]*?<StreamingIndicator[\s\S]*?variant="empty"[\s\S]*?forceWhenEmpty/);
   });
 
-  it('does NOT have a top-level {timeline.length === 0 && ... 等待模型响应…} block (regression guard)', () => {
+  it('the populated branch renders <StreamingIndicator variant="footer"> when isStreaming', () => {
+    // the footer variant pins above MessageInput so the user
+    // always sees "the engine is alive" between the first
+    // event and run_end.
+    expect(src).toMatch(/\{isStreaming\s*&&\s*<StreamingIndicator[\s\S]*?variant="footer"[\s\S]*?\/\}/);
+  });
+
+  it('does NOT have a top-level {timeline.length === 0 && ... 等待模型响应…} block (R176 regression guard)', () => {
     // Belt-and-suspenders: the pre-fix pattern was a
     // standalone {subTasks.length === 0 && preambleSteps.length === 0 && ...
-    // 等待模型响应… (waiting for model response)} block with no isStreaming gate. The new
-    // pattern uses `timeline.length === 0`. A regression that
-    // drops the isStreaming gate will fail this test.
-    const standalonePattern =
-      /\{\s*timeline\.length === 0\s*&&[^}]*?message-list-empty-steps/;
-    expect(src).not.toMatch(standalonePattern);
+    // 等待模型响应… (waiting for model response)} block with no isStreaming gate.
+    // The R176 test pinned the inline div with that text. R269 removed
+    // it entirely; we keep the negative-pin so any regression that
+    // re-introduces the inline placeholder will fail this test.
+    const inlinePlaceholder = /message-list-empty-steps[\s\S]*?等待模型响应…/;
+    expect(src).not.toMatch(inlinePlaceholder);
   });
 });

@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { useStore, ChatMessage, ChatStep, ChatSubTask } from '../store';
 import { subscribeKind } from '../rpc/events';
 import { SubagentSpawnCard } from './chat/SubagentSpawnCard';
+import { StreamingIndicator } from './StreamingIndicator';
 import './MessageList.css';
 
 // 3-level hierarchy: Task > SubTask > Step.
@@ -967,7 +968,16 @@ export function MessageList() {
   return (
     <div className="message-list" ref={listRef}>
       {timeline.length === 0 ? (
-        <div className="message-list-empty">Start a conversation</div>
+        isStreaming ? (
+          // R269: just-submitted-but-no-events-yet — show a
+          // centred, prominent streaming placeholder so the
+          // user sees "the engine is alive" right between
+          // the empty chat and the input box. Matches what
+          // typical AI agent tools do (Cursor, Claude Code).
+          <StreamingIndicator variant="empty" forceWhenEmpty />
+        ) : (
+          <div className="message-list-empty">Start a conversation</div>
+        )
       ) : (
         <>
           {timeline.map((ev) => {
@@ -995,13 +1005,14 @@ export function MessageList() {
               />
             );
           })}
-          {/* Empty-state placeholder when the user has
-           *  submitted a prompt but no events have arrived
-           *  yet. Renders between MessageList scroll bounds
-           *  and MessageInput. */}
-          {isStreaming && timeline.length === 0 && (
-            <div className="message-list-empty-steps">{'等待模型响应…'}</div>
-          )}
+          {/* R269: persistent streaming footer. When at least
+           *  one event has streamed in but the run is still
+           *  in flight, show a compact pulsing indicator just
+           *  below the last message and above the MessageInput.
+           *  Before R269 the chat panel went silent between
+           *  the first event and run_end — the user couldn't
+           *  tell whether the engine was hung or still working. */}
+          {isStreaming && <StreamingIndicator variant="footer" />}
           <div ref={bottomRef} />
           {/* inline subagent spawn cards. The user
               can expand / dismiss each card; the
