@@ -1053,6 +1053,40 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
                     return Ok(picked);
                 }
             }
+            // R268b (2026-09-15): parent-dir versioned jar.
+            // Some zip layouts put the jar one level up
+            // from the exe (the cli ships as
+            // `release/aethercode-0.2.70.jar` while the
+            // exe lives in `release/desktop/`). Without
+            // this check, the user extracts a zip whose
+            // exe has no sibling jar, find_jar_path
+            // falls through to the ancestor walk, and the
+            // ancestor walk finds a STALE dev jar from
+            // `aethercode/dist/`. This was the 0.2.70
+            // regression: portable install found nothing
+            // (zip didn't bundle the jar in `desktop/`),
+            // the cli jar sat in the parent dir with the
+            // right SHA, and we ignored it.
+            if let Some(parent_dir) = exe_dir.parent() {
+                let parent_exact = parent_dir.join("aethercode.jar");
+                if parent_exact.is_file() {
+                    eprintln!("[R268b] find_jar_path: portable install (parent-dir exact) {}", parent_exact.display());
+                    return Ok(parent_exact);
+                }
+                if let Ok(entries) = std::fs::read_dir(parent_dir) {
+                    let mut jars: Vec<PathBuf> = entries
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| is_aethercode_jar(p) && p.is_file())
+                        .collect();
+                    if !jars.is_empty() {
+                        jars.sort_by_key(|p| std::cmp::Reverse(jar_sort_key(p)));
+                        let picked = jars.swap_remove(0);
+                        eprintln!("[R268b] find_jar_path: portable install (parent-dir scan) {}", picked.display());
+                        return Ok(picked);
+                    }
+                }
+            }
         }
     }
     // Closest-ancestor walk. The first ancestor

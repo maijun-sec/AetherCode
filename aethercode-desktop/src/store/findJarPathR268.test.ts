@@ -133,3 +133,77 @@ describe('R268: portable-install jar lookup in find_jar_path', () => {
     expect(matches.length, 'find_jar_path must be defined exactly once').toBe(1);
   });
 });
+
+describe('R268b: parent-dir versioned jar fallback', () => {
+  /*
+   * R268b (2026-09-15): the 0.2.70 zip bundled the jar
+   * as `release/aethercode-0.2.70.jar` (one level up
+   * from `release/desktop/aethercode-desktop.exe`), not
+   * as `release/desktop/aethercode.jar` next to the
+   * exe. R268's portable-install check only looked at
+   * `exe.parent()` — the exe dir — and missed the jar
+   * sitting in the parent dir. So the exe fell through
+   * to the ancestor walk, which picked up a stale
+   * 0.2.66 dev jar from `aethercode/dist/`. User saw
+   * "all tool executions fail" because the daemon was
+   * running pre-R266i code.
+   *
+   * <p>Fix: extend R268 with a parent-dir lookup.
+   * After scanning exe_dir for `aethercode.jar` (and
+   * any `aethercode-*.jar`), also look at
+   * `exe_dir.parent()` for the same two shapes. This
+   * matches the zip's actual layout and any future
+   * layout where the jar is one level up from the exe.
+   */
+  it('R268b marker is present in find_jar_path', () => {
+    const src = readSrc('src-tauri/src/lib.rs');
+    expect(src, 'R268b marker must be present').toMatch(/\[R268b\]/);
+    // The R268b block must be inside the R268 portable
+    // install section (so it executes AFTER the next-to-exe
+    // check) and BEFORE the ancestor walk.
+    const r268Idx = src.indexOf('R268 desktop polish');
+    const r268bIdx = src.indexOf('R268b (2026-09-15)');
+    const ancestorIdx = src.indexOf('ancestor walk (closest)');
+    expect(r268Idx).toBeGreaterThan(-1);
+    expect(r268bIdx).toBeGreaterThan(r268Idx);
+    expect(r268bIdx).toBeLessThan(ancestorIdx);
+  });
+
+  it('R268b checks exe_dir.parent() for aethercode.jar', () => {
+    const src = readSrc('src-tauri/src/lib.rs');
+    // Extract just the R268b block so the regex doesn't
+    // match the legacy ancestor walk below.
+    const block = src.match(/R268b \(2026-09-15\)[\s\S]*?ancestor walk \(closest\)/)?.[0] ?? '';
+    expect(block.length, 'R268b block must be extractable').toBeGreaterThan(300);
+    // The block must use exe_dir.parent() — this is
+    // the whole fix. (Earlier the exe_dir.parent() was
+    // computed for other reasons; here it MUST be the
+    // thing that decides parent-dir lookup.)
+    expect(block, 'R268b must call exe_dir.parent()').toMatch(/exe_dir\.parent\(\)/);
+    expect(block, 'R268b must check parent_exact').toMatch(/parent_exact/);
+    expect(block, 'R268b must check parent_dir.join("aethercode.jar")').toMatch(/parent_dir\.join\("aethercode\.jar"\)/);
+  });
+
+  it('R268b scans exe_dir.parent() for aethercode-*.jar too', () => {
+    const src = readSrc('src-tauri/src/lib.rs');
+    const block = src.match(/R268b \(2026-09-15\)[\s\S]*?ancestor walk \(closest\)/)?.[0] ?? '';
+    // After the exact-name check, fall through to a
+    // wildcard scan in the same parent_dir. This matters
+    // because the canonical 0.2.70 cli jar is named
+    // `aethercode-0.2.70.jar` — a versioned name that
+    // won't match the exact-name check.
+    expect(block, 'parent-dir scan must exist').toMatch(/read_dir\(parent_dir\)/);
+    expect(block, 'parent-dir scan must filter jars').toMatch(/is_aethercode_jar\(p\)/);
+  });
+
+  it('R268b parent-dir check comes BEFORE the ancestor walk', () => {
+    const src = readSrc('src-tauri/src/lib.rs');
+    const r268bIdx = src.indexOf('R268b (2026-09-15)');
+    const ancestorIdx = src.indexOf('ancestor walk (closest)');
+    expect(r268bIdx).toBeGreaterThan(-1);
+    expect(ancestorIdx).toBeGreaterThan(-1);
+    // Order is the whole fix — without it the parent
+    // check would never run.
+    expect(r268bIdx).toBeLessThan(ancestorIdx);
+  });
+});
