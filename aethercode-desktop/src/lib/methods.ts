@@ -204,6 +204,19 @@ export interface SessionInfo {
   // Populated when the caller passes
   // { withPreview: true } to listSessions.
   preview?: string;
+  /** R270 (2026-09-15) — most recent agent activity,
+   *  rendered as a one-line summary. Format:
+   *    tool_use  → "<tool_name> <input_path_tail>"
+   *    text only → "<first 80 chars of last assistant text>"
+   *  Populated alongside `preview` when the caller passes
+   *  { withPreview: true } to listSessions. The desktop
+   *  SessionListRow uses this to show a Claude Code /
+   *  OpenCode style two-line summary:
+   *    [first user prompt]
+   *    → last agent action
+   *  An empty string means the session is brand-new (no
+   *  assistant message yet). */
+  lastAgentEvent?: string;
 }
 
 export interface TaskInfo {

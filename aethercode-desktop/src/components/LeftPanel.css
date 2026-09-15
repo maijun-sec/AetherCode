@@ -215,6 +215,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* R270 (2026-09-15): third line on each session row —
+   "→ <last agent action>". Renders between the meta line
+   (cwd · time · tokens) and the optional verbatim first
+   user prompt preview. Slightly larger than the preview
+   line and not italic — the user explicitly asked to
+   see the agent execution history, not just the input
+   prompt. */
+.session-list-row-last-event {
+  font-size: 11px;
+  color: var(--text);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.session-list-row-last-event-arrow {
+  color: var(--accent, #5da9ff);
+  margin-right: 4px;
+  font-weight: 600;
+}
+.session-list-row-last-event-text {
+  color: var(--text);
+  opacity: 0.85;
+}
+.session-list-row-current .session-list-row-last-event-arrow {
+  color: var(--accent, #5da9ff);
+}
 .session-list-row-delete {
   flex-shrink: 0;
   width: 22px;

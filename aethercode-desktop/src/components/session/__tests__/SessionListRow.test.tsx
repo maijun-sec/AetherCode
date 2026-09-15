@@ -37,6 +37,27 @@ describe('Phase 4.1 / T-4-03: SessionListRow', () => {
     expect(src).toMatch(/session-list-row-preview/);
   });
 
+  it('R270: renders a lastAgentEvent line (recent agent activity)', () => {
+    // The user wants to see what the agent was just doing,
+    // not just the first user prompt. R270 adds a third
+    // line "→ <tool_name> <input>|" between the meta line
+    // and the (now conditional) preview line.
+    const src = read('src/components/session/SessionListRow.tsx');
+    expect(src).toMatch(/session-list-row-last-event/);
+    expect(src).toMatch(/session\.lastAgentEvent/);
+    // the arrow glyph is the visual cue
+    expect(src).toMatch(/session-list-row-last-event-arrow/);
+  });
+
+  it('R270: hides the preview line when title === preview (no rename)', () => {
+    // Default behaviour: title falls back to preview, so
+    // showing the verbatim preview in quotes is redundant.
+    // The component should only show the preview line when
+    // the user has explicitly renamed the session.
+    const src = read('src/components/session/SessionListRow.tsx');
+    expect(src).toMatch(/session\.preview[\s\S]*?session\.title[\s\S]*?session\.preview\.trim\(\)\s*!==\s*session\.title\.trim\(\)/);
+  });
+
   it('handles Enter / Space to select', () => {
     const src = read('src/components/session/SessionListRow.tsx');
     expect(src).toMatch(/e\.key\s*===\s*['"]Enter['"]/);

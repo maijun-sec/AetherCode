@@ -89,6 +89,17 @@ export interface SessionListItem {
   parentId: string | null;
   preview?: string;
   trashedAt?: number | null;
+  /** R270 (2026-09-15) — most recent agent activity. The
+   *  daemon's listSessions populates this when the caller
+   *  passes withPreview=true. Format:
+   *    tool_use → "<tool_name> <input_path_tail>"
+   *    text     → first 80 chars of last assistant text
+   *  Empty string when the session is brand-new (no
+   *  assistant message yet). The desktop's SessionListRow
+   *  renders this as a third "→ ..." line so the user
+   *  can see what the agent was just doing, not just the
+   *  first user prompt. */
+  lastAgentEvent?: string;
 }
 
 export interface SessionListResult {

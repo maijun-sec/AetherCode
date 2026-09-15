@@ -4378,6 +4378,28 @@ public class AetherCodeMethods {
                         }
                     }
                     m.put("preview", preview == null ? "" : preview);
+                    // R270 (2026-09-15): also surface the most
+                    // recent agent activity as `lastAgentEvent`
+                    // so the desktop SessionListRow can render
+                    // a Claude Code / OpenCode style two-line
+                    // summary:
+                    //   [first user prompt]
+                    //   → last tool call or thinking snippet
+                    // We deliberately keep this opt-out-able
+                    // later — for now it's bundled with
+                    // `withPreview` because both share the
+                    // same transcript scan and we don't want
+                    // to do two passes.
+                    try {
+                        String lastEvent = extractLastAgentEvent(info);
+                        m.put("lastAgentEvent", lastEvent == null ? "" : lastEvent);
+                    } catch (Exception lastEx) {
+                        // best-effort — never fail listSessions
+                        // because the last-event scan errored.
+                        LOG.debug("R270: extractLastAgentEvent({}) failed: {}",
+                                info.id(), lastEx.getMessage());
+                        m.put("lastAgentEvent", "");
+                    }
                     // R266-desktop-session-title (2026-09-13):
                     // also surface the same text as `title` so
                     // the desktop's SessionListRow gets a real
@@ -4460,6 +4482,212 @@ public class AetherCodeMethods {
             // best-effort preview; never fail the list
         }
         return "";
+    }
+
+    /** R270 (2026-09-15) — extract the most recent agent
+     *  activity from a session transcript. Unlike
+     *  {@link #extractSessionPreview} which scans forward to
+     *  the FIRST user message, this walks the file backwards
+     *  looking for the LAST assistant-role line and renders
+     *  it as a one-liner:
+     *
+     *    tool_use block  → "file_write D:\tmp\abc_1\HeapSortTest.java"
+     *    plain text      → "💭 thinking…" (first 80 chars)
+     *
+     *  Used by the desktop's SessionListRow so each row reads
+     *  like a Claude Code / OpenCode summary — first user
+     *  prompt up top, what the agent was just doing below.
+     *  Transcripts are JSONL; the regex scan is bounded by a
+     *  4 KB per-line cap so a giant tool input doesn't slow
+     *  the list. Returns {@code ""} when the transcript has
+     *  no assistant message yet (brand-new session).
+     *
+     *  <p>Implementation notes:
+     *  <ul>
+     *    <li>Iterating from the back is O(n) in the number of
+     *        transcript lines, not the file size. Sessions
+     *        typically have hundreds of lines max.</li>
+     *    <li>We prefer {@code tool_use} over {@code text}
+     *        because the user wants to know "what did the
+     *        agent DO", not "what did the agent THINK".</li>
+     *    <li>For the input summary we look at common key
+     *        names first (file_path / path / filePath /
+     *        cmd / command / url / pattern) and finally fall
+     *        back to the first string field we find.</li>
+     *  </ul> */
+    private static String extractLastAgentEvent(
+            org.aethercode.core.transcript.SessionStore.SessionInfo info) {
+        if (info == null || info.file() == null
+                || !java.nio.file.Files.exists(info.file())) {
+            return "";
+        }
+        try {
+            // Read all lines — transcripts are < 1 MB even
+            // for long sessions; the per-line 4 KB cap below
+            // keeps the regex scan bounded.
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(
+                    info.file(), java.nio.charset.StandardCharsets.UTF_8);
+            for (int i = lines.size() - 1; i >= 0; i--) {
+                String line = lines.get(i);
+                if (line == null || line.isEmpty()) continue;
+                if (line.length() > 4096) line = line.substring(0, 4096);
+                if (!line.contains("\"role\":\"assistant\"")) continue;
+
+                // 1) Prefer tool_use blocks — they tell the
+                //    user "what the agent just did". A single
+                //    assistant message may contain BOTH text
+                //    (the thinking) and tool_use (the action);
+                //    we want the action.
+                String toolLabel = extractFirstToolUseLabel(line);
+                if (toolLabel != null && !toolLabel.isEmpty()) {
+                    return capForList(toolLabel, 80);
+                }
+
+                // 2) Fall back to plain text — the assistant
+                //    emitted only a thinking block, no tool.
+                String text = extractFirstTextValue(line);
+                if (text != null && !text.isEmpty()) {
+                    return capForList(text, 80);
+                }
+                // 3) Empty / malformed assistant line — keep
+                //    walking backwards, there might be a
+                //    useful earlier message.
+            }
+        } catch (Exception ignored) {
+            // best-effort; an unreadable transcript never
+            // fails listSessions.
+        }
+        return "";
+    }
+
+    /** Find the first {@code tool_use} block in a line and
+     *  render it as {@code "<tool_name> <first string arg>"}.
+     *  Returns {@code null} when no tool_use is present. */
+    private static String extractFirstToolUseLabel(String line) {
+        // Cheap probe: look for the "type":"tool_use" marker
+        // and grab the following "name" + "input" fields. We
+        // accept either ordering since wire format sometimes
+        // emits name before input, sometimes interleaved.
+        int toolUseIdx = line.indexOf("\"type\":\"tool_use\"");
+        if (toolUseIdx < 0) return null;
+
+        // Find the "name" string. Tool names like file_read
+        // sit adjacent to the tool_use marker in practice,
+        // so a forward search from toolUseIdx is enough.
+        int nameKey = line.indexOf("\"name\"", toolUseIdx);
+        if (nameKey < 0) return null;
+        String toolName = readQuotedValue(line, nameKey);
+        if (toolName.isEmpty()) return null;
+
+        // Find the first string value inside the SAME
+        // tool_use block's "input" object. We bound the
+        // search to the next "type":"tool_use" (or end of
+        // line) so we don't bleed across blocks.
+        int inputKey = line.indexOf("\"input\"", toolUseIdx);
+        if (inputKey < 0) {
+            return toolName;
+        }
+        int inputEnd = line.indexOf("\"type\":\"tool_use\"", inputKey + 1);
+        if (inputEnd < 0) inputEnd = line.length();
+        String inputSlice = line.substring(inputKey, inputEnd);
+        String inputSummary = extractFirstStringField(inputSlice);
+        return inputSummary.isEmpty() ? toolName : (toolName + " " + inputSummary);
+    }
+
+    /** Pull a string field's first value from a JSON object
+     *  slice. Prefers well-known short keys (file_path / path
+     *  / filePath / command / url / pattern) so the result
+     *  is human-readable; falls back to the first string-typed
+     *  field we find. */
+    private static String extractFirstStringField(String slice) {
+        String[] preferred = {"file_path", "path", "filePath",
+                "command", "cmd", "url", "pattern", "query",
+                "prompt", "name", "target", "destination"};
+        for (String key : preferred) {
+            int idx = slice.indexOf("\"" + key + "\"");
+            if (idx >= 0) {
+                String v = readQuotedValue(slice, idx);
+                if (!v.isEmpty()) return trimToPathTail(v);
+            }
+        }
+        // Fall back: first string-shaped field anywhere.
+        int i = 0;
+        while (i < slice.length()) {
+            int key = slice.indexOf('"', i);
+            if (key < 0) break;
+            int keyEnd = slice.indexOf('"', key + 1);
+            if (keyEnd < 0) break;
+            int colon = slice.indexOf(':', keyEnd + 1);
+            if (colon < 0) break;
+            // skip whitespace
+            int p = colon + 1;
+            while (p < slice.length() && Character.isWhitespace(slice.charAt(p))) p++;
+            if (p >= slice.length() || slice.charAt(p) != '"') {
+                i = keyEnd + 1;
+                continue;
+            }
+            String v = readQuotedValue(slice, key);
+            if (!v.isEmpty()) return trimToPathTail(v);
+            i = keyEnd + 1;
+        }
+        return "";
+    }
+
+    /** Read the value of a JSON string field whose KEY
+     *  starts at {@code keyStart}. Returns "" if the key is
+     *  malformed or the value isn't a string. */
+    private static String readQuotedValue(String s, int keyStart) {
+        int colon = s.indexOf(':', keyStart);
+        if (colon < 0) return "";
+        int p = colon + 1;
+        while (p < s.length() && Character.isWhitespace(s.charAt(p))) p++;
+        if (p >= s.length() || s.charAt(p) != '"') return "";
+        int q1 = p + 1;
+        int q2 = q1;
+        while (q2 < s.length()) {
+            char c = s.charAt(q2);
+            if (c == '\\' && q2 + 1 < s.length()) { q2 += 2; continue; }
+            if (c == '"') break;
+            q2++;
+        }
+        if (q2 >= s.length()) return "";
+        return s.substring(q1, q2).replaceAll("\\s+", " ").trim();
+    }
+
+    /** Same as {@link #readQuotedValue} but specifically for
+     *  a {@code "text"} field — returns the first 80-char
+     *  window of any text block (used for thinking-only
+     *  assistant messages). */
+    private static String extractFirstTextValue(String line) {
+        int textIdx = line.indexOf("\"text\"");
+        if (textIdx < 0) return null;
+        return readQuotedValue(line, textIdx);
+    }
+
+    /** Strip a Windows / POSIX path down to the tail so
+     *  "file_write D:\tmp\abc_1\src\...\HeapSortTest.java"
+     *  reads as "file_write HeapSortTest.java" without
+     *  losing information. Falls back to the original on
+     *  weird inputs. */
+    private static String trimToPathTail(String s) {
+        if (s.isEmpty()) return s;
+        // Replace Windows backslashes so split-by-separator
+        // works on both platforms.
+        String norm = s.replace('\\', '/');
+        int lastSlash = norm.lastIndexOf('/');
+        String tail = lastSlash < 0 ? s : s.substring(lastSlash + 1);
+        return tail.isEmpty() ? s : tail;
+    }
+
+    /** Cap a one-line summary to {@code max} chars with an
+     *  ellipsis. Used by both {@link #extractSessionPreview}
+     *  and {@link #extractLastAgentEvent}; duplicated here to
+     *  avoid leaking the cap choice into a shared helper. */
+    private static String capForList(String s, int max) {
+        if (s == null) return "";
+        s = s.replaceAll("\\s+", " ").trim();
+        if (s.length() <= max) return s;
+        return s.substring(0, Math.max(0, max - 1)) + "…";
     }
 
     @SuppressWarnings("unchecked")
