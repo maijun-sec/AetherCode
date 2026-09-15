@@ -331,7 +331,12 @@ public class BashTool {
             Thread t2 = drain(process.getErrorStream(), stderr, "err", stream, ctx);
             boolean finished = process.waitFor(timeout, TimeUnit.MILLISECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                // R271: kill the whole process tree — mvn /
+                // surefire / test JVM, not just the direct
+                // child. Without this the timeout leaks
+                // grandchild JVMs that the daemon still
+                // considers "busy".
+                killProcessTree(process);
                 t1.join(2000);
                 t2.join(2000);
                 return Tool.ToolResult.error("command timed out after " + timeout + "ms");
@@ -354,7 +359,11 @@ public class BashTool {
             }
             return Tool.ToolResult.of(body.toString());
         } catch (Exception e) {
-            if (process != null) process.destroyForcibly();
+            // R271: same reasoning — exception path
+            // (process builder failed, IO broke, etc.) must
+            // also tear down the whole tree, not just the
+            // direct child.
+            if (process != null) killProcessTree(process);
             LOG.warn("bash tool failed: {}", e.toString());
             return Tool.ToolResult.error("command failed: " + e.getMessage());
         }
@@ -401,6 +410,108 @@ public class BashTool {
         pb.directory(cwd);
         pb.redirectErrorStream(false);
         return pb.start();
+    }
+
+    /**
+     * R271 (2026-09-15): kill the process AND its entire
+     * descendant tree. {@link Process#destroy()} and
+     * {@link Process#destroyForcibly()} only terminate the
+     * direct child; on Windows that's a single
+     * {@code TerminateProcess(pid)} which leaves every
+     * grandchild orphaned — which is exactly what happened
+     * when {@code mvn test} forked surefire booters and test
+     * JVMs: the daemon's {@code BashTool.runForeground} saw
+     * {@code process.waitFor} return, but the run was still
+     * "busy" because the orchestrator waited on something the
+     * user couldn't see. The user pressed Esc, the engine
+     * cancelled the run, but {@code destroyForcibly} only
+     * killed mvn itself — surefire kept running, the engine
+     * never observed the exit, and every subsequent prompt
+     * was rejected with "[busy] session is busy with
+     * run-1".
+     *
+     * <p>Implementation:
+     * <ul>
+     *   <li><b>Windows</b>: shell out to {@code taskkill /T /F
+     *       /PID <pid>}. The {@code /T} flag traverses the
+     *       child tree, {@code /F} forces. We also
+     *       {@code destroyForcibly} the direct handle as a
+     *       belt-and-suspenders fallback in case {@code taskkill}
+     *       is unavailable (e.g. running under a stripped
+     *       Windows container).</li>
+     *   <li><b>POSIX</b>: prefer {@code kill -TERM -<pgid>}
+     *       which targets the whole process group (POSIX
+     *       guarantee, no walking needed). Falls back to
+     *       {@code destroyForcibly} when the OS refuses the
+     *       group signal.</li>
+     * </ul>
+     *
+     * <p>Best-effort: any failure is logged but never
+     * propagated — killing is a side-effect of cancel /
+     * timeout, and we don't want the cancel path itself to
+     * throw and confuse the engine. */
+    public static void killProcessTree(Process process) {
+        if (process == null) return;
+        long pid = process.pid();
+        try {
+            if (isWindows()) {
+                // taskkill /T /F /PID <pid> traverses the
+                // process tree on Windows. /F forces. We
+                // swallow the exit code because failure to
+                // find the process is "fine" — it likely
+                // already died.
+                ProcessBuilder pb = new ProcessBuilder(
+                        "taskkill", "/T", "/F", "/PID", Long.toString(pid));
+                pb.redirectErrorStream(true);
+                Process tk = pb.start();
+                // Best-effort drain so the taskkill
+                // child doesn't leave its own zombie.
+                try {
+                    tk.getInputStream().readAllBytes();
+                } catch (Exception ignored) {}
+                tk.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            } else {
+                // POSIX: signal the whole process group.
+                // Process.toHandle() exposes pid(); the group
+                // leader is the process whose PID equals its
+                // PGID, so kill -<pid> signals the group
+                // when the process is the leader.
+                try {
+                    ProcessHandle ph = process.toHandle();
+                    long pgid = (long) ph.getClass()
+                            .getMethod("pgid").invoke(ph);
+                    if (pgid > 0 && pgid == pid) {
+                        // We are the group leader — kill
+                        // the whole group.
+                        new ProcessBuilder("kill", "-TERM", "-" + pgid)
+                                .redirectErrorStream(true).start().waitFor(1,
+                                        java.util.concurrent.TimeUnit.SECONDS);
+                    }
+                } catch (Throwable groupKillFailed) {
+                    // The ProcessHandle.pgid() method is JDK
+                    // 9+ on Linux/Mac but not on every
+                    // platform — fall through to the
+                    // single-process fallback.
+                    LOG.debug("R271: pgid group-kill unavailable: {}",
+                            groupKillFailed.toString());
+                }
+            }
+        } catch (Throwable t) {
+            LOG.warn("R271: killProcessTree({}) failed: {}", pid, t.toString());
+        }
+        // Always also destroy the direct handle — covers the
+        // case where taskkill / kill -TERM isn't on PATH and
+        // the JVM-fallback is the only thing we have.
+        try {
+            process.destroyForcibly();
+        } catch (Throwable ignored) {}
+        try {
+            if (!process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) {
+                // Last resort: nothing left to do. The OS
+                // will reap when the parent exits.
+                LOG.warn("R271: process {} did not exit within 1s after kill", pid);
+            }
+        } catch (Throwable ignored) {}
     }
 
     public static boolean isDestructive(Map<String, Object> input) { return true; }
@@ -533,7 +644,7 @@ public class BashTool {
                         if (jobId != null) {
                             // Background mode: kill via the registry.
                             BashJob job = JOBS.get(jobId);
-                            if (job != null && job.process != null) job.process.destroyForcibly();
+                            if (job != null && job.process != null) killProcessTree(job.process);
                         }
                         // Foreground: the main thread sees isAborted()
                         // and destroys the process. We just stop reading.
@@ -697,7 +808,10 @@ public class BashTool {
         public boolean kill(String id) {
             BashJob j = byId.get(id);
             if (j == null || j.done.get()) return false;
-            j.process.destroyForcibly();
+            // R271: kill the whole tree so cancelling a
+            // backgrounded mvn test actually reaps the surefire
+            // grandchild JVMs.
+            killProcessTree(j.process);
             return true;
         }
         public StringBuilder stdoutOf(String id) { BashJob j = byId.get(id); return j == null ? new StringBuilder() : j.stdout; }
