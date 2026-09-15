@@ -1007,6 +1007,54 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
             }
         }
     }
+    // R268 desktop polish (2026-09-15): portable install
+    // support. After the Tauri resource_dir fallback,
+    // look for an `aethercode.jar` (no version suffix)
+    // sitting NEXT TO the exe itself — the natural
+    // layout for a portable release directory like
+    // `release/aethercode-0.2.70/desktop/{exe, jar}`.
+    //
+    // Without this check, find_jar_path falls through
+    // to the ancestor walk below, which finds the
+    // user's most-recent maven build in
+    // `aethercode/dist/` — frequently a STALE jar
+    // (a `cp .../aethercode-cli-0.1.0-SNAPSHOT.jar
+    // dist/aethercode-0.2.66.jar` from a prior round
+    // that the user forgot to clean up). The portable
+    // install layout puts a fresh, version-pinned jar
+    // next to the exe and gets the highest priority;
+    // the ancestor walk is the LAST resort, only for
+    // dev builds (`cargo run`).
+    //
+    // This is the fix for the 0.2.68 / 0.2.69 desktop
+    // false-positive bug: the user's old 0.2.66 daemon
+    // kept getting picked up because the ancestor walk
+    // found the stale dist/ jar before this check
+    // existed.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            // try the canonical name first
+            let exact = exe_dir.join("aethercode.jar");
+            if exact.is_file() {
+                eprintln!("[R268] find_jar_path: portable install (exact next-to-exe) {}", exact.display());
+                return Ok(exact);
+            }
+            // then any aethercode-*.jar in the same dir
+            if let Ok(entries) = std::fs::read_dir(exe_dir) {
+                let mut jars: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| is_aethercode_jar(p) && p.is_file())
+                    .collect();
+                if !jars.is_empty() {
+                    jars.sort_by_key(|p| std::cmp::Reverse(jar_sort_key(p)));
+                    let picked = jars.swap_remove(0);
+                    eprintln!("[R268] find_jar_path: portable install (scan next-to-exe) {}", picked.display());
+                    return Ok(picked);
+                }
+            }
+        }
+    }
     // Closest-ancestor walk. The first ancestor
     // with a matching `aethercode/dist/` dir
     // wins; within that dir, the highest-version
@@ -1017,6 +1065,14 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
     // ancestor it came from, which let a dev jar
     // in a project dir out-prioritise the bundled
     // release jar).
+    //
+    // R268 caveat: this fallback is also where stale
+    // jars (from manual `cp ... dist/` rounds the
+    // user forgot to clean up) get picked up. The
+    // portable-install check above is the new
+    // preferred path; this one is the legacy escape
+    // hatch for dev builds that run `cargo run`
+    // from aethercode-desktop/src-tauri/.
     if let Ok(exe) = std::env::current_exe() {
         for ancestor in exe.ancestors().take(6) {
             let dist = ancestor.join("aethercode").join("dist");
