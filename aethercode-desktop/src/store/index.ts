@@ -349,6 +349,32 @@ let engineStateTimer: number | null = null;
 // new listener both push to the same buffer).
 let rpcEventUnsubscribe: (() => void) | null = null;
 
+// R274 step-boundary (2026-09-16): tracks whether the previous
+// stream_event was a text_delta. The text_delta handler uses this
+// to decide between "accumulate this chunk into the current step"
+// (when true, i.e. same think phase) and "close the previous step
+// and open a fresh one" (when false, i.e. the previous event was
+// a tool_use_start / tool_result / run_start and this is a new
+// think phase).
+//
+// Default `true` because run_start creates the first step with
+// empty text; the first text_delta after run_start should
+// accumulate into that step, not split off a new one. (The
+// run_start handler explicitly resets it back to `true` after
+// processing tool events too, so a brand-new run always opens
+// with the flag at `true`.)
+//
+// tool_use_start / tool_result handlers set this to `false` to
+// signal "the next text_delta is a new think phase".
+//
+// (R273 had `let pendingStepBoundary: boolean = false;` instead,
+// set on tool_result and consumed on text_delta — but that was
+// too aggressive in the OTHER direction: it only split on
+// tool_result→text_delta boundaries, so a long think followed by
+// many parallel tool_use_starts collapsed into one big think +
+// many tools. R274 fixes both directions.)
+let prevEventWasText: boolean = true;
+
 // R267 desktop polish (2026-09-14): the user's
 // "natural flow" complaint — all thinking on top,
 // all tools at the bottom. Root cause: a single
@@ -382,14 +408,28 @@ let rpcEventUnsubscribe: (() => void) | null = null;
 // the order the LLM produced them ([think,tool,think,tool,…]).
 // The flag's dependencies (tool_result assignment + run_start
 // reset + text_delta consume) are now dead code and have been
-// removed. Example of the new step boundary model:
+// removed.
 //
-//   [think1] → step A (text="think1")
-//   [tool1]  → step A (toolEvents=[tool1])
-//   [tool2]  → step A (toolEvents=[tool1,tool2])
-//   [think2] → step B (text="think2")
-//   [tool3]  → step B (toolEvents=[tool3])
-//   [think3] → step C (text="think3 — final summary")
+// R274 (2026-09-16): R273 was wrong. The "always split on every
+// text_delta" rule collapsed the LLM's chunked-streamed think
+// block into one-step-per-chunk, which renders as a stack of
+// single-line "思考 · xxx" details cards the user called "现在的
+// 展示方式是在搞笑吗". R274 introduces `prevEventWasText` instead
+// of `pendingStepBoundary` and applies the inverse rule:
+// consecutive text_deltas accumulate into the same step's text
+// (because they are the same think phase), and only the first
+// text_delta AFTER a tool_use_start / tool_result triggers a step
+// split (because the model just finished a tool and is starting a
+// new think phase). R274 strictly subsumes R267 too — splitting
+// also on tool_use_start (not just tool_result) catches the
+// "text between parallel tool_use_starts" case R267 missed. Example:
+//
+//   [think1 chunk 1] → step A (text="think1 chunk 1", prevEventWasText=true)
+//   [think1 chunk 2] → step A (text="think1 chunk 1 chunk 2", prevEventWasText=true)
+//   [tool1]          → prevEventWasText=false, step A.tools=[tool1]
+//   [think2]         → split: step B (text="think2"), step A done
+//   [tool2]          → prevEventWasText=false, step B.tools=[tool2]
+//   [think3 final]   → split: step C (text="think3 final")
 
 // per-session draft helpers. The localStorage key is
 // derived from the current sessionId so switching sessions
@@ -1924,6 +1964,13 @@ export const useStore = create<AppState>((set, get) => {
         // progress, associate the step with the sub-task so the
         // MessageList can nest it inside the matching SubTaskCard.
         //
+        // R274: reset the prevEventWasText flag so the first
+        // text_delta after run_start accumulates into the empty
+        // step run_start just created (rather than splitting off
+        // a new one). Without this, a run_start followed by N
+        // stream chunks would create N+1 micro-steps with one
+        // chunk each — see R273 regression.
+        prevEventWasText = true;
         set((s) => {
           let currentStepId = s.currentStepId;
           let steps = s.steps;
@@ -2050,26 +2097,44 @@ export const useStore = create<AppState>((set, get) => {
           const activity = s.currentActivity?.kind === 'thinking'
             ? { kind: 'thinking' as const, label: '✓ Composing…', ts: Date.now() }
             : s.currentActivity;
-          // R273 step-boundary: every text_delta ALWAYS closes the
-          // previous step (marking it done) and opens a fresh one
-          // carrying this text chunk. Tools arriving after this
-          // text_delta and before the next text_delta land in this
-          // new step's toolEvents. The result is buildBlocks emits
-          // one [think][tool][think][tool]… block per model emit,
-          // in order. The previous R267 logic only split on
-          // tool_result → text_delta boundaries, so a long
-          // think followed by many parallel tool calls collapsed
-          // into one big think + many tools underneath. Strictly
-          // subsumes R267's behaviour.
+          // R274 step-boundary (2026-09-16): the rule is now "split on
+          // tool→text, accumulate on text→text". A `prevEventWasText`
+          // flag tracks whether the previous stream_event was a
+          // text_delta. If yes, this chunk is part of the same
+          // think and we accumulate it into the current step's text.
+          // If no (the previous event was a tool_use_start /
+          // tool_result / run_start-after-tool), this chunk is a
+          // new think phase and we close the previous step + open a
+          // fresh one carrying this text.
+          //
+          // R273 had "every text_delta always splits". That was
+          // wrong: the LLM streams a single think block as many
+          // small text_delta chunks (every few characters), and the
+          // "always split" rule collapsed each chunk into its own
+          // step, rendering as a stack of one-line "思考 · xxx"
+          // details cards the user called "现在的展示方式是在搞笑吗".
+          // R274 fixes this by accumulating consecutive text_deltas
+          // while still splitting at every tool boundary.
+          //
+          // R267 had `pendingStepBoundary` (true on tool_result,
+          // consumed by next text_delta). That worked for the simple
+          // think→tool→think pattern but failed when the model
+          // emitted text between parallel tool_use_starts without a
+          // tool_result in between (e.g. text "think1" →
+          // tool_use_start A → text "OK now let me" → tool_use_start B
+          // → tool_result A → tool_result B → text "test"). R274
+          // strictly subsumes R267 by splitting on tool_use_start
+          // too (not just tool_result).
           //
           // We do NOT split when currentStepId is null (the
           // run_start handler creates the first step) so the very
           // first text_delta of a run keeps the existing
           // behaviour — it inherits the empty step that run_start
-          // opened and that empty step renders nothing.
+          // opened.
           let currentStepId = s.currentStepId;
           let steps = s.steps;
-          if (currentStepId) {
+          if (currentStepId && !prevEventWasText) {
+            // close previous step + open a fresh one for this text
             const prev = steps.find((st) => st.id === currentStepId);
             const parentSubTaskId = prev?.subTaskId ?? null;
             const newStepId = newId('step');
@@ -2088,12 +2153,27 @@ export const useStore = create<AppState>((set, get) => {
               },
             ];
             currentStepId = newStepId;
+          } else if (currentStepId) {
+            // accumulate into the current step's text (same think phase)
+            steps = steps.map((st) => st.id === currentStepId
+              ? { ...st, text: st.text + text, counters: { ...st.counters, thinks: st.counters.thinks + 1 } }
+              : st);
           }
+          prevEventWasText = true;
           return { messages: msgs, isStreaming: true, lastChunkTs: Date.now(), currentActivity: activity, steps, currentStepId };
         });
         break;
       }
       case 'tool_use_start': {
+        // R274: a tool_use_start breaks the current think phase.
+        // The next text_delta (if any) opens a new step carrying
+        // that text. We don't need to set prevEventWasText here
+        // because tool_use_start happens AFTER text_delta in the
+        // stream_event order — the upcoming text_delta would still
+        // see prevEventWasText=true from the last text chunk and
+        // accumulate, which is wrong. So we explicitly flip the
+        // flag here.
+        prevEventWasText = false;
         const toolName = ev.name ?? '(unknown)';
         const detail = humanizeToolInput(toolName, ev.input);
         const label = detail ? `🛠 ${toolName} · ${detail}` : `🛠 ${toolName}…`;
@@ -2188,12 +2268,17 @@ export const useStore = create<AppState>((set, get) => {
           (() => { try { return JSON.stringify(ev.content); } catch { return String(ev.content); } })();
         const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
         const toolId = (ev as any).id ?? null;
-        // R273: tool_result no longer flips a step-boundary flag
-        // because R273's text_delta handler ALWAYS splits a step
-        // on every chunk, so the [think][tool][think][tool]… render
-        // happens
-        // unconditionally. The result still goes into the
-        // matching tool event of the *current* step here.
+        // R274: a tool_result completes a tool_use. Any subsequent
+        // text_delta opens a new step (the model is starting a new
+        // think phase after seeing the tool output). The result
+        // itself goes into the matching tool event of the *current*
+        // step here.
+        //
+        // (R267 had `pendingStepBoundary = true` here; R273 dropped
+        // it because R273's text_delta always split anyway. R274
+        // reintroduces the split signal — but on tool_use_start too,
+        // not just tool_result.)
+        prevEventWasText = false;
         // R83 Issue #6: fill in the result of the matching tool
         // event in the current step (matched by tool_use_start id).
         set((s) => {
