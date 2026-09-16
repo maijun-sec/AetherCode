@@ -13,7 +13,6 @@ import { RpcDiagnosticsPanel } from './components/RpcDiagnosticsPanel';
 import { RpcCommandPalette } from './components/RpcCommandPalette';
 import { Welcome } from './components/Welcome';
 import { ReconnectBanner } from './components/ReconnectBanner';
-import { ActivityIndicator } from './components/ActivityIndicator';
 import { AwaitingDecisionBanner } from './components/AwaitingDecisionBanner';
 import { PermissionPromptBanner } from './components/PermissionPromptBanner';
 import { CommandPalette } from './components/CommandPalette';
@@ -264,8 +263,14 @@ function MainLayout(p: MainLayoutProps) {
       />
       <LeftPanel />
       <main className="center">
+        {/* R273 (2026-09-16): removed the top-of-page
+          * <ActivityIndicator />. It duplicated the chat-area
+          * <StreamingIndicator /> footer (both rendered
+          * `currentActivity.label`), so the user saw "✓ Composing…"
+          * twice in the same frame. The footer indicator now
+          * subscribes to `compactionInProgress` too, so we keep
+          * parity with what ActivityIndicator used to show. */}
         <ReconnectBanner />
-        <ActivityIndicator />
         <AwaitingDecisionBanner />
         <LoopGuardBanner />
         <EndOfTaskPanel />

@@ -757,8 +757,41 @@ function AgentMarkdownMessage({
   );
 }
 
+// R273 (2026-09-16): the daemon's QueryEngine injects a
+// pseudo-user prompt when an in-progress todo item has taken more
+// than the loop-guard soft threshold of tool-calls/turns. The
+// message is stored in the transcript with `role: user` (because
+// the LLM API only accepts user/assistant), so the desktop used
+// to render it as a blue "YOU" user bubble. The content always
+// begins with the literal "[Engine]" marker that the engine
+// appends. We render those as a small muted engine-hint pill
+// instead, so the user can see "this is a system nudge about
+// the same task" rather than "I never typed this".
+function isEnginePromptUserMessage(content: string): boolean {
+  if (!content) return false;
+  const trimmed = content.trimStart();
+  return trimmed.startsWith('[Engine]');
+}
+
 function LegacyMessage({ m }: { m: ChatMessage }) {
   if (m.role === 'user') {
+    // R273: engine-authored prompts (loop-guard bumps, etc.) get
+    // a muted system-style pill with a "[引擎]" label instead of
+    // the blue "YOU" user bubble.
+    if (isEnginePromptUserMessage(m.content)) {
+      const summary = m.content.trim().split('\n').slice(0, 3).join(' ').slice(0, 240);
+      return (
+        <details className="message message-engine-hint">
+          <summary className="message-engine-hint-summary" title={m.content}>
+            <span className="message-engine-hint-icon" aria-hidden>⤵</span>
+            <span className="message-engine-hint-label">[引擎]</span>
+            <span className="message-engine-hint-text">{summary}</span>
+            <span className="message-engine-hint-time">{fmtTime(m.timestamp)}</span>
+          </summary>
+          <div className="message-content">{m.content}</div>
+        </details>
+      );
+    }
     return (
       <div className="message message-user">
         <div className="message-meta">

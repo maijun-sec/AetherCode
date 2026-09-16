@@ -574,6 +574,72 @@
   border-top-color: rgba(220, 38, 38, 0.35);
 }
 
+/* ----- R273 Engine-authored pseudo-user prompt (loop-guard bump) -----
+ * The daemon's loop-guard injects a `role: user` prompt when an
+ * in-progress todo item exceeds the soft tool-call/turn threshold.
+ * The transcript stores it as user because that's the only role
+ * the LLM API accepts. We detect the "[Engine]" content prefix
+ * and render it as a muted centered pill with a "[引擎]" label
+ * and an expand-on-click <details>, so the user can see "this is
+ * a system nudge" rather than reading it as their own message. */
+.message-engine-hint {
+  align-self: center;
+  max-width: 90%;
+  margin: 4px auto;
+  font-size: 12px;
+  color: var(--chat-text-muted);
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.06);
+  padding: 0;
+}
+.message-engine-hint[open] {
+  background: rgba(148, 163, 184, 0.10);
+}
+.message-engine-hint-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  list-style: none;
+  user-select: none;
+  outline: none;
+}
+.message-engine-hint-summary::-webkit-details-marker {
+  display: none;
+}
+.message-engine-hint-icon {
+  color: #b48ead;
+  font-size: 13px;
+  font-weight: 600;
+}
+.message-engine-hint-label {
+  font-weight: 600;
+  color: #b48ead;
+  letter-spacing: 0.4px;
+}
+.message-engine-hint-text {
+  flex: 1;
+  color: var(--chat-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+.message-engine-hint-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.7;
+  font-size: 11px;
+}
+.message-engine-hint .message-content {
+  padding: 8px 12px 10px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.25);
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--chat-text);
+}
+
 /* ======================================================================
  * Assistant markdown body (rendered inside a step's .step-text)
  * ====================================================================== */

@@ -111,6 +111,17 @@
   border-color: rgba(244, 135, 113, 0.3);
 }
 
+.streaming-kind-compaction {
+  color: #b48ead;
+  background: rgba(180, 142, 173, 0.06);
+  border-color: rgba(180, 142, 173, 0.28);
+}
+.streaming-kind-compaction .streaming-dot {
+  /* distinct slow pulse for compaction — gives the user a
+     visual cue that this isn't a thinking/tool/done state */
+  animation: streaming-pulse 2.4s ease-in-out infinite;
+}
+
 /* ---- animations ---- */
 @keyframes streaming-pulse {
   0%, 100% {

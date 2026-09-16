@@ -34,6 +34,7 @@ function resetStore() {
   useStore.setState({
     isStreaming: false,
     currentActivity: null,
+    compactionInProgress: false,
   } as any);
 }
 
@@ -124,5 +125,50 @@ describe('R269: behaviour', () => {
     const { container } = render(<StreamingIndicator variant="footer" />);
     const el = container.querySelector('.streaming-kind-tool');
     expect(el).toBeTruthy();
+  });
+
+  // ----------------------------------------------------------------
+  // R273 (2026-09-16) — the top-of-page ActivityIndicator was
+  // removed in favour of a single streaming footer. The footer
+  // now also subscribes to `compactionInProgress` so the user
+  // still sees the old "⤓ 正在压缩对话历史…" pill.
+  // ----------------------------------------------------------------
+
+  it('R273: footer renders the compaction pill when compactionInProgress=true', () => {
+    resetStore();
+    useStore.setState({ compactionInProgress: true } as any);
+    render(<StreamingIndicator variant="footer" />);
+    const el = screen.getByTestId('streaming-indicator-footer');
+    expect(el).toBeTruthy();
+    expect(screen.getByText(/压缩对话历史/)).toBeTruthy();
+  });
+
+  it('R273: compaction kind has its own CSS class', () => {
+    const css = readFileSync(join(root, 'src', 'components', 'StreamingIndicator.css'), 'utf-8');
+    expect(css).toMatch(/\.streaming-kind-compaction\b/);
+  });
+
+  it('R273: App.tsx no longer imports or renders ActivityIndicator', () => {
+    // The top-of-page ActivityIndicator was a duplicate of the
+    // chat-area StreamingIndicator footer — the user saw the same
+    // "✓ Composing…" twice. R273 removes the import + element to
+    // dedupe the rendering and lets the StreamingIndicator own
+    // every activity pill (thinking / tool / done / error /
+    // compaction).
+    //
+    // We assert with `^` so JSDoc comments mentioning the old
+    // name in prose don't trip the check — we're validating the
+    // import + JSX render, not the historical mention.
+    const lines = readFileSync(join(root, 'src', 'App.tsx'), 'utf-8').split(/\r?\n/);
+    // no `import ... from './components/ActivityIndicator'`
+    expect(
+      lines.some((l) => /from\s+['"]\.\/components\/ActivityIndicator['"]/.test(l)),
+      'App.tsx must not import ./components/ActivityIndicator',
+    ).toBe(false);
+    // no JSX element `<ActivityIndicator />` on a non-comment line
+    expect(
+      lines.some((l) => /^\s*<ActivityIndicator\s*\/?\>/.test(l)),
+      'App.tsx must not render <ActivityIndicator /> in JSX',
+    ).toBe(false);
   });
 });

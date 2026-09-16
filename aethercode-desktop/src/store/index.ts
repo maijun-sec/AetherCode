@@ -369,16 +369,28 @@ let rpcEventUnsubscribe: (() => void) | null = null;
 //   [think2 → tool2 → result2]
 //   [final summary think]
 //
-// The flag is module-private because it's pure
-// implementation state, not part of the React
-// tree. It's flipped on tool_result and cleared on
-// text_delta (after we use it to decide whether
-// to open a new step). tool_use_start + tool_result
-// pairs without text between them do NOT clear
-// the flag — the next text_delta is the signal
-// that the model finished its "thinking phase"
-// and started a new one.
-let pendingStepBoundary: boolean = false;
+// The flag was module-private because it's pure implementation
+// state, not part of the React tree. It was flipped on tool_result and cleared on
+// text_delta (after we used it to decide whether to open a new step).
+// tool_use_start + tool_result pairs without text between them did
+// NOT clear the flag — the next text_delta was the signal that the
+// model finished its "thinking phase" and started a new one.
+// R273 (2026-09-16) strictly subsumes that: every text_delta
+// ALWAYS opens a fresh step carrying the new text. Tools
+// arriving between this text_delta and the next one land in
+// this new step's toolEvents, and buildBlocks emits them in
+// the order the LLM produced them ([think,tool,think,tool,…]).
+// The flag's dependencies (tool_result assignment + run_start
+// reset + text_delta consume) are now dead code and have been
+// removed. Example of the new step boundary model:
+//
+//   [think1] → step A (text="think1")
+//   [tool1]  → step A (toolEvents=[tool1])
+//   [tool2]  → step A (toolEvents=[tool1,tool2])
+//   [think2] → step B (text="think2")
+//   [tool3]  → step B (toolEvents=[tool3])
+//   [think3] → step C (text="think3 — final summary")
+
 // per-session draft helpers. The localStorage key is
 // derived from the current sessionId so switching sessions
 // restores the right scratchpad. When the user has no current
@@ -1912,10 +1924,6 @@ export const useStore = create<AppState>((set, get) => {
         // progress, associate the step with the sub-task so the
         // MessageList can nest it inside the matching SubTaskCard.
         //
-        // R267 desktop polish: clear the pendingStepBoundary
-        // flag from any prior run so it can't trigger a phantom
-        // step split on the first text_delta of this new run.
-        pendingStepBoundary = false;
         set((s) => {
           let currentStepId = s.currentStepId;
           let steps = s.steps;
@@ -2027,14 +2035,6 @@ export const useStore = create<AppState>((set, get) => {
       case 'text_delta': {
         const text = ev.text ?? '';
         if (!text) return;
-        // R267 desktop polish: split the step on the
-        // tool→text boundary. See pendingStepBoundary
-        // declaration for the full rationale. We
-        // capture the flag value BEFORE set() because
-        // the reducer runs synchronously and we want
-        // to inspect / clear it at most once.
-        const splitStep = pendingStepBoundary;
-        pendingStepBoundary = false;
         set((s) => {
           const msgs = [...s.messages];
           let last = msgs[msgs.length - 1];
@@ -2050,21 +2050,26 @@ export const useStore = create<AppState>((set, get) => {
           const activity = s.currentActivity?.kind === 'thinking'
             ? { kind: 'thinking' as const, label: '✓ Composing…', ts: Date.now() }
             : s.currentActivity;
-          // R83 Issue #6: also append to the current step's text.
+          // R273 step-boundary: every text_delta ALWAYS closes the
+          // previous step (marking it done) and opens a fresh one
+          // carrying this text chunk. Tools arriving after this
+          // text_delta and before the next text_delta land in this
+          // new step's toolEvents. The result is buildBlocks emits
+          // one [think][tool][think][tool]… block per model emit,
+          // in order. The previous R267 logic only split on
+          // tool_result → text_delta boundaries, so a long
+          // think followed by many parallel tool calls collapsed
+          // into one big think + many tools underneath. Strictly
+          // subsumes R267's behaviour.
           //
-          // R267 polish: if the last event was a tool_result
-          // (splitStep === true) and we have a current step,
-          // close it and open a new one so buildBlocks emits
-          // one [think][tool] block per model-think-took-tool
-          // cycle. The new step inherits the current
-          // sub-task so the MessageList still nests it
-          // correctly. We do NOT split when there's no
-          // current step (the run_start handler creates the
-          // first one) so the very first text_delta of a
-          // run keeps the existing behaviour.
+          // We do NOT split when currentStepId is null (the
+          // run_start handler creates the first step) so the very
+          // first text_delta of a run keeps the existing
+          // behaviour — it inherits the empty step that run_start
+          // opened and that empty step renders nothing.
           let currentStepId = s.currentStepId;
           let steps = s.steps;
-          if (splitStep && currentStepId) {
+          if (currentStepId) {
             const prev = steps.find((st) => st.id === currentStepId);
             const parentSubTaskId = prev?.subTaskId ?? null;
             const newStepId = newId('step');
@@ -2083,8 +2088,6 @@ export const useStore = create<AppState>((set, get) => {
               },
             ];
             currentStepId = newStepId;
-          } else if (currentStepId) {
-            steps = steps.map((st) => st.id === currentStepId ? { ...st, text: st.text + text } : st);
           }
           return { messages: msgs, isStreaming: true, lastChunkTs: Date.now(), currentActivity: activity, steps, currentStepId };
         });
@@ -2185,15 +2188,12 @@ export const useStore = create<AppState>((set, get) => {
           (() => { try { return JSON.stringify(ev.content); } catch { return String(ev.content); } })();
         const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
         const toolId = (ev as any).id ?? null;
-        // R267 desktop polish: signal that the model has just
-        // finished a tool. The next text_delta (if any) will
-        // close the current step and open a new one, producing
-        // the natural "[think][tool][think][tool]..." render
-        // the user expects. The flag is intentionally NOT
-        // cleared here — it survives any subsequent
-        // tool_use_start (back-to-back tools stay in the same
-        // step) and is consumed by the next text_delta.
-        pendingStepBoundary = true;
+        // R273: tool_result no longer flips a step-boundary flag
+        // because R273's text_delta handler ALWAYS splits a step
+        // on every chunk, so the [think][tool][think][tool]… render
+        // happens
+        // unconditionally. The result still goes into the
+        // matching tool event of the *current* step here.
         // R83 Issue #6: fill in the result of the matching tool
         // event in the current step (matched by tool_use_start id).
         set((s) => {
