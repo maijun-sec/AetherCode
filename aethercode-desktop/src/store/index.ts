@@ -1975,6 +1975,36 @@ export const useStore = create<AppState>((set, get) => {
           let currentStepId = s.currentStepId;
           let steps = s.steps;
           const parentSubTaskId = s.currentSubTaskId;
+
+          // R274 (2026-09-16): if currentStepId points at a step
+          // that's already done (came from a previous query's
+          // run_end), force-clear it so the new query opens a
+          // fresh step. Without this guard, the daemon's
+          // transcript-replay path (desktop rehydrates state on
+          // session switch → daemon then runs a new query →
+          // run_start fires before our run_end did, OR vice
+          // versa) leaves currentStepId pointing at the OLD
+          // step, and the new prompt's text_delta / tool_use
+          // accumulates into the OLD step. The user calls this
+          // "新 prompt 的输出跑到老 prompt 上面执行了". We close
+          // any live step defensively before opening the new one.
+          if (currentStepId) {
+            const oldStep = steps.find((st) => st.id === currentStepId);
+            if (!oldStep || oldStep.done) {
+              currentStepId = null;
+            } else {
+              // Old step is still live but we're starting a new
+              // query — close it so its buildBlocks rendering
+              // is properly terminated, then null out so the new
+              // step gets created below.
+              const closingId = currentStepId;
+              steps = steps.map((st) => st.id === closingId
+                ? { ...st, done: true, endedAt: Date.now() }
+                : st);
+              currentStepId = null;
+            }
+          }
+
           if (!currentStepId && s.currentQuery) {
             currentStepId = newId('step');
             steps = [...steps, {
@@ -2001,10 +2031,6 @@ export const useStore = create<AppState>((set, get) => {
                 loopWarn: null,
               };
             }
-          } else if (currentStepId) {
-            steps = steps.map((st) => st.id === currentStepId
-              ? { ...st, counters: { ...st.counters, thinks: st.counters.thinks + 1 } }
-              : st);
           }
           return {
             isStreaming: true, lastChunkTs: Date.now(),
@@ -2343,10 +2369,30 @@ export const useStore = create<AppState>((set, get) => {
               break;
             }
           }
+          // R274 (2026-09-16): close the current step + clear
+          // currentStepId. Without this, the live pointer stays
+          // attached to the step from the previous query, so the
+          // next run_start handler takes the "else if
+          // (currentStepId)" branch and bumps the counter on the
+          // OLD step instead of opening a fresh one. The new
+          // prompt's text_delta / tool_use then accumulate into
+          // the old step — visually "the new prompt's output runs
+          // on top of the old prompt's tools" (the user reported
+          // this in R272/R274). Closing here + clearing
+          // currentStepId makes the next run_start take the
+          // `if (!currentStepId && s.currentQuery)` branch and
+          // open a brand-new step.
+          const steps = s.currentStepId
+            ? s.steps.map((st) => st.id === s.currentStepId && !st.done
+                ? { ...st, done: true, endedAt: Date.now() }
+                : st)
+            : s.steps;
           const updates: Partial<AppState> = {
             messages: msgs,
             isStreaming: false,
             currentActivity: { kind: 'done', label: '✓Done', ts: Date.now() },
+            steps,
+            currentStepId: null,
             // a fresh run ended; clear any active workflow
             // selection and the running-workflow tracker. The
             // progress bar unmounts, and the next message starts

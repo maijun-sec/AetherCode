@@ -154,3 +154,87 @@ describe('R274: text_delta splits only when prev event was a tool', () => {
     expect(tdBody).toMatch(/prevEventWasText/);
   });
 });
+
+describe('R274b: run_end closes the current step + clears currentStepId', () => {
+  // The user reported "新 prompt 的输出跑到老 prompt 上面执行了".
+  // Root cause: when a query finished, the desktop store's
+  // currentStepId stayed attached to the step from that query. The
+  // next run_start (for the new query) saw a non-null
+  // currentStepId, took the "else if" branch, and just bumped the
+  // step's counter — the new query's text_delta and tool_use_start
+  // then accumulated into the OLD step. The chat panel rendered
+  // the old step's tools above the new prompt's content, with the
+  // new prompt's content glued onto the old step at the bottom.
+  //
+  // Fix: run_end closes the current step (done=true, endedAt=now)
+  // AND clears currentStepId. The next run_start takes the
+  // `if (!currentStepId && s.currentQuery)` branch and opens a
+  // fresh step for the new query. run_start also has a defensive
+  // guard that closes any leftover live step (for the case where
+  // stream_events arrive out of order after a session-replay
+  // hydrate).
+  // Helper to find the *stream_event* handler (not the tool humanize
+// helper that has a `case 'run_end':` line in a different context).
+// The actual handlers live in the big `rpc.on('stream_event', ...)`
+// switch and are all `case 'xxx': { ... }` (with the brace on the
+// same line). The humanize helpers don't have braces.
+function streamEventBody(src: string, name: string): string {
+  const sig = `case '${name}': {`;
+  let from = src.indexOf(sig);
+  // skip the tool-humanize helper occurrence (no `{` immediately
+  // after the case name).
+  while (from !== -1) {
+    const next = src.charAt(from + sig.length - 1);
+    if (next === '{' || src.slice(from, from + sig.length) === sig) {
+      // verify the line ends with `{` (handler signature).
+      break;
+    }
+    from = src.indexOf(sig, from + 1);
+  }
+  if (from === -1) return '';
+  return src.slice(from, src.indexOf("\n      case '", from + sig.length));
+}
+
+it('run_end handler must mark the current step done=true with endedAt', () => {
+    const src = readSrc('src/store/index.ts');
+    const reBody = streamEventBody(src, 'run_end');
+    expect(reBody.length, 'run_end handler must exist').toBeGreaterThan(0);
+    expect(
+      reBody,
+      'run_end must mark the current step done=true with endedAt — ' +
+        'otherwise buildBlocks keeps rendering it as live.',
+    ).toMatch(/done:\s*true[,\s]+endedAt:\s*Date\.now\(\)/);
+  });
+
+  it('run_end handler must clear currentStepId', () => {
+    // Without clearing currentStepId, the next run_start takes
+    // the "else if (currentStepId)" branch and bumps the counter
+    // on the OLD step instead of opening a fresh one. This is
+    // exactly the "新 prompt 的输出跑到老 prompt 上面" bug.
+    const src = readSrc('src/store/index.ts');
+    const reBody = streamEventBody(src, 'run_end');
+    expect(
+      reBody,
+      'run_end must clear currentStepId — the next query needs ' +
+        'a fresh step, not a continuation of the old one.',
+    ).toMatch(/currentStepId:\s*null/);
+  });
+
+  it('run_start handler must defensively close a stale live step', () => {
+    // Defensive: if currentStepId still points at a live step
+    // (e.g. session-replay hydrate landed a step that the new
+    // run_start has never seen, or stream_events arrived out of
+    // order so run_end missed its window), close it before
+    // opening the new one. Without this guard, the OLD step's
+    // tools are rendered with the NEW prompt's content glued on.
+    const src = readSrc('src/store/index.ts');
+    const rsBody = streamEventBody(src, 'run_start');
+    expect(rsBody.length, 'run_start handler must exist').toBeGreaterThan(0);
+    expect(
+      rsBody,
+      'run_start must defensively close a leftover live step — ' +
+        'otherwise a stale currentStepId from the previous query ' +
+        'still receives the new content.',
+    ).toMatch(/oldStep\.done/);
+  });
+});
