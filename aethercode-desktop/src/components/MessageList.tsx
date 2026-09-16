@@ -902,22 +902,39 @@ export function MessageList() {
       // in requestAnimationFrame so the browser has already
       // laid out the new content before we measure
       // scrollHeight.
+      //
+      // R275 (2026-09-16): the prior round's `if (distance < 80)`
+      // gate ONLY when the user was already at the bottom (distance
+      // < 80px). On initial mount (user hasn't scrolled yet),
+      // scrollHeight was very large (the first batch of streamed
+      // content was already longer than the viewport), so
+      // distance > 80 and the auto-scroll branch was skipped —
+      // the viewport never moved from scrollTop=0, and the user
+      // saw "I'm stuck at the top, can't scroll to the bottom".
+      // Fix: always scroll when pinned (which is the default
+      // state and means "user wants the bottom").
       requestAnimationFrame(() => {
         if (!listRef.current) return;
-        const distance = listRef.current.scrollHeight
-          - listRef.current.scrollTop
-          - listRef.current.clientHeight;
-        if (distance < 80) {
-          listRef.current.scrollTop = listRef.current.scrollHeight;
-        }
+        listRef.current.scrollTop = listRef.current.scrollHeight;
       });
       lastSeenRef.current = cur;
     } else {
+      // R275: also update lastSeenRef in the unpinned branch.
+      // The prior round left lastSeenRef at its previous value
+      // here, which meant every subsequent useEffect run
+      // recomputed `delta = cur - lastSeenRef` with the SAME
+      // stale lastSeenRef → delta always reflected the total
+      // accumulated events, not "since this useEffect fired".
+      // The unseenCount counter ballooned to "89020 new" while
+      // the user was actually seeing the latest content (because
+      // they were pinned, just temporarily scrolled up at some
+      // point). Always advance lastSeenRef so delta is per-tick.
       const delta =
               (cur.msgs - lastSeenRef.current.msgs) +
               (cur.subs - lastSeenRef.current.subs) +
               (cur.steps - lastSeenRef.current.steps);
       if (delta > 0) setUnseenCount((c) => c + delta);
+      lastSeenRef.current = cur;
     }
     // depend on the `steps` array reference itself,
     // not just `steps.length`. When a tool's streamed output
@@ -929,7 +946,14 @@ export function MessageList() {
   }, [messages, isStreaming, steps, subTasks.length, currentSubTaskId, pinned]);
 
   const jumpToBottom = () => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // R275: use direct scrollTop assignment (synchronous,
+    // idempotent) instead of scrollIntoView({ behavior: 'smooth' }).
+    // smooth-scroll on a 100k-row streaming transcript can fail to
+    // trigger reliably — multiple scrollIntoView calls cancel
+    // each other, the animation never lands. Direct assignment
+    // is what the pinned auto-scroll path already uses.
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
     setUnseenCount(0);
     setPinned(true);
     lastSeenRef.current = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
