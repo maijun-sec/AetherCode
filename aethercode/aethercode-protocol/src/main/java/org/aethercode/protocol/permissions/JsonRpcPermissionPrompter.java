@@ -109,9 +109,19 @@ public class JsonRpcPermissionPrompter implements ToolPermissionPrompter {
         // covers medium + high (but critical risk is NEVER
         // auto-approved; rm -rf / sudo / mkfs / dd still ask).
         if (("medium".equals(riskLevel) || "high".equals(riskLevel))
-                && methods.isAutoApproveMediumHigh()) {
+                && methods.isAutoApproveMediumHigh()
+                && !methods.isAskMode()) {
+            // R277 (2026-09-16): the previous round unconditionally
+            // short-circuited medium/high when autoApproveMediumHigh
+            // was true. The user picked "主动询问" (= ASK_BEFORE_TOOL /
+            // DEFAULT / PLAN) from the dropdown but every tool call
+            // still went through without confirmation — the flag had
+            // silently overridden the mode. The fix: respect the
+            // explicit-ask mode as the source of truth. The flag
+            // still wins in BYPASS_PERMISSIONS / ACCEPT_EDITS so the
+            // batch-workflow safety net (R268d) stays intact.
             methods.recordAutoApproved(tool.name(), input, question, riskLevel);
-            LOG.debug("R183 auto-approved {} tool call: {}", riskLevel, tool.name());
+            LOG.debug("R277 auto-approved {} tool call (mode={}, flag=true)", riskLevel, methods.currentPermissionModeName());
             return CompletableFuture.completedFuture(new PermissionResult.Allow(input));
         }
         CompletableFuture<PermissionDecision> fut = methods.askPermission(

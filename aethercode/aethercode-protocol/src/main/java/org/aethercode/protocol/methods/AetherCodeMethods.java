@@ -1624,6 +1624,38 @@ public class AetherCodeMethods {
     public boolean isAutoApproveMediumHigh() { return autoApproveMediumHigh; }
 
     /**
+     * live permission-mode name (the canonical {@link
+     * org.aethercode.core.permission.PermissionMode} enum string).
+     * The {@link org.aethercode.protocol.permissions.JsonRpcPermissionPrompter}
+     * reads this on every ask and short-circuits the autoApproveMediumHigh
+     * path when the user is in an explicit-ask mode (ASK_BEFORE_TOOL /
+     * DEFAULT / PLAN) — R277 fix. Returns {@code "DEFAULT"} if the
+     * engine is null (defensive fallback for unit tests).
+     */
+    public String currentPermissionModeName() {
+        if (engine == null) return "DEFAULT";
+        try {
+            return engine.appState().permissionMode().name();
+        } catch (Throwable t) {
+            return "DEFAULT";
+        }
+    }
+
+    /**
+     * true iff the current permission mode is one of the explicit-ask
+     * tiers (ASK_BEFORE_TOOL / DEFAULT / PLAN). The JsonRpcPermissionPrompter
+     * skips the autoApproveMediumHigh short-circuit when this returns true
+     * so the user's "主动询问" / "ask" choice is actually honoured — the
+     * R268d default-flipped-to-true change made the flag override the
+     * mode, which silently bypassed every medium/high-risk call. R277
+     * restores the mode-as-source-of-truth invariant.
+     */
+    public boolean isAskMode() {
+        String m = currentPermissionModeName();
+        return "ASK_BEFORE_TOOL".equals(m) || "DEFAULT".equals(m) || "PLAN".equals(m);
+    }
+
+    /**
      * local setter (Java SDK / tests). Returns
      * the new value for chaining. The wire-level setter
      * is {@code setAutoApproveMediumHigh(Object params)}

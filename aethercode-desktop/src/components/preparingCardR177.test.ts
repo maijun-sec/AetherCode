@@ -552,20 +552,24 @@ describe('R201: 5 fixes from one user feedback round (second batch)', () => {
     expect(appSrc).toMatch(/<SessionDetailsDrawer[\s\S]*?open=\{p\.detailsDrawerOpen\}/);
   });
 
-  it('#3: long think block auto-collapses into a <details> (no H2/H3 sections needed)', () => {
-    // previously the in-app folding only worked when the
-    // agent emitted `## ` / `### ` headings. The user
-    // pasted a screenshot of a 1 KB preamble (numbered
-    // list + "supported types" + "let me start creating the todo list...") with
-    // zero fold affordance. R201 wrapped any preamble
-    // over 500 chars in a default-closed <details>;
-    // R202 renamed the variable (the architecture
-    // changed from a single "preamble" doc to a stream
-    // of blocks) but the threshold + summary length
-    // are unchanged.
-    expect(mlSrc).toMatch(/PREAMBLE_AUTO_COLLAPSE_CHARS = 500/);
-    expect(mlSrc).toMatch(/PREAMBLE_SUMMARY_CHARS = 80/);
+  it('#3: think blocks render in a foldable <details> with the 80-char summary', () => {
+    // R201 (2026-09-15) wrapped any preamble over 500 chars in a
+    // default-closed <details>; R202 renamed the variable and
+    // moved to per-block rendering. R276 (2026-09-16) replaced
+    // the size heuristic with a per-block fold policy (defaultOpenFor)
+    // but kept the same affordance: a think block is a <details>
+    // that defaults to folded, with the first 80 chars as the
+    // summary so the user can see what each think was about
+    // without opening every one. The PREAMBLE_AUTO_COLLAPSE_CHARS
+    // constant is gone (no more size-based heuristic); what stays
+    // is PREAMBLE_SUMMARY_CHARS (still 80) and the `agent-block-think`
+    // class.
+    expect(mlSrc).not.toMatch(/PREAMBLE_AUTO_COLLAPSE_CHARS/);
+    expect(mlSrc).toMatch(/PREAMBLE_SUMMARY_CHARS\s*=\s*80/);
     expect(mlSrc).toMatch(/agent-block-think/);
+    // R276 added the defaultOpenFor helper as the single source of
+    // truth for which blocks default-open vs default-folded.
+    expect(mlSrc).toMatch(/function\s+defaultOpenFor\s*\(/);
   });
 });
 

@@ -81,6 +81,14 @@ class JsonRpcPermissionPrompterR126Test {
         }
         @Override public boolean isAutoApproveLowRisk() { return lowFlag.get(); }
         @Override public boolean isAutoApproveMediumHigh() { return elevatedFlag.get(); }
+        // R277: the parent's isAskMode() defaults to DEFAULT mode →
+        // true, which would override the medium/high short-circuit
+        // the R126 / R183 / R268d tests assert. The R277 contract is
+        // "autoApproveMediumHigh short-circuits in non-ask modes";
+        // these legacy tests exercise that non-ask path. Override
+        // isAskMode → false so the existing assertions still hold
+        // (the R277 R277ModeTest covers the ask-tier path).
+        @Override public boolean isAskMode() { return false; }
         void setLow(boolean v) { lowFlag.set(v); }
         void setElevated(boolean v) { elevatedFlag.set(v); }
         @Override public long getAutoApprovedCount() { return lowCount.get(); }

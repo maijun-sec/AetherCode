@@ -98,6 +98,15 @@ class JsonRpcPermissionPrompterR120Test {
         void setFlag(boolean v) { flag.set(v); }
         @Override public boolean isAutoApproveMediumHigh() { return mediumHighFlag.get(); }
         void setMediumHighFlag(boolean v) { mediumHighFlag.set(v); }
+        // R277: the parent AetherCodeMethods#isAskMode() reads
+        // engine.appState().permissionMode(), which is DEFAULT by
+        // default. The R120 / R183 / R268d tests here were written
+        // before R277 and assume a "medium+high short-circuit when
+        // flag=true" world — i.e. NOT in an ask tier. Override
+        // isAskMode to false so the existing assertions still hold
+        // (and the R277 R277ModeTest exercises the ask-tier path
+        // separately).
+        @Override public boolean isAskMode() { return false; }
         @Override public long getAutoApprovedCount() { return count.get(); }
         @Override public long recordAutoApproved(String toolName, Map<String, Object> input, String reason, String riskLevel) {
             recordCalls.incrementAndGet();
