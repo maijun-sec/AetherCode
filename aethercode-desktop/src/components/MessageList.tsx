@@ -544,7 +544,6 @@ type Block =
   | { kind: 'tool'; id: string; ev: ChatStep['toolEvents'][number] }
   | { kind: 'result'; id: string; status: string; summary: string };
 
-const PREAMBLE_AUTO_COLLAPSE_CHARS = 500;
 const PREAMBLE_SUMMARY_CHARS = 80;
 
 function buildBlocks(steps: ChatStep[], subTask?: ChatSubTask): Block[] {
@@ -579,6 +578,50 @@ function buildBlocks(steps: ChatStep[], subTask?: ChatSubTask): Block[] {
   return out;
 }
 
+// R276 (2026-09-16): the user wants a tighter fold policy.
+// The historical policy was:
+//   - short think (<500 chars): always open
+//   - long think (>=500 chars): always folded
+//   - tools: open during live, closed after
+//   - everything else: open
+// That had two bad consequences:
+//   (a) every short think the model emitted — including 50 of them in a
+//       long task — stayed open, so the chat panel was a wall of text
+//       the user couldn't compress,
+//   (b) the last think (the one that's actually the "answer" to the
+//       task) could be long enough to fold, hiding the conclusion.
+//
+// New policy (user-stated, 2026-09-16 17:14):
+//   - while a task is running (isLive), the LAST block is open (so the
+//     user sees new thinking/tool arrive without clicking)
+//   - once a task is done, history is collapsed (don't repeat every
+//     think in the panel)
+//   - the FINAL think (the last think block in the chat, regardless of
+//     position) is always open — that's the model's "answer" / final
+//     reasoning, and the user always wants to see it
+//   - sub-task headers and result blocks stay always-open (anchors + summary)
+//
+// `defaultOpenFor(block, opts)` is the single source of truth for
+// whether a block starts expanded. The caller computes `isFinalThink`
+// once per render so all think blocks can share the same flag.
+function defaultOpenFor(
+  block: Block,
+  opts: { isLast: boolean; isFinalThink: boolean; isLive: boolean },
+): boolean {
+  if (block.kind === 'header') return true;   // sub-task title anchor
+  if (block.kind === 'result') return true;   // summary anchor
+  if (block.kind === 'think') {
+    if (opts.isFinalThink) return true;       // the final think is always visible
+    if (opts.isLive && opts.isLast) return true; // streaming tail
+    return false;
+  }
+  if (block.kind === 'tool') {
+    if (opts.isLive && opts.isLast) return true; // streaming tail tool
+    return false;
+  }
+  return true;
+}
+
 function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean }): ReactElement | null {
   if (block.kind === 'header') {
     // The sub-task title is always visible (it's the
@@ -590,29 +633,16 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
   if (block.kind === 'think') {
     const trimmed = block.md.trim();
     if (!trimmed) return null;
-    // a think block is a prose segment. Short
-    // segments render open; long segments default-fold
-    // with the first 80 chars as the summary (same
-    // heuristic as the historical preamble auto-collapse).
-    const isLong = trimmed.length > PREAMBLE_AUTO_COLLAPSE_CHARS;
-    if (!isLong) {
-      return (
-        <details open className="agent-block agent-block-think">
-          <summary className="agent-block-summary" title="思考">
-            <span className="agent-block-chevron">{'\u25be'}</span>
-            <span className="agent-block-title">思考</span>
-          </summary>
-          <div className="agent-block-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {block.md}
-            </ReactMarkdown>
-          </div>
-        </details>
-      );
-    }
+    // R276 (2026-09-16): collapse by default; only open when
+    // `defaultOpen` is true (final think OR streaming tail). The
+    // historical `<500 chars always open` heuristic made 50 short
+    // thinks in a long task all stay expanded, drowning the chat.
+    // The folded summary is the first PREAMBLE_SUMMARY_CHARS chars
+    // so the user can still see what each think was about without
+    // re-opening every one of them.
     const summary = trimmed.replace(/^#+\s*/gm, '').replace(/[*_`>]/g, '').replace(/\s+/g, ' ').slice(0, PREAMBLE_SUMMARY_CHARS) + '...';
     return (
-      <details className="agent-block agent-block-think">
+      <details open={defaultOpen} className="agent-block agent-block-think">
         <summary className="agent-block-summary" title={summary}>
           <span className="agent-block-chevron">{'\u25be'}</span>
           <span className="agent-block-title">思考 · {summary}</span>
@@ -733,18 +763,25 @@ function AgentMarkdownMessage({
   // cursor is appended after the last block.
   const cursor = isLive ? <span className="agent-cursor">{'\u25cd'}</span> : null;
   const lastBlock = blocks[blocks.length - 1];
+  // R276 (2026-09-16): find the LAST think in the chat. That's the
+  // "final think" — the model's concluding reasoning before the
+  // tool result / sub-task result / assistant answer. The user
+  // explicitly asked: "如果是最后一次思考，就始终展开" — so this
+  // one block is always-open regardless of `isLive`.
+  let finalThinkIdx = -1;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].kind === 'think') { finalThinkIdx = i; break; }
+  }
   return (
     <div className={`agent-message ${isLive ? 'agent-live' : ''} ${subTask ? 'has-subtask' : 'preamble'}`}>
       {blocks.map((b, i) => {
         const isLast = i === blocks.length - 1;
         const isLastTool = isLast && b.kind === 'tool';
-        // defaultOpen = true for the LAST block
-        // when streaming (so the user sees new tool
-        // calls without clicking), false otherwise
-        // (so the chat doesn't overflow). Older blocks
-        // default to true so the user can scroll
-        // through without re-opening every step.
-        const defaultOpen = isLive ? isLast : true;
+        const defaultOpen = defaultOpenFor(b, {
+          isLast,
+          isFinalThink: i === finalThinkIdx,
+          isLive,
+        });
         return (
           <div key={b.id} className="agent-block-wrap">
             <BlockView block={b} defaultOpen={defaultOpen} />
