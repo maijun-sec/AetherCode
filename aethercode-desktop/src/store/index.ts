@@ -692,6 +692,23 @@ export interface ChatStep {
    *  matching sub-task card. Null = legacy steps or steps
    *  emitted before any sub-task was declared. */
   subTaskId: string | null;
+  /** R278 (2026-09-17): the daemon-emitted run id from
+   *  the {@code run_start} stream event that opened this
+   *  step. Two consecutive user prompts (no sub-task
+   *  declared) produce two sets of steps — both end up
+   *  in the renderer's {@code pre[]} bucket because
+   *  neither step has a subTaskId. Without {@code queryId},
+   *  the timeline emitted ONE preamble event covering
+   *  both queries' steps, with a ts of the FIRST step
+   *  (i.e. the older one), so the sort put the user
+   *  bubble of the SECOND query AFTER the merged
+   *  preamble. Visually: "new prompt's output is on top
+   *  of the old prompt". Grouping by queryId gives each
+   *  user query its own preamble, sorted by the new
+   *  query's step start, so the user bubble lands above
+   *  the new preamble and below the previous preamble.
+   *  Empty string for legacy steps written before R278. */
+  queryId?: string;
   startedAt: number;
   endedAt?: number;
   /** Accumulated text from text_delta events. */
@@ -1971,6 +1988,19 @@ export const useStore = create<AppState>((set, get) => {
         // stream chunks would create N+1 micro-steps with one
         // chunk each — see R273 regression.
         prevEventWasText = true;
+        // R278 (2026-09-17): the daemon's run_start event carries
+        // a `runId` (see AetherCodeMethods.eventToMap — "run_start"
+        // payload includes runId from StreamEvent.RunStart). Tag
+        // every step opened by this run_start with that runId so
+        // the MessageList timeline can split per-query preamble
+        // events. Without this, two consecutive user prompts
+        // (both without a sub-task) merge into one preamble
+        // block and the user bubble of the second prompt lands
+        // AFTER the merged content — "new prompt's output runs
+        // on top of the old prompt".
+        const newQueryId: string = (typeof (ev as any).runId === 'string' && (ev as any).runId)
+          ? (ev as any).runId
+          : newId('query');
         set((s) => {
           let currentStepId = s.currentStepId;
           let steps = s.steps;
@@ -2010,6 +2040,7 @@ export const useStore = create<AppState>((set, get) => {
             steps = [...steps, {
               id: currentStepId,
               subTaskId: parentSubTaskId,
+              queryId: newQueryId,
               startedAt: Date.now(),
               text: '',
               toolEvents: [],

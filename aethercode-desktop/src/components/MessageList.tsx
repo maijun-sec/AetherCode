@@ -1037,13 +1037,38 @@ export function MessageList() {
       const isLive = isStreaming && st.id === currentSubTaskId && !st.summary;
       events.push({ kind: 'subtask', ts, subTask: st, steps: own, isLive });
     }
-    // 4. Preamble run (no sub-task) is one event, timestamped
-    //    to its first step. Live while the model hasn't
-    //    declared any sub-task yet.
+    // 4. Preamble runs (no sub-task) — R278 splits by
+    //    `queryId` so each user prompt gets its own preamble
+    //    block, even when two consecutive prompts both
+    //    produce subTaskId=null steps. Without the split,
+    //    every step landed in one `pre[]` bucket and the
+    //    timeline emitted a single preamble event with the
+    //    FIRST step's ts — so the second prompt's user
+    //    bubble sorted AFTER the merged content (the user's
+    //    "second-prompt leak"). Steps without a queryId
+    //    (legacy / pre-R278) fall into the empty-string
+    //    bucket so they group together rather than scatter
+    //    one per step.
     if (pre.length > 0) {
-      const ts = pre[0].startedAt;
-      const isLive = isStreaming && subTasks.length === 0;
-      events.push({ kind: 'preamble', ts, steps: pre, isLive });
+      const preByQuery: Record<string, ChatStep[]> = {};
+      for (const s of pre) {
+        const qid = s.queryId ?? '';
+        (preByQuery[qid] ||= []).push(s);
+      }
+      for (const qSteps of Object.values(preByQuery)) {
+        const ts = qSteps[0].startedAt;
+        // Live when this preamble's last step is the
+        // currently-streaming one and the model hasn't
+        // declared any sub-task yet. The simple "subTasks
+        // empty" check is too coarse (a previous prompt's
+        // preamble can never be live once a later preamble
+        // has any steps) but it's the same heuristic the
+        // previous round used; the R278 split is what fixes
+        // the layout, not this live flag.
+        const isLive = isStreaming && subTasks.length === 0
+          && qSteps.some((s) => !s.done);
+        events.push({ kind: 'preamble', ts, steps: qSteps, isLive });
+      }
     }
     // 5. Sort ascending. Ties: keep user messages first
     //    (they're prompts the model is responding to),
