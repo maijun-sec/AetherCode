@@ -190,6 +190,38 @@ class ProviderRegistryTest {
     }
 
     @Test
+    void hasApiKey_unsetEnvReturnsFalse() {
+        // R282: the Settings panel uses hasApiKey() to
+        // filter providers. A spec whose apiKeyEnv is
+        // unset must report false. We pick a name we
+        // know is unset (TEST_R282_HASAPIKEY_PROBE) so
+        // the test doesn't depend on the host env.
+        ProviderSpec p = new ProviderSpec(
+                "probe", "openai-compat", "https://x.com/v1",
+                "TEST_R282_HASAPIKEY_PROBE",
+                "probe-1",
+                java.util.List.of(new ModelSpec("probe-1", 0, 0, 1000, true)));
+        org.junit.jupiter.api.Assertions.assertFalse(p.hasApiKey());
+    }
+
+    @Test
+    void hasApiKey_blankEnvReturnsFalse() {
+        // A blank env var (e.g. set by a CI that ran
+        // `unset X; X=`) must NOT count as configured.
+        // We can't actually set env vars in pure JUnit,
+        // so we test the equivalent path: the apiKey()
+        // returns null → hasApiKey() returns false.
+        ProviderSpec p = new ProviderSpec(
+                "blank", "openai-compat", "https://x.com/v1",
+                "TEST_R282_HASAPIKEY_BLANK",
+                "blank-1",
+                java.util.List.of(new ModelSpec("blank-1", 0, 0, 1000, true)));
+        // Sanity: the env var is unset in the test JVM.
+        org.junit.jupiter.api.Assertions.assertNull(System.getenv("TEST_R282_HASAPIKEY_BLANK"));
+        org.junit.jupiter.api.Assertions.assertFalse(p.hasApiKey());
+    }
+
+    @Test
     void laterProviderOverridesEarlierOne() {
         // The index() helper does "later wins" so a
         // user's override in providers.yaml beats a

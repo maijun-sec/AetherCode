@@ -66,4 +66,22 @@ public record ProviderSpec(
     public String apiKey() {
         return System.getenv(apiKeyEnv);
     }
+
+    /** R282: true when {@link #apiKeyEnv} resolves to a
+     *  non-blank value in the current process environment.
+     *  The renderer's Settings panel uses this to filter
+     *  the model picker so providers the user hasn't
+     *  configured (no API key in env) don't show up —
+     *  otherwise the user sees a list of models they
+     *  can't actually call. Submodels of a configured
+     *  provider are still shown (the user might not have
+     *  purchased every model, but they CAN call it once
+     *  their account is set up). The {@link ProviderSpec#apiKeyEnv}
+     *  is the env-var name declared on the spec; the lookup
+     *  is dynamic (env vars can change between calls in
+     *  tests). */
+    public boolean hasApiKey() {
+        String k = apiKey();
+        return k != null && !k.isBlank();
+    }
 }

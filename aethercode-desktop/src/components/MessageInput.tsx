@@ -157,10 +157,25 @@ export function MessageInput() {
   // model) pair list, with the current provider's models
   // first. The dropdown shows `provider/model` so the
   // user can see which model belongs to which provider.
+  //
+  // R282: filter out providers the user hasn't
+  // configured (no API key in the daemon's process
+  // environment). The user reported "你配置的很多模型
+  // 都是我没办法用的" — the dropdown showed every
+  // model in the registry, including anthropic /
+  // openai whose env vars aren't set. The hasApiKey
+  // flag from listProviders solves that — providers
+  // the user can't call simply don't appear.
   const modelEntries = useMemo(() => {
     const list: { id: string; label: string; provider: string }[] = [];
     const providers = (availableProviders ?? []) as ProviderInfo[];
     for (const p of providers) {
+      // hasApiKey is computed by the daemon at list
+      // time (it reads System.getenv each call).
+      // Undefined (older daemon) is treated as "show
+      // it" for backward compat — fresh daemons
+      // always set the field.
+      if (p.hasApiKey === false) continue;
       for (const m of p.models ?? []) {
         list.push({
           id: `${p.name}/${m.id}`,

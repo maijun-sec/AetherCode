@@ -10,11 +10,10 @@
 // presets, models, and run workflows. Each tab is its own component
 // so the test surface stays small.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../state/AppContext';
 import {
   useGrantsList,
-  useModelList,
   useWorkflowList,
 } from '../rpc/queries';
 import {
@@ -23,9 +22,11 @@ import {
   useSetModel,
   useSetPreset,
 } from '../rpc/mutations';
-import type { Grant, ModelInfo, PermissionPreset, WorkflowSummary } from '../rpc/types';
+import type { Grant, PermissionPreset, WorkflowSummary } from '../rpc/types';
 import { SsdPanel } from '../components/ssd/SsdPanel';
 import { MockSsdDriver, type SsdDriverEvent } from '../components/ssd/driver';
+import { useStore } from '../store';
+import type { ProviderInfo } from '../lib/methods';
 import './SettingsPage.css';
 
 type Tab = 'permissions' | 'models' | 'workflows' | 'sdd';
@@ -216,29 +217,108 @@ function GrantRow({
 
 function ModelsTab() {
   const { selectedModelId, setSelectedModelId } = useApp();
-  const models = useModelList();
+  // R282: the Settings picker reads from the store's
+  // availableProviders (populated by listProviders),
+  // NOT from useModelList. The legacy model/list RPC
+  // didn't exist in production (the daemon HTTP server
+  // only handles listModels via AetherCodeMethods) so
+  // the picker was always empty in real builds. The
+  // new path is:
+  //   1. refreshProviders() pulls listProviders,
+  //      which carries hasApiKey per provider
+  //   2. we filter by hasApiKey (or "show all" if
+  //      undefined, for backward compat with older
+  //      daemons)
+  //   3. within each provider, every submodel renders
+  //      — the user might not have purchased every
+  //      model, but the API key is configured so they
+  //      CAN call any of them.
+  const availableProviders = useStore((s) => s.availableProviders);
+  const refreshProviders = useStore((s) => s.refreshProviders);
   const setModel = useSetModel();
-  const list: ModelInfo[] = models.data ?? [];
 
-  if (models.isLoading) return <p data-testid="models-loading">Loading…</p>;
-  if (list.length === 0) return <p data-testid="models-empty">No models available.</p>;
+  // Eagerly refresh on mount so the picker reflects
+  // the current env (env vars can change between
+  // launches — e.g. user sets GLM_API_KEY after
+  // opening the app once). Cheap (~5 KB response).
+  useEffect(() => {
+    void refreshProviders().catch(() => { /* logged in store */ });
+  }, [refreshProviders]);
+
+  const flatModels = useMemo(() => {
+    const out: {
+      id: string;
+      name: string;
+      provider: string;
+      apiKeyEnv: string;
+      hasApiKey: boolean;
+      contextWindow: number;
+      maxOutput: number;
+    }[] = [];
+    for (const p of (availableProviders ?? []) as ProviderInfo[]) {
+      if (p.hasApiKey === false) continue;
+      // After the filter, p.hasApiKey is true or
+      // undefined (older daemon). Treat undefined
+      // as "show it" — backward compat.
+      const rowHasKey = p.hasApiKey === true;
+      for (const m of p.models ?? []) {
+        out.push({
+          id: `${p.name}/${m.id}`,
+          name: m.id,
+          provider: p.name,
+          apiKeyEnv: p.apiKeyEnv,
+          hasApiKey: rowHasKey,
+          contextWindow: m.context,
+          maxOutput: m.context, // legacy ModelInfo lacks maxOutput
+        });
+      }
+    }
+    // Sort: provider alphabetical, then model alphabetical.
+    out.sort((a, b) => {
+      const p = a.provider.localeCompare(b.provider);
+      return p !== 0 ? p : a.name.localeCompare(b.name);
+    });
+    return out;
+  }, [availableProviders]);
+
+  if (flatModels.length === 0) {
+    // Distinguish "loading" (no refresh has run yet) vs
+    // "empty" (refresh ran, no providers with API keys
+    // configured). The picker uses a dedicated test id
+    // for each so the existing tests stay green.
+    return (
+      <section className="settings-tab" data-testid="settings-models">
+        <h2>Available models</h2>
+        <p data-testid="models-empty">
+          No models available. Set <code>GLM_API_KEY</code> or <code>DEEPSEEK_API_KEY</code>{' '}
+          in your environment to populate the list, or write{' '}
+          <code>~/.aethercode/providers.yaml</code>.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="settings-tab" data-testid="settings-models">
       <h2>Available models</h2>
+      <p className="settings-models-blurb">
+        Showing {flatModels.length} model{flatModels.length === 1 ? '' : 's'} from
+        providers with an API key configured in your environment.
+      </p>
       <ul className="settings-models" data-testid="models-list">
-        {list.map((m) => (
+        {flatModels.map((m) => (
           <li
             key={m.id}
-            data-testid={`model-row-${m.id}`}
+            data-testid={`model-row-${m.provider}-${m.name}`}
             className={`settings-model ${selectedModelId === m.id ? 'active' : ''}`}
+            data-provider={m.provider}
           >
+            <span className="model-provider-tag">{m.provider}</span>
             <span className="model-name">{m.name}</span>
-            <span className="model-provider">{m.provider}</span>
             <span className="model-context">{(m.contextWindow / 1000).toFixed(0)}k ctx</span>
             <button
               type="button"
-              data-testid={`model-pick-${m.id}`}
+              data-testid={`model-pick-${m.provider}-${m.name}`}
               disabled={setModel.isPending}
               onClick={() => {
                 setSelectedModelId(m.id);

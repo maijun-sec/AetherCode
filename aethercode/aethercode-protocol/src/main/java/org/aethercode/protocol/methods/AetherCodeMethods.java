@@ -170,6 +170,10 @@ public class AetherCodeMethods {
         m.put("getSystemPromptSection",                new String[]{TAG_READ, TAG_ENGINE});
         m.put("getPhaseBudget",                        new String[]{TAG_READ, TAG_ENGINE});
         m.put("listModels",                            new String[]{TAG_READ, TAG_ENGINE});
+        // R282: registry-backed model catalog (replaces
+        // the legacy costTracker-only listModels for the
+        // Settings picker path).
+        m.put("listAvailableModels",                    new String[]{TAG_READ});
         // Engine config (write)
         m.put("setModel",                              new String[]{TAG_WRITE, TAG_ENGINE});
         m.put("setPermissionMode",                     new String[]{TAG_WRITE, TAG_ENGINE, TAG_PERMISSION});
@@ -1343,6 +1347,14 @@ public class AetherCodeMethods {
         dispatcher.register("getTraces",             this::getTraces);
         dispatcher.register("getTrace",              this::getTrace);
         dispatcher.register("listModels",            this::listModels);
+        // R282: registry-backed catalog (the Settings panel
+        // uses this; the legacy listModels stays for the
+        // engine-state spend view).
+        dispatcher.register("listAvailableModels",     this::listAvailableModels);
+        // Alias: the desktop SettingsPage.ModelsTab has
+        // historically called model/list. Point at the new
+        // registry-backed handler so the page works.
+        dispatcher.register("model/list",             this::listAvailableModels);
         // retry a previously-failed sub-task. R89 RPC is a thin
         // wrapper over query() that re-issues the sub-task's goal as
         // a new user prompt; the engine retains all prior transcript
@@ -5869,6 +5881,14 @@ public class AetherCodeMethods {
                 pm.put("baseUrl", p.baseUrl());
                 pm.put("apiKeyEnv", p.apiKeyEnv());
                 pm.put("defaultModel", p.defaultModel());
+                // R282: the renderer's Settings panel filters
+                // the model picker by this flag so providers
+                // without an API key configured in the user's
+                // environment don't pollute the list. The
+                // lookup is dynamic (env vars can change
+                // between calls), so each refresh of the
+                // Settings page sees the current state.
+                pm.put("hasApiKey", p.hasApiKey());
                 java.util.List<java.util.Map<String, Object>> ms = new java.util.ArrayList<>();
                 for (org.aethercode.core.providers.ModelSpec m : p.models()) {
                     java.util.Map<String, Object> mm = new java.util.LinkedHashMap<>();
@@ -5886,6 +5906,77 @@ public class AetherCodeMethods {
         java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
         resp.put("ok", true);
         resp.put("providers", out);
+        resp.put("currentProvider", currentProviderName);
+        resp.put("currentModel", currentModelId);
+        return resp;
+    }
+
+    /** R282: list the catalog of models the user can actually
+     *  pick from. Reads from {@link #providerRegistry} (NOT
+     *  from {@code engine.costTracker().knownModels()}, which
+     *  only returns models the engine has previously called).
+     *  Each model carries {@code provider}, {@code apiKeyEnv},
+     *  and the per-provider {@code hasApiKey} flag so the
+     *  renderer can group by provider and filter out
+     *  providers the user hasn't configured.
+     *
+     *  <p>Shape:
+     *  <pre>{@code
+     *  {
+     *    ok: true,
+     *    models: [
+     *      { id: "glm-4-plus", name: "glm-4-plus",
+     *        provider: "glm", apiKeyEnv: "GLM_API_KEY",
+     *        hasApiKey: true, inputPer1k: 0.0007, ...,
+     *        context: 128000, maxOutput: 128000, default: true },
+     *      ...
+     *    ],
+     *    providers: [ { name: "glm", hasApiKey: true, ... } ]
+     *  }
+     *  }</pre>
+     *
+     *  <p>Returns the empty list (with {@code ok: true}) when
+     *  no {@link ProviderRegistry} is wired — the renderer
+     *  shows an empty-state pill instead of crashing.
+     *
+     *  <p>This replaces the legacy {@link #listModels} RPC for
+     *  the Settings picker path. The legacy RPC stays
+     *  registered (the engine-state panel uses it to show
+     *  per-model spend over time, which only the
+     *  cost-tracker knows). */
+    public Object listAvailableModels(Object params) {
+        org.aethercode.core.providers.ProviderRegistry reg = providerRegistry;
+        java.util.List<java.util.Map<String, Object>> modelRows = new java.util.ArrayList<>();
+        java.util.List<java.util.Map<String, Object>> providerRows = new java.util.ArrayList<>();
+        if (reg != null) {
+            for (org.aethercode.core.providers.ProviderSpec p : reg.list()) {
+                boolean hasKey = p.hasApiKey();
+                java.util.Map<String, Object> pm = new java.util.LinkedHashMap<>();
+                pm.put("name", p.name());
+                pm.put("apiKeyEnv", p.apiKeyEnv());
+                pm.put("hasApiKey", hasKey);
+                pm.put("defaultModel", p.defaultModel());
+                providerRows.add(pm);
+                for (org.aethercode.core.providers.ModelSpec m : p.models()) {
+                    java.util.Map<String, Object> mm = new java.util.LinkedHashMap<>();
+                    mm.put("id", m.id());
+                    mm.put("name", m.id());
+                    mm.put("provider", p.name());
+                    mm.put("apiKeyEnv", p.apiKeyEnv());
+                    mm.put("hasApiKey", hasKey);
+                    mm.put("inputPer1k", m.inputPer1k());
+                    mm.put("outputPer1k", m.outputPer1k());
+                    mm.put("context", m.context());
+                    mm.put("maxOutput", m.maxOutput());
+                    mm.put("default", m.isDefault());
+                    modelRows.add(mm);
+                }
+            }
+        }
+        java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("ok", true);
+        resp.put("models", modelRows);
+        resp.put("providers", providerRows);
         resp.put("currentProvider", currentProviderName);
         resp.put("currentModel", currentModelId);
         return resp;

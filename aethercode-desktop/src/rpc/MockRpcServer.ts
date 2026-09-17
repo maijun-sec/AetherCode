@@ -53,6 +53,27 @@ interface MockContext {
 
 type Handler = (params: unknown, ctx: MockContext) => unknown | Promise<unknown>;
 
+/** R282: subset of {@link ProviderInfo} the test mock
+ *  accepts. We don't reuse the full type so the test
+ *  fixtures stay small and so the contract (the
+ *  `hasApiKey` flag in particular) is enforced at the
+ *  mock's boundary. */
+export interface MockProviderInfo {
+  name: string;
+  type: string;
+  baseUrl: string;
+  apiKeyEnv: string;
+  defaultModel: string | null;
+  hasApiKey: boolean;
+  models: {
+    id: string;
+    inputPer1k: number;
+    outputPer1k: number;
+    context: number;
+    default: boolean;
+  }[];
+}
+
 export interface MockSeed {
   /** Convenience: the first session to create. Subsequent
    *  `newSession` calls append. */
@@ -60,6 +81,11 @@ export interface MockSeed {
   sessions?: SessionDetail[];
   grants?: Grant[];
   models?: ModelInfo[];
+  /** R282: provider catalog returned by listProviders +
+   *  listAvailableModels. Each entry carries a
+   *  {@code hasApiKey} flag the mock uses verbatim
+   *  (rather than reading the host's env vars). */
+  providers?: MockProviderInfo[];
   workflows?: WorkflowSummary[];
   tasks?: TaskInfo[];
   lastUsedModelId?: string;
@@ -75,10 +101,11 @@ export class MockRpcServer {
     sessions: SessionDetail[];
     grants: Grant[];
     models: ModelInfo[];
+    providers: MockProviderInfo[];
     workflows: WorkflowSummary[];
     tasks: TaskInfo[];
     lastUsedModelId?: string;
-  } = { sessions: [], grants: [], models: [], workflows: [], tasks: [] };
+  } = { sessions: [], grants: [], models: [], providers: [], workflows: [], tasks: [] };
   private idCounter = 1;
   private now = 1_700_000_000_000;
   private installHandle: { restore: () => void } | null = null;
@@ -96,6 +123,7 @@ export class MockRpcServer {
       sessions: seed.sessions ? JSON.parse(JSON.stringify(seed.sessions)) : [],
       grants: seed.grants ? JSON.parse(JSON.stringify(seed.grants)) : [],
       models: seed.models ? JSON.parse(JSON.stringify(seed.models)) : [],
+      providers: seed.providers ? JSON.parse(JSON.stringify(seed.providers)) : [],
       workflows: seed.workflows ? JSON.parse(JSON.stringify(seed.workflows)) : [],
       tasks: seed.tasks ? JSON.parse(JSON.stringify(seed.tasks)) : [],
       lastUsedModelId: seed.lastUsedModelId,
@@ -569,6 +597,49 @@ export class MockRpcServer {
         lastUsedAt: m.id === this.store.lastUsedModelId ? this.now : m.lastUsedAt,
       })),
     );
+    // R282: registry-backed catalog. Returns every
+    // provider the mock was seeded with (regardless of
+    // hasApiKey — the renderer filters client-side).
+    // Each provider carries the hasApiKey flag so the
+    // Settings panel can drop rows for providers the
+    // user hasn't configured.
+    this.handle('listProviders', () => ({
+      ok: true,
+      providers: this.store.providers,
+      currentProvider: null,
+      currentModel: null,
+    }));
+    this.handle('listAvailableModels', () => {
+      const models: Array<Record<string, unknown>> = [];
+      for (const p of this.store.providers) {
+        for (const m of p.models) {
+          models.push({
+            id: m.id,
+            name: m.id,
+            provider: p.name,
+            apiKeyEnv: p.apiKeyEnv,
+            hasApiKey: p.hasApiKey,
+            inputPer1k: m.inputPer1k,
+            outputPer1k: m.outputPer1k,
+            context: m.context,
+            maxOutput: m.context,
+            default: m.default,
+          });
+        }
+      }
+      return {
+        ok: true,
+        models,
+        providers: this.store.providers.map((p) => ({
+          name: p.name,
+          apiKeyEnv: p.apiKeyEnv,
+          hasApiKey: p.hasApiKey,
+          defaultModel: p.defaultModel,
+        })),
+        currentProvider: null,
+        currentModel: null,
+      };
+    });
     this.handle('model/get', (params) => {
       const { id } = (params ?? {}) as { id: string };
       return this.store.models.find((m) => m.id === id);

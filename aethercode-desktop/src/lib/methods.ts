@@ -331,6 +331,14 @@ export interface ProviderInfo {
   baseUrl: string;
   apiKeyEnv: string;
   defaultModel: string | null;
+  /** R282: true when the {@link apiKeyEnv} env var is
+   *  set to a non-blank value in the daemon's process
+   *  environment. The renderer uses this to filter the
+   *  model picker — providers the user hasn't
+   *  configured (no API key) are hidden from the
+   *  Settings / dropdown so the user doesn't see a
+   *  bunch of models they can't call. */
+  hasApiKey?: boolean;
   models: {
     id: string;
     inputPer1k: number;
@@ -338,6 +346,25 @@ export interface ProviderInfo {
     context: number;
     default: boolean;
   }[];
+}
+
+/** R282: one row of the flat catalog returned by
+ *  listAvailableModels (the Settings picker
+ *  reads THIS rather than the legacy costTracker-
+ *  backed listModels). Carries the
+ *  {@link apiKeyEnv} + {@link hasApiKey} fields so
+ *  the renderer can group by provider and filter. */
+export interface AvailableModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  apiKeyEnv: string;
+  hasApiKey: boolean;
+  inputPer1k: number;
+  outputPer1k: number;
+  context: number;
+  maxOutput: number;
+  default: boolean;
 }
 
 /** parsed workflow metadata returned by `listWorkflows` /
@@ -896,6 +923,31 @@ export class AetherCodeRpc {
     currentModel: string | null;
   }> {
     return this.call('listProviders', null);
+  }
+  // R282: registry-backed catalog. The Settings
+  // panel reads this so the model picker shows
+  // every model across every provider that has an
+  // API key configured in the daemon's process
+  // environment. Returns the flat catalog (one row
+  // per model) plus a top-level {@code providers}
+  // block (one row per provider) carrying the
+  // per-provider hasApiKey flag. Replaces the
+  // legacy listModels for the Settings panel; the
+  // legacy RPC stays for the engine-state spend
+  // view.
+  listAvailableModels(): Promise<{
+    ok: true;
+    models: AvailableModelInfo[];
+    providers: {
+      name: string;
+      apiKeyEnv: string;
+      hasApiKey: boolean;
+      defaultModel: string | null;
+    }[];
+    currentProvider: string | null;
+    currentModel: string | null;
+  }> {
+    return this.call('listAvailableModels', null);
   }
   switchProvider(opts: {
     provider: string;

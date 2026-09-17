@@ -800,6 +800,12 @@ public final class HttpJsonRpcServer {
             case "getTraces" -> methods.getTraces(params);
             case "getTrace" -> methods.getTrace(params);
             case "listModels" -> methods.listModels(params);
+            // R282: registry-backed catalog; the desktop
+            // SettingsPage.ModelsTab uses this so the user
+            // sees models they can actually call (filtered
+            // by hasApiKey on the renderer side).
+            case "listAvailableModels" -> methods.listAvailableModels(params);
+            case "model/list"         -> methods.listAvailableModels(params);
             // retry a previously-failed sub-task.
             case "retrySubTask" -> methods.retrySubTask(params);
             // install a per-(tool, target) permission override.

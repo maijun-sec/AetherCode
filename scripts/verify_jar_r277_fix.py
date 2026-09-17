@@ -32,6 +32,16 @@ R281 markers:
     SsdRunner.class — recordRevision helper referenced (call site shows
         up in the bytecode as a method name string)
     SsdCommand.class — the new "interactive" CLI flag literal
+
+R282 markers:
+    ProviderSpec.class — the new hasApiKey() helper (the method
+        name appears as a string in the bytecode; the apiKey()
+        string is also present)
+    AetherCodeMethods.class — listAvailableModels RPC handler
+        (the method name appears in the dispatcher.register(...)
+        call site as a string literal). Also "model/list" alias.
+    HttpJsonRpcServer.class — case "listAvailableModels" / case
+        "model/list" routing. The literal strings must be present.
 """
 import sys
 import zipfile
@@ -126,6 +136,27 @@ checks = [
         b'interactive',
         'SsdCommand must register the --interactive flag (R281)',
     ),
+    # ---- R282 ----
+    (
+        'org/aethercode/core/providers/ProviderSpec.class',
+        b'hasApiKey',
+        'ProviderSpec must expose hasApiKey() helper (R282)',
+    ),
+    (
+        'org/aethercode/protocol/methods/AetherCodeMethods.class',
+        b'listAvailableModels',
+        'AetherCodeMethods must register listAvailableModels RPC (R282)',
+    ),
+    (
+        'org/aethercode/protocol/methods/AetherCodeMethods.class',
+        b'model/list',
+        'AetherCodeMethods must register model/list alias (R282)',
+    ),
+    (
+        'org/aethercode/protocol/http/HttpJsonRpcServer.class',
+        b'listAvailableModels',
+        'HttpJsonRpcServer must route listAvailableModels (R282)',
+    ),
 ]
 for path, needle, msg in checks:
     data = classes.get(path)
@@ -153,3 +184,6 @@ print(f'        MemoryMethods registers 3 new RPCs (appendSessionChange / setPro
 print(f'  R281: InteractiveRepl (new class) emits phase-list / phase-draft and handles revise')
 print(f'        SsdRunner calls recordRevision after a revise')
 print(f'        SsdCommand registers the --interactive flag')
+print(f'  R282: ProviderSpec exposes hasApiKey() helper (env-var-driven)')
+print(f'        AetherCodeMethods registers listAvailableModels + model/list alias')
+print(f'        HttpJsonRpcServer routes listAvailableModels')
