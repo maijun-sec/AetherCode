@@ -1,5 +1,6 @@
 """Verify release jar contains the R277 isAskMode fix AND the R280
-project-memory fix.
+project-memory fix AND the R281 desktop SSD panel InteractiveRepl
++ SsdRunner emitPhaseStart + SsdCommand --interactive flag.
 
 Run this AFTER `mvn clean package` (or `mvn package -DskipTests`)
 and BEFORE copying the jar into release/. Each round's bytecode
@@ -23,6 +24,14 @@ R280 markers:
     MemoryMethods.class — appendSessionChange / setProjectInfo /
         readProjectMemory RPC handlers (the method-name strings appear
         in the dispatcher.register(...) call sites).
+
+R281 markers:
+    InteractiveRepl.class — the new JSONL wire protocol driver; the
+        InteractiveRepl class itself, the "phase-list" / "phase-start"
+        event literals, and the "revise" command key must be present.
+    SsdRunner.class — recordRevision helper referenced (call site shows
+        up in the bytecode as a method name string)
+    SsdCommand.class — the new "interactive" CLI flag literal
 """
 import sys
 import zipfile
@@ -91,6 +100,32 @@ checks = [
         b'readProjectMemory',
         'MemoryMethods must register readProjectMemory RPC (R280)',
     ),
+    # ---- R281 ----
+    (
+        'org/aethercode/workflows/ssd/InteractiveRepl.class',
+        b'phase-list',
+        'InteractiveRepl must emit phase-list events (R281)',
+    ),
+    (
+        'org/aethercode/workflows/ssd/InteractiveRepl.class',
+        b'phase-draft',
+        'InteractiveRepl must emit phase-draft events (R281)',
+    ),
+    (
+        'org/aethercode/workflows/ssd/InteractiveRepl.class',
+        b'revise',
+        'InteractiveRepl must handle revise commands (R281)',
+    ),
+    (
+        'org/aethercode/workflows/ssd/SsdRunner.class',
+        b'recordRevision',
+        'SsdRunner must call recordRevision after a revise (R281)',
+    ),
+    (
+        'org/aethercode/cli/SsdCommand.class',
+        b'interactive',
+        'SsdCommand must register the --interactive flag (R281)',
+    ),
 ]
 for path, needle, msg in checks:
     data = classes.get(path)
@@ -115,3 +150,6 @@ print(f'  R280: LayeredMemoryStore exposes appendSessionChange / writeProjectInf
 print(f'        ProjectMemoryStore owns PROJECT_MEMORY.md (plain-text)')
 print(f'        AetherCodeEngine has buildProjectMemorySection (top-of-prompt inject)')
 print(f'        MemoryMethods registers 3 new RPCs (appendSessionChange / setProjectInfo / readProjectMemory)')
+print(f'  R281: InteractiveRepl (new class) emits phase-list / phase-draft and handles revise')
+print(f'        SsdRunner calls recordRevision after a revise')
+print(f'        SsdCommand registers the --interactive flag')

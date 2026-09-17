@@ -131,6 +131,16 @@ public final class SsdRunner {
                 log.log("[ssd] stopping at phase " + toPhase + " (" + phase.id() + " skipped) — --to-phase=" + toPhase);
                 break;
             }
+            // R281: when the runner is driven by an
+            // InteractiveRepl, announce the phase so the UI can
+            // update its TODO chip to "running". The phase-start
+            // event is best-effort; failures are swallowed so a
+            // broken UI never crashes the SSD run.
+            if (repl instanceof InteractiveRepl ir) {
+                try {
+                    ir.emitPhaseStart(phase.id(), phase.order(), phase.title());
+                } catch (Exception ignore) {}
+            }
             if (phase.order() == 4) {
                 // Phase 4 is special — it doesn't write a single
                 // artefact, it iterates the tasks in tasks.md.
@@ -203,6 +213,12 @@ public final class SsdRunner {
                     log.log("[ssd] wrote " + outFile + " (" + text.length() + " chars)");
                     lastContent = text;
                     revisionsThisPhase++;
+                    // R281: keep InteractiveRepl's revision counter
+                    // in sync so the next phase-accepted event
+                    // carries the right count.
+                    if (repl instanceof InteractiveRepl ir) {
+                        ir.recordRevision(phase.title());
+                    }
                 } else {
                     String systemPrompt = phase.systemPrompt();
                     String userPrompt = phase.renderUserPrompt(bag);

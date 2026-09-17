@@ -34,12 +34,25 @@ describe('Phase 3 / T-3-09: SettingsPage', () => {
     });
   });
 
-  it('renders the three tabs', () => {
+  it('renders the four tabs', () => {
     fixture.render(<SettingsPage />);
     expect(screen.getByTestId('settings-page')).toBeDefined();
     expect(screen.getByTestId('settings-tab-permissions')).toBeDefined();
     expect(screen.getByTestId('settings-tab-models')).toBeDefined();
     expect(screen.getByTestId('settings-tab-workflows')).toBeDefined();
+    expect(screen.getByTestId('settings-tab-sdd')).toBeDefined();
+  });
+
+  it('initialTab prop opens the named tab on first render', () => {
+    fixture.render(<SettingsPage initialTab="sdd" />);
+    // The SddTab renders a settings-sdd section test id.
+    expect(screen.getByTestId('settings-sdd')).toBeDefined();
+  });
+
+  it('SDD tab mounts an SsdPanel with a Run demo button', () => {
+    fixture.render(<SettingsPage initialTab="sdd" />);
+    expect(screen.getByTestId('sdd-run-demo')).toBeDefined();
+    expect(screen.getByTestId('ssd-panel')).toBeDefined();
   });
 
   it('permissions tab lists grants + preset cards', async () => {

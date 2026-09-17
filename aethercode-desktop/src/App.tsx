@@ -167,9 +167,14 @@ function Shell() {
       <div className={`app app-fullpage${rightPanelOpen ? ' right-panel-open' : ''}`}>
         <Routes>
           <Route path="/trash" element={<TrashPage onClose={() => navigate('/')} />} />
-          <Route path="/settings/permissions" element={<SettingsPage onClose={() => navigate('/')} />} />
-          <Route path="/settings/models" element={<SettingsPage onClose={() => navigate('/')} />} />
-          <Route path="/settings/workflows" element={<SettingsPage onClose={() => navigate('/')} />} />
+          <Route path="/settings/permissions" element={<SettingsPage onClose={() => navigate('/')} initialTab="permissions" />} />
+          <Route path="/settings/models" element={<SettingsPage onClose={() => navigate('/')} initialTab="models" />} />
+          <Route path="/settings/workflows" element={<SettingsPage onClose={() => navigate('/')} initialTab="workflows" />} />
+          {/* R281: SDD panel — desktop home for the
+              `aethercode ssd <feature> "<intent>" --interactive`
+              subprocess flow. The tab mounts a MockSsdDriver for
+              now; a Tauri shell plugin driver lands in R282. */}
+          <Route path="/settings/sdd" element={<SettingsPage onClose={() => navigate('/')} initialTab="sdd" />} />
           <Route path="/settings" element={<SettingsPage onClose={() => navigate('/')} />} />
           <Route
             path="/sessions/:id"

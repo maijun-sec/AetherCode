@@ -2,6 +2,7 @@ package org.aethercode.cli;
 
 import org.aethercode.core.stream.StreamEvent;
 import org.aethercode.sdk.AetherCodeEngine;
+import org.aethercode.workflows.ssd.InteractiveRepl;
 import org.aethercode.workflows.ssd.SsdConfig;
 import org.aethercode.workflows.ssd.SsdConfig.Phase;
 import org.aethercode.workflows.ssd.SsdRunner;
@@ -98,6 +99,10 @@ public class SsdCommand implements Callable<Integer> {
             description = "Run mode: skip the stdin confirmation REPL (auto-accept every phase).")
     boolean auto;
 
+    @Option(names = {"--interactive", "-i"},
+            description = "R281: run mode: emit newline-delimited JSON events to stdout and read JSON commands from stdin. Lets a UI (desktop SsdPanel, TUI dashboard) drive the per-phase confirmation flow instead of typing into a terminal. Mutually exclusive with --auto.")
+    boolean interactive;
+
     @Option(names = {"--from-phase"},
             description = "Run mode: start at phase N (1..4). Earlier artefacts are reused. Default: 1.")
     int fromPhase = 1;
@@ -149,6 +154,10 @@ public class SsdCommand implements Callable<Integer> {
             System.err.println("--from-phase (" + fromPhase + ") must be <= --to-phase (" + toPhase + ")");
             return 2;
         }
+        if (auto && interactive) {
+            System.err.println("--auto and --interactive are mutually exclusive (interactive requires the driver to send commands)");
+            return 2;
+        }
         if (feature == null || feature.isBlank()) {
             System.err.println("feature is required for run mode (e.g. `aethercode ssd add-foo \"add a foo\"`)");
             return 2;
@@ -159,13 +168,18 @@ public class SsdCommand implements Callable<Integer> {
             return 2;
         }
         SsdConfig config = SsdConfig.fromProjectOrBundled(cwd);
-        System.out.println("[ssd] using " + config.source() + " config '"
-                + config.name() + "' (" + config.phases().size() + " phases)");
-        System.out.println("[ssd] feature: " + feature);
-        System.out.println("[ssd] intent:  " + intent);
-        System.out.println("[ssd] cwd:     " + cwd);
-        if (toPhase < 4) {
-            System.out.println("[ssd] stopping after phase " + toPhase + " (--to-phase; dev phase skipped)");
+        if (!interactive) {
+            // Friendly preamble for terminal users. In interactive
+            // mode we skip these so the JSON event stream stays
+            // clean (every stdout byte must be a JSON object).
+            System.out.println("[ssd] using " + config.source() + " config '"
+                    + config.name() + "' (" + config.phases().size() + " phases)");
+            System.out.println("[ssd] feature: " + feature);
+            System.out.println("[ssd] intent:  " + intent);
+            System.out.println("[ssd] cwd:     " + cwd);
+            if (toPhase < 4) {
+                System.out.println("[ssd] stopping after phase " + toPhase + " (--to-phase; dev phase skipped)");
+            }
         }
 
         // Build the engine in-process. The CLI's Main holds a
@@ -178,28 +192,61 @@ public class SsdCommand implements Callable<Integer> {
         cli.cwd = cwd;
         AetherCodeEngine engine = cli.buildEngineForSession(null);
         LlmFn llm = makeLlmFn(engine, config);
-        ReplFn repl = makeReplFn(auto);
-        Logger log = line -> System.out.println(line);
+        ReplFn repl;
+        final InteractiveRepl interactiveRepl;
+        if (interactive) {
+            interactiveRepl = InteractiveRepl.stdio(feature, config.orderedPhases());
+            try {
+                interactiveRepl.emitPhaseList();
+            } catch (java.io.IOException ioe) {
+                System.err.println("[ssd] failed to emit initial phase-list: " + ioe.getMessage());
+                return 1;
+            }
+            repl = interactiveRepl;
+        } else {
+            interactiveRepl = null;
+            repl = makeReplFn(auto);
+        }
+        Logger log = interactive ? (line -> interactiveRepl.log("info", line)) : line -> System.out.println(line);
 
         SsdRunner runner = new SsdRunner(config);
         try {
             List<PhaseResult> results = runner.runAll(cwd, feature, intent,
                     fromPhase, force, auto, llm, repl, log, toPhase);
-            System.out.println();
-            System.out.println("=" .repeat(60));
-            System.out.println("SSD complete. " + results.size() + " phase(s) produced artefacts:");
-            for (PhaseResult r : results) {
-                System.out.println("  - " + r.phaseId() + ": " + r.artefactPath()
-                        + (r.revisions() > 0 ? " (revised " + r.revisions() + "x)" : ""));
+            if (interactive) {
+                interactiveRepl.emitComplete(results);
+            } else {
+                System.out.println();
+                System.out.println("=".repeat(60));
+                System.out.println("SSD complete. " + results.size() + " phase(s) produced artefacts:");
+                for (PhaseResult r : results) {
+                    System.out.println("  - " + r.phaseId() + ": " + r.artefactPath()
+                            + (r.revisions() > 0 ? " (revised " + r.revisions() + "x)" : ""));
+                }
             }
             return 0;
         } catch (AbortException ae) {
-            System.err.println("[ssd] aborted: " + ae.getMessage());
+            if (!interactive) System.err.println("[ssd] aborted: " + ae.getMessage());
             return 2;
         } catch (Exception ex) {
-            System.err.println("[ssd] failed: " + ex.getMessage());
-            if (Boolean.getBoolean("aethercode.ssd.verbose")) {
-                ex.printStackTrace(System.err);
+            if (interactive) {
+                // Best-effort error event so the UI can show a
+                // banner before the subprocess exits with 1.
+                try {
+                    java.util.Map<String, Object> ev = new java.util.LinkedHashMap<>();
+                    ev.put("event", "error");
+                    ev.put("message", ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+                    java.io.PrintStream err = System.err;
+                    synchronized (err) {
+                        err.println("{\"event\":\"error\",\"message\":\"" + (ex.getMessage() == null ? "" : ex.getMessage().replace("\"", "\\\"")) + "\"}");
+                        err.flush();
+                    }
+                } catch (Exception ignore) {}
+            } else {
+                System.err.println("[ssd] failed: " + ex.getMessage());
+                if (Boolean.getBoolean("aethercode.ssd.verbose")) {
+                    ex.printStackTrace(System.err);
+                }
             }
             return 1;
         }

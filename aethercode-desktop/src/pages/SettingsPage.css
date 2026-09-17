@@ -1,0 +1,295 @@
+/* R281 — SettingsPage layout.
+ *
+ * The four tabs (Permissions / Models / Workflows / SDD) all share the
+ * `settings-tab` class. The SDD tab additionally uses
+ * `settings-sdd-form` + `settings-sdd-field` + `settings-sdd-run` +
+ * `settings-sdd-panel-mount` for its run-demo form.
+ */
+
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 64px);
+  padding: 24px 32px;
+  background: var(--bg);
+  color: var(--text);
+  user-select: text;
+}
+
+.settings-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-page-header h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.settings-page-close {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  padding: 4px 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.settings-page-close:hover { color: var(--text); }
+
+.settings-page-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.settings-page-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+}
+.settings-page-tab:hover { color: var(--text); }
+.settings-page-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.settings-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-tab h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ----- permission preset cards ----------------------------------------- */
+
+.settings-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+}
+.settings-preset.active {
+  border-color: var(--accent);
+  background: rgba(0, 120, 212, 0.08);
+}
+.settings-preset strong {
+  font-size: 14px;
+}
+.settings-preset span {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ----- grants list ---------------------------------------------------- */
+
+.settings-grants {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-grant-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.grant-decision {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.grant-allow { color: #2ea043; }
+.grant-deny { color: var(--error); }
+
+.settings-grants-clear {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.settings-grants-clear:hover { color: var(--text); }
+
+/* ----- models list ---------------------------------------------------- */
+
+.settings-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-model {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.settings-model.active { border-color: var(--accent); }
+.settings-model .model-name { flex: 1; font-weight: 500; }
+.settings-model .model-provider,
+.settings-model .model-context {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.settings-model button {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.settings-model button:disabled { opacity: 0.6; cursor: default; }
+
+/* ----- workflows list ------------------------------------------------- */
+
+.settings-workflows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-workflow-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.settings-workflow-row em {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: normal;
+}
+
+/* ----- SDD tab (R281) -------------------------------------------------- */
+
+.settings-sdd-blurb {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.settings-sdd-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.settings-sdd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.settings-sdd-field input,
+.settings-sdd-field textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.settings-sdd-field input:focus,
+.settings-sdd-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-sdd-run {
+  align-self: flex-start;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: white;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.settings-sdd-run:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.settings-sdd-panel-mount {
+  /* The panel styles itself; this wrapper keeps the demo form and
+     the live panel separated by a hairline border. */
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
