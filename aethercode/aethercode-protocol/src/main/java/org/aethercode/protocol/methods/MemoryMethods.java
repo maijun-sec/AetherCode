@@ -63,6 +63,9 @@ public final class MemoryMethods {
     public static final String METHOD_GET                   = "memory/get";
     public static final String METHOD_APPEND_PROJECT_CHANGE = "memory/appendProjectChange";
     public static final String METHOD_APPEND_SESSION_FACT   = "memory/appendSessionFact";
+    public static final String METHOD_APPEND_SESSION_CHANGE = "memory/appendSessionChange"; // R280
+    public static final String METHOD_SET_PROJECT_INFO      = "memory/setProjectInfo";      // R280
+    public static final String METHOD_READ_PROJECT_MEMORY   = "memory/readProjectMemory";   // R280
     public static final String METHOD_COMPACT               = "memory/compact";
     public static final String METHOD_SWITCH_PROJECT        = "memory/switchProject";
     public static final String METHOD_LIST                  = "memory/list";
@@ -93,6 +96,9 @@ public final class MemoryMethods {
         dispatcher.register(METHOD_GET,                   this::get);
         dispatcher.register(METHOD_APPEND_PROJECT_CHANGE, this::appendProjectChange);
         dispatcher.register(METHOD_APPEND_SESSION_FACT,   this::appendSessionFact);
+        dispatcher.register(METHOD_APPEND_SESSION_CHANGE, this::appendSessionChange); // R280
+        dispatcher.register(METHOD_SET_PROJECT_INFO,      this::setProjectInfo);      // R280
+        dispatcher.register(METHOD_READ_PROJECT_MEMORY,   this::readProjectMemory);   // R280
         dispatcher.register(METHOD_COMPACT,               this::compact);
         dispatcher.register(METHOD_SWITCH_PROJECT,        this::switchProject);
         dispatcher.register(METHOD_LIST,                  this::list);
@@ -242,6 +248,112 @@ public final class MemoryMethods {
         r.put("id", item.id());
         r.put("ts", System.currentTimeMillis());
         r.put("compressed", false);
+        return r;
+    }
+
+    // ------------------------------------------------------------------
+    //  R280 — memory/appendSessionChange
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code memory/appendSessionChange}. Append one
+     * session-change entry to the project's PROJECT_MEMORY.md
+     * (NOT to MEMORY.md). Format:
+     * {@code [<sessionId> <iso8601>] <description>}.
+     *
+     * <p>Triggers an in-process compression pass when the
+     * total count crosses {@code projectCompressThreshold}
+     * (production: 20). The LLM summarises the oldest
+     * {@code count - keepRecent} entries into a single
+     * paragraph (kept as one timestamped line, with the
+     * session-change entries from the recent window
+     * preserved verbatim).
+     *
+     * <p>Compare with {@link #appendProjectChange}, which
+     * writes to MEMORY.md (the JSON store owned by
+     * FileBackedMemory). PROJECT_MEMORY.md is the new
+     * R280 plain-text store with two well-defined blocks.
+     */
+    public Map<String, Object> appendSessionChange(Object params) {
+        Map<String, Object> err = requireStore(); if (err != null) return err;
+        Map<String, Object> p = asMap(params);
+        String description = stringOrThrow(p, "description");
+        String cwd = p.get("cwd") instanceof String s && !s.isBlank()
+                ? s : System.getProperty("user.dir");
+        String sessionId = p.get("sessionId") instanceof String s ? s : "";
+        int before = memoryStore.countProjectChanges(cwd);
+        memoryStore.appendSessionChange(cwd, sessionId, description);
+        int after = memoryStore.countProjectChanges(cwd);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", true);
+        r.put("cwd", cwd);
+        r.put("sessionId", sessionId);
+        r.put("countBefore", before);
+        r.put("countAfter", after);
+        r.put("compressedTriggered", after > memoryStore.projectCompressThreshold());
+        return r;
+    }
+
+    // ------------------------------------------------------------------
+    //  R280 — memory/setProjectInfo
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code memory/setProjectInfo}. Write (replace) the
+     * project-info block — the hand-curated description of
+     * the project + the agent's capabilities on this
+     * project. Idempotent. R280 design: project memory
+     * carries two sections, a persistent info block + an
+     * auto-grown session-change log. The info block
+     * survives compression.
+     */
+    public Map<String, Object> setProjectInfo(Object params) {
+        Map<String, Object> err = requireStore(); if (err != null) return err;
+        Map<String, Object> p = asMap(params);
+        Object infoRaw = p.get("info");
+        if (infoRaw == null) {
+            return Map.of("ok", false, "reason", "info required");
+        }
+        String info = infoRaw.toString();
+        String cwd = p.get("cwd") instanceof String s && !s.isBlank()
+                ? s : System.getProperty("user.dir");
+        memoryStore.writeProjectInfo(cwd, info);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", true);
+        r.put("cwd", cwd);
+        r.put("infoBytes", info.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        return r;
+    }
+
+    // ------------------------------------------------------------------
+    //  R280 — memory/readProjectMemory
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code memory/readProjectMemory}. Returns the
+     * project's PROJECT_MEMORY.md as a string. Pass
+     * {@code excludeSessionId} to drop this session's own
+     * change-log entries (mirrors what
+     * {@code AetherCodeEngine.buildProjectMemorySection}
+     * does for the system prompt).
+     */
+    public Map<String, Object> readProjectMemory(Object params) {
+        Map<String, Object> err = requireStore(); if (err != null) return err;
+        Map<String, Object> p = asMap(params);
+        String cwd = p.get("cwd") instanceof String s && !s.isBlank()
+                ? s : System.getProperty("user.dir");
+        String excludeSid = p.get("excludeSessionId") instanceof String s ? s : null;
+        String body = excludeSid == null
+                ? memoryStore.readProjectMemory(cwd)
+                : memoryStore.readProjectMemoryExcluding(cwd, excludeSid);
+        int changes = memoryStore.countProjectChanges(cwd);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", true);
+        r.put("cwd", cwd);
+        r.put("body", body);
+        r.put("sessionChangeCount", changes);
+        r.put("excludeSessionId", excludeSid == null ? "" : excludeSid);
+        r.put("totalBytes", body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
         return r;
     }
 

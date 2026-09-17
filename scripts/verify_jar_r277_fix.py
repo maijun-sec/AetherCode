@@ -1,20 +1,28 @@
-"""Verify release jar contains the R277 isAskMode fix.
+"""Verify release jar contains the R277 isAskMode fix AND the R280
+project-memory fix.
 
-Use this AFTER `mvn package` but BEFORE copying the jar into the
-release/ directory. R277 added two new public methods on
-AetherCodeMethods — `isAskMode()` and `currentPermissionModeName()` —
-and a guard inside JsonRpcPermissionPrompter that calls
-`!methods.isAskMode()`. The bytecode for these is what we
-check here.
+Run this AFTER `mvn clean package` (or `mvn package -DskipTests`)
+and BEFORE copying the jar into release/. Each round's bytecode
+marker is what we check here — the jar SHA / size is NOT a
+reliable signal because maven-shade-plugin can re-package stale
+class files via incremental cache (we hit this exact bug in R277;
+see also R279).
 
-Why this matters: `mvn package` can use incremental cache and
-rebuild a shaded jar that LOOKS fresh (new SHA, new timestamp)
-but is actually missing the new class entries — maven reuses
-the class files from a previous build. A `mvn clean package`
-forces the new class files into the shade. We hit this exact
-bug after R277: the jar in release/ had SHA `4BA099C3…` and
-was 56,586,422 B, but did NOT contain `isAskMode` (56,586,688 B
-with `isAskMode` is the correct shape).
+R277 markers:
+    AetherCodeMethods.class   — isAskMode + currentPermissionModeName methods
+    JsonRpcPermissionPrompter.class — references isAskMode (guard)
+
+R280 markers:
+    LayeredMemoryStore.class — appendSessionChange (3-arg overload),
+        writeProjectInfo, readProjectMemoryExcluding
+    ProjectMemoryStore.class — the new plain-text store (PROJECT_MEMORY.md);
+        the on-disk string PROJECT_MEMORY.md in this class is the
+        filename sentinel and must be present
+    AetherCodeEngine.class — buildProjectMemorySection (top-of-prompt
+        injection). The method name appears as a string in the bytecode.
+    MemoryMethods.class — appendSessionChange / setProjectInfo /
+        readProjectMemory RPC handlers (the method-name strings appear
+        in the dispatcher.register(...) call sites).
 """
 import sys
 import zipfile
@@ -26,6 +34,7 @@ with zipfile.ZipFile(JAR) as z:
 
 problems = []
 checks = [
+    # ---- R277 ----
     (
         'org/aethercode/protocol/methods/AetherCodeMethods.class',
         b'isAskMode',
@@ -40,6 +49,47 @@ checks = [
         'org/aethercode/protocol/permissions/JsonRpcPermissionPrompter.class',
         b'isAskMode',
         'JsonRpcPermissionPrompter must reference isAskMode (R277 guard)',
+    ),
+    # ---- R280 ----
+    (
+        'org/aethercode/memory/LayeredMemoryStore.class',
+        b'appendSessionChange',
+        'LayeredMemoryStore must expose appendSessionChange(cwd,sessionId,desc) (R280)',
+    ),
+    (
+        'org/aethercode/memory/LayeredMemoryStore.class',
+        b'writeProjectInfo',
+        'LayeredMemoryStore must expose writeProjectInfo(cwd,info) (R280)',
+    ),
+    (
+        'org/aethercode/memory/LayeredMemoryStore.class',
+        b'readProjectMemoryExcluding',
+        'LayeredMemoryStore must expose readProjectMemoryExcluding(cwd,excludeSid) (R280)',
+    ),
+    (
+        'org/aethercode/memory/ProjectMemoryStore.class',
+        b'PROJECT_MEMORY.md',
+        'ProjectMemoryStore owns PROJECT_MEMORY.md; the filename literal must be present (R280)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'buildProjectMemorySection',
+        'AetherCodeEngine must inject PROJECT_MEMORY.md at the top of the system prompt (R280)',
+    ),
+    (
+        'org/aethercode/protocol/methods/MemoryMethods.class',
+        b'appendSessionChange',
+        'MemoryMethods must register appendSessionChange RPC (R280)',
+    ),
+    (
+        'org/aethercode/protocol/methods/MemoryMethods.class',
+        b'setProjectInfo',
+        'MemoryMethods must register setProjectInfo RPC (R280)',
+    ),
+    (
+        'org/aethercode/protocol/methods/MemoryMethods.class',
+        b'readProjectMemory',
+        'MemoryMethods must register readProjectMemory RPC (R280)',
     ),
 ]
 for path, needle, msg in checks:
@@ -59,6 +109,9 @@ if problems:
     sys.exit(1)
 
 print(f'OK: {JAR}')
-print(f'  contains isAskMode + currentPermissionModeName in AetherCodeMethods.class')
-print(f'  JsonRpcPermissionPrompter.class references isAskMode')
-print('R277 mode-as-source-of-truth fix is present in the shipped jar.')
+print(f'  R277: isAskMode + currentPermissionModeName in AetherCodeMethods.class')
+print(f'        JsonRpcPermissionPrompter.class references isAskMode')
+print(f'  R280: LayeredMemoryStore exposes appendSessionChange / writeProjectInfo / readProjectMemoryExcluding')
+print(f'        ProjectMemoryStore owns PROJECT_MEMORY.md (plain-text)')
+print(f'        AetherCodeEngine has buildProjectMemorySection (top-of-prompt inject)')
+print(f'        MemoryMethods registers 3 new RPCs (appendSessionChange / setProjectInfo / readProjectMemory)')

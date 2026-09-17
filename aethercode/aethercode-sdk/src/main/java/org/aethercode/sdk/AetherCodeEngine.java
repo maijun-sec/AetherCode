@@ -2562,7 +2562,18 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // "onMemoryRecallHit" on each surfaced file.
         if (memoryLifecycle != null) {
             memoryLifecycle.onQueryStart(userInput);
+            // R280: bind the project cwd on the lifecycle so the post-query
+            // hook can append a session-change entry to PROJECT_MEMORY.md.
+            // This is best-effort: a missing cwd just means no change entry.
+            try {
+                if (appState != null && appState.cwd() != null) {
+                    memoryLifecycle.setProjectCwd(appState.cwd().toString());
+                }
+            } catch (Exception projCwdEx) {
+                LOG.debug("R280 setProjectCwd skipped: " + projCwdEx.getMessage());
+            }
         }
+        String projectMemorySection = buildProjectMemorySection();
         String memorySection = buildMemorySection(userInput);
         // also recall top-K experience records (prior round) and
         // render them as a separate system-prompt section. This closes
@@ -2573,7 +2584,13 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // finally implemented) — anything the user said earlier in
         // this same session that was put into sessionStore.
         String sessionKvSection = buildSessionKvSection(userInput);
-        String combined = combineThreeSections(memorySection, experienceSection, sessionKvSection);
+        // R280: project memory section precedes everything else.
+        // The user's brief: "project memory needs to be put at the
+        // front, with this session's entries excluded (the session
+        // already knows its own work via the transcript)".
+        String top    = projectMemorySection;
+        String middle = combineThreeSections(memorySection, experienceSection, sessionKvSection);
+        String combined = combineSections(top, middle);
         queryEngine.setMemorySection(combined);
         Stream<StreamEvent> inner = queryEngine.query(userInput, override);
         final String sectionForNote = memorySection;
@@ -2591,11 +2608,17 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                     // were recalled. Empty when no memories matched.
                     // also count "## Past experience" headers in
                     // the combined section so the user sees both numbers.
+                    // R280: also surface the project-memory section size so
+                    // the user knows what was injected at the top.
                     if (sectionForNote != null && !sectionForNote.isBlank()) {
                         int memCount = countRecalledFiles(sectionForNote);
                         int expCount = countExperienceEntries(sectionForNote);
                         String label = "recalled " + memCount + " memory file(s)";
                         if (expCount > 0) label += " + " + expCount + " experience(s)";
+                        if (projectMemorySection != null && !projectMemorySection.isBlank()) {
+                            int projChanges = countProjectMemoryChanges(projectMemorySection);
+                            label += " + project memory (" + projChanges + " session-change line(s))";
+                        }
                         action.accept(new StreamEvent.SideNote("memory", label));
                     }
                     taskAnnounced = true;
@@ -2750,6 +2773,66 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     /** glue three non-empty sections with blank lines. */
     private static String combineThreeSections(String a, String b, String c) {
         return combineSections(combineSections(a, b), c);
+    }
+
+    // ----------------------------------------------------------------
+    // R280: project memory section
+    // ----------------------------------------------------------------
+
+    /**
+     * R280: build the project-memory system-prompt section.
+     *
+     * <p>Reads {@code PROJECT_MEMORY.md} from {@code appState.cwd()}
+     * via the {@link MemoryLifecycle}'s underlying
+     * {@link LayeredMemoryStore}. The section's purpose is to put
+     * project-level context (info + recent session-change log) at the
+     * top of the system prompt. Sessions from {@link #appState}'s
+     * current {@code sessionId} are filtered out — the session
+     * already sees its own work via the transcript.
+     *
+     * <p>Empty string when:
+     * <ul>
+     *   <li>no memory lifecycle wired (no daemon) — gracefully
+     *       degrades to nothing</li>
+     *   <li>no cwd set — project memory is project-scoped, no cwd
+     *       → no project memory</li>
+     *   <li>PROJECT_MEMORY.md does not exist yet (a fresh project)
+     *       — nothing to inject</li>
+     * </ul>
+     */
+    private String buildProjectMemorySection() {
+        try {
+            if (memoryLifecycle == null) return "";
+            org.aethercode.memory.LayeredMemoryStore store = memoryLifecycle.store();
+            if (store == null) return "";
+            if (appState == null || appState.cwd() == null) return "";
+            String cwd = appState.cwd().toString();
+            String sid = appState.sessionId();
+            String body = store.readProjectMemoryExcluding(cwd, sid);
+            if (body == null || body.isBlank()) return "";
+            String header = "# Project memory\n"
+                    + "_Injected at the top of every prompt for this project. Entries from this session "
+                    + "are filtered out (current session context is already in your transcript)._\n";
+            return header + body;
+        } catch (Exception e) {
+            LOG.debug("R280 buildProjectMemorySection skipped: " + e.getMessage());
+            return "";
+        }
+    }
+
+    /** Count {@code [<sessionId> <iso>]} lines in a project-memory section
+     *  for the SideNote label. */
+    private static int countProjectMemoryChanges(String rendered) {
+        if (rendered == null || rendered.isBlank()) return 0;
+        int n = 0;
+        for (String line : rendered.split("\n", -1)) {
+            // match the on-disk format: [<non-blank> <iso>] desc
+            if (line.startsWith("[") && line.contains("] ")
+                    && Character.isLetterOrDigit(line.codePointAt(1))) {
+                n++;
+            }
+        }
+        return n;
     }
 
     /** recall the current session's k/v entries. Best-effort. */

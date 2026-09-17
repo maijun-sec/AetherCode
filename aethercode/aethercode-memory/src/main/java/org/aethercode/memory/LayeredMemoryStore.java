@@ -54,6 +54,10 @@ public final class LayeredMemoryStore {
     /** cwd -> agentType -> FileBackedMemory. Keyed so a
      *  switchCwd invalidates the whole tree (R127 brief). */
     private final Map<String, Map<String, FileBackedMemory>> projectStores = new ConcurrentHashMap<>();
+    /** R280: project memory stores per (cwd, agentType). Plain-text
+     *  PROJECT_MEMORY.md distinct from MEMORY.md (which is owned by
+     *  FileBackedMemory). Lazily constructed + cached. */
+    private final Map<String, Map<String, ProjectMemoryStore>> projectMemoryStores = new ConcurrentHashMap<>();
     /** agentType -> FileBackedMemory. User-scope lives at
      *  {@code <memoryBase>/agent-memory/<agentType>/MEMORY.md}
      *  and is cwd-independent. */
@@ -172,6 +176,8 @@ public final class LayeredMemoryStore {
      *  the project-scoped memory should be re-created". */
     public void invalidateProject(String cwd) {
         projectStores.remove(cwd);
+        // R280: also drop the per-cwd project memory file cache.
+        projectMemoryStores.remove(cwd);
     }
 
     /** Drop ALL project-store caches. Used when the user does a
@@ -179,6 +185,74 @@ public final class LayeredMemoryStore {
      *  file in an external editor and reloading the TUI). */
     public void invalidateAllProjects() {
         projectStores.clear();
+        projectMemoryStores.clear();
+    }
+
+    // ------------------------------------------------------------------
+    // R280: PROJECT MEMORY (plain-text PROJECT_MEMORY.md)
+    // ------------------------------------------------------------------
+
+    /** Per-cwd ProjectMemoryStore. Lazy + cached, same pattern as
+     *  {@link #projectStore}. The compressor + threshold + keepRecent
+     *  come from THIS LayeredMemoryStore so the production defaults
+     *  propagate uniformly. */
+    public ProjectMemoryStore projectMemoryStore(String cwd) {
+        if (cwd == null) return null;
+        return projectMemoryStores
+                .computeIfAbsent(cwd, k -> new ConcurrentHashMap<>())
+                .computeIfAbsent(agentType, k -> {
+                    Path dir = MemoryPaths.agentMemoryDir(agentType, MemoryScope.PROJECT, Path.of(cwd));
+                    try { Files.createDirectories(dir); } catch (IOException ignore) {}
+                    return new ProjectMemoryStore(
+                            dir.resolve(ProjectMemoryStore.FILENAME),
+                            compressor,
+                            projectCompressThreshold,
+                            keepRecent);
+                });
+    }
+
+    /** Write (or replace) the project's MEMORY.md "project info" block —
+     *  the hand-curated, persistent description of the project +
+     *  the agent's capabilities on this project. R280 design: see the
+     *  user-facing brief — "项目的基本信息,比如本身具备的一些能力". */
+    public void writeProjectInfo(String cwd, String info) {
+        if (cwd == null) return;
+        projectMemoryStore(cwd).writeProjectInfo(info);
+    }
+
+    /** Read the full PROJECT_MEMORY.md contents. Empty when the
+     *  project has no project memory yet. */
+    public String readProjectMemory(String cwd) {
+        if (cwd == null) return "";
+        return projectMemoryStore(cwd).readAll();
+    }
+
+    /** Read PROJECT_MEMORY.md with all session-change lines belonging
+     *  to {@code excludeSessionId} filtered out. The project-info
+     *  block is preserved (info should never be filtered). R280
+     *  design: when the engine builds the system-prompt section for
+     *  session X, it passes X as the excludeSessionId so the section
+     *  doesn't carry this session's own change-log entries (the
+     *  session already sees its own work in its transcript). */
+    public String readProjectMemoryExcluding(String cwd, String excludeSessionId) {
+        if (cwd == null) return "";
+        return projectMemoryStore(cwd).readExcludingSession(excludeSessionId);
+    }
+
+    /** Append one session-change entry. Format on disk:
+     *  {@code [<sessionId> <iso8601>] <description>}. Triggers the
+     *  LLM-driven compression pass when the count exceeds
+     *  {@link #projectCompressThreshold}. */
+    public void appendSessionChange(String cwd, String sessionId, String description) {
+        if (cwd == null || description == null || description.isBlank()) return;
+        projectMemoryStore(cwd).appendSessionChange(sessionId, description);
+    }
+
+    /** Count session-change entries in PROJECT_MEMORY.md. 0 when no
+     *  project memory yet. */
+    public int countProjectChanges(String cwd) {
+        if (cwd == null) return 0;
+        return projectMemoryStore(cwd).countChanges();
     }
 
     private FileBackedMemory projectStore(String cwd) {

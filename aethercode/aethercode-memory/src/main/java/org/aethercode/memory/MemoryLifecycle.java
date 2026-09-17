@@ -184,6 +184,14 @@ public final class MemoryLifecycle {
     public Config config() { return config; }
 
     /**
+     * accessor for the underlying {@link LayeredMemoryStore}. The engine uses this in
+     * {@code AetherCodeEngine.buildProjectMemorySection} (R280) to read PROJECT_MEMORY.md
+     * for the system-prompt injection. Returns {@code null} when no store was
+     * wired (the default disabled no-op lifecycle). Never null in production.
+     */
+    public LayeredMemoryStore store() { return store; }
+
+    /**
      * install the {@link MemoryExtractor} (used to write
      * SESSION-scope MEMORY.md after long conversations). Lazy-wired
      * by the daemon after the lifecycle is constructed. Idempotent
@@ -437,6 +445,29 @@ public final class MemoryLifecycle {
                 }
             } catch (Exception extractEx) {
                 LOG.warn("memory extractor pass failed: {}", extractEx.getMessage());
+            }
+        }
+        // R280: auto-append a project-memory session-change entry on
+        // successful query end. Best-effort. The summary is derived from
+        // the last assistant turn's text content (heuristic, no LLM).
+        // When currentProjectCwd is null (session ran without project
+        // context), we skip — project memory is project-scoped by design.
+        if (success && store != null && currentProjectCwd != null
+                && transcript != null && !transcript.isEmpty()) {
+            try {
+                String summary = R280DeriveSessionSummary.fromTranscript(transcript);
+                if (summary != null && !summary.isBlank()) {
+                    store.appendSessionChange(currentProjectCwd, sessionId, summary);
+                    if (audit != null) {
+                        audit.record(null, MemoryAudit.Action.WRITE,
+                                MemoryScope.PROJECT, "session-change", "session-change",
+                                sessionId, MemoryAudit.Decision.ALLOW,
+                                java.util.Map.of("cwd", currentProjectCwd,
+                                        "summaryLen", Integer.toString(summary.length())));
+                    }
+                }
+            } catch (Exception projEx) {
+                LOG.warn("R280 appendSessionChange failed: {}", projEx.getMessage());
             }
         }
         return new QueryEndReport(

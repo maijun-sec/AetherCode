@@ -1042,7 +1042,13 @@ final class DaemonRunner {
                 new org.aethercode.memory.ProjectMemoryCompressor(client);
         return new org.aethercode.memory.LayeredMemoryStore(
                 memoryBase, agentType, sessionStore, compressor,
-                50, 10, true);
+                // R280: production defaults — compress once project memory
+                // has more than 20 session-change entries, keep the most
+                // recent 5 verbatim. LLM summarisation collapses the oldest
+                // (count - 5) entries into a single paragraph each. This
+                // matches the user-facing brief: "阈值 20, LLM 压缩,
+                // 保留最近 5 次".
+                20, 5, true);
     }
 
     /** prior round: build the unified registry-reload service

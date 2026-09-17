@@ -266,6 +266,9 @@ public class AetherCodeMethods {
         m.put("memory/get",                            new String[]{TAG_READ, TAG_MEMORY});
         m.put("memory/appendProjectChange",            new String[]{TAG_WRITE, TAG_MEMORY});
         m.put("memory/appendSessionFact",              new String[]{TAG_WRITE, TAG_MEMORY});
+        m.put("memory/appendSessionChange",            new String[]{TAG_WRITE, TAG_MEMORY}); // R280
+        m.put("memory/setProjectInfo",                 new String[]{TAG_WRITE, TAG_MEMORY, TAG_PROJECT}); // R280
+        m.put("memory/readProjectMemory",              new String[]{TAG_READ,  TAG_MEMORY, TAG_PROJECT}); // R280
         m.put("memory/compact",                        new String[]{TAG_WRITE, TAG_MEMORY});
         m.put("memory/switchProject",                  new String[]{TAG_WRITE, TAG_PROJECT, TAG_MEMORY});
         m.put("memory/list",                           new String[]{TAG_READ, TAG_MEMORY});

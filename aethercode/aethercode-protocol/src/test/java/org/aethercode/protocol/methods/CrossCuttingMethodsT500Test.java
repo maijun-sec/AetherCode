@@ -57,6 +57,9 @@ class CrossCuttingMethodsT500Test {
                 "memory/get",
                 "memory/appendProjectChange",
                 "memory/appendSessionFact",
+                "memory/appendSessionChange",     // R280
+                "memory/setProjectInfo",          // R280
+                "memory/readProjectMemory",       // R280
                 "memory/compact",
                 "memory/switchProject",
                 "memory/list"}) {
@@ -73,7 +76,9 @@ class CrossCuttingMethodsT500Test {
         // the missing state, never crashes.
         for (String method : new String[]{
                 "memory/get", "memory/appendProjectChange",
-                "memory/appendSessionFact", "memory/compact",
+                "memory/appendSessionFact", "memory/appendSessionChange",     // R280
+                "memory/setProjectInfo", "memory/readProjectMemory",          // R280
+                "memory/compact",
                 "memory/switchProject", "memory/list"}) {
             JsonRpcDispatcher d = newDispatcher();
             m.registerAll(d);
