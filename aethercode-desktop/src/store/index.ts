@@ -1521,6 +1521,11 @@ interface AppState {
     description?: string;
     displayName?: string;
     model?: string;
+    /** R286: per-agent quality preset
+     *  (low / medium / high / xhigh). Empty
+     *  string means the agent has no
+     *  binding. */
+    variant?: string;
     path?: string;
     lastModifiedMs?: number;
     error?: string;

@@ -131,6 +131,16 @@ function AgentEditorLazy(props: {
             description: r.description ?? '',
             displayName: r.displayName ?? '',
             model: r.model ?? '',
+            // R286: surface the per-agent
+            // quality preset from the
+            // daemon's getAgentBody
+            // response. Empty string means
+            // the agent has no binding —
+            // AgentEditor shows
+            // "(inherit)" and the daemon's
+            // writeAgent helper omits the
+            // frontmatter line on save.
+            variant: r.variant ?? '',
             body: r.body ?? '',
           });
         } catch (e: any) {
@@ -143,6 +153,7 @@ function AgentEditorLazy(props: {
         description: '',
         displayName: '',
         model: '',
+        variant: '',
         body: '',
       });
     }

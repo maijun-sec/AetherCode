@@ -850,10 +850,38 @@ export class AetherCodeRpc {
     description?: string;
     displayName?: string;
     model?: string;
+    /** R286: per-agent quality preset
+     *  (low / medium / high / xhigh). Empty
+     *  string means the agent has no variant
+     *  binding — the executor falls back to
+     *  AETHERCODE_SUBAGENT_VARIANT, then the
+     *  bundled default. */
+    variant?: string;
     lastModifiedMs?: number;
     error?: string;
   }> {
-    return this.call('getAgentBody', { name });
+    // R286: the variant field was added in
+    // R286 to the daemon's getAgentBody
+    // response. Older daemons (pre-R286) don't
+    // return it; the type stays optional so a
+    // mixed deployment doesn't break the
+    // renderer's TS check. We cast through
+    // unknown because `call` is generic in its
+    // return type — the cast tells TS the
+    // extended shape including the new
+    // variant field is the canonical contract.
+    return this.call('getAgentBody', { name }) as unknown as Promise<{
+      ok: boolean;
+      name: string;
+      body?: string;
+      path?: string;
+      description?: string;
+      displayName?: string;
+      model?: string;
+      variant?: string;
+      lastModifiedMs?: number;
+      error?: string;
+    }>;
   }
 
   // The Settings panel's "Agents" tab uses
@@ -861,12 +889,18 @@ export class AetherCodeRpc {
   // shape mirrors the daemon's AgentRegistry
   // write path: a free-form body plus named
   // frontmatter params (description,
-  // displayName, model).
+  // displayName, model, variant).
   createAgent(opts: {
     name: string;
     description?: string;
     displayName?: string;
     model?: string;
+    /** R286: per-agent quality preset
+     *  (low / medium / high / xhigh). The
+     *  daemon writes it to frontmatter only
+     *  when non-blank; empty means "inherit
+     *  from the engine's env override". */
+    variant?: string;
     body: string;
   }): Promise<{ ok: true; name: string }> {
     return this.call('createAgent', {
@@ -874,6 +908,7 @@ export class AetherCodeRpc {
       description: opts.description ?? null,
       displayName: opts.displayName ?? null,
       model: opts.model ?? null,
+      variant: opts.variant ?? null,
       body: opts.body,
     });
   }
@@ -882,6 +917,7 @@ export class AetherCodeRpc {
     description?: string;
     displayName?: string;
     model?: string;
+    variant?: string;
     body: string;
   }): Promise<{ ok: true; name: string }> {
     return this.call('updateAgent', {
@@ -889,6 +925,7 @@ export class AetherCodeRpc {
       description: opts.description ?? null,
       displayName: opts.displayName ?? null,
       model: opts.model ?? null,
+      variant: opts.variant ?? null,
       body: opts.body,
     });
   }

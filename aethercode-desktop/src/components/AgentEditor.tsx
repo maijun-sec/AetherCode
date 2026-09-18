@@ -26,11 +26,38 @@ interface AgentEditorProps {
     description: string;
     displayName: string;
     model: string;
+    /** R286: per-agent quality preset
+     *  (low / medium / high / xhigh). Empty
+     *  means "inherit from the engine's
+     *  AETHERCODE_SUBAGENT_VARIANT env override,
+     *  then the bundled default". The editor
+     *  exposes this as a dropdown next to the
+     *  model picker. */
+    variant: string;
     body: string;
   };
   onClose: () => void;
   onSaved: () => void;
 }
+
+// R286: the four bundled presets. We
+// hard-code the list here rather than reading
+// the active Variant rows from the daemon
+// because the editor is a pure form and we
+// want to be able to render it before the
+// engine has finished its initial listAgents
+// round-trip. The daemon's
+// ProviderRegistry.variantFor() still resolves
+// the alias server-side, so passing
+// "fast" / "deep" works at write time even
+// though we don't surface those aliases here.
+const VARIANT_OPTIONS = [
+  { value: '',     label: '(inherit)',     description: 'use AETHERCODE_SUBAGENT_VARIANT, else bundled default' },
+  { value: 'low',     label: 'low',       description: '0.3 / 16K — fastest, lowest temperature' },
+  { value: 'medium',  label: 'medium',    description: '0.7 / 32K — balanced (default)' },
+  { value: 'high',    label: 'high',      description: '1.0 / 48K — sharper, larger max' },
+  { value: 'xhigh',   label: 'xhigh',     description: '1.0 / 64K + 8K reasoning + extended thinking' },
+];
 
 export function AgentEditor({ mode, initial, onClose, onSaved }: AgentEditorProps) {
   const { createAgent, updateAgent, deleteAgent, availableProviders, currentProvider } = useStore();
@@ -43,6 +70,15 @@ export function AgentEditor({ mode, initial, onClose, onSaved }: AgentEditorProp
   // combination when the workflow executor
   // spawns this agent.
   const [model, setModel] = useState(initial?.model ?? '');
+  // R286: per-agent quality preset. The
+  // default "(inherit)" empty string tells
+  // the daemon to fall back to the
+  // AETHERCODE_SUBAGENT_VARIANT env override
+  // (then the bundled default). The dropdown
+  // is keyed on the raw name; the daemon's
+  // variantFor() does the case-insensitive
+  // lookup against the bundled list.
+  const [variant, setVariant] = useState(initial?.variant ?? '');
   const [body, setBody] = useState(initial?.body ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +119,16 @@ export function AgentEditor({ mode, initial, onClose, onSaved }: AgentEditorProp
         description: description.trim(),
         displayName: displayName.trim(),
         model: model.trim(),
+        // R286: only send the variant
+        // field when it's set. Empty
+        // string means "inherit from
+        // env / engine default" and
+        // the daemon's writeAgent
+        // helper omits the frontmatter
+        // line, preserving the "missing
+        // field = use default" contract
+        // for legacy agents.
+        variant: variant.trim(),
         body,
       };
       if (!opts.name) {
@@ -175,6 +221,39 @@ export function AgentEditor({ mode, initial, onClose, onSaved }: AgentEditorProp
             <small className="settings-hint">
               对应历史 round: per-agent model. Pick a provider/model — the workflow executor's
               kind: agent step uses this when spawning the agent as a child session.
+            </small>
+          </label>
+          {/* R286: per-agent quality preset.
+              The dropdown lists the four
+              bundled presets (low / medium /
+              high / xhigh) plus an "(inherit)"
+              empty option that maps to the
+              engine's AETHERCODE_SUBAGENT_VARIANT
+              env override. The daemon resolves
+              the raw name at child-session time
+              via variantFor(), so case and alias
+              ("fast"/"deep") are normalised
+              server-side; the editor deliberately
+              only ships the canonical names so
+              the renderer stays tidy. The hint
+              echoes the knob summary from the
+              daemon's bundled preset. */}
+          <label className="agent-editor-field">
+            <span>Quality preset</span>
+            <select
+              value={variant}
+              onChange={(e) => setVariant(e.target.value)}
+              data-testid="agent-editor-variant"
+            >
+              {VARIANT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}{o.description ? ` — ${o.description}` : ''}
+                </option>
+              ))}
+            </select>
+            <small className="settings-hint">
+              R286: per-agent quality preset. (inherit) reads AETHERCODE_SUBAGENT_VARIANT env, else bundled default.
+              The daemon resolves the name at child-session time (low/medium/high/xhigh + opencode aliases).
             </small>
           </label>
           <label className="agent-editor-field">

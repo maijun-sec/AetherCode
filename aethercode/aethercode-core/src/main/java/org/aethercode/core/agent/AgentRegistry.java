@@ -42,12 +42,24 @@ public final class AgentRegistry {
      *  (e.g. {@code glm/glm-4-flash}) for the child
      *  session. The shape is {@code "provider/model"};
      *  an empty string means "use the engine's default
-     *  model" (the legacy behaviour). */
+     *  model" (the legacy behaviour).
+     *
+     *  <p>R286: the {@code variant} field carries the agent's
+     *  R285 quality preset name (low / medium / high /
+     *  xhigh). An empty string means "inherit from the
+     *  AETHERCODE_SUBAGENT_VARIANT env override, falling back
+     *  to the bundled default". The resolution happens at
+     *  workflow-execution time when the executor has the
+     *  {@link org.aethercode.core.providers.ProviderRegistry}
+     *  in scope — the registry already exposes
+     *  {@link org.aethercode.core.providers.Variant#byName(String)}
+     *  for the case-insensitive lookup. */
     public record AgentMeta(
             String name,
             String description,
             String displayName,
             String model,
+            String variant,
             Path path,
             long lastModifiedMs
     ) {
@@ -135,11 +147,22 @@ public final class AgentRegistry {
                         // execution time when the executor
                         // has access to the ProviderRegistry.
                         String m = Frontmatter.string(f, "model");
+                        // R286: per-agent quality preset.
+                        // Raw scalar ("low" / "medium" /
+                        // "high" / "xhigh" / opencode alias
+                        // like "fast" / "deep"). Empty
+                        // string means "inherit from the
+                        // engine / env override". Same
+                        // resolution path as {@code model}
+                        // — deferred until the executor has
+                        // the ProviderRegistry in scope.
+                        String v = Frontmatter.string(f, "variant");
                         long lm = Files.getLastModifiedTime(md).toMillis();
                         AgentMeta meta = new AgentMeta(name,
                                 desc == null ? "" : desc,
                                 dn == null ? "" : dn,
                                 m == null ? "" : m,
+                                v == null ? "" : v.trim(),
                                 md, lm);
                         next.put(name, new Entry(meta, p.body()));
                     } catch (IOException e) {
@@ -216,6 +239,7 @@ public final class AgentRegistry {
      *  new entry is queryable immediately. */
     public synchronized void create(String name, String description,
                                     String displayName, String model,
+                                    String variant,
                                     String body) throws IOException {
         validateName(name);
         if (agentsDir == null) {
@@ -228,7 +252,7 @@ public final class AgentRegistry {
             // you want to be explicit.)
             LOG.info("agent {} already exists, overwriting", name);
         }
-        writeAgentMd(name, description, displayName, model, body);
+        writeAgentMd(name, description, displayName, model, variant, body);
         reload();
     }
 
@@ -240,12 +264,13 @@ public final class AgentRegistry {
      *  difference. */
     public synchronized void update(String name, String description,
                                     String displayName, String model,
+                                    String variant,
                                     String body) throws IOException {
         validateName(name);
         if (!byName.containsKey(name)) {
             throw new IllegalArgumentException("agent not found: " + name);
         }
-        writeAgentMd(name, description, displayName, model, body);
+        writeAgentMd(name, description, displayName, model, variant, body);
         reload();
     }
 
@@ -282,6 +307,7 @@ public final class AgentRegistry {
 
     private void writeAgentMd(String name, String description,
                               String displayName, String model,
+                              String variant,
                               String body) throws IOException {
         Files.createDirectories(agentsDir.resolve(name));
         StringBuilder fm = new StringBuilder();
@@ -300,6 +326,21 @@ public final class AgentRegistry {
             // queryInChildSession pick the right
             // model for the agent.
             fm.append("model: ").append(quoteYaml(model)).append("\n");
+        }
+        if (variant != null && !variant.isBlank()) {
+            // R286: per-agent quality preset. The
+            // workflow executor resolves the raw
+            // name (low/medium/high/xhigh + opencode
+            // aliases) against the
+            // ProviderRegistry.variantFor() lookup
+            // when the child session starts. An
+            // empty string here means "inherit
+            // from the engine's env override /
+            // bundled default" — we omit the
+            // frontmatter line so the legacy
+            // "missing field = use default" path
+            // keeps working.
+            fm.append("variant: ").append(quoteYaml(variant.trim())).append("\n");
         }
         fm.append("---\n\n");
         fm.append(body == null ? "" : body);

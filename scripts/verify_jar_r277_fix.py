@@ -99,6 +99,30 @@ R285 markers:
         as a string literal)
     HttpJsonRpcServer.class — case "switchVariant" routing
         literal (the routing string)
+
+R286 markers:
+    AgentRegistry$AgentMeta.class — the record carries a
+        `variant` field (the field name appears in the
+        accessor bytecode). The shape is
+        (name, description, displayName, model, variant,
+        path, lastModifiedMs) — same as R283 with the
+        new `variant` slot in the middle.
+    AgentRegistry.class — writeAgentMd helper emits the
+        `variant:` frontmatter line (the literal
+        "variant" appears in the bytecode alongside
+        the existing "model" literal)
+    AetherCodeEngine.class — resolveVariantName static
+        helper + subagentVariant builder field (the
+        AETHERCODE_SUBAGENT_VARIANT env override path).
+        The static method name appears as a string
+        in the bytecode.
+    AetherCodeMethods.class — writeAgent + listAgents +
+        getAgentBody + createAgent + updateAgent all
+        accept the variant field. The "variant" string
+        appears in the createAgent / updateAgent
+        params map. The new "AETHERCODE_SUBAGENT_VARIANT"
+        literal (if env-driven wiring is included) is
+        present.
 """
 import sys
 import zipfile
@@ -362,6 +386,32 @@ checks = [
         b'switchVariant',
         'HttpJsonRpcServer must route switchVariant (R285)',
     ),
+    # ---- R286 ----
+    (
+        'org/aethercode/core/agent/AgentRegistry$AgentMeta.class',
+        b'variant',
+        'AgentMeta record must carry a variant field (R286)',
+    ),
+    (
+        'org/aethercode/core/agent/AgentRegistry.class',
+        b'variant',
+        'AgentRegistry.writeAgentMd must emit the variant: frontmatter line (R286)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'resolveVariantName',
+        'AetherCodeEngine must expose the resolveVariantName static helper (R286)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'subagentVariant',
+        'AetherCodeEngine.Builder must declare the subagentVariant field (R286)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'AETHERCODE_SUBAGENT_VARIANT',
+        'AetherCodeEngine must consult the AETHERCODE_SUBAGENT_VARIANT env override (R286)',
+    ),
 ]
 for path, needle, msg in checks:
     data = classes.get(path)
@@ -412,3 +462,6 @@ print(f'        ModelSpec carries variants field for per-model overrides')
 print(f'        AetherCodeEngine exposes setVariant + getActiveVariant (engine plumbing)')
 print(f'        AetherCodeMethods registers switchVariant RPC')
 print(f'        HttpJsonRpcServer routes switchVariant')
+print(f'  R286: AgentMeta record carries the variant field for per-agent quality preset')
+print(f'        AgentRegistry.writeAgentMd emits the variant: frontmatter line')
+print(f'        AetherCodeEngine.resolveVariantName + subagentVariant field + AETHERCODE_SUBAGENT_VARIANT env override')

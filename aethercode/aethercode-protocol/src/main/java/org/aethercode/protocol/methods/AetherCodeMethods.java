@@ -5786,11 +5786,16 @@ public class AetherCodeMethods {
             // field is empty when the agent has no
             // model binding (legacy legacy agents
             // written pre-3 land).
+            // R286: also surface {@code variant} so
+            // the Agents tab can render "high / think"
+            // pills next to the model name without
+            // a second round-trip per row.
             out.add(Map.of(
                     "name", m.name(),
                     "description", m.description(),
                     "displayName", m.displayName(),
                     "model", m.model() == null ? "" : m.model(),
+                    "variant", m.variant() == null ? "" : m.variant(),
                     "lastModifiedMs", m.lastModifiedMs()));
         }
         return Map.of("ok", true, "count", out.size(), "agents", out);
@@ -5819,6 +5824,7 @@ public class AetherCodeMethods {
                 "description", meta == null ? "" : meta.description(),
                 "displayName", meta == null ? "" : meta.displayName(),
                 "model", meta == null ? "" : meta.model(),
+                "variant", meta == null ? "" : meta.variant(),
                 "lastModifiedMs", meta == null ? 0L : meta.lastModifiedMs());
     }
 
@@ -5845,6 +5851,18 @@ public class AetherCodeMethods {
         String description = p.get("description") instanceof String d ? d : "";
         String displayName = p.get("displayName") instanceof String d ? d : null;
         String model = p.get("model") instanceof String m ? m : null;
+        // R286: per-agent quality preset. Empty
+        // string means "omit the frontmatter line,
+        // inherit from the engine / env override at
+        // workflow execution time". We deliberately
+        // do NOT validate the name against the
+        // bundled BUILTIN list here — the executor's
+        // ProviderRegistry.variantFor() does the
+        // case-insensitive lookup, and unknown
+        // names fall back to Variant.DEFAULT so a
+        // typo doesn't break the agent.
+        String variant = p.get("variant") instanceof String v ? v.trim() : null;
+        if (variant != null && variant.isBlank()) variant = null;
         String body = p.get("body") instanceof String b ? b : "";
         try {
             org.aethercode.core.agent.AgentRegistry reg = engine.agentRegistry();
@@ -5855,9 +5873,9 @@ public class AetherCodeMethods {
                                 "start the daemon with --agents-dir or agentsDir in the engine builder"));
             }
             if (requireExists) {
-                reg.update(name, description, displayName, model, body);
+                reg.update(name, description, displayName, model, variant, body);
             } else {
-                reg.create(name, description, displayName, model, body);
+                reg.create(name, description, displayName, model, variant, body);
             }
             return Map.of("ok", true, "name", name);
         } catch (IllegalArgumentException e) {

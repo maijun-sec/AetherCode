@@ -148,6 +148,7 @@ class AgentRegistryTest {
         AgentRegistry reg = new AgentRegistry(agents, Duration.ofMinutes(1));
         reg.create("test-agent", "A test agent", "Test Agent",
                 "minmax/MiniMax-Text-01",
+                null,
                 "Body content here.");
         // The on-disk file is parseable
         // (re-load picks it up).
@@ -171,8 +172,8 @@ class AgentRegistryTest {
         Path agents = tmp.resolve("agents");
         Files.createDirectories(agents);
         AgentRegistry reg = new AgentRegistry(agents, Duration.ofMinutes(1));
-        reg.create("agent", "first", null, null, "first body");
-        reg.create("agent", "second", null, null, "second body");
+        reg.create("agent", "first", null, null, null, "first body");
+        reg.create("agent", "second", null, null, null, "second body");
         AgentRegistry reloaded = new AgentRegistry(agents, Duration.ofMinutes(1));
         var body = reloaded.getBody("agent");
         assertTrue(body.isPresent());
@@ -195,7 +196,7 @@ class AgentRegistryTest {
         // rename to a typo'd name doesn't
         // silently create a new agent).
         assertThrows(IllegalArgumentException.class, () ->
-                reg.update("nope", "x", null, null, "body"));
+                reg.update("nope", "x", null, null, null, "body"));
     }
 
     @Test
@@ -203,7 +204,7 @@ class AgentRegistryTest {
         Path agents = tmp.resolve("agents");
         Files.createDirectories(agents);
         AgentRegistry reg = new AgentRegistry(agents, Duration.ofMinutes(1));
-        reg.create("to-delete", "x", null, null, "body");
+        reg.create("to-delete", "x", null, null, null, "body");
         assertTrue(Files.isDirectory(agents.resolve("to-delete")));
         reg.delete("to-delete");
         assertFalse(Files.exists(agents.resolve("to-delete")));
@@ -236,7 +237,7 @@ class AgentRegistryTest {
         Files.createDirectories(agents);
         AgentRegistry reg = new AgentRegistry(agents, Duration.ofMinutes(1));
         // First write: simple body.
-        reg.create("atom", "first", null, null, "v1");
+        reg.create("atom", "first", null, null, null, "v1");
         // The atomic write means a .tmp
         // file is briefly created and
         // renamed; we should never see
@@ -244,7 +245,7 @@ class AgentRegistryTest {
         // the operation.
         assertFalse(Files.exists(agents.resolve("atom").resolve("agent.md.tmp")));
         // Second write: overwrite.
-        reg.update("atom", "second", null, null, "v2");
+        reg.update("atom", "second", null, null, null, "v2");
         var body = reg.getBody("atom");
         assertTrue(body.isPresent());
         assertTrue(body.get().contains("v2"));

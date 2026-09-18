@@ -480,6 +480,30 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         }
         this.appState.permissionMode(effectiveMode);
         this.appState.mainLoopModel(b.model);
+        // R286: AETHERCODE_SUBAGENT_VARIANT env override
+        // for the per-agent quality preset. The explicit
+        // Builder.subagentVariant(String) wins when the
+        // caller passed one; otherwise the env var seeds
+        // the engine default. Empty / null / unparseable
+        // values log a warning and fall through to
+        // Variant.DEFAULT so a typo doesn't break the
+        // daemon. The executor's
+        // {@code AgentRegistry.resolveVariant(...)} helper
+        // consults this field at child-session time.
+        String envVariant = System.getenv("AETHERCODE_SUBAGENT_VARIANT");
+        String rawVariant = (b.subagentVariant != null && !b.subagentVariant.isBlank())
+                ? b.subagentVariant
+                : envVariant;
+        String resolvedVariant = resolveVariantName(rawVariant);
+        if (rawVariant != null && !rawVariant.isBlank() && resolvedVariant == null) {
+            LOG.warn("subagent variant '{}' did not match any bundled preset; falling back to default", rawVariant);
+        }
+        if (resolvedVariant != null) {
+            LOG.info("subagent variant set from {}: {}",
+                    b.subagentVariant != null ? "builder" : "env",
+                    resolvedVariant);
+        }
+        this.currentVariant = resolvedVariant;
         this.appState.toolPool().addAll(b.tools);
         if (b.transcript != null) {
             for (Message m : b.transcript.messages()) appState.appendMessage(m);
@@ -1411,6 +1435,32 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *  that {@code setVariant} propagated correctly. */
     public String currentVariant() {
         return currentVariant;
+    }
+
+    /** R286: resolve a raw variant name (from the
+     *  AETHERCODE_SUBAGENT_VARIANT env override, the
+     *  Builder.subagentVariant(String) setter, or an
+     *  agent's frontmatter) into the canonical
+     *  bundled preset. Returns {@code null} when the
+     *  raw name is blank, doesn't match any preset,
+     *  or alias. The constructor's boot path uses
+     *  the same helper so a typo doesn't break the
+     *  daemon — the warning log + bundled-default
+     *  fallback is the user-facing contract.
+     *
+     *  <p>This is a static method (no engine state
+     *  required) so tests can exercise it without
+     *  spinning up a full engine or mutating
+     *  process-level env vars. The full boot
+     *  integration is covered by
+     *  {@link AetherCodeEngineR286Test}. */
+    public static String resolveVariantName(String rawName) {
+        if (rawName == null) return null;
+        String trimmed = rawName.trim();
+        if (trimmed.isEmpty()) return null;
+        org.aethercode.core.providers.Variant resolved =
+                org.aethercode.core.providers.Variant.byName(trimmed);
+        return resolved == null ? null : resolved.name();
     }
 
     /** R285: resolve the runtime {@link
@@ -3146,6 +3196,14 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         private Path cwd = Path.of("").toAbsolutePath();
         private String model = "MiniMax-M3";
         private String apiKey;
+        // R286: per-agent quality preset override.
+        // When non-null, takes precedence over the
+        // AETHERCODE_SUBAGENT_VARIANT env var and
+        // seeds the engine's currentVariant at boot.
+        // Validated against Variant.byName() —
+        // unknown names log a warning and fall
+        // through to Variant.DEFAULT.
+        private String subagentVariant;
         /** active agent role, drives the role-scoped
          *  rules subdirectory. Empty by default (no
          *  role layer). */
@@ -3278,6 +3336,12 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         public Builder cwd(Path p) { this.cwd = p; return this; }
         public Builder model(String m) { this.model = m; return this; }
         public Builder apiKey(String k) { this.apiKey = k; return this; }
+        // R286: explicit setter for the per-agent
+        // quality preset. Wins over the
+        // AETHERCODE_SUBAGENT_VARIANT env var when
+        // both are set. Tests use this to assert on
+        // the boot-path resolution.
+        public Builder subagentVariant(String v) { this.subagentVariant = v; return this; }
         /** install a provider spec. The engine
          *  will build its ChatClient from this spec's
          *  baseUrl + the apiKeyEnv-declared env var.

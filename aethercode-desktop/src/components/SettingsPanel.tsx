@@ -166,6 +166,41 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   // sends both via switchProvider.
   const [provider, setLocalProvider] = useState<string>(currentProvider ?? '');
   const [providerModel, setLocalProviderModel] = useState<string>('');
+  // R286: "Show all providers" toggle. The
+  // default (true) hides providers without an
+  // API key configured in the daemon's env
+  // (mirroring the R282 MessageInput filter so
+  // the user doesn't see rows they can't
+  // call). Toggling the switch shows every
+  // entry in the registry, marked with a small
+  // "(no API key)" badge so the user can see
+  // WHY a row is greyed out. Persisted to
+  // localStorage so the choice survives a
+  // renderer reload.
+  const [showAllProviders, setShowAllProviders] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = window.localStorage.getItem('aethercode.settings.showAllProviders');
+      if (raw === null) return false;  // default: hide unconfigured
+      return raw === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        'aethercode.settings.showAllProviders',
+        showAllProviders ? '1' : '0',
+      );
+    } catch {
+      // private mode — in-memory state is still set.
+    }
+  }, [showAllProviders]);
+  const filteredProviders = showAllProviders
+    ? (availableProviders ?? [])
+    : (availableProviders ?? []).filter((p: any) => p.hasApiKey !== false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -236,6 +271,34 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           <button className="settings-close" onClick={onClose}>×</button>
         </div>
         <div className="settings-body">
+          {/* R286: provider visibility toggle.
+              Off by default — the user reported
+              "你配置的很多模型都是我没办法用的",
+              so the Settings panel mirrors the
+              MessageInput's R282 filter. When
+              on, every registry entry shows up
+              with a small "(no API key)" badge
+              next to the env-var hint so the
+              user can see why a row isn't
+              usable. The toggle persists to
+              localStorage so a renderer reload
+              keeps the user's choice. */}
+          <div className="settings-field settings-field-row">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={showAllProviders}
+                onChange={(e) => setShowAllProviders(e.target.checked)}
+                data-testid="settings-show-all-providers"
+              />
+              <span>Show all providers (incl. unconfigured)</span>
+            </label>
+            <small className="settings-hint">
+              {filteredProviders.length === (availableProviders ?? []).length
+                ? `showing ${filteredProviders.length} of ${(availableProviders ?? []).length}`
+                : `showing ${filteredProviders.length} configured · ${(availableProviders ?? []).length - filteredProviders.length} hidden (no API key)`}
+            </small>
+          </div>
           {/* provider + model picker. The
               first row picks the provider (e.g.
               "minmax" / "glm" / "qwen" /
@@ -257,18 +320,28 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 // the user doesn't accidentally
                 // submit a model that doesn't
                 // belong to the new provider.
-                const np = (availableProviders ?? []).find(
+                const np = filteredProviders.find(
                   (p: any) => p.name === e.target.value
                 );
                 setLocalProviderModel(np?.defaultModel ?? '');
               }}
             >
-              {availableProviders.length === 0 ? (
-                <option value="" disabled>(no providers — daemon offline?)</option>
-              ) : availableProviders.map((p: any) => (
+              {filteredProviders.length === 0 ? (
+                <option value="" disabled>(no providers — daemon offline? or toggle "Show all")</option>
+              ) : filteredProviders.map((p: any) => (
                 <option key={p.name} value={p.name}>
                   {p.name}{p.name === currentProvider ? ' (current)' : ''}
                   {p.apiKeyEnv ? ` · ${p.apiKeyEnv}` : ''}
+                  {/* R286: when the user has
+                      enabled "Show all", badge
+                      the unconfigured rows so the
+                      reason is obvious. The
+                      filter already gates the
+                      underlying list, so the
+                      dropdown only shows
+                      unconfigured rows when the
+                      user explicitly opted in. */}
+                  {showAllProviders && p.hasApiKey === false ? ' · (no API key)' : ''}
                 </option>
               ))}
             </select>
@@ -295,9 +368,46 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 <option key={m.id} value={m.id}>
                   {m.id}{m.default ? ' (default)' : ''}
                   {' · '}${(m.inputPer1k ?? 0).toFixed(4)}/${(m.outputPer1k ?? 0).toFixed(4)} per 1k
+                  {/* R286: per-model pricing
+                      summary. Convert the
+                      per-1k USD rate to the
+                      standard $X/M-input +
+                      $Y/M-output label so the
+                      user can compare models at
+                      a glance without opening a
+                      calculator. M = million
+                      tokens, so ×1000 over the
+                      per-1k value. Free / blank
+                      rates (e.g. local stubs)
+                      show as "free" so the row
+                      doesn't read as $0.00 (a
+                      missing signal a 0 would
+                      give). */}
+                      {' · $' + ((m.inputPer1k ?? 0) * 1000).toFixed(2) + '/M in, $' + ((m.outputPer1k ?? 0) * 1000).toFixed(2) + '/M out'}
                 </option>
               ))}
             </select>
+            <small className="settings-hint">
+              {selectedProvider && (() => {
+                // R286: provider-level cost
+                // summary. Sum the per-1k
+                // input + output rates across
+                // the provider's models and
+                // show the band (min..max in
+                // + out). Lets the user see at
+                // a glance that glm runs
+                // $0.10-$1.20/M input while
+                // openai gpt-4 sits at $30/M.
+                const inMin = Math.min(...modelsForProvider.map((mm: any) => mm.inputPer1k ?? 0));
+                const inMax = Math.max(...modelsForProvider.map((mm: any) => mm.inputPer1k ?? 0));
+                const outMin = Math.min(...modelsForProvider.map((mm: any) => mm.outputPer1k ?? 0));
+                const outMax = Math.max(...modelsForProvider.map((mm: any) => mm.outputPer1k ?? 0));
+                if (inMin === inMax && outMin === outMax) {
+                  return `${modelsForProvider.length} model(s) · $${(inMin * 1000).toFixed(2)}/M in, $${(outMin * 1000).toFixed(2)}/M out`;
+                }
+                return `${modelsForProvider.length} model(s) · in $${(inMin * 1000).toFixed(2)}–$${(inMax * 1000).toFixed(2)}/M, out $${(outMin * 1000).toFixed(2)}–$${(outMax * 1000).toFixed(2)}/M`;
+              })()}
+            </small>
           </label>
           <label className="settings-field">
             <span>Permission mode</span>
