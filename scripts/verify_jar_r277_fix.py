@@ -42,6 +42,25 @@ R282 markers:
         call site as a string literal). Also "model/list" alias.
     HttpJsonRpcServer.class — case "listAvailableModels" / case
         "model/list" routing. The literal strings must be present.
+
+R283 markers:
+    CompactConfig.class — forContextWindow (the tier-default
+        factory), compactAt + preserveTail (record component
+        names appear in the bytecode)
+    CompactConfig$Strategy.class — wire-stable strategy ids
+        (summary8 / summary7 / summarySliding / disabled)
+    CompactSpec.class — the YAML record with toConfig() helper
+        that bridges YAML fields to the runtime CompactConfig
+    ProviderSpec.class — compactFor(modelId) helper (per-model
+        lookup that walks model → provider → DEFAULT)
+    ModelSpec.class — the compact field on the per-model spec
+        (the field name appears in the accessor's bytecode)
+    QueryEngine.class — resolveCompactConfig / setCompactRegistry
+        (the per-model gate plumbing)
+    AetherCodeEngine.class — setCompactRegistry (the SDK
+        plumbing that hands the registry over to QueryEngine)
+    AetherCodeMethods.class — setProviderRegistry (the RPC
+        handler that wires the registry on daemon startup)
 """
 import sys
 import zipfile
@@ -157,6 +176,62 @@ checks = [
         b'listAvailableModels',
         'HttpJsonRpcServer must route listAvailableModels (R282)',
     ),
+    # ---- R283 ----
+    (
+        'org/aethercode/core/compact/CompactConfig.class',
+        b'forContextWindow',
+        'CompactConfig must expose forContextWindow(ctx) tier-default factory (R283)',
+    ),
+    (
+        'org/aethercode/core/compact/CompactConfig.class',
+        b'compactAt',
+        'CompactConfig record-component compactAt must be present (R283)',
+    ),
+    (
+        'org/aethercode/core/compact/CompactConfig$Strategy.class',
+        b'summary8',
+        'Strategy enum must expose the summary8 wire id (R283)',
+    ),
+    (
+        'org/aethercode/core/compact/CompactConfig$Strategy.class',
+        b'disabled',
+        'Strategy enum must expose the disabled wire id (R283 opt-out)',
+    ),
+    (
+        'org/aethercode/core/providers/CompactSpec.class',
+        b'toConfig',
+        'CompactSpec must expose toConfig() to bridge YAML to CompactConfig (R283)',
+    ),
+    (
+        'org/aethercode/core/providers/ProviderSpec.class',
+        b'compactFor',
+        'ProviderSpec must expose compactFor(modelId) lookup (R283)',
+    ),
+    (
+        'org/aethercode/core/providers/ModelSpec.class',
+        b'compact',
+        'ModelSpec must carry a compact field for the per-model override (R283)',
+    ),
+    (
+        'org/aethercode/core/engine/QueryEngine.class',
+        b'resolveCompactConfig',
+        'QueryEngine must resolve the per-model config (R283)',
+    ),
+    (
+        'org/aethercode/core/engine/QueryEngine.class',
+        b'setCompactRegistry',
+        'QueryEngine must accept a compact registry at startup (R283)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'setCompactRegistry',
+        'AetherCodeEngine must propagate compact registry to QueryEngine (R283)',
+    ),
+    (
+        'org/aethercode/protocol/methods/AetherCodeMethods.class',
+        b'setProviderRegistry',
+        'AetherCodeMethods must register setProviderRegistry RPC (R283)',
+    ),
 ]
 for path, needle, msg in checks:
     data = classes.get(path)
@@ -187,3 +262,11 @@ print(f'        SsdCommand registers the --interactive flag')
 print(f'  R282: ProviderSpec exposes hasApiKey() helper (env-var-driven)')
 print(f'        AetherCodeMethods registers listAvailableModels + model/list alias')
 print(f'        HttpJsonRpcServer routes listAvailableModels')
+print(f'  R283: CompactConfig.forContextWindow tier-default factory')
+print(f'        Strategy enum exposes summary8 / summary7 / summarySliding / disabled wire ids')
+print(f'        CompactSpec.toConfig() bridges YAML to runtime CompactConfig')
+print(f'        ProviderSpec.compactFor(modelId) walks model → provider → DEFAULT')
+print(f'        ModelSpec carries per-model compact field')
+print(f'        QueryEngine resolves per-model config (setCompactRegistry + resolveCompactConfig)')
+print(f'        AetherCodeEngine propagates compact registry to QueryEngine')
+print(f'        AetherCodeMethods registers setProviderRegistry RPC')

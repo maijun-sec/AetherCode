@@ -69,6 +69,17 @@ public class QueryEngine {
     private final StreamingToolExecutor streamingExecutor;
     private final org.aethercode.core.compact.Compactor compactor;
     private final Consumer<String> sideNoteSink;
+    // R283: per-model compact config. The engine reads
+    // this every turn to decide whether to compact. Both
+    // fields are volatile because {@link #switchModel}
+    // can be called from any thread (the Settings
+    // picker's onChange is async). The legacy path —
+    // reading {@code appState.contextWindow()} — still
+    // works when the registry isn't wired (single-provider
+    // legacy daemon).
+    private volatile org.aethercode.core.providers.ProviderRegistry compactRegistry;
+    private volatile String currentProviderName;
+    private volatile String currentModelId;
     // hook fired on every user prompt BEFORE the LLM stream
     // starts. Defaults to a no-op so existing callers (TUI, headless
     // --print, tests) see no behavioural change. The AetherCodeEngine
@@ -410,9 +421,59 @@ public class QueryEngine {
         pendingAwaitSummary = null;
     }
 
-    /** pre-flight auto-compact. Run BEFORE the
-     *  next turn starts when the transcript is at
-     *  >= 90% of the configured context window.
+    /** R283: install the provider registry used to
+     *  look up per-model compact configs. Idempotent
+     *  — safe to call repeatedly when the daemon
+     *  reloads providers.yaml. */
+    public void setCompactRegistry(
+            org.aethercode.core.providers.ProviderRegistry registry,
+            String currentProviderName,
+            String currentModelId) {
+        this.compactRegistry = registry;
+        this.currentProviderName = currentProviderName;
+        this.currentModelId = currentModelId;
+    }
+
+    /** R283: update just the (provider, model) the
+     *  engine is currently driving. Called from
+     *  {@code AetherCodeMethods.switchProvider} after
+     *  a successful hot-swap so the next
+     *  {@link #runPreFlightCompact()} consults the
+     *  new model's compact config. */
+    public void setCurrentModel(String providerName, String modelId) {
+        this.currentProviderName = providerName;
+        this.currentModelId = modelId;
+    }
+
+    /** R283: resolve the compact config for the
+     *  currently-active model. Three-way lookup:
+     *  <ol>
+     *    <li>registry.compactFor(provider, model) —
+     *        the per-model declaration</li>
+     *    <li>appState.contextWindow() — the legacy
+     *        CLI-flag path (when the daemon was booted
+     *        with --context-window but no registry)</li>
+     *    <li>null — neither set; caller skips</li>
+     *  </ol> */
+    private org.aethercode.core.compact.CompactConfig resolveCompactConfig() {
+        if (compactRegistry != null
+                && currentProviderName != null
+                && currentModelId != null) {
+            var spec = compactRegistry.get(currentProviderName);
+            if (spec.isPresent()) {
+                return spec.get().compactFor(currentModelId);
+            }
+        }
+        // legacy boot path — fall back to the
+        // --context-window flag value.
+        int ctx = appState.contextWindow();
+        if (ctx > 0) {
+            return org.aethercode.core.compact.CompactConfig.forContextWindow(ctx);
+        }
+        return null;
+    }
+
+/** pre-flight auto-compact. Run BEFORE the
      *  The default 90% is generous (the user has some
      *  room to keep typing) but tight enough to avoid
      *  the "context exceeded, request too large" 400
@@ -425,21 +486,63 @@ public class QueryEngine {
      *  emits a SideNote so the TUI can show a
      *  "compacting..." spinner.
      *
-     *  <p>Env override: AETHERCODE_COMPACT_THRESHOLD
-     *  (fraction of context window, default 0.9).
+     *  <p>R283: per-model configuration. The
+     *  contextWindow / compactAt / preserveTail /
+     *  strategy come from the {@link
+     *  org.aethercode.core.providers.CompactConfig} of
+     *  the currently-active model (looked up via
+     *  {@link #setCompactRegistry}). When the user
+     *  switches models mid-session, the new thresholds
+     *  apply on the next query — no daemon restart
+     *  needed.
+     *
+     *  <p>Env overrides:
+     *  <ul>
+     *    <li>{@code AETHERCODE_COMPACT_THRESHOLD} —
+     *        fraction override on the model's
+     *        {@code compactAt} (e.g. 0.7 to compact
+     *        earlier). Default 1.0 (use the model's
+     *        own value).</li>
+     *    <li>{@code AETHERCODE_COMPACT_TAIL} —
+     *        override the model's {@code preserveTail}.
+     *        Default 0 (use the model's own value).</li>
+     *  </ul>
      */
     public void runPreFlightCompact() {
         if (compactor == null) return;
-        int ctxWindow = appState.contextWindow();
+        // R283: pull the per-model config. Falls back to
+        // appState.contextWindow() (legacy boot path) when
+        // the engine has no provider registry wired.
+        org.aethercode.core.compact.CompactConfig cfg =
+                resolveCompactConfig();
+        if (cfg == null) return;
+        int ctxWindow = cfg.contextWindow();
         if (ctxWindow <= 0) return;
-        double threshold = 0.9;
+        // R283: gate uses the model's own compactAt by
+        // default (absolute token count), with an
+        // optional AETHERCODE_COMPACT_THRESHOLD
+        // fraction override (e.g. 0.7 = compact at
+        // 70% of contextWindow for early compaction).
+        // When the env var is unset, treat the model's
+        // compactAt as the gate — matching the per-model
+        // declaration rather than the legacy 90%
+        // default.
+        long gate;
         String env = System.getenv("AETHERCODE_COMPACT_THRESHOLD");
         if (env != null && !env.isBlank()) {
+            double threshold;
             try { threshold = Double.parseDouble(env.trim()); }
-            catch (NumberFormatException ignored) {}
+            catch (NumberFormatException ignored) { threshold = -1; }
+            if (threshold > 0) {
+                gate = (long) (ctxWindow * threshold);
+            } else {
+                gate = cfg.compactAt();
+            }
+        } else {
+            gate = cfg.compactAt();
         }
         long current = estimateTranscriptTokens();
-        if (current < (long) (ctxWindow * threshold)) return;
+        if (current < gate) return;
         var messages = new java.util.ArrayList<>(appState.transcript());
         if (!compactor.shouldCompact(messages)) return;
         // emit a structured user-role note so the
@@ -448,9 +551,15 @@ public class QueryEngine {
         // rather than the StreamEvent action so the
         // note is part of the durable transcript.
         try {
-            String note = "R140 pre-flight compact: " + messages.size() + " msgs / "
+            // R283: the note now shows the model's tier
+            // (summary8 / summary7 / sliding) and the
+            // preserveTail count so the user can see
+            // exactly which knobs fired.
+            String note = "R283 pre-flight compact: " + messages.size() + " msgs / "
                     + current + " tokens (window=" + ctxWindow
-                    + ", threshold=" + (int) (threshold * 100) + "%)";
+                    + ", compactAt=" + gate
+                    + ", strategy=" + cfg.strategy().wire()
+                    + ", preserveTail=" + cfg.preserveTail() + ")";
             java.util.logging.Logger.getLogger(QueryEngine.class.getName())
                     .info(note);
             Message noteMsg = new Message(

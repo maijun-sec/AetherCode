@@ -19,6 +19,10 @@ import java.util.List;
  * can show it in the Settings picker and the
  * metrics module can bill the user.
  *
+ * <p>The {@code compact} block (R283) declares the
+ * provider-level compaction defaults. Individual
+ * models can override via {@link ModelSpec#compact()}.
+ *
  * <p>Provider specs are typically loaded from
  * {@code ~/.aethercode/providers.yaml} (or the
  * bundled default if that file is missing) by
@@ -31,8 +35,21 @@ public record ProviderSpec(
         String baseUrl,
         String apiKeyEnv,
         String defaultModel,
-        List<ModelSpec> models
+        List<ModelSpec> models,
+        CompactSpec compact
 ) {
+    /** Legacy 6-arg overload so existing test fixtures and
+     *  user providers.yaml files keep working. Maps to
+     *  the 7-arg form with {@code compact=null} (the
+     *  accessor then falls back to the model-level
+     *  compact block, then to
+     *  {@link org.aethercode.core.compact.CompactConfig#DEFAULT}). */
+    public ProviderSpec(String name, String type, String baseUrl,
+                        String apiKeyEnv, String defaultModel,
+                        List<ModelSpec> models) {
+        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, null);
+    }
+
     public ProviderSpec {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("provider name is required");
@@ -83,5 +100,48 @@ public record ProviderSpec(
     public boolean hasApiKey() {
         String k = apiKey();
         return k != null && !k.isBlank();
+    }
+
+    /** R283: look up the compaction configuration for
+     *  a specific model id. The lookup order is
+     *  <ol>
+     *    <li>the model's own {@code compact} block</li>
+     *    <li>this provider's {@code compact} block</li>
+     *    <li>{@link org.aethercode.core.compact.CompactConfig#DEFAULT}
+     *        — the last-resort tier default for a 200k window</li>
+     *  </ol>
+     *  Returns the runtime
+     *  {@link org.aethercode.core.compact.CompactConfig}
+     *  form (the YAML {@link CompactSpec} is converted
+     *  eagerly here so callers never see a "compact
+     *  missing" branch). */
+    public org.aethercode.core.compact.CompactConfig compactFor(String modelId) {
+        for (ModelSpec m : models) {
+            if (m.id().equals(modelId)) {
+                if (m.compact() != null) return m.compact().toConfig();
+                if (compact != null) return compact.toConfig();
+                return tierDefaultFor(contextWindow());
+            }
+        }
+        return org.aethercode.core.compact.CompactConfig.DEFAULT;
+    }
+
+    /** Default compact tier when neither the model
+     *  nor the provider declared a compact block.
+     *  Picks a sensible buffer based on the model's
+     *  own context window. */
+    public int contextWindow() {
+        // pick the max across all models as the
+        // provider-level context (used as fallback
+        // by compactFor when nothing else matches).
+        int max = 0;
+        for (ModelSpec m : models) {
+            if (m.context() > max) max = m.context();
+        }
+        return max > 0 ? max : org.aethercode.core.compact.CompactConfig.DEFAULT.contextWindow();
+    }
+
+    private static org.aethercode.core.compact.CompactConfig tierDefaultFor(int ctx) {
+        return org.aethercode.core.compact.CompactConfig.forContextWindow(ctx);
     }
 }

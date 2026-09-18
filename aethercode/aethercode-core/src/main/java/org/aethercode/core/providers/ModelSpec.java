@@ -22,6 +22,13 @@ package org.aethercode.core.providers;
  * equal to {@code context} (the "as much as
  * possible" conservative default that lets the
  * model pick its own ceiling).
+ *
+ * <p>R283: per-model compaction override. When
+ * non-null, the model's {@code compact} block
+ * takes precedence over the provider's. Used
+ * when a single provider hosts both small-context
+ * (e.g. glm-4-flash 128k) and large-context (e.g.
+ * the future glm-4-1m-context) models.
  */
 public record ModelSpec(
         String id,
@@ -29,7 +36,8 @@ public record ModelSpec(
         double outputPer1k,
         int context,
         int maxOutput,
-        boolean isDefault
+        boolean isDefault,
+        CompactSpec compact
 ) {
     public ModelSpec {
         if (id == null || id.isBlank()) {
@@ -49,11 +57,29 @@ public record ModelSpec(
         }
     }
 
+    /** R136.4: deprecated 6-arg overload, kept for
+     *  backward compat with callers that don't track
+     *  output ceiling separately. Delegates to the
+     *  7-arg form with {@code maxOutput = context}
+     *  (the "let the model pick" default) and
+     *  {@code compact=null} (the engine falls back
+     *  to the provider-level compact block, then to
+     *  {@link org.aethercode.core.compact.CompactConfig#DEFAULT}).
+     *
+     *  @deprecated prefer the 7-arg form so the engine
+     *    can set the chat-completion {@code max_tokens}
+     *    correctly for the model AND honour per-model
+     *    compaction overrides. */
+    @Deprecated
+    public ModelSpec(String id, double inputPer1k, double outputPer1k,
+                     int context, int maxOutput, boolean isDefault) {
+        this(id, inputPer1k, outputPer1k, context, maxOutput, isDefault, null);
+    }
+
     /** R136.4: deprecated 5-arg overload, kept for
      *  backward compat with callers that don't track
      *  output ceiling separately. Delegates to the
-     *  6-arg form with {@code maxOutput = context}
-     *  (the "let the model pick" default).
+     *  6-arg form with {@code maxOutput = context}.
      *
      *  @deprecated prefer the 6-arg form so the engine
      *    can set the chat-completion {@code max_tokens}
@@ -70,7 +96,7 @@ public record ModelSpec(
      *  caller; the engine will cap maxOutput to
      *  whatever the chat completion supports. */
     public static ModelSpec free(String id, int context) {
-        return new ModelSpec(id, 0.0, 0.0, context, context, false);
+        return new ModelSpec(id, 0.0, 0.0, context, context, false, null);
     }
 
     /** R136.4: same as {@link #free(String, int)} but
@@ -78,6 +104,15 @@ public record ModelSpec(
      *  models like Claude Sonnet 4.5 where output
      *  is 64K but context is 200K). */
     public static ModelSpec free(String id, int context, int maxOutput) {
-        return new ModelSpec(id, 0.0, 0.0, context, maxOutput, false);
+        return new ModelSpec(id, 0.0, 0.0, context, maxOutput, false, null);
+    }
+
+    /** R283: free + explicit per-model compact config
+     *  (e.g. for ollama models that disable compaction
+     *  because the compactor's LLM round-trip costs
+     *  more than the saved context tokens). */
+    public static ModelSpec free(String id, int context,
+                                 CompactSpec compact) {
+        return new ModelSpec(id, 0.0, 0.0, context, context, false, compact);
     }
 }

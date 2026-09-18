@@ -114,6 +114,17 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     private volatile org.aethercode.sdk.SessionManager sessionManager;
     private final Compactor compactor;
     private final CostTracker costTracker;
+    // R283: provider registry + current (provider,
+    // model) id pair. Volatile because the daemon's
+    // switchProvider RPC mutates them off the query
+    // thread; the QueryEngine's pre-flight gate reads
+    // them every turn. The fields are null-safe — when
+    // unset (legacy boot path with --context-window
+    // and no registry), the engine falls back to the
+    // --context-window flag value.
+    private volatile org.aethercode.core.providers.ProviderRegistry providerRegistry;
+    private volatile String currentProviderName;
+    private volatile String currentModelId;
     /** per-session tool-call + state
      *  counters. Reset on {@link #loadSession}
      *  (so a new session in the same engine
@@ -1275,6 +1286,19 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // reach the catch (Throwable) branch.
         if (this.queryEngine != null) {
             this.queryEngine.setChatClient(this.chatClient);
+        // R283: keep the compact registry in sync with
+        // the engine's current provider/model so
+        // runPreFlightCompact() reads the right
+        // thresholds. The QueryEngine constructor
+        // was called before setProviderRegistry()
+        // could be wired in, so we pass them here
+        // too.
+        if (providerRegistry != null) {
+            this.queryEngine.setCompactRegistry(
+                    providerRegistry,
+                    currentProviderName,
+                    currentModelId);
+        }
         }
         if (client instanceof org.aethercode.engine.springai.SpringAiChatClient sac) {
             sac.appState(this.appState);
@@ -1286,10 +1310,60 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     /** update the engine's mainLoopModel
      *  field. Used after switchProvider so the
      *  next {@code getState} call surfaces the
-     *  new model without a full engine rebuild. */
+     *  new model without a full engine rebuild.
+     *  R283: also forwards to the QueryEngine so
+     *  the next {@code runPreFlightCompact()} consults
+     *  the new model's compact config (different
+     *  contextWindow / compactAt / preserveTail /
+     *  strategy per model). */
     public AetherCodeEngine mainLoopModelName(String m) {
         this.appState.mainLoopModel(m);
+        if (this.queryEngine != null) {
+            this.queryEngine.setCurrentModel(currentProviderName, m);
+        }
+        // R283: refresh the boot-time contextWindow
+        // declared on AppState. The legacy
+        // --context-window flag stays authoritative
+        // for the legacy boot path; when the engine
+        // runs through the ProviderRegistry, the
+        // per-model config wins.
+        if (providerRegistry != null && currentProviderName != null && m != null) {
+            var spec = providerRegistry.get(currentProviderName);
+            if (spec.isPresent()) {
+                var compact = spec.get().compactFor(m);
+                if (compact.contextWindow() > 0) {
+                    this.appState.contextWindow(compact.contextWindow());
+                }
+            }
+        }
         return this;
+    }
+
+    /** R283: install the provider registry. The
+     *  registry is the source of truth for the
+     *  per-model compact config; without it, the
+     *  engine falls back to the
+     *  {@code --context-window} flag (legacy boot
+     *  path). Safe to call repeatedly — re-installing
+     *  a registry is a no-op if neither field
+     *  changed. */
+    public AetherCodeEngine setCompactRegistry(
+            org.aethercode.core.providers.ProviderRegistry registry,
+            String providerName,
+            String modelId) {
+        this.providerRegistry = registry;
+        this.currentProviderName = providerName;
+        this.currentModelId = modelId;
+        if (this.queryEngine != null) {
+            this.queryEngine.setCompactRegistry(registry, providerName, modelId);
+        }
+        return this;
+    }
+
+    /** R283 accessor for the current compact
+     *  registry (mainly tests). */
+    public org.aethercode.core.providers.ProviderRegistry compactRegistry() {
+        return providerRegistry;
     }
 
     /** install (or remove) the task-push fan-out.

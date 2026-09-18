@@ -152,6 +152,11 @@ public final class ProviderRegistry {
         public String apiKeyEnv;
         public String defaultModel;
         public List<ModelYaml> models;
+        /** R283: provider-level compaction defaults. Each
+         *  field is optional; absent fields fall back to
+         *  the per-model block, then to
+         *  {@link org.aethercode.core.compact.CompactConfig#DEFAULT}. */
+        public CompactYaml compact;
 
         ProviderSpec toSpec() {
             List<ModelSpec> ms = new ArrayList<>();
@@ -160,18 +165,32 @@ public final class ProviderRegistry {
                     int out = my.maxOutput != null && my.maxOutput > 0
                             ? my.maxOutput
                             : my.context;  // conservative default
+                    // R283: convert the per-model compact block.
+                    // The provider's compact block serves as a
+                    // fallback for fields missing from the
+                    // model block — the merge happens in
+                    // {@link ModelSpec#compact()} / CompactSpec.toConfig().
+                    CompactSpec merged = CompactYaml.merge(my.compact, compact);
                     ms.add(new ModelSpec(
                             my.id,
                             my.inputPer1k,
                             my.outputPer1k,
                             my.context,
                             out,
-                            Boolean.TRUE.equals(my.isDefault)));
+                            Boolean.TRUE.equals(my.isDefault),
+                            merged));
                 }
             }
+            // The provider-level compact uses its own contextWindow
+            // (or falls back to the LARGEST model's context if
+            // absent). The individual model's CompactSpec inherits
+            // from this.
+            CompactSpec providerCompact = compact != null
+                    ? compact.toSpec()
+                    : null;
             return new ProviderSpec(
                     name, type, baseUrl,
-                    apiKeyEnv, defaultModel, ms);
+                    apiKeyEnv, defaultModel, ms, providerCompact);
         }
     }
 
@@ -191,6 +210,55 @@ public final class ProviderRegistry {
          *  the Java-idiomatic {@code isDefault}. */
         @JsonProperty("default")
         public Boolean isDefault;
+        /** R283: per-model compaction override. */
+        public CompactYaml compact;
+    }
+
+    /** R283: provider-level OR model-level compact block.
+     *  Inner class so the YAML deserialiser can parse
+     *  the same shape at both positions. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class CompactYaml {
+        public Integer contextWindow;
+        public Integer compactAt;
+        public Integer preserveTail;
+        public String strategy;
+
+        CompactSpec toSpec() {
+            if (contextWindow == null) {
+                throw new IllegalArgumentException(
+                        "compact block requires contextWindow");
+            }
+            return new CompactSpec(contextWindow, compactAt, preserveTail, strategy);
+        }
+
+        /** merge a model-level block on top of a
+         *  provider-level block. {@code provider} is the
+         *  fallback (its values fill any nulls in
+         *  {@code model}); {@code model} wins when both
+         *  declare the same field. The result is
+         *  always non-null when the provider block is
+         *  present (we copy contextWindow from there
+         *  when the model block omits it). */
+        static CompactSpec merge(CompactYaml model, CompactYaml provider) {
+            CompactYaml winner = model != null ? model : provider;
+            if (winner == null) return null;
+            CompactYaml parent = model != null ? provider : null;
+            CompactYaml m = new CompactYaml();
+            m.contextWindow = firstNonNull(model != null ? model.contextWindow : null,
+                    parent != null ? parent.contextWindow : null);
+            m.compactAt = firstNonNull(model != null ? model.compactAt : null,
+                    parent != null ? parent.compactAt : null);
+            m.preserveTail = firstNonNull(model != null ? model.preserveTail : null,
+                    parent != null ? parent.preserveTail : null);
+            m.strategy = firstNonNull(model != null ? model.strategy : null,
+                    parent != null ? parent.strategy : null);
+            return m.toSpec();
+        }
+
+        private static <T> T firstNonNull(T a, T b) {
+            return a != null ? a : b;
+        }
     }
 
     // ---- Bundled defaults ----

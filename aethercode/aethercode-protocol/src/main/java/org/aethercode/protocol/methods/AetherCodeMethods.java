@@ -974,6 +974,27 @@ public class AetherCodeMethods {
      *  this again. */
     public void setProviderRegistry(org.aethercode.core.providers.ProviderRegistry reg) {
         this.providerRegistry = reg;
+        // R283: propagate to the engine so its
+        // runPreFlightCompact() looks up the
+        // current model's CompactConfig instead of
+        // the boot-time --context-window flag. The
+        // currentProviderName / currentModelId are
+        // already on the engine from boot; null
+        // here means the daemon hasn't picked one
+        // yet (the user hasn't run a query), in
+        // which case the engine skips the gate.
+        if (this.engine != null) {
+            String pname = currentProviderName;
+            String mname = currentModelId;
+            if (pname == null && this.engine.appState() != null) {
+                // best-effort: ask the engine for its
+                // current model so the pre-flight gate
+                // is consistent from the very first
+                // compact.
+                mname = this.engine.appState().mainLoopModel();
+            }
+            this.engine.setCompactRegistry(reg, pname, mname);
+        }
     }
     /** install a resolver that builds a
      *  {@link org.aethercode.core.llm.ChatClient}
@@ -5969,6 +5990,21 @@ public class AetherCodeMethods {
                     mm.put("context", m.context());
                     mm.put("maxOutput", m.maxOutput());
                     mm.put("default", m.isDefault());
+                    // R283: include the compact config
+                    // so the desktop Settings panel can
+                    // show "compacts at 115k tokens /
+                    // summary8 / preserve 4 msgs" per
+                    // model. Renderer uses this for the
+                    // tooltip / sub-line.
+                    org.aethercode.core.compact.CompactConfig cfg =
+                            p.compactFor(m.id());
+                    java.util.Map<String, Object> compactRow =
+                            new java.util.LinkedHashMap<>();
+                    compactRow.put("contextWindow", cfg.contextWindow());
+                    compactRow.put("compactAt", cfg.compactAt());
+                    compactRow.put("preserveTail", cfg.preserveTail());
+                    compactRow.put("strategy", cfg.strategy().wire());
+                    mm.put("compact", compactRow);
                     modelRows.add(mm);
                 }
             }
@@ -6097,6 +6133,22 @@ public class AetherCodeMethods {
             if (newClient != null) {
                 engine.setChatClient(newClient);
                 engine.mainLoopModelName(modelId);
+                // R283: the engine's pre-flight
+                // compact consults the registry's
+                // per-model CompactConfig. After a
+                // successful switch, the (provider, model)
+                // fields must point at the new pair —
+                // mainLoopModelName() does it, but only
+                // when setProviderRefreshed() has
+                // already happened; for the boot-time
+                // path (when setProviderRegistry()
+                // ran with no current model yet), do
+                // it explicitly here.
+                if (engine.compactRegistry() == null
+                        && providerRegistry != null) {
+                    engine.setCompactRegistry(
+                            providerRegistry, providerName, modelId);
+                }
             }
         } catch (Exception e) {
             throw new JsonRpcProtocolException(
