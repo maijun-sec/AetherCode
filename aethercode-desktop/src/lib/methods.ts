@@ -367,6 +367,29 @@ export interface AvailableModelInfo {
   default: boolean;
 }
 
+/** R285: one variant (Quality preset) of a
+ *  single model. Mirrors the daemon's
+ *  {@code org.aethercode.core.providers.Variant}
+ *  shape — name + description + temperature +
+ *  maxTokens + reasoningBudget +
+ *  extendedThinking. The Settings panel's
+ *  Quality dropdown shows one row per
+ *  variant; the picker previews the active
+ *  variant's knobs as a read-only line below
+ *  the dropdown. */
+export interface VariantInfo {
+  name: string;
+  description: string;
+  /** null = inherit from the model's bundled
+   *  default. Always populated on the wire
+   *  because the daemon fills nulls with the
+   *  bundled-default value at RPC time. */
+  temperature: number | null;
+  maxTokens: number | null;
+  reasoningBudget: number | null;
+  extendedThinking: boolean | null;
+}
+
 /** parsed workflow metadata returned by `listWorkflows` /
  *  `getWorkflow`. The `raw` field is the full YAML body, only
  *  populated for `getWorkflow`. The `steps[]` is the step list
@@ -952,14 +975,38 @@ export class AetherCodeRpc {
   switchProvider(opts: {
     provider: string;
     model?: string | null;
+    variant?: string | null;
   }): Promise<{
     ok: true;
     provider: string;
     model: string;
+    variant: string | null;
+    activeVariant: import('./methods').VariantInfo | null;
   }> {
     return this.call('switchProvider', {
       provider: opts.provider,
       model: opts.model ?? null,
+      variant: opts.variant ?? null,
+    });
+  }
+  // R285: switch just the variant without
+  // touching the provider / model. Mirrors
+  // the {@code switchVariant} RPC. The
+  // desktop's Quality pills row calls this
+  // on click. The daemon normalises the
+  // name (case-insensitive) and returns the
+  // active variant row so the renderer can
+  // echo it in a preview chip ("0.7 /
+  // 32K / no thinking").
+  switchVariant(opts: {
+    variant: string;
+  }): Promise<{
+    ok: true;
+    variant: string;
+    activeVariant: import('./methods').VariantInfo | null;
+  }> {
+    return this.call('switchVariant', {
+      variant: opts.variant,
     });
   }
   // R284: pre-compaction snapshot access. The desktop

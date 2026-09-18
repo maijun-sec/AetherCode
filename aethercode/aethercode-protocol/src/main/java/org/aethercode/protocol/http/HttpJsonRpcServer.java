@@ -905,6 +905,8 @@ public final class HttpJsonRpcServer {
             // dropdowns.
             case "listProviders"          -> methods.listProviders(params);
             case "switchProvider"         -> methods.switchProvider(params);
+            // R285: hot-swap just the variant.
+            case "switchVariant"          -> methods.switchVariant(params);
             // cancel a running background subagent. The
             // stdio daemon picks this up via the
             // AetherCodeMethods.registerAll() map; the HTTP+WS

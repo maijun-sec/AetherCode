@@ -157,6 +157,14 @@ public final class ProviderRegistry {
          *  the per-model block, then to
          *  {@link org.aethercode.core.compact.CompactConfig#DEFAULT}. */
         public CompactYaml compact;
+        /** R285: provider-level variant defaults. Applied
+         *  to every sibling model that doesn't declare
+         *  its own variant block. A provider that wants
+         *  to share presets across its whole model
+         *  family (e.g. "GLM uses temperature 0.3 for
+         *  low by default") can declare it once at
+         *  the provider level. */
+        public List<VariantYaml> variants;
 
         ProviderSpec toSpec() {
             List<ModelSpec> ms = new ArrayList<>();
@@ -171,6 +179,13 @@ public final class ProviderRegistry {
                     // model block — the merge happens in
                     // {@link ModelSpec#compact()} / CompactSpec.toConfig().
                     CompactSpec merged = CompactYaml.merge(my.compact, compact);
+                    // R285: same merge idea for variants. The
+                    // model-level list wins when non-empty;
+                    // otherwise we inherit the provider-level
+                    // block (and ModelSpec's own constructor
+                    // falls back to Variant.BUILTIN if BOTH
+                    // are missing).
+                    List<Variant> mergedVariants = VariantYaml.mergeList(my.variants, variants);
                     ms.add(new ModelSpec(
                             my.id,
                             my.inputPer1k,
@@ -178,7 +193,8 @@ public final class ProviderRegistry {
                             my.context,
                             out,
                             Boolean.TRUE.equals(my.isDefault),
-                            merged));
+                            merged,
+                            mergedVariants));
                 }
             }
             // The provider-level compact uses its own contextWindow
@@ -188,9 +204,15 @@ public final class ProviderRegistry {
             CompactSpec providerCompact = compact != null
                     ? compact.toSpec()
                     : null;
+            // R285: provider-level variant block to the
+            // same model — sibling models that lack
+            // their own variant list pick this up.
+            List<Variant> providerVariants = variants != null
+                    ? VariantYaml.toVariantList(variants)
+                    : null;
             return new ProviderSpec(
                     name, type, baseUrl,
-                    apiKeyEnv, defaultModel, ms, providerCompact);
+                    apiKeyEnv, defaultModel, ms, providerCompact, providerVariants);
         }
     }
 
@@ -212,6 +234,58 @@ public final class ProviderRegistry {
         public Boolean isDefault;
         /** R283: per-model compaction override. */
         public CompactYaml compact;
+        /** R285: per-model variants. Empty list means
+         *  "inherit the provider's variant block"; a
+         *  non-empty list replaces the provider
+         *  block (so a model owner can pick exactly
+         *  which presets apply). */
+        public List<VariantYaml> variants;
+    }
+
+    /** R285: provider-level OR model-level variant
+     *  block. Inner class so the YAML deserialiser
+     *  can parse the same shape at both positions
+     *  (mirrors {@link CompactYaml}). */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class VariantYaml {
+        public String name;
+        public String description;
+        public Double temperature;
+        public Integer maxTokens;
+        public Integer reasoningBudget;
+        public Boolean extendedThinking;
+
+        VariantSpec toSpec() {
+            return new VariantSpec(
+                    name, description, temperature, maxTokens,
+                    reasoningBudget, extendedThinking);
+        }
+
+        static List<Variant> toVariantList(List<VariantYaml> ys) {
+            if (ys == null || ys.isEmpty()) return null;
+            List<Variant> out = new ArrayList<>(ys.size());
+            for (VariantYaml y : ys) {
+                if (y == null || y.name == null || y.name.isBlank()) continue;
+                out.add(y.toSpec().toVariant());
+            }
+            return out.isEmpty() ? null : out;
+        }
+
+        /** R285: resolve a model-level variants list
+         *  against the provider's list. The model
+         *  wins when non-empty; otherwise we fall
+         *  back to the provider's block. A
+         *  {@code null} or empty model-list means
+         *  "inherit"; the resulting list is what the
+         *  ModelSpec constructor receives. */
+        static List<Variant> mergeList(List<VariantYaml> model,
+                                       List<VariantYaml> provider) {
+            List<Variant> modelResolved = model == null
+                    ? null
+                    : toVariantList(model);
+            if (modelResolved != null) return modelResolved;
+            return toVariantList(provider);
+        }
     }
 
     /** R283: provider-level OR model-level compact block.

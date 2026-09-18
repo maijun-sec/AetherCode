@@ -493,6 +493,11 @@ function clearDraft(sessionId: string | null) {
  *  canonical value (we just leave it alone). */
 interface EnginePrefs {
   model?: string;
+  /** R285: last-known variant name ("low" /
+   *  "medium" / "high" / "xhigh"). Restored
+   *  on next boot so the Quality pill row
+   *  shows the right active state. */
+  variant?: string;
   permissionMode?: string;
   loopWindow?: number;
   loopThreshold?: number;
@@ -1463,13 +1468,35 @@ interface AppState {
    *  currentModel in the store updates so
    *  the Header / StatusBar reflect the
    *  change without a refresh. */
-  switchProvider: (provider: string, model?: string) => Promise<void>;
+  switchProvider: (provider: string, model?: string, variant?: string | null) => Promise<void>;
+  /** R285: switch just the variant without
+   *  touching the provider / model. Mirrors the
+   *  {@code switchVariant} RPC. Returns the
+   *  active variant row so the caller can
+   *  echo it in a toast ("Quality set to
+   *  high (1.0 / 48K)"). */
+  switchVariant: (variant: string) => Promise<import('../lib/methods').VariantInfo | null>;
   /** the daemon's current provider
    *  + model, set by refreshProviders. The
    *  Settings panel reads these to highlight
    *  the active row. */
   currentProvider: string | null;
   availableProviders: import('../lib/methods').ProviderInfo[];
+  /** R285: the currently-installed variant name
+   *  ("low" / "medium" / "high" / "xhigh"). Set by
+   *  {@link switchVariant} and by the model
+   *  picker's {@code /model y:y} syntax. The
+   *  Settings panel's Quality dropdown reads this
+   *  to highlight the active row. */
+  currentVariant: string | null;
+  /** R285: the active variant's full knobs
+   *  (temperature / maxTokens / reasoningBudget /
+   *  extendedThinking). Mirrors the daemon's
+   *  activeVariant field. The Settings panel
+   *  uses this for the read-only preview
+   *  ("0.7 / 32K / no thinking") next to the
+   *  Quality dropdown. */
+  activeVariant: import('../lib/methods').VariantInfo | null;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
    *  calls this on open. The agent body
@@ -3490,6 +3517,15 @@ export const useStore = create<AppState>((set, get) => {
     // which row to highlight as the active one.
     availableProviders: [],
     currentProvider: null,
+    // R285: variant state. Both default to null
+    // (the engine falls back to the bundled
+    // variant.DEFAULT when the daemon hasn't
+    // installed an explicit override). The
+    // Settings panel's Quality dropdown watches
+    // currentVariant to highlight the active
+    // row.
+    currentVariant: null,
+    activeVariant: null,
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
     // tab on open). Each entry has {name,
@@ -4770,12 +4806,42 @@ export const useStore = create<AppState>((set, get) => {
     // the round-trip.
     refreshProviders: async () => {
       try {
-        const r = await rpc.listProviders();
+        // R285: prefer the rich listAvailableModels
+        // RPC (it carries per-model variants +
+        // currentVariant + activeVariant). The
+        // legacy listProviders RPC is a fallback
+        // for older daemon builds that haven't
+        // shipped the new endpoint yet.
+        let providers: any[] = [];
+        let currentProvider: string | null = null;
+        let currentModel: string | null = null;
+        let currentVariant: string | null = null;
+        let activeVariant: any = null;
+        try {
+          const r = await rpc.listAvailableModels();
+          providers = r.providers ?? [];
+          currentProvider = (r as any).currentProvider ?? null;
+          currentModel = (r as any).currentModel ?? null;
+          currentVariant = (r as any).currentVariant ?? null;
+          activeVariant = (r as any).activeVariant ?? null;
+        } catch {
+          // legacy daemon — fall back to the
+          // listProviders RPC. We don't try
+          // listAvailableModels again on the next
+          // tick; the boot path retries via
+          // initialize() so the user gets the
+          // rich form on a daemon restart.
+          const r = await rpc.listProviders();
+          providers = r.providers ?? [];
+          currentProvider = r.currentProvider ?? null;
+        }
         set({
-          availableProviders: r.providers ?? [],
-          currentProvider: r.currentProvider ?? null,
+          availableProviders: providers,
+          currentProvider,
+          currentVariant,
+          activeVariant,
         });
-        return r;
+        return { providers, currentProvider, currentModel };
       } catch (e) {
         console.warn('[store] refreshProviders failed:', e);
         return { providers: [], currentProvider: null, currentModel: null };
@@ -4871,11 +4937,21 @@ export const useStore = create<AppState>((set, get) => {
     // the Header's current-model badge and the
     // Settings picker's active row update
     // without a refresh.
-    switchProvider: async (provider, model) => {
+    switchProvider: async (provider, model, variant) => {
       try {
-        const r = await rpc.switchProvider({ provider, model: model ?? null });
+        const r = await rpc.switchProvider({ provider, model: model ?? null, variant: variant ?? null });
         set({
           currentProvider: (r as any).provider ?? provider,
+          // R285: the response tail from
+          // switchProvider carries the active
+          // variant row so the Quality
+          // dropdown can update without an
+          // extra round-trip. Fall back to the
+          // daemon's null-payload when the
+          // server hasn't filled the field
+          // (older daemon builds).
+          currentVariant: (r as any).variant ?? null,
+          activeVariant: (r as any).activeVariant ?? null,
           // The engineState field is the
           // single source of truth for the
           // model. Refresh it after a switch so
@@ -4969,6 +5045,37 @@ export const useStore = create<AppState>((set, get) => {
       // server-side (e.g. sessionId rotation on a model
       // change that affected provider).
       void get().refreshEngineState();
+    },
+    /** R285: switch just the variant without
+     *  touching the provider / model. Mirrors the
+     *  {@code switchVariant} RPC. Returns the
+     *  active variant row so the caller can
+     *  echo it in a toast ("Quality set to
+     *  high (1.0 / 48K)"). */
+    switchVariant: async (variant: string) => {
+      try {
+        const r = await rpc.switchVariant({ variant });
+        const rAny = r as any;
+        // persist the user's choice to
+        // localStorage so a reload (or a fresh
+        // daemon) restores the same variant. We
+        // write AFTER the daemon RPC succeeds so
+        // a failure leaves the prior value
+        // intact. The in-memory state is the
+        // source of truth; localStorage is a
+        // nice-to-have (the R117 lesson).
+        const prefs = readEnginePrefs();
+        if (rAny.variant) prefs.variant = rAny.variant;
+        writeEnginePrefs(prefs);
+        set({
+          currentVariant: rAny.variant ?? null,
+          activeVariant: rAny.activeVariant ?? null,
+        });
+        return rAny.activeVariant ?? null;
+      } catch (e) {
+        console.warn('[store] switchVariant failed:', e);
+        throw e;
+      }
     },
     setPermissionMode: async (mode: string) => {
       // the dropdown sends a UI tier

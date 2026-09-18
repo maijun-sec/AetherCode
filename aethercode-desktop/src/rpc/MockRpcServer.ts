@@ -138,6 +138,22 @@ export class MockRpcServer {
      *  engine's "active session" is a higher-level concept
      *  than the sessions list. */
     defaultSessionId?: string;
+    /** R285: mock-side mirror of the engine's
+     *  currentProvider / currentModel. Set by the
+     *  switchProvider handler and echoed by
+     *  listAvailableModels so the MessageInput
+     *  dropdown's active row reflects the latest
+     *  pick on first paint. */
+    currentProvider?: string;
+    currentModel?: string;
+    /** R285: mock-side mirror of the active
+     *  variant row. Set by switchVariant +
+     *  switchProvider(variant). Echoed by
+     *  listAvailableModels so the Quality pill
+     *  can render the right active state
+     *  before the user clicks anything. */
+    currentVariant?: string;
+    activeVariant?: Record<string, unknown> | null;
   } = {
     sessions: [], grants: [], models: [],
     providers: [], workflows: [], tasks: [],
@@ -681,8 +697,63 @@ export class MockRpcServer {
           hasApiKey: p.hasApiKey,
           defaultModel: p.defaultModel,
         })),
-        currentProvider: null,
-        currentModel: null,
+        currentProvider: this.store.currentProvider ?? null,
+        currentModel: this.store.currentModel ?? null,
+        // R285: surface the active variant row so the
+        // MessageInput Quality pills can highlight the
+        // active state on first paint without an extra
+        // round-trip. Defaults to null when nothing
+        // has been picked yet.
+        currentVariant: this.store.currentVariant ?? null,
+        activeVariant: this.store.activeVariant ?? null,
+      };
+    });
+    // R285: provider/model swap. Mirrors the daemon's
+    // switchProvider RPC: persists the new (provider,
+    // model) on the mock store, optionally carries
+    // a variant argument, and echoes the active
+    // variant row back so the renderer's Quality
+    // pill highlights it. Tests rely on this to
+    // exercise `/model y:y` syntax + provider
+    // dropdown changes end-to-end.
+    this.handle('switchProvider', (params) => {
+      const { provider, model, variant } = (params ?? {}) as {
+        provider?: string | null;
+        model?: string | null;
+        variant?: string | null;
+      };
+      if (provider) this.store.currentProvider = provider;
+      const targetModel = model || (this.store.currentModel ?? '');
+      if (targetModel) this.store.currentModel = targetModel;
+      if (variant) {
+        this.store.currentVariant = variant;
+        this.store.activeVariant = resolveVariant(variant);
+      }
+      return {
+        ok: true,
+        provider: this.store.currentProvider,
+        model: this.store.currentModel,
+        variant: this.store.currentVariant ?? null,
+        activeVariant: this.store.activeVariant ?? null,
+      };
+    });
+    // R285: variant-only swap. Mirrors the daemon's
+    // switchVariant RPC: keeps the current
+    // provider / model, just rotates the variant.
+    // Returns the active variant row (with knob
+    // values like temperature / maxTokens /
+    // reasoningBudget) so the Quality pill can
+    // echo the new state immediately.
+    this.handle('switchVariant', (params) => {
+      const { variant } = (params ?? {}) as { variant?: string | null };
+      const name = (variant ?? '').toString().trim().toLowerCase();
+      const resolved = resolveVariant(name);
+      this.store.currentVariant = resolved.name;
+      this.store.activeVariant = resolved;
+      return {
+        ok: true,
+        variant: resolved.name,
+        activeVariant: resolved,
       };
     });
     this.handle('model/get', (params) => {
@@ -825,4 +896,59 @@ function toSummary(d: SessionDetail, withPreview: boolean): SessionListItem {
 export function ok<R>(id: number, result: R) { return buildOk(id, result); }
 export function err(id: number, code: number, message: string, data?: unknown) {
   return buildErr(id, code, message, data);
+}
+
+// R285: variant resolver. Mirrors the daemon's
+// Variant.byName() — opencode-style aliases
+// ("default"/"medium"/"med" → MEDIUM,
+// "low"/"fast" → LOW, "high"/"deep" → HIGH,
+// "xhigh" → XHIGH), falling back to a generic
+// default when nothing matches. Each preset
+// carries the same temperature / maxTokens /
+// reasoningBudget / extendedThinking knobs
+// the daemon ships. Tests use this to
+// exercise switchVariant end-to-end without
+// needing a real ChatClient.
+const VARIANT_PRESETS: Record<string, {
+  name: string;
+  description: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  reasoningBudget: number | null;
+  extendedThinking: boolean | null;
+}> = {
+  low: {
+    name: 'low', description: 'Low — fastest, lowest temperature.',
+    temperature: 0.3, maxTokens: 16_000,
+    reasoningBudget: null, extendedThinking: false,
+  },
+  medium: {
+    name: 'medium', description: 'Medium — balanced (default).',
+    temperature: 0.7, maxTokens: 32_000,
+    reasoningBudget: null, extendedThinking: false,
+  },
+  high: {
+    name: 'high', description: 'High — sharper, larger max.',
+    temperature: 1.0, maxTokens: 48_000,
+    reasoningBudget: null, extendedThinking: false,
+  },
+  xhigh: {
+    name: 'xhigh', description: 'XHIGH — sharpest, with extended thinking.',
+    temperature: 1.0, maxTokens: 64_000,
+    reasoningBudget: 8_192, extendedThinking: true,
+  },
+};
+export function resolveVariant(name: string | null | undefined): {
+  name: string;
+  description: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  reasoningBudget: number | null;
+  extendedThinking: boolean | null;
+} {
+  const key = (name ?? '').trim().toLowerCase();
+  if (key === 'default' || key === 'med') return VARIANT_PRESETS.medium;
+  if (key === 'fast') return VARIANT_PRESETS.low;
+  if (key === 'deep') return VARIANT_PRESETS.high;
+  return VARIANT_PRESETS[key] ?? VARIANT_PRESETS.medium;
 }

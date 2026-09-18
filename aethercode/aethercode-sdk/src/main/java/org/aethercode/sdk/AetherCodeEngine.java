@@ -125,6 +125,16 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     private volatile org.aethercode.core.providers.ProviderRegistry providerRegistry;
     private volatile String currentProviderName;
     private volatile String currentModelId;
+    // R285: the variant name the engine is currently
+    // driving. Mirrors the R283 (provider, model) pair
+    // — the renderer's "Quality" dropdown and the
+    // /model y:y picker syntax both update this so the
+    // next chat-completion call uses the right
+    // temperature / maxTokens / reasoning-budget knobs.
+    // Null means "use the bundled default" (the same
+    // fallback the variantByName lookup uses when no
+    // match is found).
+    private volatile String currentVariant;
     // R284: pre-compaction snapshot store. When set, every
     // successful runPreFlightCompact persists the pre-compact
     // transcript as a JSON file under <store.dir>/ so the
@@ -1358,9 +1368,78 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 if (compact.contextWindow() > 0) {
                     this.appState.contextWindow(compact.contextWindow());
                 }
+                // R285: when the model changes, the
+                // old variant might not exist on the
+                // new model. Reset to null so the
+                // variantByName fallback resolves to
+                // the new model's bundled default
+                // (claude-code-style low/medium/high/xhigh).
+                this.currentVariant = null;
             }
         }
         return this;
+    }
+
+    /** R285: install a variant name. The next
+     *  chat-completion call consults the registry
+     *  for {@code provider.variantFor(modelId, name)}
+     *  and hands the resulting knobs (temperature,
+     *  maxTokens, reasoningBudget, extendedThinking)
+     *  to the ChatClient. Pass {@code null} or
+     *  {@code ""} to clear the override (the engine
+     *  then falls back to the bundled default).
+     *
+     *  <p>Variant names are case-insensitive —
+     *  {@code "Low"} and {@code "low"} resolve to the
+     *  same preset. Unknown names silently fall back
+     *  to the bundled default rather than throwing,
+     *  so a typo in the {@code /model y:y} pick
+     *  doesn't break the turn.
+     *
+     *  <p>Idempotent — re-installing the same variant
+     *  is a no-op. */
+    public AetherCodeEngine setVariant(String variant) {
+        // normalize empty / null → null so the
+        // variantFor lookup uses the bundled default.
+        this.currentVariant = (variant == null || variant.isBlank()) ? null : variant.trim();
+        return this;
+    }
+
+    /** R285: the currently-installed variant name,
+     *  or {@code null} when the engine is using the
+     *  bundled default. Tests use this to assert
+     *  that {@code setVariant} propagated correctly. */
+    public String currentVariant() {
+        return currentVariant;
+    }
+
+    /** R285: resolve the runtime {@link
+     *  org.aethercode.core.providers.Variant} for the
+     *  active (provider, model, variant) triple.
+     *  Returns the bundled
+     *  {@link org.aethercode.core.providers.Variant#DEFAULT}
+     *  when the registry isn't wired or the model
+     *  isn't known. The ChatClient consumes this
+     *  shape to set temperature / maxTokens /
+     *  reasoningBudget on each call.
+     *
+     *  <p>Resolving on every call (rather than at
+     *  {@code setVariant} time) means a live
+     *  reload of {@code providers.yaml} that
+     *  changes the variant set takes effect on the
+     *  very next turn. Same trade-off as
+     *  {@code compactFor}: hot-reload-friendly at
+     *  the cost of a registry lookup per query. */
+    public org.aethercode.core.providers.Variant getActiveVariant() {
+        if (providerRegistry == null || currentProviderName == null
+                || currentModelId == null) {
+            return org.aethercode.core.providers.Variant.DEFAULT;
+        }
+        var spec = providerRegistry.get(currentProviderName);
+        if (spec.isEmpty()) {
+            return org.aethercode.core.providers.Variant.DEFAULT;
+        }
+        return spec.get().variantFor(currentModelId, currentVariant);
     }
 
     /** R283: install the provider registry. The

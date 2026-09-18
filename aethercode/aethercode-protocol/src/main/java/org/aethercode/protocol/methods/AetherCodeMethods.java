@@ -202,6 +202,12 @@ public class AetherCodeMethods {
         m.put("setPhaseBudget",                        new String[]{TAG_WRITE, TAG_ENGINE});
         m.put("setConcurrencyProfile",                 new String[]{TAG_WRITE, TAG_ENGINE});
         m.put("switchProvider",                        new String[]{TAG_WRITE, TAG_ENGINE});
+        // R285: hot-swap just the variant without
+        // touching the provider / model. The
+        // renderer's Quality dropdown calls this;
+        // switchProvider stays reserved for the
+        // model picker.
+        m.put("switchVariant",                         new String[]{TAG_WRITE, TAG_ENGINE});
         // Permission
         m.put("permissionResponse",                    new String[]{TAG_WRITE, TAG_PERMISSION});
         m.put("permissionPolicyOverride",              new String[]{TAG_WRITE, TAG_PERMISSION});
@@ -503,6 +509,14 @@ public class AetherCodeMethods {
      *  in the Settings panel. */
     private volatile String currentProviderName;
     private volatile String currentModelId;
+    // R285: the currently-installed variant name.
+    // Mirrors the engine's {@code currentVariant}
+    // field but is kept on the RPC layer so the
+    // response tail of switchProvider +
+    // switchVariant + listAvailableModels can
+    // surface "active variant" without an extra
+    // round-trip.
+    private volatile String currentVariant;
     /** optional resolver that builds a
      *  fresh {@link org.aethercode.core.llm.ChatClient}
      *  from a {@code "provider/model"} string. The
@@ -989,16 +1003,71 @@ public class AetherCodeMethods {
         // yet (the user hasn't run a query), in
         // which case the engine skips the gate.
         if (this.engine != null) {
+            // R285: prefer the engine's already-installed
+            // fields over the methods object's. A test
+            // (or a daemon that re-wires) that calls
+            // engine.setCompactRegistry(reg, "glm",
+            // "glm-4-flash") first, then
+            // methods.setProviderRegistry(reg), must
+            // NOT clobber the engine's (glm, glm-4-flash)
+            // with (null, "MiniMax-M3"). The
+            // engine's own (provider, model) fields
+            // win; we only fall through to defaults
+            // when BOTH engine and methods are empty.
             String pname = currentProviderName;
             String mname = currentModelId;
-            if (pname == null && this.engine.appState() != null) {
-                // best-effort: ask the engine for its
-                // current model so the pre-flight gate
-                // is consistent from the very first
-                // compact.
+            // peek the engine's fields via reflection —
+            // they're package-private and the methods
+            // object shouldn't have to know the field
+            // names. The reflection cost is one-off at
+            // boot (called once per setProviderRegistry),
+            // so the cost is negligible.
+            String engineProvider = readEngineProviderName();
+            String engineModel = readEngineModelName();
+            if (engineProvider != null && pname == null) pname = engineProvider;
+            if (engineModel != null && mname == null) mname = engineModel;
+            if (mname == null && this.engine.appState() != null) {
                 mname = this.engine.appState().mainLoopModel();
             }
-            this.engine.setCompactRegistry(reg, pname, mname);
+            // Only push to the engine when we have
+            // something to push — passing (null,
+            // "MiniMax-M3") would clobber an engine
+            // that's already been configured.
+            if (pname != null || mname != null) {
+                this.engine.setCompactRegistry(reg, pname, mname);
+            }
+        }
+    }
+
+    /** R285: helper to read the engine's current
+     *  provider name without poking private fields.
+     *  Falls back to {@code null} when the engine
+     *  hasn't been built (legacy single-engine
+     *  boot path) so the caller can keep its
+     *  default-resolution branch. */
+    private String readEngineProviderName() {
+        if (this.engine == null) return null;
+        try {
+            java.lang.reflect.Field f =
+                    org.aethercode.sdk.AetherCodeEngine.class
+                            .getDeclaredField("currentProviderName");
+            f.setAccessible(true);
+            return (String) f.get(this.engine);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
+    private String readEngineModelName() {
+        if (this.engine == null) return null;
+        try {
+            java.lang.reflect.Field f =
+                    org.aethercode.sdk.AetherCodeEngine.class
+                            .getDeclaredField("currentModelId");
+            f.setAccessible(true);
+            return (String) f.get(this.engine);
+        } catch (ReflectiveOperationException e) {
+            return null;
         }
     }
     /** install a resolver that builds a
@@ -1490,6 +1559,11 @@ public class AetherCodeMethods {
         // model picker in one round-trip.
         dispatcher.register("listProviders",         this::listProviders);
         dispatcher.register("switchProvider",       this::switchProvider);
+        // R285: hot-swap just the variant. Called
+        // by the renderer's Quality dropdown when
+        // the user picks low / medium / high /
+        // xhigh without changing the model.
+        dispatcher.register("switchVariant",        this::switchVariant);
         // R284: pre-compaction snapshot access. The desktop
         // MessageList reads these when the user clicks
         // "View original" on a compacted message — the
@@ -6028,6 +6102,41 @@ public class AetherCodeMethods {
         resp.put("providers", providerRows);
         resp.put("currentProvider", currentProviderName);
         resp.put("currentModel", currentModelId);
+        // R285: include the currently-installed
+        // variant so the renderer's Quality
+        // dropdown can show the active preset on
+        // every poll. The renderer uses this to
+        // highlight the row matching
+        // {@code currentVariant} in its dropdown.
+        // We resolve via the engine (rather than
+        // this.currentVariant) so listAvailableModels
+        // stays consistent with switchProvider's
+        // response even when the engine was
+        // configured outside the RPC layer.
+        String resolvedVariant = currentVariant;
+        org.aethercode.core.providers.Variant activeVariant = null;
+        if (engine != null) {
+            // engine.currentVariant() can be null when
+            // no explicit override is in place; in
+            // that case the active variant row will
+            // show the bundled default's name.
+            resolvedVariant = engine.currentVariant();
+            activeVariant = engine.getActiveVariant();
+        }
+        resp.put("currentVariant", resolvedVariant);
+        // also surface the active variant's full
+        // knobs so the Settings panel can preview
+        // "0.7 / 32K" without an extra RPC.
+        if (activeVariant != null) {
+            java.util.Map<String, Object> variantRow = new java.util.LinkedHashMap<>();
+            variantRow.put("name", activeVariant.name());
+            variantRow.put("description", activeVariant.description());
+            variantRow.put("temperature", activeVariant.temperature());
+            variantRow.put("maxTokens", activeVariant.maxTokens());
+            variantRow.put("reasoningBudget", activeVariant.reasoningBudget());
+            variantRow.put("extendedThinking", activeVariant.extendedThinking());
+            resp.put("activeVariant", variantRow);
+        }
         return resp;
     }
 
@@ -6257,6 +6366,14 @@ public class AetherCodeMethods {
         Map<String, Object> p = asMap(params);
         String providerName = stringOrThrow(p, "provider");
         String modelId = p.get("model") instanceof String s && !s.isBlank() ? s : null;
+        // R285: optional variant name. When omitted,
+        // the engine keeps its current variant (or
+        // null = bundled default). When present, the
+        // engine sets it BEFORE building the
+        // ChatClient so the new client's options pick
+        // up the variant's temperature / maxTokens
+        // / reasoningBudget knobs.
+        String variantName = p.get("variant") instanceof String s && !s.isBlank() ? s : null;
         org.aethercode.core.providers.ProviderRegistry reg = providerRegistry;
         if (reg == null) {
             throw new JsonRpcProtocolException(
@@ -6288,11 +6405,46 @@ public class AetherCodeMethods {
         // (the same helper resolves an agent's
         // frontmatter model into a ChatClient).
         try {
+            // R285: install the variant BEFORE
+            // building the ChatClient so the new
+            // client's temperature / maxTokens
+            // are picked up on the very first call.
+            // mainLoopModelName() below resets
+            // currentVariant=null for the model
+            // change; we set it AFTER so the
+            // caller-supplied variant survives.
+            if (variantName != null) {
+                engine.setVariant(variantName);
+            }
             org.aethercode.core.llm.ChatClient newClient =
                     resolveChatClient(providerName + "/" + modelId);
             if (newClient != null) {
                 engine.setChatClient(newClient);
+            }
+            // R285: mainLoopModelName is the
+            // single source of truth for "the user
+            // switched model" — call it whenever
+            // the model id changes, even when no
+            // new chat client was built. Tests
+            // that hot-swap the model via the
+            // switchProvider RPC expect the
+            // variant to reset (the new model
+            // might not carry the old variant);
+            // tests that don't swap the chat
+            // client (e.g. a stub resolver) still
+            // expect the model-driven side
+            // effects. mainLoopModelName is a
+            // no-op when m equals the current
+            // mainLoopModel, so this branch
+            // doesn't double-fire on a
+            // no-op switch.
+            if (!modelId.equals(engine.appState().mainLoopModel())) {
                 engine.mainLoopModelName(modelId);
+                if (variantName != null) {
+                    engine.setVariant(variantName);
+                }
+            }
+            if (newClient != null) {
                 // R283: the engine's pre-flight
                 // compact consults the registry's
                 // per-model CompactConfig. After a
@@ -6317,11 +6469,80 @@ public class AetherCodeMethods {
         }
         this.currentProviderName = providerName;
         this.currentModelId = modelId;
-        LOG.info("provider switched: {} / {}", providerName, modelId);
+        // R285: when the caller omits "variant", we
+        // KEEP the engine's current variant (so a
+        // "/model glm/glm-4-flash" pick doesn't reset
+        // the user's Quality dropdown). When the
+        // caller passes a variant name, that wins.
+        // Reading from engine.currentVariant() (not
+        // variantName) keeps the RPC layer's view in
+        // sync with the engine's.
+        this.currentVariant = engine.currentVariant();
+        LOG.info("provider switched: {} / {} (variant={})", providerName, modelId, currentVariant);
         java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
         resp.put("ok", true);
         resp.put("provider", providerName);
         resp.put("model", modelId);
+        resp.put("variant", currentVariant);
+        // R285: include the active variant knobs so
+        // the renderer's "Quality" dropdown can
+        // show the actual temperature / maxTokens
+        // / extended-thinking state without a
+        // follow-up call. Falls back to the
+        // bundled default when the registry isn't
+        // wired or the variant name doesn't match.
+        org.aethercode.core.providers.Variant activeVariant = engine.getActiveVariant();
+        java.util.Map<String, Object> variantRow = new java.util.LinkedHashMap<>();
+        variantRow.put("name", activeVariant.name());
+        variantRow.put("description", activeVariant.description());
+        variantRow.put("temperature", activeVariant.temperature());
+        variantRow.put("maxTokens", activeVariant.maxTokens());
+        variantRow.put("reasoningBudget", activeVariant.reasoningBudget());
+        variantRow.put("extendedThinking", activeVariant.extendedThinking());
+        resp.put("activeVariant", variantRow);
+        return resp;
+    }
+
+    /**
+     * R285: switch ONLY the variant, keeping the
+     * current provider + model. Useful when the
+     * user has just picked a new "Quality" preset
+     * from the picker without changing which model
+     * they're on. The renderer calls this from the
+     * Quality dropdown; switchProvider is reserved
+     * for the model-picker row.
+     *
+     * <p>The response shape mirrors switchProvider's
+     * tail so the renderer's state update path
+     * (which already handles {@code variant} +
+     * {@code activeVariant}) works without a
+     * conditional.
+     */
+    @SuppressWarnings("unchecked")
+    public Object switchVariant(Object params) {
+        Map<String, Object> p = asMap(params);
+        if (engine == null) {
+            throw new JsonRpcProtocolException(
+                    "switchVariant unavailable: no engine wired",
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR,
+                            "no engine; the daemon needs an AetherCodeEngine on startup"));
+        }
+        String variantName = p.get("variant") instanceof String s && !s.isBlank() ? s : null;
+        engine.setVariant(variantName);
+        this.currentVariant = engine.currentVariant();
+        LOG.info("variant switched: {}", currentVariant);
+        java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("ok", true);
+        resp.put("variant", currentVariant);
+        org.aethercode.core.providers.Variant activeVariant = engine.getActiveVariant();
+        java.util.Map<String, Object> variantRow = new java.util.LinkedHashMap<>();
+        variantRow.put("name", activeVariant.name());
+        variantRow.put("description", activeVariant.description());
+        variantRow.put("temperature", activeVariant.temperature());
+        variantRow.put("maxTokens", activeVariant.maxTokens());
+        variantRow.put("reasoningBudget", activeVariant.reasoningBudget());
+        variantRow.put("extendedThinking", activeVariant.extendedThinking());
+        resp.put("activeVariant", variantRow);
         return resp;
     }
 

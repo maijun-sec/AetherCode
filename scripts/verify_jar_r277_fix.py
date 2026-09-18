@@ -80,6 +80,25 @@ R284 markers:
         "View original")
     HttpJsonRpcServer.class — case "compact/listSnapshots"
         + case "compact/getSnapshot" (the routing literals)
+
+R285 markers:
+    Variant.class — the variant record (low/medium/high/xhigh
+        presets; the static final fields LOW/MEDIUM/HIGH/XHIGH
+        appear in the bytecode, plus byName() alias helper)
+    VariantSpec.class — the YAML-shape record with toVariant()
+        that bridges YAML fields to runtime Variant
+    ProviderSpec.class — variantFor(modelId, name) 3-tier
+        fallback (model → provider → BUILTIN)
+    ModelSpec.class — variants field on the per-model spec
+        (the field name appears in the accessor bytecode)
+    AetherCodeEngine.class — setVariant / getActiveVariant
+        (the SDK plumbing that hands the active variant
+        through to the engine state)
+    AetherCodeMethods.class — switchVariant RPC handler
+        (the method name appears in the dispatcher.register
+        as a string literal)
+    HttpJsonRpcServer.class — case "switchVariant" routing
+        literal (the routing string)
 """
 import sys
 import zipfile
@@ -292,6 +311,57 @@ checks = [
         b'compact/getSnapshot',
         'HttpJsonRpcServer must route compact/getSnapshot (R284)',
     ),
+    # ---- R285 ----
+    (
+        'org/aethercode/core/providers/Variant.class',
+        b'LOW',
+        'Variant must expose the LOW preset (R285)',
+    ),
+    (
+        'org/aethercode/core/providers/Variant.class',
+        b'XHIGH',
+        'Variant must expose the XHIGH preset (R285)',
+    ),
+    (
+        'org/aethercode/core/providers/Variant.class',
+        b'byName',
+        'Variant must expose byName() alias resolver (R285)',
+    ),
+    (
+        'org/aethercode/core/providers/VariantSpec.class',
+        b'toVariant',
+        'VariantSpec must expose toVariant() to bridge YAML to Variant (R285)',
+    ),
+    (
+        'org/aethercode/core/providers/ProviderSpec.class',
+        b'variantFor',
+        'ProviderSpec must expose variantFor(modelId, name) 3-tier lookup (R285)',
+    ),
+    (
+        'org/aethercode/core/providers/ModelSpec.class',
+        b'variants',
+        'ModelSpec must carry variants field for per-model overrides (R285)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'setVariant',
+        'AetherCodeEngine must expose setVariant for active-variant plumbing (R285)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'getActiveVariant',
+        'AetherCodeEngine must expose getActiveVariant accessor (R285)',
+    ),
+    (
+        'org/aethercode/protocol/methods/AetherCodeMethods.class',
+        b'switchVariant',
+        'AetherCodeMethods must register switchVariant RPC (R285)',
+    ),
+    (
+        'org/aethercode/protocol/http/HttpJsonRpcServer.class',
+        b'switchVariant',
+        'HttpJsonRpcServer must route switchVariant (R285)',
+    ),
 ]
 for path, needle, msg in checks:
     data = classes.get(path)
@@ -335,3 +405,10 @@ print(f'        Snapshot record carries sessionId + compactionIndex (monotonic p
 print(f'        QueryEngine + AetherCodeEngine propagate setSnapshotStore (R284)')
 print(f'        AetherCodeMethods registers compactListSnapshots + compactGetSnapshot RPCs')
 print(f'        HttpJsonRpcServer routes compact/listSnapshots + compact/getSnapshot')
+print(f'  R285: Variant presets LOW/MEDIUM/HIGH/XHIGH + byName() alias resolver')
+print(f'        VariantSpec.toVariant() bridges YAML to runtime Variant')
+print(f'        ProviderSpec.variantFor(modelId, name) walks model → provider → BUILTIN')
+print(f'        ModelSpec carries variants field for per-model overrides')
+print(f'        AetherCodeEngine exposes setVariant + getActiveVariant (engine plumbing)')
+print(f'        AetherCodeMethods registers switchVariant RPC')
+print(f'        HttpJsonRpcServer routes switchVariant')

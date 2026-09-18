@@ -858,3 +858,60 @@
 .followup-pill-cancel:hover {
   opacity: 1;
 }
+
+/* R285: Quality preset pills row, lives just below the
+   model dropdown. Each pill represents a
+   temperature / maxTokens preset (low / medium /
+   high / xhigh) — clicking it calls switchVariant
+   on the daemon so the next chat-completion picks
+   up the new knobs without changing the provider
+   or model. The active row is highlighted so the
+   user can see which preset is in effect. */
+.message-input-quality-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 4px 0 0;
+  flex-wrap: nowrap;
+}
+
+.message-input-quality-pill {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #b0b0b8;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-transform: lowercase;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.message-input-quality-pill:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.message-input-quality-pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.message-input-quality-pill-active {
+  background: rgba(138, 169, 255, 0.16);
+  border-color: rgba(138, 169, 255, 0.4);
+  color: #8aa9ff;
+}
+
+.message-input-quality-pill-active:hover:not(:disabled) {
+  background: rgba(138, 169, 255, 0.24);
+  color: #a8c1ff;
+}
+
+.message-input-quality-detail {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #8a8a92;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}

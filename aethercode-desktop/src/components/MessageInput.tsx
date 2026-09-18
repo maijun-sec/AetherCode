@@ -35,6 +35,44 @@ function shortPath(p: string | null, maxLen = 50): string {
   return '…' + p.slice(p.length - maxLen + 1);
 }
 
+/** R285: parse `/model provider/model:variant` (or
+ *  just `/model provider/model`). Returns
+ *  {provider, model, variant?} when the input is a
+ *  complete model pick; the caller dispatches
+ *  switchProvider with the parsed pieces. Returns
+ *  null when the input is something else — the
+ *  caller then proceeds with the normal "send
+ *  message" path.
+ *
+ *  <p>The syntax mirrors the claude-code-style
+ *  inline model pick: the user types the whole
+ *  command on a single line (no args menu), the
+ *  variant suffix is optional, and the picking
+ *  is a no-op on Enter when the daemon doesn't
+ *  recognise the model. A typo in either the
+ *  provider or the model fails loudly — the
+ *  user sees the daemon's error in the toast,
+ *  rather than silently switching to the wrong
+ *  model.
+ *
+ *  <p>Exported so {@link MessageInputR285.test}
+ *  can hit it directly without mounting the
+ *  whole input bar — the parser is pure
+ *  (no React, no DOM, no daemon). */
+export function parseModelSwitchCommand(input: string): {
+  provider: string;
+  model: string;
+  variant?: string;
+} | null {
+  const m = /^model\s+(\S+?)\/(\S+?)(?::(\S+))?$/i.exec(input);
+  if (!m) return null;
+  const provider = m[1];
+  const model = m[2];
+  const variant = m[3];
+  if (!provider || !model) return null;
+  return variant ? { provider, model, variant } : { provider, model };
+}
+
 export function MessageInput() {
   const {
     currentInput,
@@ -96,6 +134,13 @@ export function MessageInput() {
     // gemini) instead of a hard-coded subset.
     availableProviders,
     currentProvider,
+    // R285: the active variant + setter. The
+    // Quality pills below the model dropdown
+    // call switchVariant; the active variant
+    // chip shows the current knob bundle.
+    currentVariant,
+    activeVariant,
+    switchVariant,
     refreshProviders,
     // one-time mismatch prompt. Set by
     // initialize() when the localStorage `enginePrefs.model`
@@ -388,7 +433,7 @@ export function MessageInput() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mentionQuery]);
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // `@`-mention dropdown navigation. Same
     // pattern as the slash dropdown (the textarea's
     // keydown handler drives the active row because
@@ -471,7 +516,29 @@ export function MessageInput() {
         }
       }
       if (isStreaming) cancelQuery();
-      else if (isConnected) sendMessage();
+      else if (isConnected) {
+        // R285: `/model y:y` syntax — the user types
+        // a complete model pick as a slash-style
+        // command, including an optional `:variant`
+        // suffix. Matches the opencode / claude
+        // code convention of putting the model
+        // pick on the input line so the user
+        // doesn't have to navigate the dropdown
+        // when they want a quick "glm/glm-4-flash
+        // at high temperature" pick.
+        const modelCmd = parseModelSwitchCommand(currentInput.trim());
+        if (modelCmd) {
+          setCurrentInput('');
+          try {
+            await useStore.getState().switchProvider(
+                modelCmd.provider, modelCmd.model, modelCmd.variant);
+          } catch (e) {
+            console.warn('[MessageInput] /model switch failed:', e);
+          }
+          return;
+        }
+        sendMessage();
+      }
     } else if (e.key === 'Escape') {
       if (slashOpen) {
         setCurrentInput('');
@@ -668,6 +735,66 @@ export function MessageInput() {
               ))
             )}
           </select>
+        </div>
+        {/* R285: Quality preset pills (low /
+            medium / high / xhigh). Click to call
+            switchVariant — keeps the current
+            provider + model, just flips the
+            temperature / maxTokens /
+            extendedThinking knobs. The active
+            row is highlighted via currentVariant
+            (the daemon's normalised "active"
+            name after case-insensitive lookup
+            against the bundled set). */}
+        <div
+          className="message-input-quality-row"
+          data-testid="message-input-quality"
+        >
+          {['low', 'medium', 'high', 'xhigh'].map((name) => {
+            const active = (currentVariant ?? '').toLowerCase() === name;
+            return (
+              <button
+                key={name}
+                type="button"
+                className={
+                  'message-input-quality-pill' +
+                  (active ? ' message-input-quality-pill-active' : '')
+                }
+                data-testid={`message-input-quality-${name}`}
+                data-active={active ? '1' : '0'}
+                disabled={!isConnected}
+                title={
+                  active
+                    ? `Currently on ${name}`
+                    : `Switch to ${name}`
+                }
+                onClick={async () => {
+                  try {
+                    await switchVariant(name);
+                  } catch (e) {
+                    console.warn('[MessageInput] switchVariant failed:', e);
+                  }
+                }}
+              >
+                {name}
+              </button>
+            );
+          })}
+          {activeVariant && (
+            <span
+              className="message-input-quality-detail"
+              data-testid="message-input-quality-detail"
+              title={activeVariant.description ?? ''}
+            >
+              {activeVariant.temperature != null
+                ? `${activeVariant.temperature.toFixed(1)} / `
+                : ''}
+              {activeVariant.maxTokens != null
+                ? `${Math.round(activeVariant.maxTokens / 1000)}k`
+                : ''}
+              {activeVariant.extendedThinking ? ' · think' : ''}
+            </span>
+          )}
         </div>
         <div className="config-group">
           <label className="config-label">Perm</label>

@@ -36,18 +36,29 @@ public record ProviderSpec(
         String apiKeyEnv,
         String defaultModel,
         List<ModelSpec> models,
-        CompactSpec compact
+        CompactSpec compact,
+        List<Variant> variants
 ) {
-    /** Legacy 6-arg overload so existing test fixtures and
+    /** Legacy 7-arg overload so existing test fixtures and
      *  user providers.yaml files keep working. Maps to
-     *  the 7-arg form with {@code compact=null} (the
+     *  the 8-arg form with {@code variants=null} (the
      *  accessor then falls back to the model-level
-     *  compact block, then to
-     *  {@link org.aethercode.core.compact.CompactConfig#DEFAULT}). */
+     *  variants list, then to
+     *  {@link Variant#BUILTIN}). */
+    public ProviderSpec(String name, String type, String baseUrl,
+                        String apiKeyEnv, String defaultModel,
+                        List<ModelSpec> models,
+                        CompactSpec compact) {
+        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, compact, null);
+    }
+
+    /** Legacy 6-arg overload (without the compact
+     *  arg). Kept so existing test fixtures and user
+     *  providers.yaml files keep working. */
     public ProviderSpec(String name, String type, String baseUrl,
                         String apiKeyEnv, String defaultModel,
                         List<ModelSpec> models) {
-        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, null);
+        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, null, null);
     }
 
     public ProviderSpec {
@@ -139,6 +150,56 @@ public record ProviderSpec(
             if (m.context() > max) max = m.context();
         }
         return max > 0 ? max : org.aethercode.core.compact.CompactConfig.DEFAULT.contextWindow();
+    }
+
+    /** R285: look up the variant for a specific model
+     *  by name. The lookup order is:
+     *  <ol>
+     *    <li>{@code model.variants[name]} (per-model
+     *        override)</li>
+     *    <li>this provider's {@code variants} list
+     *        (provider-level fallback — applies to
+     *        every sibling model that doesn't declare
+     *        its own variant block)</li>
+     *    <li>{@link Variant#BUILTIN} (the bundled
+     *        claude-code-style low/medium/high/xhigh
+     *        set — every model gets SOMETHING
+     *        renderable in the picker)</li>
+     *  </ol>
+     *  Returns the runtime {@link Variant} shape
+     *  (post-defaults-fill) so callers never see a
+     *  null. */
+    public Variant variantFor(String modelId, String name) {
+        for (ModelSpec m : models) {
+            if (m.id().equals(modelId)) {
+                for (Variant v : m.variants()) {
+                    if (name != null && name.equalsIgnoreCase(v.name())) {
+                        return v;
+                    }
+                }
+                break;
+            }
+        }
+        // model not found in list OR didn't carry this
+        // variant — fall back to the provider-level
+        // block (if any).
+        if (variants != null) {
+            for (Variant v : variants) {
+                if (name != null && name.equalsIgnoreCase(v.name())) {
+                    return v;
+                }
+            }
+        }
+        // last resort: the bundled set. The renderer's
+        // Quality dropdown always has something to
+        // show even when the providers.yaml is
+        // totally bare.
+        for (Variant v : Variant.BUILTIN) {
+            if (name != null && name.equalsIgnoreCase(v.name())) {
+                return v;
+            }
+        }
+        return Variant.DEFAULT;
     }
 
     private static org.aethercode.core.compact.CompactConfig tierDefaultFor(int ctx) {
