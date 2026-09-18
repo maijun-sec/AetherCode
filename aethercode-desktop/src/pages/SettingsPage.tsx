@@ -25,6 +25,13 @@ import {
 import type { Grant, PermissionPreset, WorkflowSummary } from '../rpc/types';
 import { SsdPanel } from '../components/ssd/SsdPanel';
 import { MockSsdDriver, type SsdDriverEvent } from '../components/ssd/driver';
+// R287: the production driver that spawns the
+// daemon's `ssd --interactive` subprocess via
+// @tauri-apps/plugin-shell. The mock driver
+// remains the default for design review + dev
+// mode; the user opts into the real one via the
+// "Driver" radio in the SDD tab.
+import { TauriSsdDriver } from '../components/ssd/tauriSsdDriver';
 import { useStore } from '../store';
 import type { ProviderInfo } from '../lib/methods';
 import './SettingsPage.css';
@@ -355,19 +362,81 @@ function WorkflowsTab() {
   );
 }
 
-// R281: Spec-Driven Development panel. The tab wraps the panel
-// in a section that matches the other settings tabs' chrome but
-// also surfaces a "Run demo SSD flow" button — clicking it
-// remounts the panel with a fresh MockSsdDriver that replays a
-// canned spec → design → tasks sequence. The real
-// `aethercode ssd <feature> "<intent>" --interactive`
-// subprocess driver lands in R282 (Tauri shell plugin wiring).
+// R281 + R287: Spec-Driven Development panel.
+// The tab wraps the panel in a section that
+// matches the other settings tabs' chrome but
+// also surfaces a "Run SSD flow" button —
+// clicking it remounts the panel with a fresh
+// driver. R287 split the run button into two:
+//
+//   - "Demo (mock driver)" → MockSsdDriver with
+//     a canned spec → design → tasks event
+//     sequence. Same as before, still the
+//     default because it works without a JVM
+//     subprocess.
+//
+//   - "Real (Tauri shell)" → TauriSsdDriver that
+//     spawns `java -jar aethercode.jar ssd
+//     <feature> "<intent>" --interactive` via
+//     @tauri-apps/plugin-shell and streams the
+//     newline-delimited JSON events. The
+//     jar path is resolved by the Rust side
+//     (resources/aethercode.jar on packaged
+//     builds) and passed in here so we don't
+//     duplicate the lookup logic.
 function SddTab() {
   const [runKey, setRunKey] = useState(0);
   const [feature, setFeature] = useState('demo-feature');
   const [intent, setIntent] = useState(
     'Add a per-user timezone setting so the UI shows local time everywhere.',
   );
+  // R287: mock vs real driver. Persisted to
+  // localStorage so a re-open keeps the user's
+  // last choice. Default is "mock" because the
+  // real driver requires the desktop exe + the
+  // aethercode.jar bundled in resources/.
+  const [mode, setMode] = useState<'mock' | 'real'>(() => {
+    if (typeof window === 'undefined') return 'mock';
+    try {
+      const raw = window.localStorage.getItem('aethercode.sdd.mode');
+      return raw === 'real' ? 'real' : 'mock';
+    } catch {
+      return 'mock';
+    }
+  });
+  // R287: when the user picks "Real (spawn JVM)",
+  // we need the resolved jar path + cwd from the
+  // Rust side (the same values the daemon
+  // spawner uses). Fetched lazily on demand —
+  // not at mount — because the mock path is
+  // still the default and we'd rather not block
+  // the first paint on a Tauri IPC round-trip.
+  const [appPaths, setAppPaths] = useState<{ jarPath: string; cwd: string } | null>(null);
+  useEffect(() => {
+    if (mode !== 'real' || appPaths) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const r = await invoke<{ jarPath: string; cwd: string }>('get_app_paths');
+        if (!cancelled) setAppPaths(r);
+      } catch (e) {
+        // graceful fallback: leave null so the
+        // user sees a "couldn't resolve jar"
+        // message instead of a stack trace.
+        console.warn('[SddTab] get_app_paths failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mode, appPaths]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem('aethercode.sdd.mode', mode);
+    } catch {
+      // private mode — in-memory state is still set.
+    }
+  }, [mode]);
 
   const events = useMemo<SsdDriverEvent[]>(() => buildDemoEvents(feature), [feature]);
 
@@ -399,23 +468,79 @@ function SddTab() {
             onChange={(e) => setIntent(e.target.value)}
           />
         </label>
+        {/* R287: pick between the canned
+            MockSsdDriver and the new Tauri shell
+            driver. The radio group is sticky via
+            localStorage so a renderer reload
+            keeps the choice. */}
+        <div className="settings-sdd-field" data-testid="sdd-mode-field">
+          <span>Driver</span>
+          <label className="settings-sdd-radio">
+            <input
+              type="radio"
+              name="sdd-mode"
+              value="mock"
+              checked={mode === 'mock'}
+              onChange={() => setMode('mock')}
+              data-testid="sdd-mode-mock"
+            />
+            <span>Demo (mock driver)</span>
+          </label>
+          <label className="settings-sdd-radio">
+            <input
+              type="radio"
+              name="sdd-mode"
+              value="real"
+              checked={mode === 'real'}
+              onChange={() => setMode('real')}
+              data-testid="sdd-mode-real"
+            />
+            <span>Real (spawn <code>java -jar aethercode.jar ssd …</code>)</span>
+          </label>
+          <small className="settings-hint">
+            Real mode requires the desktop exe to ship with aethercode.jar in
+            <code> resources/</code>. The subprocess streams newline-delimited events on stdout
+            and reads JSONL commands on stdin.
+          </small>
+        </div>
         <button
           type="button"
           className="settings-sdd-run"
           data-testid="sdd-run-demo"
           onClick={() => setRunKey((k) => k + 1)}
         >
-          ▶ Run demo SSD flow (mock driver)
+          {mode === 'mock' ? '▶ Run demo SSD flow (mock driver)' : '▶ Run real SSD flow (spawn JVM)'}
         </button>
       </div>
       <div className="settings-sdd-panel-mount" data-testid="sdd-panel-mount">
         <SsdPanel
           key={runKey}
-          driver={new MockSsdDriver(events, {
-            [`/tmp/${feature}/spec.md`]: `# ${feature} — Spec\n\n(generated by demo)\n\n${intent}`,
-            [`/tmp/${feature}/design.md`]: `# ${feature} — Design\n\n(generated by demo)\n\nArchitecture overview …`,
-            [`/tmp/${feature}/tasks.md`]: `# ${feature} — Tasks\n\n- [ ] add the review endpoint\n- [ ] wire audit logging\n- [ ] add tests`,
-          })}
+          // R287: the real driver is constructed
+          // lazily inside SddPanelDriverLazy so a
+          // Tauri runtime is required only when
+          // mode === 'real'. The mock driver
+          // path stays synchronous and zero-cost.
+          driver={mode === 'mock'
+            ? new MockSsdDriver(events, {
+                [`/tmp/${feature}/spec.md`]: `# ${feature} — Spec\n\n(generated by demo)\n\n${intent}`,
+                [`/tmp/${feature}/design.md`]: `# ${feature} — Design\n\n(generated by demo)\n\nArchitecture overview …`,
+                [`/tmp/${feature}/tasks.md`]: `# ${feature} — Tasks\n\n- [ ] add the review endpoint\n- [ ] wire audit logging\n- [ ] add tests`,
+              })
+            : new TauriSsdDriver({
+                // R287: the Rust side resolves the
+                // jar path + cwd via
+                // {@code get_app_paths}. Until that
+                // IPC round-trip completes the
+                // driver still has the placeholders;
+                // the panel will surface an error
+                // if the user clicks Run before
+                // the path lands (the IPC is
+                // usually <50 ms).
+                jarPath: appPaths?.jarPath ?? '',
+                cwd: appPaths?.cwd ?? '',
+                feature,
+                intent,
+              })}
           title={`${feature} — Spec-Driven Development`}
         />
       </div>

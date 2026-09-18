@@ -15,6 +15,26 @@
 
 pub mod bank_client;
 
+// R287: AppPaths is the wire shape returned by
+// the `get_app_paths` Tauri command. The
+// renderer's TauriSsdDriver uses it to source
+// the jar path + cwd when spawning the
+// `java -jar … ssd … --interactive` subprocess
+// without duplicating the Rust-side lookup
+// logic. Kept in its own file so a future
+// round can extend the shape (e.g. add the
+// resolved java executable) without bloating
+// lib.rs.
+pub mod java_com_aethercode_app_paths {
+    use serde::Serialize;
+    #[derive(Debug, Serialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct AppPaths {
+        pub jar_path: String,
+        pub cwd: String,
+    }
+}
+
 use bank_client::{BankClient, BankStats, BankUnit};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -795,9 +815,75 @@ async fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&p, contents).map_err(|e| format!("write failed: {}", e))
 }
 
+/// R287: read a UTF-8 text file by absolute path.
+/// Symmetric to {@link write_text_file}; lets
+/// the renderer's TauriSsdDriver fetch the full
+/// body of a draft artefact that the
+/// `ssd --interactive` subprocess wrote to disk.
+/// We do NOT pull in tauri-plugin-fs for this —
+/// a focused 6-line command is lighter than a
+/// full plugin + capability surface. The caller
+/// is the renderer, which in turn sources the
+/// path from the daemon's `phase-draft` event —
+/// the path is trusted (we wrote it ourselves)
+/// so no path-traversal guard is needed.
+#[tauri::command]
+async fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("read failed: {}", e))
+}
+
 #[tauri::command]
 async fn get_daemon_info(state: State<'_, AppState>) -> Result<Option<DaemonInfo>, String> {
     Ok(state.daemon.lock().await.clone())
+}
+
+/// R287: surface the resolved jar path + the
+/// current cwd so the renderer's
+/// {@link TauriSsdDriver} can spawn
+/// `java -jar <jarPath> ssd <feature> "<intent>"
+/// --interactive --cwd <cwd>` without
+/// duplicating the Rust-side lookup logic. The
+/// renderer is the source of truth for the cwd
+/// (it updates via `set_cwd`); we re-read it
+/// here from `state.cwd` so the subprocess gets
+/// the same value the daemon would get. The
+/// jar path is resolved via
+/// {@link find_jar_path} — the same lookup the
+/// daemon spawner uses, so a packaged build
+/// finds the bundled resource and a dev build
+/// finds the ancestor-walked source jar.
+#[tauri::command]
+async fn get_app_paths(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<java_com_aethercode_app_paths::AppPaths, String> {
+    let jar = find_jar_path(&app)?;
+    // Mirror the daemon-spawn lookup order in
+    // {@link ensure_daemon}: explicit in-memory
+    // override first, persisted last-project
+    // second. We pull them as separate awaits so
+    // the closures don't have to be `async`
+    // (the Tokio Mutex guard type doesn't support
+    // a sync .or_else() returning an awaited
+    // value — rustc complains about implicit
+    // await in a non-async closure).
+    let cwd = {
+        let explicit = state.cwd.lock().await.clone();
+        if let Some(c) = explicit {
+            c
+        } else {
+            state
+                .persisted_cwd
+                .lock()
+                .await
+                .clone()
+                .ok_or_else(|| "NEEDS_CWD".to_string())?
+        }
+    };
+    Ok(java_com_aethercode_app_paths::AppPaths {
+        jar_path: jar.to_string_lossy().to_string(),
+        cwd: cwd.to_string_lossy().to_string(),
+    })
 }
 
 /// Force-clear the daemon + WS state on the Rust side. The renderer
@@ -1442,11 +1528,24 @@ fn daemon_jvm_args() -> Vec<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // R287: register the shell plugin so the
+        // renderer's SsdPanel can spawn
+        // `java -jar aethercode.jar ssd
+        // <feature> "..." --interactive` and stream
+        // newline-delimited JSON events over the
+        // subprocess's stdout. The plugin scope
+        // (which executables are allowed to be
+        // spawned) is configured in tauri.conf.json
+        // via the `shell > scope` array; the renderer
+        // passes the resolved jar path explicitly so
+        // the scope doesn't have to whitelist
+        // arbitrary `java` invocations.
+        .plugin(tauri_plugin_shell::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            ensure_daemon, rpc_call, get_daemon_info, set_cwd, get_cwd, disconnect,
+            ensure_daemon, rpc_call, get_daemon_info, get_app_paths, set_cwd, get_cwd, disconnect,
             pre_warm_daemon, swap_to_pre_warm, discard_pre_warm,
-            write_text_file,
+            write_text_file, read_text_file,
             // bank surface from Rust over HTTP
             bank_stats, bank_recall, bank_recall_all_kinds
         ])

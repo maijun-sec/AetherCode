@@ -22,6 +22,17 @@ tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "m
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 tauri-plugin-dialog = "2"
+# R287: spawn the daemon's `ssd --interactive`
+# subprocess from the Settings panel. The shell
+# plugin exposes a TypeScript `Command` class
+# (`@tauri-apps/plugin-shell`) that handles the
+# stdin/stdout pipes for newline-delimited JSON.
+# Without this plugin the desktop SsdPanel
+# renders a `MockSsdDriver` with canned events
+# (the prior-round default); with it, the same
+# panel drives a real SSD run from a JVM the user
+# launched via the daemon's `ssd` CLI.
+tauri-plugin-shell = "2"
 # R249: HTTP client for the strategy-bank surface (R244.2
 # endpoints). Symmetric with the TS BankClient shipped in
 # aethercode-memory@0.1.0 (R244.3) — same URL/path/method
