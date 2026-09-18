@@ -14,7 +14,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `custom-protocol` is REQUIRED for release builds. Without it,
+# tauri-build sets `cargo:dev=true` (since it inverts the
+# `custom-protocol` feature flag), and runtime `get_app_url()`
+# falls into the `#[cfg(dev)]` branch — pointing the WebView at
+# `devUrl` (http://localhost:1420/) instead of the bundled
+# `frontendDist`. Result: every release exe shows the
+# `localhost 拒绝连接 / ERR_CONNECTION_REFUSED` chrome-error page
+# instead of the React renderer. Enabling the feature flips
+# the cfg so `get_app_url()` returns the embedded asset URL
+# (`http://tauri.localhost` on Windows).
+tauri = { version = "2", features = ["custom-protocol"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 once_cell = "1"
