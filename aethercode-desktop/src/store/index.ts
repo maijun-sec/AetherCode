@@ -278,7 +278,16 @@ function messageToChatMessage(raw: any): ChatMessage | null {
     case 'tool_result':  renderRole = 'tool'; break;
     default:             renderRole = 'system'; break;
   }
-  return { id, role: renderRole, content: text, timestamp };
+  // R284: pass the daemon's metadata map through so the
+  // MessageList can recognise compaction-summary messages
+  // and offer "View original". Other message kinds (user
+  // / assistant / tool) ignore metadata, so the cost is
+  // a shallow object copy on every message — negligible.
+  const metadata = (raw && typeof raw === 'object' && raw.metadata
+      && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata))
+      ? { ...(raw.metadata as Record<string, unknown>) }
+      : undefined;
+  return { id, role: renderRole, content: text, timestamp, metadata };
 }
 
 /** the prior round helper for {@link messageToChatMessage}. The
@@ -678,6 +687,16 @@ export interface ChatMessage {
    *  from plain text to react-markdown — markdown re-parse on
    *  every text_delta is janky for long messages. */
   isComplete?: boolean;
+  /** R284: the daemon's metadata map for this message.
+   *  Surfaced so the renderer's MessageList can recognise
+   *  compaction-summary messages (kind === 'compaction-summary')
+   *  and offer a "View original (N msgs)" affordance that
+   *  loads the pre-compaction transcript via
+   *  {@code compact/getSnapshot}. Optional because the
+   *  vast majority of messages don't carry metadata; the
+   *  renderer's branch keys off the {@code kind} string
+   *  rather than field presence. */
+  metadata?: Record<string, unknown>;
 }
 
 /** R83 Issue #6: a step is one engine round-trip. The

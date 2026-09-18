@@ -261,6 +261,11 @@ public class AetherCodeMethods {
         // Misc read
         m.put("getTranscript",                         new String[]{TAG_READ});
         m.put("listProviders",                         new String[]{TAG_READ});
+        // R284: read-only access to the pre-compaction
+        // snapshot store. The renderer uses these to show
+        // "View original (N msgs)" on summary messages.
+        m.put("compact/listSnapshots",                 new String[]{TAG_READ});
+        m.put("compact/getSnapshot",                   new String[]{TAG_READ});
         m.put("query",                                 new String[]{TAG_WRITE});
         m.put("cancel",                                new String[]{TAG_WRITE});
         m.put("setCwd",                                new String[]{TAG_WRITE});
@@ -1485,6 +1490,14 @@ public class AetherCodeMethods {
         // model picker in one round-trip.
         dispatcher.register("listProviders",         this::listProviders);
         dispatcher.register("switchProvider",       this::switchProvider);
+        // R284: pre-compaction snapshot access. The desktop
+        // MessageList reads these when the user clicks
+        // "View original" on a compacted message — the
+        // renderer hits compact/listSnapshots to populate
+        // the per-message chip and compact/getSnapshot to
+        // load the actual transcript into a modal.
+        dispatcher.register("compact/listSnapshots", this::compactListSnapshots);
+        dispatcher.register("compact/getSnapshot",   this::compactGetSnapshot);
         // toggle the boulder auto-continue per session. The
         // TUI's countdown toast calls this with `stopped=true` when
         // the user clicks "Stop"; the next user-prompt submit clears
@@ -6016,6 +6029,153 @@ public class AetherCodeMethods {
         resp.put("currentProvider", currentProviderName);
         resp.put("currentModel", currentModelId);
         return resp;
+    }
+
+    /** R284: list pre-compaction snapshots of {@code sessionId}
+     *  (or, when omitted, the engine's active session). Each
+     *  entry carries the {@code compactionIndex} +
+     *  {@code originalMessageCount} + {@code createdAt} +
+     *  a {@code summary} preview (first 200 chars), enough for
+     *  the renderer's "View original (N msgs)" chip to
+     *  decide whether to show the affordance.
+     *
+     *  <p>Returns an empty {@code snapshots[]} (rather than
+     *  an error) when the store is unwired — the desktop's
+     *  MessageList handles the "no snapshots" branch by
+     *  hiding the affordance rather than crashing. */
+    @SuppressWarnings("unchecked")
+    public Object compactListSnapshots(Object params) {
+        java.util.Map<String, Object> p = params == null
+                ? java.util.Map.of()
+                : (java.util.Map<String, Object>) params;
+        org.aethercode.core.compact.SnapshotStore store = currentSnapshotStore();
+        String sessionId = p.get("sessionId") instanceof String s && !s.isBlank()
+                ? s
+                : (engine == null ? null : engine.appState().sessionId());
+        java.util.List<java.util.Map<String, Object>> rows = new java.util.ArrayList<>();
+        if (store != null && sessionId != null && !sessionId.isBlank()) {
+            for (org.aethercode.core.compact.SnapshotStore.Snapshot snap
+                    : store.bySession(sessionId)) {
+                rows.add(snapshotSummaryRow(snap));
+            }
+        }
+        java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("ok", true);
+        resp.put("sessionId", sessionId);
+        resp.put("snapshots", rows);
+        return resp;
+    }
+
+    /** R284: load a specific snapshot's messages so the
+     *  desktop MessageList can show "View original (N msgs)"
+     *  as a modal. The {@code sessionId} defaults to the
+     *  engine's active session; {@code compactionIndex} is
+     *  required. Returns {@code ok=false, error="not-found"}
+     *  when no such snapshot exists (rather than throwing
+     *  so the renderer's modal can show a friendly
+     *  "snapshot missing" pill). */
+    @SuppressWarnings("unchecked")
+    public Object compactGetSnapshot(Object params) {
+        java.util.Map<String, Object> p = params == null
+                ? java.util.Map.of()
+                : (java.util.Map<String, Object>) params;
+        org.aethercode.core.compact.SnapshotStore store = currentSnapshotStore();
+        if (store == null) {
+            throw new JsonRpcProtocolException(
+                    "compact/getSnapshot unavailable: snapshot store not wired",
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR,
+                            "snapshot store not wired; the daemon needs SnapshotStore on startup"));
+        }
+        String sessionId = p.get("sessionId") instanceof String s && !s.isBlank()
+                ? s
+                : (engine == null ? null : engine.appState().sessionId());
+        Object idxRaw = p.get("compactionIndex");
+        long idx;
+        if (idxRaw instanceof Number n) idx = n.longValue();
+        else if (idxRaw instanceof String s && !s.isBlank()) {
+            try { idx = Long.parseLong(s.trim()); }
+            catch (NumberFormatException e) {
+                throw new JsonRpcProtocolException(
+                        "compact/getSnapshot: compactionIndex must be an integer",
+                        JsonRpcError.of(JsonRpcError.INVALID_PARAMS,
+                                "compactionIndex must be an integer, got: " + s));
+            }
+        } else {
+            throw new JsonRpcProtocolException(
+                    "compact/getSnapshot: compactionIndex is required",
+                    JsonRpcError.of(JsonRpcError.INVALID_PARAMS,
+                            "compactionIndex is required"));
+        }
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new JsonRpcProtocolException(
+                    "compact/getSnapshot: sessionId is required",
+                    JsonRpcError.of(JsonRpcError.INVALID_PARAMS,
+                            "sessionId is required"));
+        }
+        java.util.Optional<org.aethercode.core.compact.SnapshotStore.Snapshot> hit =
+                store.getByIndex(sessionId, idx);
+        if (hit.isEmpty()) {
+            java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+            resp.put("ok", false);
+            resp.put("error", "not-found");
+            resp.put("sessionId", sessionId);
+            resp.put("compactionIndex", idx);
+            return resp;
+        }
+        org.aethercode.core.compact.SnapshotStore.Snapshot snap = hit.get();
+        java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("ok", true);
+        resp.put("snapshot", snapshotDetailRow(snap));
+        return resp;
+    }
+
+    /** R284: helper — turn a {@link
+     *  org.aethercode.core.compact.SnapshotStore.Snapshot}
+     *  into the lightweight row shape returned by
+     *  {@code compact/listSnapshots}. Truncates the
+     *  summary to 200 chars so a long compaction doesn't
+     *  bloat the list response (the renderer only needs
+     *  the first paragraph for a hover preview). */
+    private static java.util.Map<String, Object> snapshotSummaryRow(
+            org.aethercode.core.compact.SnapshotStore.Snapshot snap) {
+        java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("compactionIndex", snap.compactionIndex());
+        row.put("originalMessageCount", snap.originalMessageCount());
+        row.put("keptMessageCount", snap.keptMessageCount());
+        row.put("createdAt", snap.createdAt() == null ? null : snap.createdAt().toString());
+        row.put("fileName", snap.fileName());
+        String summary = snap.summary() == null ? "" : snap.summary();
+        if (summary.length() > 200) summary = summary.substring(0, 200) + "…";
+        row.put("summary", summary);
+        return row;
+    }
+
+    /** R284: helper — turn a snapshot into the full row
+     *  shape returned by {@code compact/getSnapshot}.
+     *  Includes the raw {@code messages} array so the
+     *  renderer's modal can render the original turns
+     *  verbatim. The size of {@code messages} can be
+     *  large; callers should stream or paginate if they
+     *  expect very long histories. */
+    private static java.util.Map<String, Object> snapshotDetailRow(
+            org.aethercode.core.compact.SnapshotStore.Snapshot snap) {
+        java.util.Map<String, Object> row = snapshotSummaryRow(snap);
+        java.util.List<java.util.Map<String, Object>> msgs = new java.util.ArrayList<>();
+        for (org.aethercode.core.message.Message m : snap.messages()) {
+            msgs.add(m.toMap());
+        }
+        row.put("messages", msgs);
+        return row;
+    }
+
+    /** R284: helper — resolve the engine's current
+     *  snapshot store. Falls back to null when the
+     *  engine was built without one (legacy CLI / unit
+     *  tests); the list handler treats null as "no
+     *  snapshots" and the get handler throws. */
+    private org.aethercode.core.compact.SnapshotStore currentSnapshotStore() {
+        if (engine == null) return null;
+        return engine.snapshotStore();
     }
 
     /** resolve a {@code "provider/model"} string to a

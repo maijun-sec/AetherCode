@@ -962,6 +962,51 @@ export class AetherCodeRpc {
       model: opts.model ?? null,
     });
   }
+  // R284: pre-compaction snapshot access. The desktop
+  // MessageList calls compactListSnapshots to populate
+  // the "View original" affordance on summary messages
+  // and compactGetSnapshot to load the actual transcript
+  // into a modal. Both RPCs are read-only — the daemon
+  // owns the on-disk SnapshotStore.
+  compactListSnapshots(opts?: { sessionId?: string }): Promise<{
+    ok: true;
+    sessionId: string | null;
+    snapshots: Array<{
+      compactionIndex: number;
+      originalMessageCount: number;
+      keptMessageCount: number;
+      createdAt: string | null;
+      fileName: string;
+      summary: string;
+    }>;
+  }> {
+    return this.call('compact/listSnapshots', {
+      sessionId: opts?.sessionId ?? null,
+    });
+  }
+  compactGetSnapshot(opts: {
+    sessionId?: string;
+    compactionIndex: number;
+  }): Promise<{
+    ok: true;
+    snapshot: {
+      compactionIndex: number;
+      originalMessageCount: number;
+      keptMessageCount: number;
+      createdAt: string | null;
+      fileName: string;
+      summary: string;
+      messages: Array<Record<string, unknown>>;
+    };
+  } | {
+    ok: false;
+    error: string;
+  }> {
+    return this.call('compact/getSnapshot', {
+      sessionId: opts.sessionId ?? null,
+      compactionIndex: opts.compactionIndex,
+    });
+  }
 
   // The user explicitly asked for "a summary
   // regardless of whether the task ended

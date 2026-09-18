@@ -90,6 +90,30 @@ export interface MockSeed {
   tasks?: TaskInfo[];
   lastUsedModelId?: string;
   events?: RpcEvent[];
+  /** R284: per-session pre-compaction snapshots for the
+   *  MessageList's "View original" affordance. Tests
+   *  populate this when a session's transcript contains
+   *  a compaction-summary message so
+   *  {@code compact/getSnapshot} returns a fixture
+   *  without needing a real daemon SnapshotStore. The
+   *  key is sessionId; the value is the list of
+   *  snapshots in {@code compactionIndex} order (0, 1,
+   *  2, ...). */
+  snapshots?: Record<string, MockSnapshot[]>;
+}
+
+/** R284: a single pre-compaction snapshot row, the
+ *  shape {@code compact/getSnapshot} returns. Matches
+ *  the daemon's wire contract (kept loose so a future
+ *  server-side field addition doesn't break tests). */
+export interface MockSnapshot {
+  compactionIndex: number;
+  originalMessageCount: number;
+  keptMessageCount: number;
+  createdAt?: string;
+  fileName?: string;
+  summary?: string;
+  messages?: Array<Record<string, unknown>>;
 }
 
 /** The in-process mock. Tests construct one per `it()` block so
@@ -105,7 +129,20 @@ export class MockRpcServer {
     workflows: WorkflowSummary[];
     tasks: TaskInfo[];
     lastUsedModelId?: string;
-  } = { sessions: [], grants: [], models: [], providers: [], workflows: [], tasks: [] };
+    snapshots: Record<string, MockSnapshot[]>;
+    /** R284: the {@code MockSeed.sessionId} the mock was
+     *  constructed with. The compact/* RPCs resolve an
+     *  omitted {@code sessionId} param to this value (the
+     *  daemon defaults to the engine's active session).
+     *  Stored separately from {@code sessions} because the
+     *  engine's "active session" is a higher-level concept
+     *  than the sessions list. */
+    defaultSessionId?: string;
+  } = {
+    sessions: [], grants: [], models: [],
+    providers: [], workflows: [], tasks: [],
+    snapshots: {},
+  };
   private idCounter = 1;
   private now = 1_700_000_000_000;
   private installHandle: { restore: () => void } | null = null;
@@ -127,6 +164,14 @@ export class MockRpcServer {
       workflows: seed.workflows ? JSON.parse(JSON.stringify(seed.workflows)) : [],
       tasks: seed.tasks ? JSON.parse(JSON.stringify(seed.tasks)) : [],
       lastUsedModelId: seed.lastUsedModelId,
+      // R284: per-session pre-compaction snapshots. Same
+      // JSON deep-clone so a test that mutates the
+      // response (e.g. optimistic append) doesn't leak
+      // into the next test's fixture.
+      snapshots: seed.snapshots
+        ? JSON.parse(JSON.stringify(seed.snapshots))
+        : {},
+      defaultSessionId: seed.sessionId,
     };
     if (seed.sessionId) this.ensureSession(seed.sessionId);
     this.registerDefaults();
@@ -643,6 +688,50 @@ export class MockRpcServer {
     this.handle('model/get', (params) => {
       const { id } = (params ?? {}) as { id: string };
       return this.store.models.find((m) => m.id === id);
+    });
+    // R284: pre-compaction snapshot access for the
+    // MessageList's "View original" affordance. Mirrors
+    // the daemon's compact/listSnapshots +
+    // compact/getSnapshot contract so tests don't need a
+    // real SnapshotStore on disk.
+    this.handle('compact/listSnapshots', (params) => {
+      const p = (params ?? {}) as { sessionId?: string | null };
+      const sid = p.sessionId || this.store.defaultSessionId || 'default';
+      const rows = this.store.snapshots[sid] ?? [];
+      return {
+        ok: true,
+        sessionId: sid,
+        snapshots: rows.map((s) => ({
+          compactionIndex: s.compactionIndex,
+          originalMessageCount: s.originalMessageCount,
+          keptMessageCount: s.keptMessageCount,
+          createdAt: s.createdAt ?? null,
+          fileName: s.fileName ?? `${sid}__${s.compactionIndex}.json`,
+          summary: s.summary ?? '',
+        })),
+      };
+    });
+    this.handle('compact/getSnapshot', (params) => {
+      const p = (params ?? {}) as { sessionId?: string | null; compactionIndex?: number };
+      const sid = p.sessionId || this.store.defaultSessionId || 'default';
+      const idx = p.compactionIndex ?? -1;
+      const rows = this.store.snapshots[sid] ?? [];
+      const hit = rows.find((s) => s.compactionIndex === idx);
+      if (!hit) {
+        return { ok: false, error: 'not-found', sessionId: sid, compactionIndex: idx };
+      }
+      return {
+        ok: true,
+        snapshot: {
+          compactionIndex: hit.compactionIndex,
+          originalMessageCount: hit.originalMessageCount,
+          keptMessageCount: hit.keptMessageCount,
+          createdAt: hit.createdAt ?? null,
+          fileName: hit.fileName ?? `${sid}__${hit.compactionIndex}.json`,
+          summary: hit.summary ?? '',
+          messages: hit.messages ?? [],
+        },
+      };
     });
     this.handle('model/set', (params) => {
       const { id, sessionId } = (params ?? {}) as { id: string; sessionId?: string };

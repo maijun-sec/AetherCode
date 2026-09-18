@@ -806,6 +806,10 @@ public final class HttpJsonRpcServer {
             // by hasApiKey on the renderer side).
             case "listAvailableModels" -> methods.listAvailableModels(params);
             case "model/list"         -> methods.listAvailableModels(params);
+            // R284: pre-compaction snapshot access for the
+            // desktop MessageList's "View original" affordance.
+            case "compact/listSnapshots" -> methods.compactListSnapshots(params);
+            case "compact/getSnapshot"   -> methods.compactGetSnapshot(params);
             // retry a previously-failed sub-task.
             case "retrySubTask" -> methods.retrySubTask(params);
             // install a per-(tool, target) permission override.

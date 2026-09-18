@@ -61,6 +61,25 @@ R283 markers:
         plumbing that hands the registry over to QueryEngine)
     AetherCodeMethods.class — setProviderRegistry (the RPC
         handler that wires the registry on daemon startup)
+
+R284 markers:
+    SnapshotStore.class — saveForSession (the sessionId-keyed
+        save path; the method name appears in the bytecode)
+    SnapshotStore$Snapshot.class — the record carrying
+        sessionId + compactionIndex + the message list
+        (sessionId field name appears in the bytecode)
+    QueryEngine.class — setSnapshotStore (the R284 wiring
+        that lets the engine attribute snapshots to the
+        active session)
+    AetherCodeEngine.class — setSnapshotStore + snapshotStore
+        (the SDK plumbing that hands the store over to
+        QueryEngine)
+    AetherCodeMethods.class — compactListSnapshots +
+        compactGetSnapshot (the two RPC handlers the
+        desktop MessageList calls when the user clicks
+        "View original")
+    HttpJsonRpcServer.class — case "compact/listSnapshots"
+        + case "compact/getSnapshot" (the routing literals)
 """
 import sys
 import zipfile
@@ -232,6 +251,47 @@ checks = [
         b'setProviderRegistry',
         'AetherCodeMethods must register setProviderRegistry RPC (R283)',
     ),
+    # ---- R284 ----
+    (
+        'org/aethercode/core/compact/SnapshotStore.class',
+        b'saveForSession',
+        'SnapshotStore must expose saveForSession (R284)',
+    ),
+    (
+        'org/aethercode/core/compact/SnapshotStore$Snapshot.class',
+        b'sessionId',
+        'Snapshot record must carry sessionId field (R284)',
+    ),
+    (
+        'org/aethercode/core/engine/QueryEngine.class',
+        b'setSnapshotStore',
+        'QueryEngine must accept setSnapshotStore (R284)',
+    ),
+    (
+        'org/aethercode/sdk/AetherCodeEngine.class',
+        b'setSnapshotStore',
+        'AetherCodeEngine must propagate setSnapshotStore (R284)',
+    ),
+    (
+        'org/aethercode/protocol/methods/AetherCodeMethods.class',
+        b'compactListSnapshots',
+        'AetherCodeMethods must register compactListSnapshots RPC (R284)',
+    ),
+    (
+        'org/aethercode/protocol/methods/AetherCodeMethods.class',
+        b'compactGetSnapshot',
+        'AetherCodeMethods must register compactGetSnapshot RPC (R284)',
+    ),
+    (
+        'org/aethercode/protocol/http/HttpJsonRpcServer.class',
+        b'compact/listSnapshots',
+        'HttpJsonRpcServer must route compact/listSnapshots (R284)',
+    ),
+    (
+        'org/aethercode/protocol/http/HttpJsonRpcServer.class',
+        b'compact/getSnapshot',
+        'HttpJsonRpcServer must route compact/getSnapshot (R284)',
+    ),
 ]
 for path, needle, msg in checks:
     data = classes.get(path)
@@ -270,3 +330,8 @@ print(f'        ModelSpec carries per-model compact field')
 print(f'        QueryEngine resolves per-model config (setCompactRegistry + resolveCompactConfig)')
 print(f'        AetherCodeEngine propagates compact registry to QueryEngine')
 print(f'        AetherCodeMethods registers setProviderRegistry RPC')
+print(f'  R284: SnapshotStore.saveForSession(sessionId, …) writes <sessionId>__<N>.json')
+print(f'        Snapshot record carries sessionId + compactionIndex (monotonic per session)')
+print(f'        QueryEngine + AetherCodeEngine propagate setSnapshotStore (R284)')
+print(f'        AetherCodeMethods registers compactListSnapshots + compactGetSnapshot RPCs')
+print(f'        HttpJsonRpcServer routes compact/listSnapshots + compact/getSnapshot')

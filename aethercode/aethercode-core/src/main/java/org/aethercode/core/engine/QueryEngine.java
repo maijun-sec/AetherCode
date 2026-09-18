@@ -80,6 +80,14 @@ public class QueryEngine {
     private volatile org.aethercode.core.providers.ProviderRegistry compactRegistry;
     private volatile String currentProviderName;
     private volatile String currentModelId;
+    // R284: pre-compaction snapshot store. When wired
+    // (typically by AetherCodeEngine), every runPreFlightCompact
+    // writes a JSON snapshot of the live transcript BEFORE the
+    // compactor runs so the user can later "View original
+    // context" from the MessageList. Null disables snapshotting
+    // (legacy / test paths).
+    private volatile org.aethercode.core.compact.SnapshotStore snapshotStore;
+    private volatile String currentSessionId;
     // hook fired on every user prompt BEFORE the LLM stream
     // starts. Defaults to a no-op so existing callers (TUI, headless
     // --print, tests) see no behavioural change. The AetherCodeEngine
@@ -445,6 +453,32 @@ public class QueryEngine {
         this.currentModelId = modelId;
     }
 
+    /** R284: install the pre-compaction snapshot store and
+     *  the session id it should attribute snapshots to.
+     *  Idempotent — safe to call again on hot-reload.
+     *  Pass {@code null} to disable snapshotting (used by
+     *  tests that don't want disk side effects). */
+    public void setSnapshotStore(
+            org.aethercode.core.compact.SnapshotStore store,
+            String sessionId) {
+        this.snapshotStore = store;
+        this.currentSessionId = sessionId;
+    }
+
+    /** R284: update the session id without rebuilding the
+     *  store. Called when the engine switches sessions mid-run
+     *  (e.g. {@code AetherCodeMethods.switchSession}). */
+    public void setSessionId(String sessionId) {
+        this.currentSessionId = sessionId;
+    }
+
+    /** R284: accessor used by the RPC layer so a
+     *  {@code compact/getSnapshot} call can resolve the same
+     *  store the engine itself wrote to. */
+    public org.aethercode.core.compact.SnapshotStore snapshotStore() {
+        return snapshotStore;
+    }
+
     /** R283: resolve the compact config for the
      *  currently-active model. Three-way lookup:
      *  <ol>
@@ -577,10 +611,38 @@ public class QueryEngine {
         } catch (Exception ignored) {}
         var spliced = compactor.compact(messages);
         if (spliced != null && spliced != messages) {
+            // R284: snapshot the pre-compaction context BEFORE
+            // we mutate appState.transcript. We do this after
+            // the compactor has produced the summary so the
+            // snapshot carries the same summary text the model
+            // saw — when the user clicks "View original" in
+            // the MessageList, they get both the original
+            // turns AND the summary that replaced them.
+            org.aethercode.core.compact.SnapshotStore.Snapshot snap = null;
+            try {
+                if (snapshotStore != null && currentSessionId != null
+                        && !currentSessionId.isBlank()) {
+                    String summary = extractSummaryFromSpliced(spliced);
+                    snap = snapshotStore.saveForSession(
+                            currentSessionId,
+                            messages.size(),
+                            summary,
+                            messages);
+                    spliced = attachCompactionMetadata(spliced, snap);
+                }
+            } catch (Exception snapshotEx) {
+                // Snapshotting is best-effort. A failed write
+                // must not break the user's turn.
+                java.util.logging.Logger.getLogger(QueryEngine.class.getName())
+                        .warning("R284 snapshot save failed: " + snapshotEx.getMessage());
+            }
             appState.transcript().clear();
             for (var mm : spliced) appState.appendMessage(mm);
             try {
                 String done = "R140 compacted: " + messages.size() + " -> " + spliced.size() + " msgs";
+                if (snap != null) {
+                    done += " (snapshot=" + snap.sessionId() + "__" + snap.compactionIndex() + ")";
+                }
                 java.util.logging.Logger.getLogger(QueryEngine.class.getName())
                         .info(done);
                 Message doneMsg = new Message(
@@ -592,6 +654,59 @@ public class QueryEngine {
                 messageSink.accept(doneMsg);
             } catch (Exception ignored) {}
         }
+    }
+
+    /**
+     * R284: pull the summary text out of the spliced list.
+     * The synthetic summary message is the FIRST entry and
+     * carries {@code metadata["summary"] = true}. We strip
+     * the "[Conversation compacted — ...]" prefix
+     * {@link org.aethercode.compact.CompactGate#spliceSummary}
+     * prepends so the snapshot's {@code summary} field holds
+     * the bare model output — useful for audit and for the
+     * desktop "diff" view that compares the original context
+     * with the summary that replaced it.
+     */
+    private static String extractSummaryFromSpliced(List<Message> spliced) {
+        if (spliced == null || spliced.isEmpty()) return "";
+        Message first = spliced.get(0);
+        if (first.metadata() == null
+                || !Boolean.TRUE.equals(first.metadata().get("summary"))) {
+            return "";
+        }
+        String text = first.textContent();
+        int sep = text.indexOf("\n\n");
+        if (sep < 0) return text;
+        return text.substring(sep + 2);
+    }
+
+    /**
+     * R284: replace the spliced summary message's metadata
+     * with the compaction bookkeeping (compactionIndex +
+     * snapshotPath + originalCount). The renderer's MessageList
+     * watches for {@code kind == "compaction-summary"} on a
+     * message and renders a "View original (N msgs)" affordance
+     * that calls {@code compact/getSnapshot} against the same
+     * sessionId + index.
+     */
+    private static List<Message> attachCompactionMetadata(
+            List<Message> spliced,
+            org.aethercode.core.compact.SnapshotStore.Snapshot snap) {
+        if (spliced == null || spliced.isEmpty() || snap == null) return spliced;
+        Message first = spliced.get(0);
+        java.util.Map<String, Object> base = first.metadata() != null
+                ? new java.util.LinkedHashMap<>(first.metadata())
+                : new java.util.LinkedHashMap<>();
+        base.put("kind", "compaction-summary");
+        base.put("compactionIndex", snap.compactionIndex());
+        base.put("snapshotPath", snap.fileName());
+        base.put("originalCount", snap.originalMessageCount());
+        Message updated = new Message(
+                first.id(), first.role(), first.content(),
+                null, base);
+        java.util.List<Message> out = new java.util.ArrayList<>(spliced);
+        out.set(0, updated);
+        return out;
     }
 
     /** rough token estimate of the live transcript

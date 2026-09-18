@@ -5,6 +5,7 @@ import { useStore, ChatMessage, ChatStep, ChatSubTask } from '../store';
 import { subscribeKind } from '../rpc/events';
 import { SubagentSpawnCard } from './chat/SubagentSpawnCard';
 import { StreamingIndicator } from './StreamingIndicator';
+import { SnapshotModal } from './SnapshotModal';
 import './MessageList.css';
 
 // 3-level hierarchy: Task > SubTask > Step.
@@ -810,6 +811,85 @@ function isEnginePromptUserMessage(content: string): boolean {
   return trimmed.startsWith('[Engine]');
 }
 
+/** R284: detect a pre-compaction summary message. The
+ *  daemon tags the synthetic user-role message it
+ *  splices into the transcript with
+ *  {@code metadata["kind"] === "compaction-summary"}
+ *  plus a {@code compactionIndex} so the renderer can
+ *  fetch the original transcript. The renderer treats
+ *  this as a separate visual layer (not a user bubble
+ *  and not an engine-hint pill) because the affordance
+ *  needs a button to open the snapshot modal. */
+function isCompactionSummary(m: ChatMessage): boolean {
+  return m.role === 'user'
+    && m.metadata?.kind === 'compaction-summary'
+    && typeof m.metadata?.compactionIndex === 'number';
+}
+
+/** R284: compaction-summary row in the message list.
+ *  Renders the summary text plus a "View original (N
+ *  msgs)" button that opens the {@link SnapshotModal}.
+ *  Lives outside the markdown stream so the user can
+ *  always find the affordance even when the model
+ *  hasn't emitted a heading for it. */
+function CompactionSummaryMessage({
+  m, sessionId,
+}: { m: ChatMessage; sessionId: string | null }) {
+  const [open, setOpen] = useState(false);
+  const idx = (m.metadata?.compactionIndex as number) ?? 0;
+  const original = (m.metadata?.originalCount as number) ?? 0;
+  const fileName = typeof m.metadata?.snapshotPath === 'string'
+    ? (m.metadata.snapshotPath as string)
+    : null;
+  // strip the "[Conversation compacted — earlier turns
+  // replaced by the summary below]\n\n" prefix the
+  // daemon puts on the spliced message so the row
+  // shows the bare model output.
+  const summaryText = m.content.replace(
+      /^\[Conversation compacted[^\]]*\]\s*\n+/, '');
+  return (
+    <div
+      className="message message-compaction-summary"
+      data-testid="compaction-summary"
+      data-compaction-index={idx}
+    >
+      <div className="message-meta">
+        <span className="message-compaction-summary-icon" aria-hidden>↺</span>
+        <span className="message-role">compaction</span>
+        <span className="message-time">{fmtTime(m.timestamp)}</span>
+      </div>
+      <div className="message-content message-compaction-summary-body">
+        {summaryText}
+      </div>
+      <div className="message-compaction-summary-actions">
+        <button
+          type="button"
+          className="message-compaction-summary-view"
+          data-testid="compaction-summary-view-original"
+          onClick={() => setOpen(true)}
+        >
+          View original ({original} msgs)
+        </button>
+        {fileName && (
+          <span
+            className="message-compaction-summary-filename"
+            title={fileName}
+          >
+            {fileName}
+          </span>
+        )}
+      </div>
+      <SnapshotModal
+        open={open}
+        sessionId={sessionId ?? undefined}
+        compactionIndex={idx}
+        summaryPreview={summaryText}
+        onClose={() => setOpen(false)}
+      />
+    </div>
+  );
+}
+
 function LegacyMessage({ m }: { m: ChatMessage }) {
   if (m.role === 'user') {
     // R273: engine-authored prompts (loop-guard bumps, etc.) get
@@ -1101,6 +1181,19 @@ export function MessageList() {
         <>
           {timeline.map((ev) => {
             if (ev.kind === 'user') {
+              // R284: route compaction-summary messages to
+              // the dedicated row so the user gets the
+              // "View original" affordance. The legacy
+              // path stays for plain user bubbles.
+              if (isCompactionSummary(ev.message)) {
+                return (
+                  <CompactionSummaryMessage
+                    key={`c-${ev.message.id}`}
+                    m={ev.message}
+                    sessionId={currentSessionId}
+                  />
+                );
+              }
               return <LegacyMessage key={`u-${ev.message.id}`} m={ev.message} />;
             }
             if (ev.kind === 'system') {

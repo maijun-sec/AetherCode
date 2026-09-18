@@ -125,6 +125,16 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     private volatile org.aethercode.core.providers.ProviderRegistry providerRegistry;
     private volatile String currentProviderName;
     private volatile String currentModelId;
+    // R284: pre-compaction snapshot store. When set, every
+    // successful runPreFlightCompact persists the pre-compact
+    // transcript as a JSON file under <store.dir>/ so the
+    // user can later "View original context" in the
+    // MessageList. The engine keeps the snapshot in sync
+    // with the active session: loadSession / createSession
+    // push the new sessionId to QueryEngine via
+    // setSnapshotStore so the next compact attributes
+    // its snapshot to the correct session.
+    private volatile org.aethercode.core.compact.SnapshotStore snapshotStore;
     /** per-session tool-call + state
      *  counters. Reset on {@link #loadSession}
      *  (so a new session in the same engine
@@ -475,6 +485,13 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         if (this.sessionStore != null) {
             attachSessionStore();
         }
+        // R284: stash the pre-compaction snapshot store
+        // BEFORE QueryEngine is constructed below — we
+        // forward it to QueryEngine right after construction
+        // so the very first compact writes a snapshot. The
+        // store is sourced from the builder (the daemon wires
+        // a real one); tests can leave it null.
+        this.snapshotStore = b.snapshotStore;
         // build the SkillRegistry. The user-tier dir is
         // resolved from {@code MAVIS_HOME} / {@code MINIMAX_HOME} /
         // {@code ~/.minimax}; the project-tier dir is
@@ -799,6 +816,13 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         this.queryEngine = new QueryEngine(
                 appState, chatClient, policy, systemPrompt.render(),
                 null, this.metrics, this.costTracker, this.streamingToolExecutor, compactor, null);
+        // R284: forward the snapshot store to QueryEngine
+        // now that the engine exists. The session id is
+        // already set on AppState at this point.
+        if (this.snapshotStore != null) {
+            this.queryEngine.setSnapshotStore(
+                    this.snapshotStore, this.appState.sessionId());
+        }
         // install the onUserPrompt hook so "no confirmation needed
         // for next N rounds" patterns in the prompt are auto-detected.
         // The hook reads the prompt, calls SkipConfirmationDetector,
@@ -1364,6 +1388,33 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *  registry (mainly tests). */
     public org.aethercode.core.providers.ProviderRegistry compactRegistry() {
         return providerRegistry;
+    }
+
+    /** R284 accessor for the snapshot store. The
+     *  {@code compact/listSnapshots} and
+     *  {@code compact/getSnapshot} RPCs resolve the
+     *  store via this accessor so they read from the
+     *  same on-disk directory the engine itself wrote
+     *  to. */
+    public org.aethercode.core.compact.SnapshotStore snapshotStore() {
+        return snapshotStore;
+    }
+
+    /** R284: install the snapshot store after construction.
+     *  Used by the daemon pattern (CLI builds the engine,
+     *  daemon wires the store on startup). Idempotent —
+     *  re-installing the same instance is a no-op;
+     *  swapping to a different instance rewires
+     *  QueryEngine so the very next compact writes to
+     *  the new store. */
+    public synchronized void setSnapshotStore(
+            org.aethercode.core.compact.SnapshotStore store) {
+        if (store == this.snapshotStore) return;
+        this.snapshotStore = store;
+        if (this.queryEngine != null) {
+            this.queryEngine.setSnapshotStore(
+                    store, this.appState.sessionId());
+        }
     }
 
     /** install (or remove) the task-push fan-out.
@@ -2147,6 +2198,15 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // the engine's startup sessionId, which the user can't
         // ever escape.
         appState.sessionId(sessionId);
+        // R284: keep QueryEngine's snapshot attribution in
+        // sync with the active session. Without this, the
+        // next runPreFlightCompact would write a snapshot
+        // under the OLD session id and the user would
+        // never see it on the freshly-loaded session.
+        if (this.queryEngine != null) {
+            this.queryEngine.setSnapshotStore(
+                    this.snapshotStore, sessionId);
+        }
         // re-register the engine under the new id in
         // the SessionManager (when one is installed). The
         // manager was set up by the daemon under "default" +
@@ -2254,6 +2314,16 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // prior round transcript_push payloads would always show the
         // old id, which the user can't ever escape.
         appState.sessionId(newId);
+        // R284: keep QueryEngine's snapshot attribution in
+        // sync with the freshly-minted session id so the
+        // first compact on this session attributes its
+        // snapshot correctly. The store itself is shared
+        // across sessions (one flat dir on disk); only
+        // the sessionId label changes.
+        if (this.queryEngine != null) {
+            this.queryEngine.setSnapshotStore(
+                    this.snapshotStore, newId);
+        }
         // also register the engine under the new id in
         // the SessionManager (when one is installed). The
         // manager was set up by the daemon under "default" +
@@ -3085,6 +3155,12 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
          *  persistence. When {@code null} (the default) the engine
          *  is single-session and writes nothing to disk. */
         private org.aethercode.core.transcript.SessionStore sessionStore;
+        /** R284: optional {@code SnapshotStore} for
+         *  pre-compaction context snapshots. When {@code null}
+         *  (the default) the engine skips snapshotting — so
+         *  existing test paths that don't want disk side
+         *  effects still pass. The daemon wires a real one. */
+        private org.aethercode.core.compact.SnapshotStore snapshotStore;
         /** project-tier skill roots ({@code <cwd>/.aethercode/skills/}).
          *  Multiple roots are scanned in declaration order; project-tier
          *  wins on name collision against the user tier. When the list is
@@ -3250,6 +3326,18 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
          *  R106. Pass {@code null} (the default) for unit tests
          *  that don't need persistence. */
         public Builder sessionStore(org.aethercode.core.transcript.SessionStore s) { this.sessionStore = s; return this; }
+        /** install a {@code SnapshotStore} for pre-compaction
+         *  context snapshots. When set, every
+         *  {@code runPreFlightCompact} writes the pre-compact
+         *  transcript to {@code <store.dir>/<sessionId>__<N>.json}
+         *  and the next render of the summary message in
+         *  MessageList gets a "View original (N msgs)" affordance.
+         *  Pass {@code null} (the default) for unit tests
+         *  that don't want disk side effects. */
+        public Builder snapshotStore(org.aethercode.core.compact.SnapshotStore s) {
+            this.snapshotStore = s;
+            return this;
+        }
         /** project-tier skill roots (one entry per project
          *  directory to scan). Project wins on name collision. */
         public Builder skillProjectDirs(List<Path> dirs) { this.skillProjectDirs = dirs; return this; }
