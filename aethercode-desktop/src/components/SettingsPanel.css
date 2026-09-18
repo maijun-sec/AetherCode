@@ -88,3 +88,9 @@
   margin-top: 2px;
 }
 .settings-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); }
+/* R287-fix: deep-link buttons in the popup footer that jump to the
+   full Settings page tabs (SDD / Models / Workflows). Light-weight
+   links styled to fit between Cancel and Save. */
+.settings-footer-links { display: flex; gap: 12px; margin-right: auto; align-items: center; }
+.settings-link { background: transparent; border: 0; padding: 4px 6px; color: var(--link, #4a8bf5); cursor: pointer; font-size: 13px; border-radius: 4px; }
+.settings-link:hover { background: var(--surface-hover, rgba(0,0,0,0.04)); text-decoration: underline; }

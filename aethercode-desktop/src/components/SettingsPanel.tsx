@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import './SettingsPanel.css';
 
@@ -21,6 +22,16 @@ const CONCURRENCY_PROFILES = [
 ];
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
+  // R287-fix: deep-link to the full Settings page so the SDD
+  // tab (and the Models / Workflows tabs) are reachable from
+  // the popup. The popup stays focused on quick toggles
+  // (provider filter, model picker, concurrency sliders);
+  // anything that needs tabs lives at /settings/sdd.
+  const navigate = useNavigate();
+  const openFullSettings = (tab: 'permissions' | 'models' | 'workflows' | 'sdd') => {
+    onClose();
+    navigate(`/settings/${tab}`);
+  };
   const {
     engineState, setPermissionMode,
     refreshModels,
@@ -585,6 +596,40 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         </div>
         <div className="settings-footer">
           <button onClick={onClose}>Cancel</button>
+          {/* R287-fix: navigate to the full Settings page so the
+              SDD tab (and Models / Workflows tabs) are reachable
+              from the popup. Grouped as a small "open full settings
+              in a tab" selector so the user can jump straight to
+              the tab they want without going through permissions. */}
+          <div className="settings-footer-links">
+            <button
+              type="button"
+              className="settings-link"
+              onClick={() => openFullSettings('sdd')}
+              data-testid="settings-open-sdd"
+              title="Open the SDD panel in a full page"
+            >
+              Open SDD →
+            </button>
+            <button
+              type="button"
+              className="settings-link"
+              onClick={() => openFullSettings('models')}
+              data-testid="settings-open-models"
+              title="Open the Models tab in a full page"
+            >
+              Models →
+            </button>
+            <button
+              type="button"
+              className="settings-link"
+              onClick={() => openFullSettings('workflows')}
+              data-testid="settings-open-workflows"
+              title="Open the Workflows tab in a full page"
+            >
+              Workflows →
+            </button>
+          </div>
           <button className="primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
