@@ -37,12 +37,15 @@ import java.util.concurrent.Callable;
 @Command(
         name = "aethercode",
         mixinStandardHelpOptions = true,
-        version = "aethercode 0.2.0",
+        version = "aethercode 0.3.0",
         description = "Java AI agent — local-first, MCP-friendly, ready for the JVM.",
         subcommands = { McpCommand.class, TuiCommand.class, TaskCli.class, GrantsCli.class,
                         SessionCommand.class, WorkflowCommand.class,
-                        // in-process SSD (Spec-Design-Tasks-Dev) pipeline
-                        SsdCommand.class,
+                        // R292: in-process SDD (Spec-Driven Development) pipeline
+                        //       — Spec Kit 6 phases (constitution/specify/plan/
+                        //       tasks/implement/converge) + 2 optional quality gates.
+                        //       Replaces the R236 SSD command.
+                        SddCommand.class,
                         // aethercode a2a <host> card | send | stream | get | cancel
                         A2aCommand.class }
 )

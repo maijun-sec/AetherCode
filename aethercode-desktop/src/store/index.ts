@@ -1523,17 +1523,26 @@ interface AppState {
   /** R288: SDD mode setter. See sddEnabled above. */
   setSddEnabled: (on: boolean) => void;
   /**
-   * R289 (live): phases of the current SDD run. Read by
-   * {@link SddPhaseBar} to render the chip strip. The
-   * `state` field follows the same vocabulary as the
+   * R292 (Spec Kit 6 phases): phases of the current SDD
+   * run. Read by {@link SddPhaseBar} to render the chip
+   * strip. Replaces the R289 4-phase SSD field. Now covers
+   * constitution / specify / clarify / plan / analyze /
+   * tasks / implement / converge; optional quality gates
+   * (clarify / analyze / converge) carry `optional: true`
+   * so the chip strip can render them half-opacity.
+   *
+   * The `state` field follows the same vocabulary as the
    * canned events (idle / running / pending-accept /
-   * done / skipped / failed). Empty when `sddEnabled`
-   * is false or no run has started yet.
+   * clarify-pending / converge-pending / done / skipped /
+   * failed). Empty when `sddEnabled` is false or no run
+   * has started yet.
    */
   ssdPhases: Array<{
     id: string;
     title: string;
-    state: 'idle' | 'running' | 'pending-accept' | 'done' | 'skipped' | 'failed';
+    /** R292: render half-opacity when true (clarify / analyze / converge). */
+    optional?: boolean;
+    state: 'idle' | 'running' | 'pending-accept' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed';
     preview?: string;
     path?: string;
   }>;
@@ -1576,13 +1585,25 @@ interface AppState {
   /** R289: stop the current SSD run (driver.stop +
    *  set sddActive=false). No-op when no run is active. */
   stopSsdFlow: () => void;
-  /** R289: send an inbound command (accept / revise /
-   *  skip / quit) to the running driver. No-op when no
-   *  driver is wired up. The accept / skip / revise
-   *  handlers advance the corresponding phase to
-   *  `done` / `skipped` / `pending-accept`. */
+  /** R289 / R292: send an inbound command (accept /
+   *  revise / skip / quit / clarify-answer /
+   *  converge-iterate) to the running driver. No-op
+   *  when no driver is wired up. The accept / skip /
+   *  revise handlers advance the corresponding phase
+   *  to `done` / `skipped` / `pending-accept`.
+   *  `clarify-answer` answers a pending
+   *  `clarify-question`; `converge-iterate` either
+   *  feeds feedback to the next converge iteration
+   *  (text non-empty) or accepts the not-converged
+   *  verdict (text empty). */
   sendSsdCommand: (
-    cmd: { action: 'accept' } | { action: 'revise'; text: string } | { action: 'skip' } | { action: 'quit' }
+    cmd:
+      | { action: 'accept' }
+      | { action: 'revise'; text: string }
+      | { action: 'skip' }
+      | { action: 'quit' }
+      | { action: 'clarify-answer'; id: string; answer: string }
+      | { action: 'converge-iterate'; text: string }
   ) => void;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
@@ -5621,69 +5642,49 @@ export const useStore = create<AppState>((set, get) => {
         .slice(0, 10)
         || `sd-${Date.now().toString(36).slice(-6)}`;
 
-      // Initialise the 4-phase template (idle). The
-      // driver's `phase-list` event replaces this with
-      // its own (matching) list — but we seed it here
-      // so the UI has something to render before the
-      // first event lands.
-      const phaseTemplate: Array<{ id: string; title: string; state: 'idle' | 'running' | 'pending-accept' | 'done' | 'skipped' | 'failed'; preview?: string; path?: string }> = [
-        { id: 'spec',   title: '需求分析', state: 'idle' },
-        { id: 'design', title: '详细设计', state: 'idle' },
-        { id: 'tasks',  title: '任务分析', state: 'idle' },
-        { id: 'dev',    title: '开发实现', state: 'idle' },
+      // R292: Spec Kit 8-phase template (constitution /
+      // specify / clarify / plan / analyze / tasks /
+      // implement / converge). Optional quality gates
+      // (clarify / analyze / converge) carry `optional:
+      // true` so the chip strip renders them half-opacity.
+      // The driver's `phase-list` event replaces this with
+      // its own (matching) list — we seed it here so the
+      // UI has something to render before the first event
+      // lands.
+      const phaseTemplate: Array<{ id: string; title: string; optional?: boolean; state: 'idle' | 'running' | 'pending-accept' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed'; preview?: string; path?: string }> = [
+        { id: 'constitution', title: '项目原则',  state: 'idle' },
+        { id: 'specify',      title: '需求分析',  state: 'idle' },
+        { id: 'clarify',      title: '需求澄清',  state: 'idle', optional: true },
+        { id: 'plan',         title: '详细设计',  state: 'idle' },
+        { id: 'analyze',      title: '一致性分析', state: 'idle', optional: true },
+        { id: 'tasks',        title: '任务分析',  state: 'idle' },
+        { id: 'implement',    title: '执行实现',  state: 'idle' },
+        { id: 'converge',     title: '收敛验证',  state: 'idle', optional: true },
       ];
 
-      // Canned 14-event sequence. Mirrors the daemon's
-      // InteractiveRepl wire format so swapping in
-      // TauriSsdDriver later is a one-line change. The
-      // mock driver emits one event per ~50 ms so a
-      // full run completes in ~1.5 s — fast enough to
-      // feel snappy, slow enough for the user to watch
-      // each phase flip.
-      const draftPath = (p: string) => `<cwd>/.aethercode/ssd/${slug}/${p}.md`;
-      const draftPreview = (p: string): string => {
-        if (p === 'spec') return `# ${slug} — 需求分析\n\n## 用户需求\n${intent}\n\n## 验收条件\n- 满足上述需求\n- 通过单元测试\n- 不引入回归`;
-        if (p === 'design') return `# ${slug} — 详细设计\n\n## 模块边界\n- input / output\n- 错误处理\n\n## 关键数据结构\n- Sortable\n- Comparator`;
-        if (p === 'tasks') return `- [ ] 实现核心逻辑\n- [ ] 写单元测试\n- [ ] 跑一遍集成验证`;
-        return `# ${slug} — 开发实现\n\n按任务列表逐项实现；完成后回写到对应 .md`;
-      };
-      const phaseStartEvent = (p: string, order: number, title: string) =>
-        ({ kind: 'phase-start', phase: p, order, title });
-      const phaseDraftEvent = (p: string) => ({
-        kind: 'phase-draft',
-        phase: p,
-        path: draftPath(p),
-        bytes: draftPreview(p).length,
-        preview: draftPreview(p),
-      });
-      const phaseAcceptedEvent = (p: string) => ({ kind: 'phase-accepted', phase: p, revisionCount: 0 });
-
-      const events = [
-        { kind: 'phase-list', feature: slug, phases: [
-          { id: 'spec',   order: 1, title: '需求分析' },
-          { id: 'design', order: 2, title: '详细设计' },
-          { id: 'tasks',  order: 3, title: '任务分析' },
-          { id: 'dev',    order: 4, title: '开发实现' },
-        ] },
-        phaseStartEvent('spec', 1, '需求分析'),
-        phaseDraftEvent('spec'),
-        phaseAcceptedEvent('spec'),
-        phaseStartEvent('design', 2, '详细设计'),
-        phaseDraftEvent('design'),
-        phaseAcceptedEvent('design'),
-        phaseStartEvent('tasks', 3, '任务分析'),
-        phaseDraftEvent('tasks'),
-        phaseAcceptedEvent('tasks'),
-        phaseStartEvent('dev', 4, '开发实现'),
-        phaseDraftEvent('dev'),
-        phaseAcceptedEvent('dev'),
-        { kind: 'complete', feature: slug, results: [
-          { phaseId: 'spec',   path: draftPath('spec'),   revisions: 0 },
-          { phaseId: 'design', path: draftPath('design'), revisions: 0 },
-          { phaseId: 'tasks',  path: draftPath('tasks'),  revisions: 0 },
-          { phaseId: 'dev',    path: draftPath('dev'),    revisions: 0 },
-        ] },
-      ] as import('../components/ssd/driver').SsdDriverEvent[];
+      // R292: delegate the canned event sequence to
+      // `defaultSddEventSequence` (lives in driver.ts) so
+      // there's exactly one source of truth for the dev-mode
+      // 8-phase mock. The mock driver emits one event per
+      // ~280 ms so a full run completes in ~6 s — fast
+      // enough to feel snappy, slow enough that the user
+      // watches each phase chip flip in order.
+      //
+      // Mirror the daemon's `nextSlug` policy: prepend
+      // `001-` so the on-screen path matches what a real
+      // Spec Kit run would write (`<cwd>/.specify/specs/
+      // 001-<slug>/`). `001-` is the default SEQUENTIAL
+      // numbering; the daemon-side runner bumps the
+      // counter when multiple features live in the same
+      // `.specify/specs/` dir.
+      const featureSlug = `001-${slug}`;
+      // defaultSddEventSequence is imported below via the
+      // dynamic import (it lives in driver.ts to keep the
+      // mock + driver in one place). Pull it out so the
+      // events array can be built before we wire the
+      // driver.
+      const { MockSsdDriver, defaultSddEventSequence } = await import('../components/ssd/driver');
+      const events = defaultSddEventSequence(featureSlug);
 
       // Push the user intent as a chat message so the
       // chat list has context for the assistant
@@ -5712,7 +5713,10 @@ export const useStore = create<AppState>((set, get) => {
       // driver fires all 14 events in one synchronous
       // tick and the bar collapses before the user
       // perceives anything.
-      const { MockSsdDriver } = await import('../components/ssd/driver');
+      // (MockSsdDriver + defaultSddEventSequence were
+      // pulled in via the dynamic import earlier so the
+      // canned events array can be built before the
+      // driver wires its event handler.)
       const driver = new MockSsdDriver(events, undefined, 280);
       ssdDriverRef.driver = driver;
 
@@ -5781,6 +5785,67 @@ export const useStore = create<AppState>((set, get) => {
               ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
                 ? { ...p, state: 'failed' }
                 : p),
+            }));
+            break;
+          case 'clarify-question':
+            // R292: the runner surfaced a question about
+            // an underspecified area in spec.md (or another
+            // artefact). Push it to the chat list as a
+            // system message so the user sees the question
+            // inline, and move the chip to clarify-pending
+            // so the bar reflects "waiting on user".
+            set((s) => {
+              const msgId = newId('system');
+              return {
+                ssdPhases: s.ssdPhases.map((p) => p.id === 'clarify'
+                  ? { ...p, state: 'clarify-pending', preview: `${ev.header}\n\n${ev.question}` }
+                  : p),
+                messages: [...s.messages, {
+                  id: msgId,
+                  role: 'system' as const,
+                  content: `📐 **${ev.header}** (${ev.id})\n\n${ev.question}\n\n(在对话框里输入回答后点"发送回答"即可。回复 {\`action\`:"clarify-answer", \`id\`:"${ev.id}", \`answer\`:"..."})`,
+                  timestamp: Date.now(),
+                  metadata: { kind: 'sdd-clarify-question', id: ev.id, phase: 'clarify' },
+                }],
+              };
+            });
+            break;
+          case 'analysis':
+            // R292: cross-artifact review report. Render
+            // it as a system banner; do not gate the run
+            // on its findings (Spec Kit's analyze is
+            // advisory, not a hard gate).
+            set((s) => {
+              const msgId = newId('system');
+              return {
+                messages: [...s.messages, {
+                  id: msgId,
+                  role: 'system' as const,
+                  content: `🔍 **一致性分析报告**\n\n\`\`\`\n${ev.report}\n\`\`\``,
+                  timestamp: Date.now(),
+                  metadata: { kind: 'sdd-analysis', phase: ev.phase },
+                }],
+              };
+            });
+            break;
+          case 'converge-check':
+            // R292: the model reviewed the implementation
+            // and emitted a JSON-ish convergence report.
+            // Surface as a system message + flip the
+            // converge chip to converge-pending so the
+            // bar shows "reviewing…" while the user
+            // decides iterate / skip / quit.
+            set((s) => ({
+              ssdPhases: s.ssdPhases.map((p) => p.id === 'converge'
+                ? { ...p, state: 'converge-pending', preview: ev.report }
+                : p),
+              messages: [...s.messages, {
+                id: newId('system'),
+                role: 'system' as const,
+                content: `🔁 **收敛验证** (迭代 #${ev.iteration}, converged=${ev.converged})\n\n\`\`\`\n${ev.report}\n\`\`\`\n\n(${ev.converged ? '已收敛 — 进入 complete' : '未收敛 — 可发反馈或跳过'})`,
+                timestamp: Date.now(),
+                metadata: { kind: 'sdd-converge-check', iteration: ev.iteration, converged: ev.converged },
+              }],
             }));
             break;
           case 'complete':

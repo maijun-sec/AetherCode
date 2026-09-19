@@ -1,52 +1,55 @@
 /**
- * R287 — Tauri shell driver for the SSD subprocess.
+ * R287 / R292 — Tauri shell driver for the SDD subprocess.
  *
- * <p>Replaces the R281 {@link MockSsdDriver} for
- * production: spawns the daemon's `ssd --interactive`
- * command via `@tauri-apps/plugin-shell`, parses
- * each stdout line as a {@link SsdDriverEvent},
- * forwards user commands (accept / revise / skip /
- * quit) as JSONL lines to stdin, and fetches the
- * full draft body via a read-from-disk helper (the
- * daemon writes the artefacts to the project root
- * under `.aethercode/ssd/<feature>/<phase>.md`).
+ * <p>Spawns `java -jar aethercode.jar sdd <feature> "<intent>"
+ * --interactive --cwd <cwd>` via the Tauri shell plugin,
+ * parses each stdout line as an {@link SsdDriverEvent},
+ * forwards user commands (accept / revise / skip / quit /
+ * clarify-answer / converge-iterate) as JSONL lines to stdin,
+ * and fetches the full draft body via a read-from-disk helper
+ * (the daemon writes the artefacts to `.specify/specs/<NNN>-<slug>/`).
+ *
+ * <h2>R292 changes vs R287</h2>
+ * <ul>
+ *   <li>Spawn command renamed from `ssd` to `sdd` (R292 Spec Kit
+ *       integration; the legacy SSD command was deleted from
+ *       the daemon).</li>
+ *   <li>Wire protocol gained three new event kinds
+ *       (`clarify-question`, `analysis`, `converge-check`) and
+ *       two new commands (`clarify-answer`,
+ *       `converge-iterate`); the renderer handles them via the
+ *       updated {@link SsdDriverEvent} union.</li>
+ *   <li>New optional flags {@code --branch-numbering},
+ *       {@code --no-clarify}, {@code --no-analyze},
+ *       {@code --no-converge} pass through to the subprocess
+ *       so the UI's toggle controls map 1:1.</li>
+ * </ul>
  *
  * <h2>Wire shape</h2>
  *
  * <p>The shell plugin's `Command` class gives us a
- * `Child` handle whose `stdout`/`stdin` are line / /
- * line pipes (Rust auto-decodes UTF-8). The subprocess
- * emits newline-delimited JSON on stdout:
+ * `Child` handle whose `stdout`/`stdin` are line / line pipes
+ * (Rust auto-decodes UTF-8). The subprocess emits
+ * newline-delimited JSON on stdout:
  *
  * <pre>
- *   {"kind":"phase-list","feature":"foo","phases":[…]}
- *   {"kind":"phase-start","phase":"spec","order":1,…}
- *   {"kind":"phase-draft","phase":"spec","path":"…","preview":"…"}
- *   {"kind":"phase-accepted","phase":"spec","revisionCount":1}
- *   …
- *   {"kind":"complete","feature":"foo","results":[…]}
+ *   {"event":"phase-list","feature":"001-foo","phases":[{"id":"constitution","order":0,...},...]}
+ *   {"event":"phase-start","phase":"specify","order":1,...}
+ *   {"event":"phase-draft","phase":"specify","path":"...","preview":"..."}
+ *   {"event":"clarify-question","id":"q1","header":"Auth","question":"..."}
+ *   {"event":"converge-check","phase":"converge","iteration":1,"converged":true,"report":"..."}
+ *   {"event":"complete","feature":"001-foo","results":[...]}
  * </pre>
  *
- * <p>And reads the same JSONL format on stdin
- * (one command per line):
+ * <p>And reads JSONL on stdin (one command per line):
  *
  * <pre>
  *   {"action":"accept"}
  *   {"action":"revise","text":"add an NFR about audit logging"}
- *   {"action":"skip"}
+ *   {"action":"clarify-answer","id":"q1","answer":"SSO via Okta"}
+ *   {"action":"converge-iterate","text":""}
  *   {"action":"quit"}
  * </pre>
- *
- * <h2>Renderer's contract</h2>
- *
- * <p>The renderer's {@link SsdPanel} reads from the
- * driver interface (events + fetchDraft +
- * sendCommand + start/stop) and never knows whether
- * the backing implementation is the in-memory mock
- * or the real subprocess. Tests continue to inject
- * the {@link MockSsdDriver}; production code
- * constructs a {@link TauriSsdDriver} in
- * {@code SettingsPage}.
  */
 
 import { Command } from '@tauri-apps/plugin-shell';
@@ -56,73 +59,59 @@ import type {
   SsdInboundCommand,
 } from './driver';
 
-/** the absolute path of the jar the desktop
- *  uses to spawn the daemon. The Settings panel
- *  passes this in so the driver doesn't have to
- *  re-derive it from the Tauri runtime. */
+/** the absolute path of the jar the desktop uses to spawn the
+ *  daemon. The Settings panel passes this in so the driver
+ *  doesn't have to re-derive it from the Tauri runtime. */
 export interface TauriSsdDriverOptions {
-  /** the aethercode.jar absolute path. Resolved
-   *  by the Settings panel via
-   *  {@code resources/aethercode.jar} on
-   *  Windows. */
+  /** the aethercode.jar absolute path. Resolved by the
+   *  Settings panel via `resources/aethercode.jar` on Windows. */
   jarPath: string;
-  /** the user-supplied feature slug (kebab-case,
-   *  used as both the SSD feature name AND the
-   *  on-disk artefact directory). */
+  /** the user-supplied feature slug (kebab-case). Becomes the
+   *  NNN-prefixed artefact directory under `.specify/specs/`. */
   feature: string;
   /** the user's intent text. Spawned as
-   *  `ssd <feature> "<intent>" --interactive`. */
+   *  `sdd <feature> "<intent>" --interactive`. */
   intent: string;
-  /** the cwd the SSD run should target. The
-   *  subprocess writes artefacts under
-   *  `<cwd>/.aethercode/ssd/<feature>/…`. */
+  /** the cwd the SDD run should target. The subprocess writes
+   *  artefacts under `<cwd>/.specify/specs/<NNN>-<feature>/`. */
   cwd: string;
-  /** the absolute path of a `java` executable on
-   *  PATH. Defaults to "java" if omitted. */
+  /** the absolute path of a `java` executable on PATH.
+   *  Defaults to "java" if omitted. */
   javaPath?: string;
-  /** the read-from-disk helper for the draft body.
-   *  Defaults to {@link readDraftFromDisk} which
-   *  uses Tauri's fs plugin — tests can inject a
-   *  stub to avoid the Tauri runtime. */
+  /** the read-from-disk helper for the draft body. Defaults
+   *  to {@link readDraftFromDisk} which uses Tauri's fs
+   *  plugin — tests inject a stub to avoid the Tauri runtime. */
   readDraft?: (path: string) => Promise<string>;
+  /** R292: optional Spec Kit flags passed through to the
+   *  subprocess. The UI surfaces toggles for these (clarify /
+   *  analyze / converge on by default). */
+  options?: {
+    /** branch numbering strategy: "sequential" or "timestamp" */
+    branchNumbering?: 'sequential' | 'timestamp';
+    /** skip the optional /speckit.clarify quality gate */
+    noClarify?: boolean;
+    /** skip the optional /speckit.analyze quality gate */
+    noAnalyze?: boolean;
+    /** skip the optional /speckit.converge loop */
+    noConverge?: boolean;
+  };
 }
 
 /**
- * Production driver. Spawns the daemon's
- * `ssd --interactive` subprocess and bridges
- * its newline-delimited JSON I/O to the
+ * Production driver. Spawns the daemon's `sdd --interactive`
+ * subprocess and bridges its newline-delimited JSON I/O to the
  * renderer's event-driven view.
- *
- * <p>Lifecycle:
- * <ol>
- *   <li>{@link start} builds the `java -jar …`
- *       command and spawns it via
- *       {@link Command.create}. The subprocess's
- *       stdout is line-streamed into the event
- *       queue;</li>
- *   <li>user clicks Accept / Modify / Quit in
- *       {@link SsdPanel} → {@link sendCommand} →
- *       JSONL write to stdin;</li>
- *   <li>the subprocess emits a `complete` event
- *       on stdout and exits. {@link stop} kills
- *       the child handle if the user closes the
- *       panel before then.</li>
- * </ol>
- *
- * <p>Read the {@link TauriSsdDriverOptions}
- * constructor arg for the contract.
  */
 export class TauriSsdDriver implements SsdDriver {
   private handlers: ((ev: SsdDriverEvent) => void)[] = [];
   // We type these as `any` because the
-  // @tauri-apps/plugin-shell 2.x `Child` /
-  // `Command` types are tightly coupled to the
-  // spawn return shape and have changed across
-  // minor versions. The runtime contract is
-  // stable: `command.spawn()` returns
+  // @tauri-apps/plugin-shell 2.x `Child` / `Command` types are
+  // tightly coupled to the spawn return shape and have changed
+  // across minor versions. The runtime contract is stable:
+  // `command.spawn()` returns
   // `{ child: { write, kill }, stdout: AsyncIterable<string> }`
-  // — we destructure via any and assert against
-  // shape at runtime.
+  // — we destructure via any and assert against shape at
+  // runtime.
   private child: any = null;
   private command: any = null;
   private stopped = false;
@@ -136,59 +125,55 @@ export class TauriSsdDriver implements SsdDriver {
     };
   }
 
-  /** Spawn the subprocess and wire its stdout to
-   *  the event queue. Safe to call once; subsequent
-   *  calls are no-ops (mirrors MockSsdDriver). */
+  /** Spawn the subprocess and wire its stdout to the event
+   *  queue. Safe to call once; subsequent calls are no-ops
+   *  (mirrors MockSsdDriver). */
   async start(): Promise<void> {
     if (this.command) return;
     this.stopped = false;
 
     const java = this.opts.javaPath ?? 'java';
     const args = [
-      // R172 daemon-stability: pass the JVM heap
-      // hint so the SSD run has the same 4 GB
-      // budget as the main daemon. Without this
-      // a multi-phase run with several tool
-      // invocations can GC-starve the JVM and
-      // stall the JSONL stream.
+      // R172 daemon-stability: pass the JVM heap hint so the
+      // SDD run has the same 4 GB budget as the main daemon.
       '-Xmx4g',
       '-jar',
       this.opts.jarPath,
-      'ssd',
+      // R292: command renamed from `ssd` to `sdd`. The legacy
+      // `ssd` command was deleted from the daemon; this is
+      // now the only Spec-Driven Development entry point.
+      'sdd',
       this.opts.feature,
       this.opts.intent,
       '--interactive',
-      // R281 + R283 lessons: pass --cwd so the
-      // subprocess writes artefacts to the
-      // project root the user picked, not the
-      // renderer's working directory.
+      // R281 + R283 lessons: pass --cwd so the subprocess
+      // writes artefacts to the project root the user picked,
+      // not the renderer's working directory.
       '--cwd',
       this.opts.cwd,
     ];
 
-    // Tauri shell plugin's Command.spawn() returns
-    // a { child, stdout, stderr } triple. The
-    // child handle exposes stdin.write() for
-    // inbound commands; stdout is an
-    // AsyncIterable<string> of decoded lines.
+    // R292: pass through Spec Kit optional-gate flags so the
+    // UI's toggles map 1:1 to the subprocess.
+    const opts = this.opts.options ?? {};
+    if (opts.branchNumbering && opts.branchNumbering !== 'sequential') {
+      args.push('--branch-numbering', opts.branchNumbering);
+    }
+    if (opts.noClarify) args.push('--no-clarify');
+    if (opts.noAnalyze) args.push('--no-analyze');
+    if (opts.noConverge) args.push('--no-converge');
+
+    // Tauri shell plugin's Command.spawn() returns a
+    // { child, stdout, stderr } triple. The child handle
+    // exposes stdin.write() for inbound commands; stdout is
+    // an AsyncIterable<string> of decoded lines.
     const cmd: any = Command.create(java, args);
     this.command = cmd;
-    // The return type of spawn() in @tauri-apps/plugin-shell 2.x
-    // is a `Child` (which exposes `write` / `kill`) plus
-    // separate `stdout` / `stderr` AsyncIterables. The exact
-    // shape depends on the plugin version; we destructure
-    // via the loose {@code any} cast so the build works
-    // against both 2.3.x and 2.4.x without forcing a tight
-    // pin. The shape is stable enough at runtime (the
-    // IPC payload is a fixed JSON shape).
     const spawned: any = await cmd.spawn();
     this.child = spawned?.child ?? spawned;
     const stdout: AsyncIterable<string> | undefined =
         spawned?.stdout ?? (spawned as any)?.output;
 
-    // Stream stdout line-by-line. Tauri splits on
-    // \n automatically so each iteration is one
-    // daemon event.
     if (stdout) {
       void (async () => {
         try {
@@ -202,11 +187,6 @@ export class TauriSsdDriver implements SsdDriver {
             }
           }
         } catch (e) {
-          // Subprocess pipe error → surface to the
-          // panel as an `error` event so the UI
-          // shows the diagnostic. The renderer's
-          // lifecycle flips to "errored" on the
-          // error event.
           const msg = (e as Error)?.message ?? String(e);
           for (const h of [...this.handlers]) {
             h({ kind: 'error', message: `subprocess pipe error: ${msg}` });
@@ -216,11 +196,8 @@ export class TauriSsdDriver implements SsdDriver {
     }
   }
 
-  /** Forward a user command to the subprocess's
-   *  stdin as a single JSONL line. The subprocess
-   *  reads one command per line and the JSONL
-   *  parser is line-oriented, so we explicitly
-   *  append \n. */
+  /** Forward a user command to the subprocess's stdin as a
+   *  single JSONL line. */
   sendCommand(cmd: SsdInboundCommand): void {
     if (this.stopped || !this.child) return;
     const line = JSON.stringify(cmd) + '\n';
@@ -231,21 +208,23 @@ export class TauriSsdDriver implements SsdDriver {
     });
   }
 
-  /** Fetch the full draft body by path. For the
-   *  Tauri driver we read from disk via the
-   *  injected helper (default: the Tauri fs
-   *  plugin's readTextFile). The daemon writes
-   *  artefacts to `<cwd>/.aethercode/ssd/<feature>/
-   *  <phase>.md` so the path the panel receives
-   *  is already absolute. */
+  /** Fetch the full draft body by path. For the Tauri driver
+   *  we read from disk via the injected helper (default: the
+   *  Tauri fs plugin's readTextFile). The daemon writes
+   *  artefacts to `<cwd>/.specify/specs/<NNN>-<feature>/`
+   *  so the path the panel receives is already relative —
+   *  we resolve it against cwd. */
   async fetchDraft(path: string): Promise<string> {
     const reader = this.opts.readDraft ?? defaultReadDraft;
-    return reader(path);
+    // The daemon sends relative paths (e.g.
+    // `.specify/specs/001-foo/spec.md`); resolve against
+    // cwd before asking Tauri to read.
+    const abs = await resolveAgainstCwd(path, this.opts.cwd);
+    return reader(abs);
   }
 
-  /** Stop the subprocess. Called by SsdPanel on
-   *  unmount. Idempotent — the flag guards against
-   *  a double-stop. */
+  /** Stop the subprocess. Called by SsdPanel on unmount.
+   *  Idempotent — the flag guards against a double-stop. */
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
@@ -261,41 +240,29 @@ export class TauriSsdDriver implements SsdDriver {
   }
 }
 
-/** Best-effort JSONL → SsdDriverEvent parser.
- *  Tolerant of unknown `kind` values — returns
- *  null so the panel's switch drops the line (the
- *  daemon's own parser does the same on bad
- *  input). Exported so tests can exercise the
- *  parser in isolation. */
+/** Best-effort JSONL → SsdDriverEvent parser. Tolerant of
+ *  unknown `kind` values — returns null so the panel's switch
+ *  drops the line (the daemon's own parser does the same on
+ *  bad input). R292: extended to cover the new
+ *  `clarify-question`, `analysis`, `converge-check` kinds. */
 export function safeParseSsdEvent(line: string): SsdDriverEvent | null {
   try {
     const obj = JSON.parse(line) as Record<string, unknown>;
     if (!obj || typeof obj.kind !== 'string') return null;
-    // The driver only knows the discriminated
-    // union from driver.ts. Anything else is
-    // silently dropped — same behaviour as the
-    // daemon's InteractiveRepl on unknown kinds.
     switch (obj.kind) {
       case 'phase-list':
-        return obj as unknown as SsdDriverEvent;
       case 'phase-start':
-        return obj as unknown as SsdDriverEvent;
       case 'phase-draft':
-        return obj as unknown as SsdDriverEvent;
       case 'phase-revising':
-        return obj as unknown as SsdDriverEvent;
       case 'phase-accepted':
-        return obj as unknown as SsdDriverEvent;
       case 'phase-skipped':
-        return obj as unknown as SsdDriverEvent;
       case 'phase-error':
-        return obj as unknown as SsdDriverEvent;
+      case 'clarify-question':
+      case 'analysis':
+      case 'converge-check':
       case 'complete':
-        return obj as unknown as SsdDriverEvent;
       case 'abort':
-        return obj as unknown as SsdDriverEvent;
       case 'error':
-        return obj as unknown as SsdDriverEvent;
       case 'log':
         return obj as unknown as SsdDriverEvent;
       default:
@@ -306,17 +273,25 @@ export function safeParseSsdEvent(line: string): SsdDriverEvent | null {
   }
 }
 
-/** Default read-from-disk helper. Routes through
- *  the symmetric Rust `read_text_file` Tauri
- *  command (added alongside `write_text_file` in
- *  R287) so we don't depend on `@tauri-apps/plugin-fs`.
- *  Tests inject a stub via the constructor to
- *  bypass the Tauri runtime. */
+/** Default read-from-disk helper. Routes through the
+ *  symmetric Rust `read_text_file` Tauri command (added
+ *  alongside `write_text_file` in R287) so we don't depend on
+ *  `@tauri-apps/plugin-fs`. Tests inject a stub via the
+ *  constructor to bypass the Tauri runtime. */
 async function defaultReadDraft(path: string): Promise<string> {
-  // Tauri 2 invokes a Rust command by name via
-  // `@tauri-apps/api/core`. The Rust side
-  // signature is `read_text_file(path: String)`
-  // and returns `Result<String, String>`.
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<string>('read_text_file', { path });
+}
+
+/** Resolve a daemon-emitted relative path against the run's
+ *  cwd. The Tauri fs plugin requires absolute paths. We use
+ *  a tiny `path.posix.join` clone to avoid pulling Node
+ *  `path` into the bundle. */
+async function resolveAgainstCwd(path: string, cwd: string): Promise<string> {
+  // Already absolute?
+  if (/^([a-zA-Z]:[\\/]|\/)/.test(path)) return path;
+  const sep = cwd.includes('\\') ? '\\' : '/';
+  const left = cwd.replace(/[\\/]+$/, '');
+  const right = path.replace(/^[\\/]+/, '');
+  return `${left}${sep}${right}`;
 }

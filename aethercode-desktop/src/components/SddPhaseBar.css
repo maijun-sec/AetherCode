@@ -1,9 +1,11 @@
-/* R288: SDD phase progress bar.
+/* R288 / R292 — SDD phase progress bar.
  *
- * Lives between MessageList and MessageInput. Compact, single
- * column, four phase rows. The phase that's `running` gets a
- * pulsing marker; the one in `pending-accept` shows a preview
- * block; done states collapse back to a single line.
+ * Lives between MessageList and MessageInput. Compact chip strip
+ * showing the eight Spec Kit phases (constitution / specify /
+ * clarify / plan / analyze / tasks / implement / converge).
+ * Optional quality gates (clarify / analyze / converge) render
+ * half-opacity so the user can tell which phases are required
+ * vs opt-in.
  */
 
 .sdd-phase-bar {
@@ -55,25 +57,43 @@
   color: var(--text);
 }
 
+/* R292: 8-phase grid. Use auto-fit so the strip wraps
+ * gracefully on narrow windows instead of overflowing
+ * horizontally. minmax(120px, 1fr) keeps each chip at a
+ * legible width. */
 .sdd-phase-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
 }
 
 .sdd-phase-item {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 6px 8px;
   border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
   border-radius: 6px;
   background: var(--bg, #fff);
   transition: background 120ms ease, border-color 120ms ease;
 }
+/* R292: optional quality gates + the converge loop render
+ * half-opacity until they're active. */
+.sdd-phase-item.sdd-phase-optional {
+  opacity: 0.62;
+  border-style: dashed;
+}
+.sdd-phase-item.sdd-phase-optional.sdd-phase-running,
+.sdd-phase-item.sdd-phase-optional.sdd-phase-pending-accept,
+.sdd-phase-item.sdd-phase-optional.sdd-phase-clarify-pending,
+.sdd-phase-item.sdd-phase-optional.sdd-phase-converge-pending {
+  opacity: 1;
+  border-style: solid;
+}
+
 .sdd-phase-item.sdd-phase-running {
   border-color: var(--accent, #4a8bf5);
   background: rgba(74, 139, 245, 0.06);
@@ -82,8 +102,19 @@
   border-color: var(--warning, #e0a200);
   background: rgba(224, 162, 0, 0.06);
 }
+.sdd-phase-item.sdd-phase-clarify-pending {
+  border-color: #b48ead;
+  background: rgba(180, 142, 173, 0.06);
+}
+.sdd-phase-item.sdd-phase-converge-pending {
+  border-color: #5b8def;
+  background: rgba(91, 141, 239, 0.06);
+}
 .sdd-phase-item.sdd-phase-done {
   opacity: 0.7;
+}
+.sdd-phase-item.sdd-phase-skipped {
+  opacity: 0.4;
 }
 .sdd-phase-item.sdd-phase-failed {
   border-color: var(--error, #c0392b);
@@ -95,11 +126,11 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  min-width: 28px;
+  min-width: 24px;
 }
 .sdd-phase-num {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--bg-elevated, rgba(0, 0, 0, 0.05));
   color: var(--text-dim, #888);
@@ -114,6 +145,17 @@
   background: var(--accent, #4a8bf5);
   color: white;
   border-color: var(--accent, #4a8bf5);
+  animation: sdd-pulse 1.4s ease-in-out infinite;
+}
+.sdd-phase-clarify-pending .sdd-phase-num {
+  background: #b48ead;
+  color: white;
+  border-color: #b48ead;
+}
+.sdd-phase-converge-pending .sdd-phase-num {
+  background: #5b8def;
+  color: white;
+  border-color: #5b8def;
   animation: sdd-pulse 1.4s ease-in-out infinite;
 }
 .sdd-phase-done .sdd-phase-num {
@@ -132,7 +174,9 @@
   white-space: nowrap;
 }
 .sdd-phase-running .sdd-phase-state-label,
-.sdd-phase-pending-accept .sdd-phase-state-label {
+.sdd-phase-pending-accept .sdd-phase-state-label,
+.sdd-phase-clarify-pending .sdd-phase-state-label,
+.sdd-phase-converge-pending .sdd-phase-state-label {
   color: var(--text);
   font-weight: 500;
 }
@@ -147,27 +191,39 @@
   min-width: 0;
 }
 .sdd-phase-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sdd-phase-optional-tag {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 0 4px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.18));
+  border-radius: 3px;
+  color: var(--text-dim, #888);
+  background: var(--bg-elevated, rgba(0, 0, 0, 0.03));
 }
 .sdd-phase-desc {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-dim, #888);
   margin-top: 2px;
   line-height: 1.4;
 }
 
 .sdd-phase-preview {
-  margin-top: 6px;
-  padding: 6px 8px;
+  margin-top: 4px;
+  padding: 4px 6px;
   background: var(--bg, #fff);
   border: 1px dashed var(--border, rgba(0, 0, 0, 0.18));
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 10px;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 96px;
+  max-height: 80px;
   overflow-y: auto;
   color: var(--text-dim, #666);
 }

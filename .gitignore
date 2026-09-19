@@ -270,3 +270,7 @@ reference/参考项目/
 !mvnw
 !mvnw.cmd
 !.mvn/wrapper/maven-wrapper.jar
+
+# R292 archive: old ssd code moved here before delete
+.archive/
+
