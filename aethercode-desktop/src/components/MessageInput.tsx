@@ -153,6 +153,12 @@ export function MessageInput() {
     modelMismatchPrompt,
     dismissModelMismatch,
     acceptModelMismatch,
+    // R288: SDD mode toggle. The 📐 pill above the
+    // input flips sddEnabled; SddPhaseBar reads the
+    // same field and renders the 4-phase progress
+    // bar below MessageList when on.
+    sddEnabled,
+    setSddEnabled,
   } = useStore();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [showTools, setShowTools] = useState(false);
@@ -693,6 +699,27 @@ export function MessageInput() {
             aria-pressed={thinkingOn}
           >
             🧠 思考
+          </button>
+        </div>
+        {/* R288: SDD mode toggle. Sits right next to the
+         * Thinking pill so the user sees both on/off modes
+         * in the same row. When on, the next user turn is
+         * routed through the 4-phase SSD flow (需求分析 →
+         * 详细设计 → 任务分析 → 开发实现) instead of a
+         * regular query; SddPhaseBar renders below the
+         * MessageList to track phase progress. */}
+        <div className="config-group">
+          <button
+            type="button"
+            className={`config-toggle config-toggle-sdd ${sddEnabled ? 'config-toggle-active' : ''}`}
+            onClick={() => setSddEnabled(!sddEnabled)}
+            title={sddEnabled
+              ? '已开启规格化流程：下一次输入将进入 4 阶段流程'
+              : '开启规格化流程：需求分析 → 详细设计 → 任务分析 → 开发实现'}
+            aria-pressed={sddEnabled}
+            data-testid="sdd-toggle"
+          >
+            📐 规格化流程
           </button>
         </div>
         <div className="config-group">

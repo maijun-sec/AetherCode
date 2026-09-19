@@ -228,6 +228,23 @@
   font-weight: 600;
 }
 
+/* R288: SDD mode toggle. Same shape as the Thinking pill
+ * (so both pills live in the same row visually) but uses a
+ * purple/indigo accent so the user can tell the two modes
+ * apart at a glance. When on, the üìê pill is filled and
+ * bold; the SddPhaseBar appears below the chat list with
+ * the 4-phase progress. */
+.config-toggle-sdd {
+  /* Inherits .config-toggle layout. */
+}
+.config-toggle-sdd.config-toggle-active {
+  background: linear-gradient(180deg, #ede9fe 0%, #ddd6fe 100%);
+  color: #5b21b6;
+  border-color: rgba(124, 58, 237, 0.45);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.15);
+}
+
 .cwd-group {
   margin-left: auto;
   /* shrunk from 360px to 220px. legacy the cwd
@@ -813,7 +830,7 @@
  * the queued prompt is long.
  *
  * The colour scheme matches the rest of the chat's
- * "transient" UI (mention dropdown, slash picker) °™ a
+ * "transient" UI (mention dropdown, slash picker) ÔøΩÔøΩ a
  * subtle blue tint with a clear ? so the user can
  * dismiss it without reading the whole prompt. */
 .followup-pill {

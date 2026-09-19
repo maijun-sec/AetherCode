@@ -89,24 +89,20 @@ describe('Phase 3 / T-3-09: SettingsPage', () => {
     });
   });
 
-  it('renders the four tabs', () => {
+  it('renders the three tabs', () => {
+    // R288: SDD tab removed. SDD is now an inline flow
+    // attached to MessageInput, not a Settings tab.
     fixture.render(<SettingsPage />);
     expect(screen.getByTestId('settings-page')).toBeDefined();
     expect(screen.getByTestId('settings-tab-permissions')).toBeDefined();
     expect(screen.getByTestId('settings-tab-models')).toBeDefined();
     expect(screen.getByTestId('settings-tab-workflows')).toBeDefined();
-    expect(screen.getByTestId('settings-tab-sdd')).toBeDefined();
+    expect(screen.queryByTestId('settings-tab-sdd')).toBeNull();
   });
 
-  it('initialTab prop opens the named tab on first render', () => {
-    fixture.render(<SettingsPage initialTab="sdd" />);
-    expect(screen.getByTestId('settings-sdd')).toBeDefined();
-  });
-
-  it('SDD tab mounts an SsdPanel with a Run demo button', () => {
-    fixture.render(<SettingsPage initialTab="sdd" />);
-    expect(screen.getByTestId('sdd-run-demo')).toBeDefined();
-    expect(screen.getByTestId('ssd-panel')).toBeDefined();
+  it('initialTab prop opens the named tab on first render', async () => {
+    fixture.render(<SettingsPage initialTab="workflows" />);
+    expect(await screen.findByTestId('workflow-row-tdd-feature')).toBeDefined();
   });
 
   it('permissions tab lists grants + preset cards', async () => {

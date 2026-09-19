@@ -1497,6 +1497,19 @@ interface AppState {
    *  ("0.7 / 32K / no thinking") next to the
    *  Quality dropdown. */
   activeVariant: import('../lib/methods').VariantInfo | null;
+  /** R288: SDD (Spec-Driven Development) mode.
+   *  When true, the next user turn is fed through
+   *  the 4-phase SSD flow (需求分析 → 详细设计 →
+   *  任务分析 → 开发实现) instead of being sent to
+   *  the daemon as a regular query. Toggle lives on
+   *  MessageInput (a 📐 pill above the input box);
+   *  SddPhaseBar reads this to know whether to render.
+   *  The SsdDriver (Mock / Tauri) drives the actual
+   *  phase stream; this flag only gates whether the
+   *  MessageList / SddPhaseBar react to the toggle. */
+  sddEnabled: boolean;
+  /** R288: SDD mode setter. See sddEnabled above. */
+  setSddEnabled: (on: boolean) => void;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
    *  calls this on open. The agent body
@@ -3531,6 +3544,10 @@ export const useStore = create<AppState>((set, get) => {
     // row.
     currentVariant: null,
     activeVariant: null,
+    // R288: SDD mode off by default. The toggle in
+    // MessageInput flips this; SddPhaseBar / message
+    // routing react to it.
+    sddEnabled: false,
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
     // tab on open). Each entry has {name,
@@ -5445,6 +5462,13 @@ export const useStore = create<AppState>((set, get) => {
         return { enabledTools: cur };
       });
     },
+
+    // R288: SDD mode toggle. Flipped by the 📐 pill
+    // above MessageInput. When on, the next user turn
+    // is routed through the 4-phase SSD flow instead of
+    // a regular query, and SddPhaseBar renders below
+    // the MessageList with phase progress.
+    setSddEnabled: (on: boolean) => set({ sddEnabled: on }),
 
     selectTask: (taskId: string | null) => set({ currentTaskId: taskId }),
 
