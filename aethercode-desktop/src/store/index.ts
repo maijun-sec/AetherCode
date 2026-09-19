@@ -358,6 +358,18 @@ let engineStateTimer: number | null = null;
 // new listener both push to the same buffer).
 let rpcEventUnsubscribe: (() => void) | null = null;
 
+// R289 (2026-09-19): module-local handle for the active
+// SsdDriver. Kept out of the Zustand store so the driver
+// instance (non-serialisable, holds event handlers + a queue)
+// doesn't leak into Redux devtools / getState snapshots.
+// startSsdFlow creates + owns; stopSsdFlow tears down; the
+// store's event handler closes over `set` to push phase
+// updates back into React.
+let ssdDriverRef: {
+  driver: import('../components/ssd/driver').SsdDriver | null;
+  unsubscribe: (() => void) | null;
+} = { driver: null, unsubscribe: null };
+
 // R274 step-boundary (2026-09-16): tracks whether the previous
 // stream_event was a text_delta. The text_delta handler uses this
 // to decide between "accumulate this chunk into the current step"
@@ -1510,6 +1522,68 @@ interface AppState {
   sddEnabled: boolean;
   /** R288: SDD mode setter. See sddEnabled above. */
   setSddEnabled: (on: boolean) => void;
+  /**
+   * R289 (live): phases of the current SDD run. Read by
+   * {@link SddPhaseBar} to render the chip strip. The
+   * `state` field follows the same vocabulary as the
+   * canned events (idle / running / pending-accept /
+   * done / skipped / failed). Empty when `sddEnabled`
+   * is false or no run has started yet.
+   */
+  ssdPhases: Array<{
+    id: string;
+    title: string;
+    state: 'idle' | 'running' | 'pending-accept' | 'done' | 'skipped' | 'failed';
+    preview?: string;
+    path?: string;
+  }>;
+  /** R289: true while a driver is wired up and emitting
+   *  events (i.e. between `startSsdFlow` and the final
+   *  `complete`/`abort` event). The SddPhaseBar can use
+   *  this to swap its close button for a cancel-style
+   *  ✕ that sends `{action: 'quit'}` to the driver. */
+  ssdActive: boolean;
+  /** R289: feature slug derived from the run's
+   *  intent (≤10 ASCII chars, hyphen-joined). The
+   *  `<slug>` segment of the file paths the driver
+   *  emits (`<cwd>/.aethercode/ssd/<slug>/...`).
+   *  Empty string when no run is active. */
+  ssdSlug: string;
+  /** R289: the raw user intent that started the
+   *  current run. Echoed back into phase-draft
+   *  previews so the spec carries the user's
+   *  original wording. */
+  ssdIntent: string;
+  /** R289: kick off the SSD run for the given intent.
+   *  Spawns a `MockSsdDriver` (default) with a canned
+   *  event sequence — the canned sequence mirrors the
+   *  real daemon's wire format so swapping in
+   *  `TauriSsdDriver` later is a one-line change.
+   *  Side-effects:
+   *  - resets `ssdPhases` to a 4-phase template
+   *  - subscribes to events; updates `ssdPhases[i].state`
+   *    on each event
+   *  - pushes phase-draft content to the chat list as
+   *    an assistant message (so the user reviews in-flow)
+   *  - on `complete`, sets `ssdActive=false` and clears
+   *    `sddEnabled` so the bar collapses
+   *  Also generates a `<slug>` from the intent (≤10
+   *  ASCII chars, hyphen-joined) for the file path prefix
+   *  — full file writing is the daemon's job in the next
+   *  round; for now we just stamp it in the `path` field
+   *  of each phase-draft so the path is visible. */
+  startSsdFlow: (intent: string) => Promise<void>;
+  /** R289: stop the current SSD run (driver.stop +
+   *  set sddActive=false). No-op when no run is active. */
+  stopSsdFlow: () => void;
+  /** R289: send an inbound command (accept / revise /
+   *  skip / quit) to the running driver. No-op when no
+   *  driver is wired up. The accept / skip / revise
+   *  handlers advance the corresponding phase to
+   *  `done` / `skipped` / `pending-accept`. */
+  sendSsdCommand: (
+    cmd: { action: 'accept' } | { action: 'revise'; text: string } | { action: 'skip' } | { action: 'quit' }
+  ) => void;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
    *  calls this on open. The agent body
@@ -3548,6 +3622,17 @@ export const useStore = create<AppState>((set, get) => {
     // MessageInput flips this; SddPhaseBar / message
     // routing react to it.
     sddEnabled: false,
+    // R289: SSD run state. Empty array when no run; an
+    // array of 4 phase objects when ssdEnabled was just
+    // flipped on and a startSsdFlow() is in flight.
+    ssdPhases: [],
+    ssdActive: false,
+    // R289: feature slug + raw intent text for the
+    // active run. Used by the SddPhaseBar footer
+    // hint and by the assistant messages we push
+    // during the run. Empty strings when no run.
+    ssdSlug: '',
+    ssdIntent: '',
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
     // tab on open). Each entry has {name,
@@ -4057,6 +4142,19 @@ export const useStore = create<AppState>((set, get) => {
     sendMessage: async () => {
       const input = get().currentInput.trim();
       if (!input) return;
+      // R289: when SDD mode is on, route the input
+      // through the 4-phase SSD flow instead of the
+      // regular query() path. startSsdFlow owns the
+      // user-message push + driver lifecycle, so we
+      // return early — none of the regular send
+      // plumbing (lazy createSession, query(),
+      // hydrateTranscript, refreshSessions) should
+      // fire for an SSD run. The user's intent is
+      // captured by startSsdFlow's intent argument.
+      if (get().sddEnabled) {
+        await get().startSsdFlow(input);
+        return;
+      }
       // R272 (2026-09-15): reset sub-task / step tracking before
       // firing off the new query. Without this, the OLD
       // currentSubTaskId from the previous query leaks into the
@@ -5468,7 +5566,272 @@ export const useStore = create<AppState>((set, get) => {
     // is routed through the 4-phase SSD flow instead of
     // a regular query, and SddPhaseBar renders below
     // the MessageList with phase progress.
-    setSddEnabled: (on: boolean) => set({ sddEnabled: on }),
+    //
+    // R289 follow-up: flipping off mid-run tears down
+    // the driver so we don't leak a half-finished
+    // MockSsdDriver (its `started` flag would keep
+    // firing events into a dead listener array).
+    setSddEnabled: (on: boolean) => {
+      set({ sddEnabled: on });
+      if (!on) get().stopSsdFlow();
+    },
+
+    // R289: kick off an SSD run for the given intent.
+    // Spawns a MockSsdDriver with a canned 14-event
+    // sequence that mirrors the daemon's wire format
+    // (phase-list → 4×(phase-start, phase-draft,
+    // phase-accepted) → complete). The driver is
+    // dynamically imported so its code is NOT in the
+    // initial bundle — users who never flip the
+    // 📐 toggle never pay for it.
+    //
+    // Wire contract:
+    //   - resets ssdPhases to a 4-phase template
+    //     (idle / 需求分析 etc.)
+    //   - pushes the intent as a user message in the
+    //     chat list so the dialog has context
+    //   - subscribes to driver events; updates
+    //     ssdPhases[i].state on phase-start /
+    //     phase-draft / phase-accepted / phase-skipped
+    //     / phase-error
+    //   - on phase-draft, pushes the draft preview
+    //     as an assistant message so the user reviews
+    //     in-flow (with the file path inline)
+    //   - on complete: sets ssdActive=false, marks
+    //     remaining phases 'skipped', and toggles
+    //     sddEnabled off so the bar collapses
+    //   - on abort: stops the driver, clears state
+    startSsdFlow: async (intent: string) => {
+      // If a previous run is still active, tear it down
+      // first — the driver emits events into a closed-
+      // over handler and a second start() would leave
+      // the old handlers subscribed.
+      if (ssdDriverRef.driver) {
+        try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver.stop(); } catch {}
+        ssdDriverRef = { driver: null, unsubscribe: null };
+      }
+      // Generate a slug from the intent. ≤10 ASCII
+      // chars, hyphen-joined, lowercase. Falls back to
+      // `sd-<timestamp36>` when the intent has no
+      // alphanumeric characters.
+      const slug = intent
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 10)
+        || `sd-${Date.now().toString(36).slice(-6)}`;
+
+      // Initialise the 4-phase template (idle). The
+      // driver's `phase-list` event replaces this with
+      // its own (matching) list — but we seed it here
+      // so the UI has something to render before the
+      // first event lands.
+      const phaseTemplate: Array<{ id: string; title: string; state: 'idle' | 'running' | 'pending-accept' | 'done' | 'skipped' | 'failed'; preview?: string; path?: string }> = [
+        { id: 'spec',   title: '需求分析', state: 'idle' },
+        { id: 'design', title: '详细设计', state: 'idle' },
+        { id: 'tasks',  title: '任务分析', state: 'idle' },
+        { id: 'dev',    title: '开发实现', state: 'idle' },
+      ];
+
+      // Canned 14-event sequence. Mirrors the daemon's
+      // InteractiveRepl wire format so swapping in
+      // TauriSsdDriver later is a one-line change. The
+      // mock driver emits one event per ~50 ms so a
+      // full run completes in ~1.5 s — fast enough to
+      // feel snappy, slow enough for the user to watch
+      // each phase flip.
+      const draftPath = (p: string) => `<cwd>/.aethercode/ssd/${slug}/${p}.md`;
+      const draftPreview = (p: string): string => {
+        if (p === 'spec') return `# ${slug} — 需求分析\n\n## 用户需求\n${intent}\n\n## 验收条件\n- 满足上述需求\n- 通过单元测试\n- 不引入回归`;
+        if (p === 'design') return `# ${slug} — 详细设计\n\n## 模块边界\n- input / output\n- 错误处理\n\n## 关键数据结构\n- Sortable\n- Comparator`;
+        if (p === 'tasks') return `- [ ] 实现核心逻辑\n- [ ] 写单元测试\n- [ ] 跑一遍集成验证`;
+        return `# ${slug} — 开发实现\n\n按任务列表逐项实现；完成后回写到对应 .md`;
+      };
+      const phaseStartEvent = (p: string, order: number, title: string) =>
+        ({ kind: 'phase-start', phase: p, order, title });
+      const phaseDraftEvent = (p: string) => ({
+        kind: 'phase-draft',
+        phase: p,
+        path: draftPath(p),
+        bytes: draftPreview(p).length,
+        preview: draftPreview(p),
+      });
+      const phaseAcceptedEvent = (p: string) => ({ kind: 'phase-accepted', phase: p, revisionCount: 0 });
+
+      const events = [
+        { kind: 'phase-list', feature: slug, phases: [
+          { id: 'spec',   order: 1, title: '需求分析' },
+          { id: 'design', order: 2, title: '详细设计' },
+          { id: 'tasks',  order: 3, title: '任务分析' },
+          { id: 'dev',    order: 4, title: '开发实现' },
+        ] },
+        phaseStartEvent('spec', 1, '需求分析'),
+        phaseDraftEvent('spec'),
+        phaseAcceptedEvent('spec'),
+        phaseStartEvent('design', 2, '详细设计'),
+        phaseDraftEvent('design'),
+        phaseAcceptedEvent('design'),
+        phaseStartEvent('tasks', 3, '任务分析'),
+        phaseDraftEvent('tasks'),
+        phaseAcceptedEvent('tasks'),
+        phaseStartEvent('dev', 4, '开发实现'),
+        phaseDraftEvent('dev'),
+        phaseAcceptedEvent('dev'),
+        { kind: 'complete', feature: slug, results: [
+          { phaseId: 'spec',   path: draftPath('spec'),   revisions: 0 },
+          { phaseId: 'design', path: draftPath('design'), revisions: 0 },
+          { phaseId: 'tasks',  path: draftPath('tasks'),  revisions: 0 },
+          { phaseId: 'dev',    path: draftPath('dev'),    revisions: 0 },
+        ] },
+      ] as import('../components/ssd/driver').SsdDriverEvent[];
+
+      // Push the user intent as a chat message so the
+      // chat list has context for the assistant
+      // messages we're about to push.
+      const userMsgId = newId('user');
+      set((s) => ({
+        ssdPhases: phaseTemplate,
+        ssdActive: true,
+        ssdSlug: slug,
+        ssdIntent: intent,
+        currentInput: '',
+        isStreaming: false,   // we don't go through the regular query() path
+        messages: [...s.messages, {
+          id: userMsgId, role: 'user', content: intent, timestamp: Date.now(),
+        }],
+      }));
+
+      // Dynamic import so SsdDriver stays out of the
+      // initial bundle (users who never flip 📐
+      // never pay for it).
+      const { MockSsdDriver } = await import('../components/ssd/driver');
+      const driver = new MockSsdDriver(events);
+      ssdDriverRef.driver = driver;
+
+      // Wire the event handler. Closes over `set` so
+      // each event flips the right phase chip.
+      ssdDriverRef.unsubscribe = driver.onEvent((ev) => {
+        switch (ev.kind) {
+          case 'phase-list':
+            set((s) => ({
+              ssdPhases: ev.phases.map((p) => {
+                const existing = s.ssdPhases.find((x) => x.id === p.id);
+                return existing ?? { id: p.id, title: p.title, state: 'idle' };
+              }),
+            }));
+            break;
+          case 'phase-start':
+            set((s) => ({
+              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                ? { ...p, state: 'running' }
+                : p),
+            }));
+            break;
+          case 'phase-draft':
+            // Push the draft body to the chat list as
+            // an assistant message so the user can
+            // review in-flow. The chip moves to
+            // 'pending-accept' to signal "ready for
+            // you to accept/revise".
+            set((s) => {
+              const draftMsgId = newId('assistant');
+              return {
+                ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                  ? { ...p, state: 'pending-accept', preview: ev.preview, path: ev.path }
+                  : p),
+                messages: [...s.messages, {
+                  id: draftMsgId,
+                  role: 'assistant' as const,
+                  content: `📐 ${ev.phase} 阶段草案\n\n文件: \`${ev.path}\`\n\n\`\`\`\n${ev.preview}\n\`\`\`\n\n(等待确认 → 进入下一阶段)`,
+                  timestamp: Date.now(),
+                  isComplete: true,
+                  metadata: { kind: 'ssd-draft', phase: ev.phase, path: ev.path },
+                }],
+              };
+            });
+            break;
+          case 'phase-accepted':
+            set((s) => ({
+              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                ? { ...p, state: 'done', preview: undefined }
+                : p),
+            }));
+            break;
+          case 'phase-skipped':
+            set((s) => ({
+              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                ? { ...p, state: 'skipped' }
+                : p),
+            }));
+            break;
+          case 'phase-error':
+            set((s) => ({
+              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                ? { ...p, state: 'failed' }
+                : p),
+            }));
+            break;
+          case 'complete':
+            // Run finished cleanly. Tear down driver,
+            // mark any still-idle phases as skipped,
+            // and turn the toggle off so the bar
+            // collapses.
+            set((s) => ({
+              ssdActive: false,
+              ssdPhases: s.ssdPhases.map((p) => p.state === 'idle' || p.state === 'running' || p.state === 'pending-accept'
+                ? { ...p, state: 'skipped' }
+                : p),
+              sddEnabled: false,
+            }));
+            try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver?.stop(); } catch {}
+            ssdDriverRef = { driver: null, unsubscribe: null };
+            break;
+          case 'abort':
+            set({ ssdActive: false });
+            try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver?.stop(); } catch {}
+            ssdDriverRef = { driver: null, unsubscribe: null };
+            break;
+          // 'log' and any unknown events are ignored —
+          // the renderer doesn't have a place to show
+          // them yet and surfacing them in chat would
+          // clutter the message list.
+        }
+      });
+
+      driver.start();
+    },
+
+    // R289: tear down the active SSD run. No-op when
+    // no run is in flight. Called by setSddEnabled
+    // when the toggle flips off, and by the close
+    // button on SddPhaseBar.
+    stopSsdFlow: () => {
+      if (!ssdDriverRef.driver) return;
+      try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver.stop(); } catch {}
+      ssdDriverRef = { driver: null, unsubscribe: null };
+      set({ ssdActive: false });
+    },
+
+    // R289: send an inbound command to the running
+    // driver. Accept / skip / revise are routed to
+    // the mock driver (which records them in its
+    // commands[] queue for test inspection); the
+    // MVP canned sequence auto-advances on its own
+    // without waiting for user input, so these are
+    // mostly test hooks. Quit immediately aborts
+    // and tears down.
+    sendSsdCommand: (
+      cmd: { action: 'accept' } | { action: 'revise'; text: string } | { action: 'skip' } | { action: 'quit' },
+    ) => {
+      const driver = ssdDriverRef.driver;
+      if (!driver) return;
+      driver.sendCommand(cmd);
+      if (cmd.action === 'quit') {
+        try { ssdDriverRef.unsubscribe?.(); driver.stop(); } catch {}
+        ssdDriverRef = { driver: null, unsubscribe: null };
+        set({ ssdActive: false, sddEnabled: false });
+      }
+    },
 
     selectTask: (taskId: string | null) => set({ currentTaskId: taskId }),
 
