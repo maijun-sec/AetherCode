@@ -5704,8 +5704,16 @@ export const useStore = create<AppState>((set, get) => {
       // Dynamic import so SsdDriver stays out of the
       // initial bundle (users who never flip 📐
       // never pay for it).
+      // Pass eventDelay=280 so the 14 events spread
+      // out over ~3.9 s — fast enough to feel snappy,
+      // slow enough that the user sees each phase
+      // chip flip idle → running → pending-accept →
+      // done in order. Without this delay the mock
+      // driver fires all 14 events in one synchronous
+      // tick and the bar collapses before the user
+      // perceives anything.
       const { MockSsdDriver } = await import('../components/ssd/driver');
-      const driver = new MockSsdDriver(events);
+      const driver = new MockSsdDriver(events, undefined, 280);
       ssdDriverRef.driver = driver;
 
       // Wire the event handler. Closes over `set` so
@@ -5729,22 +5737,26 @@ export const useStore = create<AppState>((set, get) => {
             break;
           case 'phase-draft':
             // Push the draft body to the chat list as
-            // an assistant message so the user can
-            // review in-flow. The chip moves to
+            // a `system` message so MessageList's
+            // existing render path picks it up.
+            // Assistant messages aren't rendered
+            // standalone (they're inlined into the
+            // engine's preamble/subtask steps), so we
+            // use `system` with a `kind: 'ssd-draft'`
+            // metadata marker. The chip moves to
             // 'pending-accept' to signal "ready for
             // you to accept/revise".
             set((s) => {
-              const draftMsgId = newId('assistant');
+              const draftMsgId = newId('system');
               return {
                 ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
                   ? { ...p, state: 'pending-accept', preview: ev.preview, path: ev.path }
                   : p),
                 messages: [...s.messages, {
                   id: draftMsgId,
-                  role: 'assistant' as const,
+                  role: 'system' as const,
                   content: `📐 ${ev.phase} 阶段草案\n\n文件: \`${ev.path}\`\n\n\`\`\`\n${ev.preview}\n\`\`\`\n\n(等待确认 → 进入下一阶段)`,
                   timestamp: Date.now(),
-                  isComplete: true,
                   metadata: { kind: 'ssd-draft', phase: ev.phase, path: ev.path },
                 }],
               };

@@ -129,6 +129,17 @@ export class MockSsdDriver implements SsdDriver {
      *  {@link fetchDraft}. When omitted, returns the
      *  `preview` field of the matching `phase-draft`. */
     drafts?: Record<string, string>,
+    /**
+     * R289: optional per-event delay in ms. When set,
+     * the mock driver emits one event every
+     * {@code eventDelay} ms (instead of all of them in
+     * one synchronous tick). The renderer uses a
+     * non-zero delay (~250 ms) so the user can watch
+     * each phase chip flip — a 0 ms run completes in
+     * <1 ms and the phase bar collapses before the
+     * user perceives anything. Tests that want a
+     * deterministic run pass 0 (the default). */
+    private readonly eventDelay: number = 0,
   ) {
     if (drafts) this.draftStore = { ...drafts };
   }
@@ -158,16 +169,37 @@ export class MockSsdDriver implements SsdDriver {
   start(): void {
     if (this.started) return;
     this.started = true;
-    // Defer to next tick so consumers can wire onEvent before
-    // the events fire (mirrors a real subprocess whose first
-    // event arrives shortly after spawn, not synchronously).
-    setTimeout(() => {
+    // R289: when eventDelay is 0 (default, used by
+    // tests) we fire the full sequence in one tick so
+    // a unit test can assert the final state
+    // synchronously. When eventDelay > 0 (the
+    // interactive path) we schedule one event per
+    // delay, matching how the real daemon streams
+    // events from its InteractiveRepl. Either way, we
+    // defer the very first event to next-tick so
+    // consumers can wire onEvent before events fire
+    // (mirrors a real subprocess whose first event
+    // arrives shortly after spawn, not
+    // synchronously).
+    const fireAll = () => {
       if (this.stopped) return;
       for (const ev of this.events) {
         if (this.stopped) return;
         for (const h of [...this.handlers]) h(ev);
       }
-    }, 0);
+    };
+    if (this.eventDelay <= 0) {
+      setTimeout(fireAll, 0);
+      return;
+    }
+    let i = 0;
+    const tick = () => {
+      if (this.stopped || i >= this.events.length) return;
+      for (const h of [...this.handlers]) h(this.events[i]);
+      i++;
+      if (i < this.events.length) setTimeout(tick, this.eventDelay);
+    };
+    setTimeout(tick, 0);
   }
 
   stop(): void {
