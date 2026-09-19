@@ -42,47 +42,24 @@ const STATE_LABEL: Record<PhaseState['state'], string> = {
 export function SddPhaseBar() {
   const sddEnabled = useStore((s) => s.sddEnabled);
   const setSddEnabled = useStore((s) => s.setSddEnabled);
-  // R288 MVP: phases are seeded on toggle-on. The
-  // next iteration wires SsdDriver / daemon events
-  // to drive transitions (running → pending-accept → done).
+  // R288: phases always start in idle. Real transitions
+  // (idle → running → pending-accept → done) are driven
+  // by SsdDriver events pushed from the daemon. Until that
+  // wiring lands in R289, opening the 📐 toggle just
+  // shows the 4 phases parked in `idle` and the chat
+  // input is the actual entry point — sending a message
+  // kicks off the spec flow.
   const [phases, setPhases] = useState<PhaseState[]>(PHASE_TEMPLATE);
 
-  // when toggled OFF, reset phases to idle. When toggled ON, run
-  // the canned demo sequence so the user sees the layout.
+  // Reset phases to idle whenever the user toggles SDD off
+  // and back on, so the next SSD run starts clean. The
+  // `running` / `pending-accept` / `done` transitions are
+  // owned by the SsdDriver event stream — never by a
+  // local timer.
   useEffect(() => {
-    if (!sddEnabled) {
-      setPhases(PHASE_TEMPLATE.map((p) => ({ ...p, state: 'idle', preview: undefined })));
-      return;
+    if (sddEnabled) {
+      setPhases(PHASE_TEMPLATE.map((p) => ({ ...p, state: 'idle' as const, preview: undefined })));
     }
-    // canned sequence: each phase moves through running →
-    // pending-accept → done, with a 1.5s delay so the user can
-    // watch it animate. Replace this with real SsdDriver event
-    // wiring in the next round.
-    let cancelled = false;
-    const seq: PhaseState['id'][] = ['spec', 'design', 'tasks', 'dev'];
-    const delays = [600, 1500, 2400, 3300];
-    const timers: number[] = [];
-    seq.forEach((id, idx) => {
-      const t1 = window.setTimeout(() => {
-        if (cancelled) return;
-        setPhases((prev) => prev.map((p) => p.id === id ? { ...p, state: 'running' as const } : p));
-      }, delays[idx]);
-      const t2 = window.setTimeout(() => {
-        if (cancelled) return;
-        setPhases((prev) => prev.map((p) => p.id === id
-          ? { ...p, state: 'pending-accept' as const, preview: `## ${p.title}\n\n(模拟生成的 ${p.id} 草案...)` }
-          : p));
-      }, delays[idx] + 600);
-      const t3 = window.setTimeout(() => {
-        if (cancelled) return;
-        setPhases((prev) => prev.map((p) => p.id === id ? { ...p, state: 'done' as const } : p));
-      }, delays[idx] + 900);
-      timers.push(t1, t2, t3);
-    });
-    return () => {
-      cancelled = true;
-      timers.forEach((t) => window.clearTimeout(t));
-    };
   }, [sddEnabled]);
 
   if (!sddEnabled) return null;
@@ -124,8 +101,9 @@ export function SddPhaseBar() {
       </ol>
       <footer className="sdd-phase-bar-footer">
         <small className="sdd-phase-bar-hint">
-          当前是 MVP：阶段是 canned 演示。下一轮接到 SsdDriver 上，让 daemon
-          真的驱动 running → 待确认 → 已完成 流转。
+          开启规格化流程后，输入框发送的第一条消息会自动进入「需求分析」阶段。
+          每个阶段完成后会在对话流里出 assistant 卡片让你确认 / 修改，确认后再进入下一阶段，
+          daemon 同时把内容写到 <code>&lt;cwd&gt;/.aethercode/ssd/&lt;slug&gt;/</code> 下对应的 .md 文件。
         </small>
       </footer>
     </section>
