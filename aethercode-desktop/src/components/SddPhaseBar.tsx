@@ -124,11 +124,10 @@ export function SddPhaseBar() {
   for (const p of ssdPhases) byId.set(p.id, p);
 
   return (
-    <section className="sdd-phase-bar" aria-label="规格化流程阶段进度" data-testid="sdd-phase-bar">
+    <section className="sdd-phase-bar" aria-label="SDD 阶段进度" data-testid="sdd-phase-bar">
       <header className="sdd-phase-bar-header">
         <div className="sdd-phase-bar-title">
-          <span className="sdd-phase-bar-icon">📐</span>
-          <h3>规格化流程</h3>
+          <h3>SDD</h3>
           <span className="sdd-phase-bar-subtitle">
             {ssdActive && ssdSlug
               ? `8 阶段（${ssdSlug}）`
@@ -163,7 +162,7 @@ export function SddPhaseBar() {
               setSddEnabled(false);
             }
           }}
-          title={ssdActive ? '取消当前 SDD 流程' : '退出规格化流程'}
+          title={ssdActive ? '取消当前 SDD 流程' : '退出 SDD 面板'}
           data-testid="sdd-phase-bar-close"
         >
           {ssdActive ? '取消' : '✕'}

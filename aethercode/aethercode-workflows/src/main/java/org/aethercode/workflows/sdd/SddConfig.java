@@ -150,15 +150,16 @@ public final class SddConfig {
 
     // ----- project-override paths --------------------------------------
     // R294: project overrides follow the AetherCode internal SDD
-    // path layout (.aethercode/ssd/) rather than the upstream
-    // Spec Kit convention (.specify/). The user wants products
-    // to land at <cwd>/.aethercode/ssd/<slug>/{constitution.md,
-    // spec.md, design.md, tasks.md, dev.log, clarify.json,
-    // analyze.json, convergence.json}.
+    // path layout (.aethercode/sdd/) — the directory name uses
+    // lowercase `sdd` to match the daemon's `aethercode sdd`
+    // subcommand name. The user wants products to land at
+    // <cwd>/.aethercode/sdd/<slug>/{constitution.md, spec.md,
+    // design.md, tasks.md, dev.log, clarify.json, analyze.json,
+    // convergence.json}.
 
-    private static final Path PROJECT_CONSTITUTION = Path.of(".aethercode", "ssd", "constitution.md");
-    private static final Path PROJECT_TEMPLATES_DIR = Path.of(".aethercode", "ssd", "templates");
-    private static final Path PROJECT_SDD_YAML = Path.of(".aethercode", "ssd", "sdd.yaml");
+    private static final Path PROJECT_CONSTITUTION = Path.of(".aethercode", "sdd", "constitution.md");
+    private static final Path PROJECT_TEMPLATES_DIR = Path.of(".aethercode", "sdd", "templates");
+    private static final Path PROJECT_SDD_YAML = Path.of(".aethercode", "sdd", "sdd.yaml");
 
     // ----- fields ------------------------------------------------------
 
@@ -404,16 +405,17 @@ public final class SddConfig {
         long maxWaitMs = longOr(yaml == null ? null : yaml.get("maxWaitMs"), 240_000L);
         long idleEndMs = longOr(yaml == null ? null : yaml.get("idleEndMs"), 2_500L);
         // R294: default to AetherCode's internal SDD layout
-        // (<cwd>/.aethercode/ssd/<slug>/{constitution.md, spec.md,
+        // (<cwd>/.aethercode/sdd/<slug>/{constitution.md, spec.md,
         // design.md, tasks.md, dev.log, clarify.json, analyze.json,
         // convergence.json}). The previous R292 default of
         // .specify/specs/<NNN>-<slug>/ followed the upstream
         // Spec Kit convention but didn't match what the user
         // asked for in the round notes (line 21: "制品路径:
-        // <cwd>/.aethercode/ssd/<feature>/{spec,design,tasks}.md +
-        // dev.log"). Project-level `.specify/sdd.yaml` overrides
-        // still work — the override just sets `artefactRoot:`.
-        String artefactRoot = stringOr(yaml == null ? null : yaml.get("artefactRoot"), ".aethercode/ssd");
+        // <cwd>/.aethercode/sdd/<feature>/{spec,design,tasks}.md +
+        // dev.log"). Project-level `.aethercode/sdd/sdd.yaml`
+        // overrides still work — the override just sets
+        // `artefactRoot:`.
+        String artefactRoot = stringOr(yaml == null ? null : yaml.get("artefactRoot"), ".aethercode/sdd");
         SlugPolicy slugPolicy = SlugPolicy.parse(stringOr(yaml == null ? null : yaml.get("slugPolicy"), "sequential"));
         boolean enableClarify = boolOr(yaml == null ? null : yaml.get("enableClarify"), true);
         boolean enableAnalyze = boolOr(yaml == null ? null : yaml.get("enableAnalyze"), true);
@@ -464,7 +466,7 @@ public final class SddConfig {
             case CONSTITUTION -> """
                     # Project Constitution (governance)
 
-                    Write or update `.aethercode/ssd/<slug>/constitution.md`. The
+                    Write or update `.aethercode/sdd/<slug>/constitution.md`. The
                     document MUST include:
 
                     ## Core Principles

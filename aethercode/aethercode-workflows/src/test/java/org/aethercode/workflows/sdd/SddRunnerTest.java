@@ -17,23 +17,32 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * R292 — tests for {@link SddRunner}. Drives the 6-phase
+ * R292 + R294 tests for {@link SddRunner}. Drives the 6-phase
  * orchestrator with a mock {@link SddRunner.LlmFn} + mock
  * {@link SddRunner.ReplFn} + mock {@link SddRunner.Logger},
  * exercising:
  *
  * <ul>
- *   <li>happy-path 6-phase run ({@code --auto}) — every phase
+ *   <li>happy-path 6-phase run ({@code --auto}) -- every phase
  *       produces an artefact and the runner writes a
  *       convergence.json with the converge-phase output.</li>
- *   <li>abort propagation — when the mock REPL returns null
+ *   <li>abort propagation -- when the mock REPL returns null
  *       the runner throws {@link SddRunner.AbortException}.</li>
- *   <li>revision loop — the mock REPL returns revision text
+ *   <li>revision loop -- the mock REPL returns revision text
  *       once then accepts; the runner runs the phase twice
  *       and reports {@code revisions=1}.</li>
- *   <li>{@code nextSlug} SEQUENTIAL policy — the second call
- *       increments from 001 to 002.</li>
+ *   <li>{@code nextSlug} SEQUENTIAL policy -- the second call
+ *       bumps the raw feature slug to {@code <name>-2} when
+ *       the directory already exists.</li>
  * </ul>
+ *
+ * <p>R294 layout reminder: products land at
+ * {@code <cwd>/.aethercode/sdd/<slug>/{constitution.md, spec.md,
+ * design.md, tasks.md, dev.log, *.json}}. The directory name
+ * uses lowercase {@code sdd} (matches the daemon's
+ * {@code aethercode sdd} subcommand name) and the file names
+ * follow AetherCode's internal SSD convention (R236: design.md
+ * for the plan phase, dev.log for the implement phase).
  */
 class SddRunnerTest {
 
@@ -69,14 +78,14 @@ class SddRunnerTest {
         assertEquals("converge", results.get(7).phaseId());
 
         // artefacts were written to disk (R294: AetherCode-internal
-        // .aethercode/ssd/<slug>/ layout, R236 SSD file names:
+        // .aethercode/sdd/<slug>/ layout, R236 SSD file names:
         // spec.md / design.md / tasks.md / dev.log).
-        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/constitution.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/spec.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/design.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/tasks.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/dev.log")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/convergence.json")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/sdd/foo/constitution.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/sdd/foo/spec.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/sdd/foo/design.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/sdd/foo/tasks.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/sdd/foo/dev.log")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/sdd/foo/convergence.json")));
 
         // LLM was called once per required phase; optional phases
         // are skipped under auto mode (clarify, analyze, converge).
@@ -99,7 +108,7 @@ class SddRunnerTest {
         runner.runAll(cwd, "foo", "intent", 0, false, true,
                 llm, repl, log, 7);
 
-        Path clarify = cwd.resolve(".aethercode/ssd/foo/clarify.json");
+        Path clarify = cwd.resolve(".aethercode/sdd/foo/clarify.json");
         assertTrue(Files.exists(clarify), "clarify.json should be written even when no questions surfaced");
         String body = Files.readString(clarify, StandardCharsets.UTF_8);
         assertTrue(body.contains("\"questions\": 0"));
@@ -149,14 +158,14 @@ class SddRunnerTest {
         SddConfig config = SddConfig.fromBundled();
         SddRunner runner = new SddRunner(config);
 
-        // No existing dir → first slug is just the feature name
+        // No existing dir: first slug is just the feature name
         // (R294: dropped the NNN- prefix; AetherCode's internal
         // SDD layout uses the raw feature slug).
         assertEquals("foo", runner.nextSlug(cwd, "foo"));
 
         // After we create foo/, the next one with the same name
         // appends "-2".
-        Files.createDirectories(cwd.resolve(".aethercode/ssd/foo"));
+        Files.createDirectories(cwd.resolve(".aethercode/sdd/foo"));
         assertEquals("foo-2", runner.nextSlug(cwd, "foo"));
         assertEquals("bar", runner.nextSlug(cwd, "bar"));
     }
@@ -219,7 +228,7 @@ class SddRunnerTest {
 
     // ---- mocks ---------------------------------------------------
 
-    /** Mock LlmFn — returns a fixed body for every call (or, if
+    /** Mock LlmFn -- returns a fixed body for every call (or, if
      *  a per-call override is set, uses that). Records the
      *  total call count so tests can assert on it. */
     private static final class MockLlm implements SddRunner.LlmFn {
@@ -233,7 +242,7 @@ class SddRunnerTest {
         }
     }
 
-    /** Mock ReplFn — when {@code auto} is true, always accepts.
+    /** Mock ReplFn -- when {@code auto} is true, always accepts.
      *  When {@code reviseOnce} is true, the first call to the
      *  {@code specify} phase returns a revision text; subsequent
      *  calls (and all calls to other phases) accept.
@@ -271,7 +280,7 @@ class SddRunnerTest {
         }
     }
 
-    /** Mock Logger — collects lines into a list for assertion. */
+    /** Mock Logger -- collects lines into a list for assertion. */
     private static final class TestLogger implements SddRunner.Logger {
         final List<String> lines = new ArrayList<>();
         @Override public void log(String line) { lines.add(line); }

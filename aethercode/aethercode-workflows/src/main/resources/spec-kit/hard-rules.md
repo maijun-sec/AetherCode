@@ -1,46 +1,46 @@
-# R294 â€” SDD (Spec-Driven Development) built-in workflow. Reuses the
+# R294 â€?SDD (Spec-Driven Development) built-in workflow. Reuses the
 # 6-phase Spec-Driven Development process from github/spec-kit (MIT) as
 # the orchestrator + LLM-prompt backbone, but writes products to
 # AetherCode's internal directory layout (R236 SSD convention):
 #
-#   0. constitution  â†’  .aethercode/ssd/<slug>/constitution.md
-#   1. specify       â†’  .aethercode/ssd/<slug>/spec.md
-#   2. clarify       â†’  .aethercode/ssd/<slug>/clarify.json
-#   3. plan          â†’  .aethercode/ssd/<slug>/design.md
-#   4. analyze       â†’  .aethercode/ssd/<slug>/analyze.json
-#   5. tasks         â†’  .aethercode/ssd/<slug>/tasks.md
-#   6. implement     â†’  .aethercode/ssd/<slug>/dev.log
-#   7. converge      â†’  .aethercode/ssd/<slug>/convergence.json
+#   0. constitution  â†? .aethercode/sdd/<slug>/constitution.md
+#   1. specify       â†? .aethercode/sdd/<slug>/spec.md
+#   2. clarify       â†? .aethercode/sdd/<slug>/clarify.json
+#   3. plan          â†? .aethercode/sdd/<slug>/design.md
+#   4. analyze       â†? .aethercode/sdd/<slug>/analyze.json
+#   5. tasks         â†? .aethercode/sdd/<slug>/tasks.md
+#   6. implement     â†? .aethercode/sdd/<slug>/dev.log
+#   7. converge      â†? .aethercode/sdd/<slug>/convergence.json
 #
 # `<slug>` is derived from the user's prompt (lowercase, ASCII,
-# hyphen-joined, â‰¤10 chars). Constitution is per-feature (R236 layout),
+# hyphen-joined, â‰?0 chars). Constitution is per-feature (R236 layout),
 # not project-level (Spec Kit's `.specify/memory/` convention was
 # dropped because it leaks governance across features and forces the
 # user to pick where to put it).
 #
 # Default hard rules below are concatenated with each phase's per-phase
 # system prompt at LLM-call time. Edit project-locally by dropping a
-# sdd.yaml at <cwd>/.aethercode/ssd/sdd.yaml with a `hardRules:` key.
+# sdd.yaml at <cwd>/.aethercode/sdd/sdd.yaml with a `hardRules:` key.
 #
 # These rules were discovered during R236/R235 and are the single most
 # important reason the produced artefacts come out clean. Without them
-# the model emits <think>â€¦</think> blocks, chatty preambles, and tool
-# calls mid-phase â€” all of which would corrupt the artefact.
+# the model emits <think>â€?/think> blocks, chatty preambles, and tool
+# calls mid-phase â€?all of which would corrupt the artefact.
 
 version: 1
 name: sdd
 description: |
-  R294 â€” SDD (Spec-Driven Development) built-in workflow. Reuses the
+  R294 â€?SDD (Spec-Driven Development) built-in workflow. Reuses the
   6-phase Spec-Driven Development process from github/spec-kit (MIT) as
   the orchestrator + LLM-prompt backbone, but writes products to
   AetherCode's internal directory layout (R236 SSD convention). The
-  feature directory `<slug>` is derived from the user's intent (â‰¤10
+  feature directory `<slug>` is derived from the user's intent (â‰?0
   ASCII chars, hyphen-joined).
 
 hardRules: |
   [HARD RULES FOR THIS TURN]
-    - Do NOT call any tools (file_read, bash, ask_user_question, â€¦).
-    - Do NOT emit <think>â€¦</think> blocks, "Draft:" / "Note:" / "I will"
+    - Do NOT call any tools (file_read, bash, ask_user_question, â€?.
+    - Do NOT emit <think>â€?/think> blocks, "Draft:" / "Note:" / "I will"
       / "Let me" / "Sure," / "Here is" preamble lines.
     - Do NOT reference prior conversation, the user's intent verbatim,
       or any meta-commentary about being an AI.
@@ -63,11 +63,11 @@ hardRules: |
       feature slug.
     - Acceptance-criteria / success-criteria placeholders ARE
       user-supplied: fill them in. `[NEEDS CLARIFICATION]` blocks
-      are NOT user-supplied in this turn â€” keep them verbatim.
+      are NOT user-supplied in this turn â€?keep them verbatim.
 
 maxWaitMs: 240000
 idleEndMs: 2500
-artefactRoot: .aethercode/ssd
+artefactRoot: .aethercode/sdd
 slugPolicy: sequential
 enableClarify: true
 enableAnalyze: true

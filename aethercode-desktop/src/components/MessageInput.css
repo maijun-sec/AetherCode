@@ -892,6 +892,34 @@
   flex-wrap: nowrap;
 }
 
+/* R294: SDD toggle + quality preset pills grouped together
+ * so the input config bar stays compact. The two are different
+ * kinds of switches (SDD = boolean toggle, quality = radio
+ * group) but they both tune daemon behaviour, so visually
+ * pairing them reads as one "tune the daemon before sending"
+ * cluster. A hairline divider sits between the SDD pill and
+ * the first quality pill to make the seam obvious without
+ * taking horizontal real-estate. */
+.config-group-sdd-quality {
+  gap: 6px;
+  padding-right: 6px;
+  margin-right: 2px;
+  border-right: 1px solid var(--chat-divider);
+}
+
+.config-group-sdd-quality .config-toggle-sdd {
+  /* tighter padding so the `SDD` label sits flush with
+   * the quality pills beside it. The toggle label is
+   * the Spec-Driven Development acronym in capitals
+   * (matches the `low/medium/high/xhigh` siblings'
+   * monospace font but is visually distinct because
+   * it stays uppercase — like a model name in
+   * CLI tool listings). */
+  padding: 3px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.4px;
+}
+
 .message-input-quality-pill {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);

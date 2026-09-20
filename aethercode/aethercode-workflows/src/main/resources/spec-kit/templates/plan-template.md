@@ -1,10 +1,10 @@
 # Implementation Plan: [FEATURE]
 
-**Branch**: `[<slug>]` | **Date**: [DATE] | **Spec**: [.aethercode/ssd/<slug>/spec.md]
+**Branch**: `[<slug>]` | **Date**: [DATE] | **Spec**: [.aethercode/sdd/<slug>/spec.md]
 
-**Input**: Feature specification from `.aethercode/ssd/<slug>/spec.md`
+**Input**: Feature specification from `.aethercode/sdd/<slug>/spec.md`
 
-**Note**: This template is filled in by AetherCode's SDD `plan` phase; the runner writes the result to `.aethercode/ssd/<slug>/design.md` (R236 SSD naming — this is the "plan" phase product even though the file is called `design.md` because AetherCode's internal SDD convention uses that name; the Spec Kit upstream convention uses `plan.md` for the same artefact).
+**Note**: This template is filled in by AetherCode's SDD `plan` phase; the runner writes the result to `.aethercode/sdd/<slug>/design.md` (R236 SSD naming �?this is the "plan" phase product even though the file is called `design.md` because AetherCode's internal SDD convention uses that name; the Spec Kit upstream convention uses `plan.md` for the same artefact).
 
 ## Summary
 
@@ -47,7 +47,7 @@
 ### Documentation (this feature)
 
 ```text
-.aethercode/ssd/<slug>/
+.aethercode/sdd/<slug>/
 ├── design.md            # This file (R294 SDD "plan" phase output)
 ├── spec.md              # Phase 1 output (R294 SDD "specify" phase)
 ├── tasks.md             # Phase 2 output (R294 SDD "tasks" phase)
@@ -75,16 +75,16 @@ tests/
 # [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
 backend/
 ├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
+�?  ├── models/
+�?  ├── services/
+�?  └── api/
 └── tests/
 
 frontend/
 ├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
+�?  ├── components/
+�?  ├── pages/
+�?  └── services/
 └── tests/
 
 # [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)

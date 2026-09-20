@@ -164,7 +164,7 @@ public final class SddRunner {
 
         Path featureDir = artefactDir(cwd, slug);
         // R294: AetherCode's internal SDD layout — every
-        // product lives under <cwd>/.aethercode/ssd/<slug>/.
+        // product lives under <cwd>/.aethercode/sdd/<slug>/.
         // Constitution is per-feature (not project-level) to
         // keep the model prompt self-contained; the bundled
         // default still ships in the jar so users get a
@@ -809,7 +809,7 @@ public final class SddRunner {
      *  <p>R294: dropped the {@code NNN-} prefix. The AetherCode
      *  internal SDD layout (R236 SSD convention) uses the raw
      *  feature slug as the directory name — e.g.
-     *  {@code .aethercode/ssd/<slug>/spec.md}. Conflicts (a
+     *  {@code .aethercode/sdd/<slug>/spec.md}. Conflicts (a
      *  directory with the same slug already exists) are
      *  resolved by appending {@code -2}, {@code -3}, ... so
      *  rerunning the same feature doesn't silently overwrite

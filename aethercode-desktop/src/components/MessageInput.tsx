@@ -701,82 +701,47 @@ export function MessageInput() {
             🧠 思考
           </button>
         </div>
-        {/* R288: SDD mode toggle. Sits right next to the
-         * Thinking pill so the user sees both on/off modes
-         * in the same row. When on, the next user turn is
-         * routed through the 4-phase SSD flow (需求分析 →
-         * 详细设计 → 任务分析 → 开发实现) instead of a
-         * regular query; SddPhaseBar renders below the
-         * MessageList to track phase progress. */}
-        <div className="config-group">
+        {/* R294: SDD toggle and quality preset pills
+         * (low / medium / high / xhigh) are merged into
+         * one `.config-group` so the input bar doesn't grow
+         * a separate pill column for each knob. Both are
+         * daemon-behaviour switches (SDD toggles the spawn
+         * path, quality flips temperature / maxTokens /
+         * extended thinking), so grouping them reads as
+         * "this is how you tune the daemon before sending".
+         * The SDD toggle's label is the bare acronym
+         * `sdd` (lowercase) so it visually matches the
+         * `low / medium / high / xhigh` neighbours. */}
+        <div
+          className="config-group config-group-sdd-quality"
+          data-testid="sdd-quality-group"
+        >
           <button
             type="button"
             className={`config-toggle config-toggle-sdd ${sddEnabled ? 'config-toggle-active' : ''}`}
             onClick={() => setSddEnabled(!sddEnabled)}
             title={sddEnabled
-              ? '已开启规格化流程：下一次输入将进入 4 阶段流程'
-              : '开启规格化流程：需求分析 → 详细设计 → 任务分析 → 开发实现'}
+              ? '已开启 SDD：下一次输入将进入 8 阶段流程（constitution → spec → design → tasks → ...）'
+              : '开启 SDD：constitution → spec → design → tasks → implement（产物落到 .aethercode/sdd/<slug>/）'}
             aria-pressed={sddEnabled}
             data-testid="sdd-toggle"
           >
-            📐 规格化流程
+            SDD
           </button>
-        </div>
-        <div className="config-group">
-          <label className="config-label">Model</label>
-          <select
-            className="config-select"
-            // use the computed value that
-            // matches an option id, not the bare
-            // model. See the dropdownValue useMemo
-            // above for the rationale.
-            value={dropdownValue}
-            onChange={async (e) => {
-              // when the user picks a model, the value
-              // is "provider/modelId" (e.g. "anthropic/claude-sonnet-4-5").
-              // We split, switch provider if needed, then set
-              // the model id. The daemon's setModel RPC only
-              // accepts the bare model id; the provider switch
-              // is a separate RPC (switchProvider).
-              const v = e.target.value;
-              const slash = v.indexOf('/');
-              if (slash < 0) {
-                await setModel(v);
-                return;
-              }
-              const newProvider = v.slice(0, slash);
-              const newModel = v.slice(slash + 1);
-              if (newProvider && newProvider !== currentProvider) {
-                await useStore.getState().switchProvider(newProvider, newModel);
-              } else {
-                await setModel(newModel);
-              }
-            }}
-            disabled={isStreaming || !isConnected}
+          {/* R285: Quality preset pills (low /
+              medium / high / xhigh). Click to call
+              switchVariant — keeps the current
+              provider + model, just flips the
+              temperature / maxTokens /
+              extendedThinking knobs. The active
+              row is highlighted via currentVariant
+              (the daemon's normalised "active"
+              name after case-insensitive lookup
+              against the bundled set). */}
+          <div
+            className="message-input-quality-row"
+            data-testid="message-input-quality"
           >
-            {modelEntries.length === 0 ? (
-              <option value={model ?? ''}>{model ?? '—'}</option>
-            ) : (
-              modelEntries.map((e) => (
-                <option key={e.id} value={e.id}>{e.label}</option>
-              ))
-            )}
-          </select>
-        </div>
-        {/* R285: Quality preset pills (low /
-            medium / high / xhigh). Click to call
-            switchVariant — keeps the current
-            provider + model, just flips the
-            temperature / maxTokens /
-            extendedThinking knobs. The active
-            row is highlighted via currentVariant
-            (the daemon's normalised "active"
-            name after case-insensitive lookup
-            against the bundled set). */}
-        <div
-          className="message-input-quality-row"
-          data-testid="message-input-quality"
-        >
           {['low', 'medium', 'high', 'xhigh'].map((name) => {
             const active = (currentVariant ?? '').toLowerCase() === name;
             return (
@@ -822,6 +787,48 @@ export function MessageInput() {
               {activeVariant.extendedThinking ? ' · think' : ''}
             </span>
           )}
+        </div>
+        </div>
+        <div className="config-group">
+          <label className="config-label">Model</label>
+          <select
+            className="config-select"
+            // use the computed value that
+            // matches an option id, not the bare
+            // model. See the dropdownValue useMemo
+            // above for the rationale.
+            value={dropdownValue}
+            onChange={async (e) => {
+              // when the user picks a model, the value
+              // is "provider/modelId" (e.g. "anthropic/claude-sonnet-4-5").
+              // We split, switch provider if needed, then set
+              // the model id. The daemon's setModel RPC only
+              // accepts the bare model id; the provider switch
+              // is a separate RPC (switchProvider).
+              const v = e.target.value;
+              const slash = v.indexOf('/');
+              if (slash < 0) {
+                await setModel(v);
+                return;
+              }
+              const newProvider = v.slice(0, slash);
+              const newModel = v.slice(slash + 1);
+              if (newProvider && newProvider !== currentProvider) {
+                await useStore.getState().switchProvider(newProvider, newModel);
+              } else {
+                await setModel(newModel);
+              }
+            }}
+            disabled={isStreaming || !isConnected}
+          >
+            {modelEntries.length === 0 ? (
+              <option value={model ?? ''}>{model ?? '—'}</option>
+            ) : (
+              modelEntries.map((e) => (
+                <option key={e.id} value={e.id}>{e.label}</option>
+              ))
+            )}
+          </select>
         </div>
         <div className="config-group">
           <label className="config-label">Perm</label>

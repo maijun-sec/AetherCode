@@ -4,7 +4,7 @@ description: "Task list template for feature implementation"
 
 # Tasks: [FEATURE NAME]
 
-**Input**: Design documents from `.aethercode/ssd/<slug>/`
+**Input**: Design documents from `.aethercode/sdd/<slug>/`
 
 **Prerequisites**: design.md (required), spec.md (required for user stories)
 
@@ -164,7 +164,7 @@ Examples of foundational tasks (adjust based on your project):
 - **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
 - **User Stories (Phase 3+)**: All depend on Foundational phase completion
   - User stories can then proceed in parallel (if staffed)
-  - Or sequentially in priority order (P1 â†’ P2 â†’ P3)
+  - Or sequentially in priority order (P1 â†?P2 â†?P3)
 - **Polish (Final Phase)**: Depends on all desired user stories being complete
 
 ### User Story Dependencies
@@ -218,10 +218,10 @@ Task: "Create [Entity2] model in src/models/[entity2].py"
 
 ### Incremental Delivery
 
-1. Complete Setup + Foundational â†’ Foundation ready
-2. Add User Story 1 â†’ Test independently â†’ Deploy/Demo (MVP!)
-3. Add User Story 2 â†’ Test independently â†’ Deploy/Demo
-4. Add User Story 3 â†’ Test independently â†’ Deploy/Demo
+1. Complete Setup + Foundational â†?Foundation ready
+2. Add User Story 1 â†?Test independently â†?Deploy/Demo (MVP!)
+3. Add User Story 2 â†?Test independently â†?Deploy/Demo
+4. Add User Story 3 â†?Test independently â†?Deploy/Demo
 5. Each story adds value without breaking previous stories
 
 ### Parallel Team Strategy
