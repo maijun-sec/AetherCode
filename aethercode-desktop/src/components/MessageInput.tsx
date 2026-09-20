@@ -13,6 +13,20 @@ import { WORKFLOW_EXAMPLES, importExampleWorkflows } from './workflowExamples';
 import { computeModelDropdownValue } from './modelDropdownValue';
 import './MessageInput.css';
 
+// R295: per-quality tooltip text. Mirrors the
+// description strings baked into MockRpcServer.ts
+// (and the real daemon's `variantInfo` payload) so
+// the user can hover an option to read what the
+// preset actually does (temperature / maxTokens /
+// extended-thinking toggle). Keeping a local copy
+// avoids a synchronous RPC just to label the options.
+const QUALITY_PRESET_TIPS: Record<'low' | 'medium' | 'high' | 'xhigh', string> = {
+  low:    '0.3 / 16k — 最快，温度最低',
+  medium: '0.7 / 32k — 平衡（默认）',
+  high:   '1.0 / 48k — 更锐利，输出更长',
+  xhigh:  '1.0 / 64k + think — 最锐利，开启扩展思考',
+};
+
 // the dropdown is wired to UI_PERMISSION_MODES
 // (re-exported from the store so the labels and the
 // store-side mapping stay in sync). The 3-tier mental
@@ -701,17 +715,19 @@ export function MessageInput() {
             🧠 思考
           </button>
         </div>
-        {/* R294: SDD toggle and quality preset pills
-         * (low / medium / high / xhigh) are merged into
-         * one `.config-group` so the input bar doesn't grow
-         * a separate pill column for each knob. Both are
-         * daemon-behaviour switches (SDD toggles the spawn
-         * path, quality flips temperature / maxTokens /
-         * extended thinking), so grouping them reads as
-         * "this is how you tune the daemon before sending".
-         * The SDD toggle's label is the bare acronym
-         * `sdd` (lowercase) so it visually matches the
-         * `low / medium / high / xhigh` neighbours. */}
+        {/* R294/R295: SDD toggle (with 📐 icon preserved
+         * from R288) and the daemon's quality preset
+         * dropdown are merged into one `.config-group` so
+         * the input bar stays compact. The 4 quality pills
+         * (low / medium / high / xhigh) were previously a
+         * row of buttons the user couldn't parse; R295
+         * collapses them into a single `<select>` mirroring
+         * the Model select's affordance, with each option's
+         * `title` carrying the daemon-side description
+         * (temperature / maxTokens / extended-thinking
+         * flags) so users can hover to see what each preset
+         * actually does. The active variant name is shown
+         * as the select's value. */}
         <div
           className="config-group config-group-sdd-quality"
           data-testid="sdd-quality-group"
@@ -726,52 +742,42 @@ export function MessageInput() {
             aria-pressed={sddEnabled}
             data-testid="sdd-toggle"
           >
-            SDD
+            <span className="config-toggle-sdd-icon" aria-hidden="true">📐</span>
+            <span>SDD</span>
           </button>
-          {/* R285: Quality preset pills (low /
-              medium / high / xhigh). Click to call
-              switchVariant — keeps the current
-              provider + model, just flips the
-              temperature / maxTokens /
-              extendedThinking knobs. The active
-              row is highlighted via currentVariant
-              (the daemon's normalised "active"
-              name after case-insensitive lookup
-              against the bundled set). */}
-          <div
-            className="message-input-quality-row"
+          {/* R295: quality preset selector. Replaces the
+           * 4-pill row (R285 design). Click the dropdown
+           * to switch active variant; the current value
+           * stays shown as the select's value, matching
+           * the Model select's affordance. Each option's
+           * title carries the daemon's preset description
+           * so the user can hover to read what each
+           * preset (temperature / maxTokens / extended
+           * thinking) actually does. */}
+          <select
+            className="config-select config-select-quality"
             data-testid="message-input-quality"
+            value={(currentVariant ?? '').toLowerCase() || 'medium'}
+            onChange={async (e) => {
+              try {
+                await switchVariant(e.target.value);
+              } catch (err) {
+                console.warn('[MessageInput] switchVariant failed:', err);
+              }
+            }}
+            disabled={isStreaming || !isConnected}
+            title={activeVariant?.description ?? 'Daemon quality preset (temperature / maxTokens / extended thinking)'}
           >
-          {['low', 'medium', 'high', 'xhigh'].map((name) => {
-            const active = (currentVariant ?? '').toLowerCase() === name;
-            return (
-              <button
+            {(['low', 'medium', 'high', 'xhigh'] as const).map((name) => (
+              <option
                 key={name}
-                type="button"
-                className={
-                  'message-input-quality-pill' +
-                  (active ? ' message-input-quality-pill-active' : '')
-                }
-                data-testid={`message-input-quality-${name}`}
-                data-active={active ? '1' : '0'}
-                disabled={!isConnected}
-                title={
-                  active
-                    ? `Currently on ${name}`
-                    : `Switch to ${name}`
-                }
-                onClick={async () => {
-                  try {
-                    await switchVariant(name);
-                  } catch (e) {
-                    console.warn('[MessageInput] switchVariant failed:', e);
-                  }
-                }}
+                value={name}
+                title={QUALITY_PRESET_TIPS[name]}
               >
                 {name}
-              </button>
-            );
-          })}
+              </option>
+            ))}
+          </select>
           {activeVariant && (
             <span
               className="message-input-quality-detail"
@@ -787,7 +793,6 @@ export function MessageInput() {
               {activeVariant.extendedThinking ? ' · think' : ''}
             </span>
           )}
-        </div>
         </div>
         <div className="config-group">
           <label className="config-label">Model</label>

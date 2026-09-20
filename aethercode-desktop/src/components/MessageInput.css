@@ -892,14 +892,17 @@
   flex-wrap: nowrap;
 }
 
-/* R294: SDD toggle + quality preset pills grouped together
- * so the input config bar stays compact. The two are different
- * kinds of switches (SDD = boolean toggle, quality = radio
- * group) but they both tune daemon behaviour, so visually
- * pairing them reads as one "tune the daemon before sending"
- * cluster. A hairline divider sits between the SDD pill and
- * the first quality pill to make the seam obvious without
- * taking horizontal real-estate. */
+/* R294/R295: SDD toggle and quality preset dropdown
+ * grouped together so the input config bar stays
+ * compact. Both are daemon-behaviour switches
+ * (SDD toggles the spawn path, quality flips
+ * temperature / maxTokens / extended thinking),
+ * so visually pairing them reads as one
+ * "tune the daemon before sending" cluster. The
+ * hairline divider on the group's right edge
+ * separates the cluster from the next config
+ * group (Model) without taking horizontal
+ * real-estate. */
 .config-group-sdd-quality {
   gap: 6px;
   padding-right: 6px;
@@ -907,51 +910,44 @@
   border-right: 1px solid var(--chat-divider);
 }
 
+/* R295: SDD toggle carries a 📐 icon next to the
+ * acronym. The icon reverts to R288's affordance —
+ * visual recognition of "this opens the spec-driven
+ * flow" — while the label stays uppercase `SDD` per
+ * R294-followup. The icon sits in its own inline-flex
+ * span so the gap between it and the label is
+ * controlled centrally rather than relying on the
+ * character cell. */
 .config-group-sdd-quality .config-toggle-sdd {
-  /* tighter padding so the `SDD` label sits flush with
-   * the quality pills beside it. The toggle label is
-   * the Spec-Driven Development acronym in capitals
-   * (matches the `low/medium/high/xhigh` siblings'
-   * monospace font but is visually distinct because
-   * it stays uppercase — like a model name in
-   * CLI tool listings). */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   letter-spacing: 0.4px;
 }
 
-.message-input-quality-pill {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-  padding: 2px 8px;
+.config-group-sdd-quality .config-toggle-sdd-icon {
+  /* keep emoji baseline aligned with the
+   * label's text-baseline; some fonts add a
+   * glyph descender that drags the icon
+   * below the line. Sub-pixel nudge is
+   * enough. */
+  line-height: 1;
+  font-size: 13px;
+}
+
+/* R295: the quality preset selector is a
+ * `<select>` (R294 had a row of 4 pill
+ * buttons, R285 design). Re-using the
+ * `.config-select` shape keeps it visually
+ * consistent with the Model select that
+ * sits to the right. Tight padding so it
+ * fits the compact cluster. */
+.config-select-quality {
+  padding: 3px 22px 3px 8px;
   font-size: 11px;
-  color: #b0b0b8;
-  cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  text-transform: lowercase;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.message-input-quality-pill:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-}
-
-.message-input-quality-pill:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.message-input-quality-pill-active {
-  background: rgba(138, 169, 255, 0.16);
-  border-color: rgba(138, 169, 255, 0.4);
-  color: #8aa9ff;
-}
-
-.message-input-quality-pill-active:hover:not(:disabled) {
-  background: rgba(138, 169, 255, 0.24);
-  color: #a8c1ff;
+  min-width: 64px;
 }
 
 .message-input-quality-detail {
