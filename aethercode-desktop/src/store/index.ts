@@ -5673,11 +5673,15 @@ export const useStore = create<AppState>((set, get) => {
       // Mirror the daemon's `nextSlug` policy: prepend
       // `001-` so the on-screen path matches what a real
       // Spec Kit run would write (`<cwd>/.specify/specs/
-      // 001-<slug>/`). `001-` is the default SEQUENTIAL
-      // numbering; the daemon-side runner bumps the
-      // counter when multiple features live in the same
-      // `.specify/specs/` dir.
-      const featureSlug = `001-${slug}`;
+      // R294: pass the raw slug to the daemon — the daemon's
+      // `nextSlug()` decides what to do with conflicts (it now
+      // uses the bare slug and only appends `-2`/`-3` on collision
+      // instead of the previous `001-`/`002-`/... numbering).
+      // AetherCode's internal SDD layout writes products to
+      // `<cwd>/.aethercode/ssd/<slug>/{constitution.md, spec.md,
+      // design.md, tasks.md, dev.log, clarify.json, analyze.json,
+      // convergence.json}` (R236 SSD naming) — no NNN- prefix.
+      const featureSlug = slug;
       // We pull TauriSsdDriver + MockSsdDriver +
       // defaultSddEventSequence together via dynamic import
       // (chunk split): users who never flip 📐 pay zero. The

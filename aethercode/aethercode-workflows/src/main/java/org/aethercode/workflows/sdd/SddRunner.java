@@ -163,13 +163,13 @@ public final class SddRunner {
         }
 
         Path featureDir = artefactDir(cwd, slug);
-        // Spec Kit spec: constitution lives at
-        // `.specify/memory/constitution.md`, not under the
-        // feature dir. Create both directories up front so
-        // every phase's writeFile() finds a parent.
-        Files.createDirectories(cwd.resolve(config.artefactRoot()).resolve("memory"));
+        // R294: AetherCode's internal SDD layout — every
+        // product lives under <cwd>/.aethercode/ssd/<slug>/.
+        // Constitution is per-feature (not project-level) to
+        // keep the model prompt self-contained; the bundled
+        // default still ships in the jar so users get a
+        // sensible baseline on first run.
         Files.createDirectories(featureDir);
-        Files.createDirectories(featureDir.resolve("logs"));
         log.log("[sdd] slug: " + slug);
         log.log("[sdd] intent: " + intent);
         log.log("[sdd] feature dir: " + featureDir);
@@ -202,7 +202,7 @@ public final class SddRunner {
 
             switch (phase) {
                 case CONSTITUTION -> {
-                    Path p = constitutionPath(cwd);
+                    Path p = featureDir.resolve("constitution.md");
                     int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, "");
                     writtenPaths.put("constitution.md", p);
                     bodies.put("constitutionContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
@@ -210,7 +210,7 @@ public final class SddRunner {
                 }
                 case SPECIFY -> {
                     Path p = featureDir.resolve("spec.md");
-                    String prior = readIfPresent(constitutionPath(cwd));
+                    String prior = readIfPresent(featureDir.resolve("constitution.md"));
                     int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, prior);
                     bodies.put("specContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
                     writtenPaths.put("spec.md", p);
@@ -221,11 +221,16 @@ public final class SddRunner {
                     results.add(new PhaseResult(phase.specKitId(), featureDir.resolve("clarify.json"), revs));
                 }
                 case PLAN -> {
-                    Path p = featureDir.resolve("plan.md");
+                    // R294: plan phase product uses `design.md`
+                    // (R236 SSD naming) rather than `plan.md`
+                    // (upstream Spec Kit naming). The task that
+                    // consumes it is named "design" so this
+                    // matches the model prompt's wording.
+                    Path p = featureDir.resolve("design.md");
                     String prior = readIfPresent(featureDir.resolve("spec.md"));
                     int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, prior);
                     bodies.put("planContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
-                    writtenPaths.put("plan.md", p);
+                    writtenPaths.put("design.md", p);
                     results.add(new PhaseResult(phase.specKitId(), p, revs));
                 }
                 case ANALYZE -> {
@@ -234,7 +239,7 @@ public final class SddRunner {
                 }
                 case TASKS -> {
                     Path p = featureDir.resolve("tasks.md");
-                    String prior = readIfPresent(featureDir.resolve("plan.md"));
+                    String prior = readIfPresent(featureDir.resolve("design.md"));
                     int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, prior);
                     bodies.put("tasksContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
                     writtenPaths.put("tasks.md", p);
@@ -243,8 +248,10 @@ public final class SddRunner {
                 case IMPLEMENT -> {
                     Path tasksPath = featureDir.resolve("tasks.md");
                     int revs = runImplement(phase, tasksPath, auto, llm, repl, log);
-                    Path implLog = featureDir.resolve("logs").resolve("implement.log");
-                    results.add(new PhaseResult(phase.specKitId(), implLog, revs));
+                    // R294: dev.log (R236 naming) instead of
+                    // logs/implement.log (upstream Spec Kit).
+                    Path devLog = featureDir.resolve("dev.log");
+                    results.add(new PhaseResult(phase.specKitId(), devLog, revs));
                 }
                 case CONVERGE -> {
                     int revs = runConverge(phase, featureDir, auto, llm, repl, log);
@@ -452,18 +459,18 @@ public final class SddRunner {
             return 0;
         }
         String spec = readIfPresent(featureDir.resolve("spec.md"));
-        String plan = readIfPresent(featureDir.resolve("plan.md"));
+        String design = readIfPresent(featureDir.resolve("design.md"));
         String tasks = readIfPresent(featureDir.resolve("tasks.md"));
-        if (spec.isBlank() || plan.isBlank() || tasks.isBlank()) {
-            log.log("[sdd] missing one of spec/plan/tasks; skipping analyze");
+        if (spec.isBlank() || design.isBlank() || tasks.isBlank()) {
+            log.log("[sdd] missing one of spec/design/tasks; skipping analyze");
             return 0;
         }
         String prompt = "Cross-check the three artefacts below for consistency. "
                 + "List any requirement in spec.md that is not covered by tasks.md, "
-                + "any task in tasks.md that is not justified by plan.md, "
+                + "any task in tasks.md that is not justified by design.md, "
                 + "or any conflict between them. "
                 + "Output a short bullet list of issues, then a line 'CONVERGED: yes' or 'CONVERGED: no'.\n\n"
-                + "# spec.md\n" + spec + "\n\n# plan.md\n" + plan + "\n\n# tasks.md\n" + tasks;
+                + "# spec.md\n" + spec + "\n\n# design.md\n" + design + "\n\n# tasks.md\n" + tasks;
         String response = cleanOutput(llm.generate(
                 "You are a software consistency analyst.",
                 prompt, 2048));
@@ -474,11 +481,12 @@ public final class SddRunner {
     }
 
     /** Implement: walk the tasks.md table, ask the model to produce
-     *  code for each row, append to logs/implement.log. Mirrors
-     *  R236's runPhase4Dev. */
+     *  code for each row, append to dev.log. Mirrors R236's
+     *  runPhase4Dev but uses the AetherCode-internal filename
+     *  (R294: dev.log, no logs/ subdirectory). */
     private int runImplement(PhaseId phase, Path tasksPath, boolean auto,
                              LlmFn llm, ReplFn repl, Logger log) throws Exception {
-        Path implLog = tasksPath.getParent().resolve("logs").resolve("implement.log");
+        Path implLog = tasksPath.getParent().resolve("dev.log");
         if (!Files.isRegularFile(tasksPath)) {
             log.log("[sdd] no tasks.md found at " + tasksPath + "; skipping implement");
             return 0;
@@ -488,7 +496,7 @@ public final class SddRunner {
         if (tasks.isEmpty()) {
             log.log("[sdd] WARN: no tasks parsed from " + tasksPath);
             Files.writeString(implLog,
-                    "# implement.log\n\nNo tasks parsed from " + tasksPath + ".\n",
+                    "# dev.log\n\nNo tasks parsed from " + tasksPath + ".\n",
                     StandardCharsets.UTF_8);
             return 0;
         }
@@ -518,7 +526,7 @@ public final class SddRunner {
             Files.writeString(implLog, out.toString(), StandardCharsets.UTF_8);
             generated++;
         }
-        log.log("[sdd] implement.log final: " + generated + " tasks → " + implLog);
+        log.log("[sdd] dev.log final: " + generated + " tasks → " + implLog);
         return generated;
     }
 
@@ -528,17 +536,17 @@ public final class SddRunner {
     private int runConverge(PhaseId phase, Path featureDir, boolean auto,
                             LlmFn llm, ReplFn repl, Logger log) throws Exception {
         Path conv = featureDir.resolve("convergence.json");
-        Path implLog = featureDir.resolve("logs").resolve("implement.log");
+        Path implLog = featureDir.resolve("dev.log");
         String spec = readIfPresent(featureDir.resolve("spec.md"));
         String implSummary = readIfPresent(implLog);
         int iteration = 0;
         while (iteration < 5) {
             iteration++;
             String prompt = "You are doing a post-implementation review for an SDD feature.\n\n"
-                    + "# spec.md\n" + spec + "\n\n# implement.log (tail)\n"
+                    + "# spec.md\n" + spec + "\n\n# dev.log (tail)\n"
                     + (implSummary.length() > 4000 ? implSummary.substring(implSummary.length() - 4000) : implSummary)
                     + "\n\nOutput a JSON object with shape {converged: bool, issues: [string]}. "
-                    + "Converged is true only if every FR in spec.md is covered by implement.log and there are no contradictions.";
+                    + "Converged is true only if every FR in spec.md is covered by dev.log and there are no contradictions.";
             String response = cleanOutput(llm.generate(
                     "You are a post-implementation reviewer.",
                     prompt, 2048));
@@ -568,7 +576,7 @@ public final class SddRunner {
             }
             // Apply feedback: re-run implement with feedback appended.
             String feedbackPrompt = "Apply this feedback to the implementation:\n\n"
-                    + feedback + "\n\n# implement.log\n" + implSummary;
+                    + feedback + "\n\n# dev.log\n" + implSummary;
             String revised = cleanOutput(llm.generate(
                     "You revise an implementation based on reviewer feedback.",
                     feedbackPrompt, 4096));
@@ -616,17 +624,24 @@ public final class SddRunner {
         try { return Files.readString(p, StandardCharsets.UTF_8); } catch (IOException ioe) { return ""; }
     }
 
-    /** Resolve the per-feature directory: {@code <cwd>/<artefactRoot>/specs/<slug>}. */
+    /** Resolve the per-feature directory: {@code <cwd>/<artefactRoot>/<slug>}
+     *  (R294: no intermediate {@code specs/} or {@code memory/}
+     *  subdirectory — the per-feature dir is the leaf, so every
+     *  artefact sits one level down). */
     public Path artefactDir(Path cwd, String slug) {
-        Path root = cwd.resolve(config.artefactRoot()).resolve("specs");
+        Path root = cwd.resolve(config.artefactRoot());
         return root.resolve(slug);
     }
 
-    /** {@code <cwd>/<artefactRoot>/memory/constitution.md} — single
-     *  file shared across all features. */
-    public Path constitutionPath(Path cwd) {
-        Path root = cwd.resolve(config.artefactRoot()).resolve("memory");
-        return root.resolve("constitution.md");
+    /** {@code <cwd>/<artefactRoot>/<slug>/constitution.md} — R294
+     *  changed this from project-level (under {@code memory/}) to
+     *  per-feature so the governance baseline lives alongside
+     *  the rest of the spec artefacts and travels with the
+     *  feature. The bundled default is still loaded from
+     *  {@code SddConfig.PROJECT_CONSTITUTION} when the
+     *  project-local file is absent. */
+    public Path constitutionPath(Path cwd, String slug) {
+        return artefactDir(cwd, slug).resolve("constitution.md");
     }
 
     /** Strip {@code <think>…</think>} blocks, chatty preamble lines,
@@ -789,29 +804,31 @@ public final class SddRunner {
 
     /** Resolve the next slug for a feature under SEQUENTIAL /
      *  TIMESTAMP policy. Pure helper so the CLI can use it before
-     *  the runner starts. */
+     *  the runner starts.
+     *
+     *  <p>R294: dropped the {@code NNN-} prefix. The AetherCode
+     *  internal SDD layout (R236 SSD convention) uses the raw
+     *  feature slug as the directory name — e.g.
+     *  {@code .aethercode/ssd/<slug>/spec.md}. Conflicts (a
+     *  directory with the same slug already exists) are
+     *  resolved by appending {@code -2}, {@code -3}, ... so
+     *  rerunning the same feature doesn't silently overwrite
+     *  the previous run's artefacts. */
     public String nextSlug(Path cwd, String featureName) {
         if (config.slugPolicy() == SlugPolicy.TIMESTAMP) {
             String ts = LocalDateTime.now(ZoneOffset.UTC)
                     .format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
             return ts + "-" + featureName;
         }
-        Path specsRoot = cwd.resolve(config.artefactRoot()).resolve("specs");
-        if (!Files.isDirectory(specsRoot)) return "001-" + featureName;
-        int max = 0;
-        try (var stream = Files.list(specsRoot)) {
-            for (Path child : (Iterable<Path>) stream::iterator) {
-                String name = child.getFileName().toString();
-                int dash = name.indexOf('-');
-                if (dash <= 0) continue;
-                try {
-                    int n = Integer.parseInt(name.substring(0, dash));
-                    if (n > max) max = n;
-                } catch (NumberFormatException ignore) {}
-            }
-        } catch (IOException ioe) {
-            return "001-" + featureName;
+        Path root = cwd.resolve(config.artefactRoot());
+        Path candidate = root.resolve(featureName);
+        if (!Files.isDirectory(candidate)) return featureName;
+        for (int n = 2; n < 1000; n++) {
+            Path next = root.resolve(featureName + "-" + n);
+            if (!Files.isDirectory(next)) return featureName + "-" + n;
         }
-        return String.format("%03d-%s", max + 1, featureName);
+        // pathological — 1000 runs of the same feature on the
+        // same day. Fall through with a timestamp suffix.
+        return featureName + "-" + System.currentTimeMillis();
     }
 }

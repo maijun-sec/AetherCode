@@ -149,10 +149,16 @@ public final class SddConfig {
     private static final String BUNDLED_SDD_YAML = "spec-kit/sdd-defaults.yaml";
 
     // ----- project-override paths --------------------------------------
+    // R294: project overrides follow the AetherCode internal SDD
+    // path layout (.aethercode/ssd/) rather than the upstream
+    // Spec Kit convention (.specify/). The user wants products
+    // to land at <cwd>/.aethercode/ssd/<slug>/{constitution.md,
+    // spec.md, design.md, tasks.md, dev.log, clarify.json,
+    // analyze.json, convergence.json}.
 
-    private static final Path PROJECT_CONSTITUTION = Path.of(".specify", "memory", "constitution.md");
-    private static final Path PROJECT_TEMPLATES_DIR = Path.of(".specify", "templates");
-    private static final Path PROJECT_SDD_YAML = Path.of(".specify", "sdd.yaml");
+    private static final Path PROJECT_CONSTITUTION = Path.of(".aethercode", "ssd", "constitution.md");
+    private static final Path PROJECT_TEMPLATES_DIR = Path.of(".aethercode", "ssd", "templates");
+    private static final Path PROJECT_SDD_YAML = Path.of(".aethercode", "ssd", "sdd.yaml");
 
     // ----- fields ------------------------------------------------------
 
@@ -397,7 +403,17 @@ public final class SddConfig {
         String description = stringOr(yaml == null ? null : yaml.get("description"), "");
         long maxWaitMs = longOr(yaml == null ? null : yaml.get("maxWaitMs"), 240_000L);
         long idleEndMs = longOr(yaml == null ? null : yaml.get("idleEndMs"), 2_500L);
-        String artefactRoot = stringOr(yaml == null ? null : yaml.get("artefactRoot"), ".specify");
+        // R294: default to AetherCode's internal SDD layout
+        // (<cwd>/.aethercode/ssd/<slug>/{constitution.md, spec.md,
+        // design.md, tasks.md, dev.log, clarify.json, analyze.json,
+        // convergence.json}). The previous R292 default of
+        // .specify/specs/<NNN>-<slug>/ followed the upstream
+        // Spec Kit convention but didn't match what the user
+        // asked for in the round notes (line 21: "制品路径:
+        // <cwd>/.aethercode/ssd/<feature>/{spec,design,tasks}.md +
+        // dev.log"). Project-level `.specify/sdd.yaml` overrides
+        // still work — the override just sets `artefactRoot:`.
+        String artefactRoot = stringOr(yaml == null ? null : yaml.get("artefactRoot"), ".aethercode/ssd");
         SlugPolicy slugPolicy = SlugPolicy.parse(stringOr(yaml == null ? null : yaml.get("slugPolicy"), "sequential"));
         boolean enableClarify = boolOr(yaml == null ? null : yaml.get("enableClarify"), true);
         boolean enableAnalyze = boolOr(yaml == null ? null : yaml.get("enableAnalyze"), true);
@@ -448,7 +464,7 @@ public final class SddConfig {
             case CONSTITUTION -> """
                     # Project Constitution (governance)
 
-                    Write or update `.specify/memory/constitution.md`. The
+                    Write or update `.aethercode/ssd/<slug>/constitution.md`. The
                     document MUST include:
 
                     ## Core Principles
@@ -471,10 +487,10 @@ public final class SddConfig {
             case ANALYZE -> """
                     # Analyze (optional quality gate)
 
-                    Cross-check spec.md / plan.md / tasks.md for
+                    Cross-check spec.md / design.md / tasks.md for
                     consistency. List any requirement in spec.md that is
                     not covered by tasks.md, any task that is not
-                    justified by plan.md, or any contradiction. Output a
+                    justified by design.md, or any contradiction. Output a
                     short bullet list and end with a line `CONVERGED: yes`
                     or `CONVERGED: no`.
                     """;
@@ -488,7 +504,7 @@ public final class SddConfig {
             case CONVERGE -> """
                     # Converge (post-implementation loop)
 
-                    Read spec.md and the latest implement.log. Output a
+                    Read spec.md and the latest dev.log. Output a
                     JSON-ish object with shape {converged: bool, issues:
                     [string]}. Converged is true only if every FR is
                     covered and there are no contradictions. End with

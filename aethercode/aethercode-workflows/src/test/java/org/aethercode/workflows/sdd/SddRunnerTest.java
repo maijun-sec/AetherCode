@@ -53,7 +53,7 @@ class SddRunnerTest {
         TestLogger log = new TestLogger();
 
         List<SddRunner.PhaseResult> results = runner.runAll(
-                cwd, "001-foo", "add a foo feature",
+                cwd, "foo", "add a foo feature",
                 /*fromOrder*/ 0, /*force*/ false, /*auto*/ true,
                 llm, repl, log, /*toOrder*/ 7);
 
@@ -68,13 +68,15 @@ class SddRunnerTest {
         assertEquals("implement", results.get(6).phaseId());
         assertEquals("converge", results.get(7).phaseId());
 
-        // artefacts were written to disk
-        assertTrue(Files.isRegularFile(cwd.resolve(".specify/memory/constitution.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".specify/specs/001-foo/spec.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".specify/specs/001-foo/plan.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".specify/specs/001-foo/tasks.md")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".specify/specs/001-foo/logs/implement.log")));
-        assertTrue(Files.isRegularFile(cwd.resolve(".specify/specs/001-foo/convergence.json")));
+        // artefacts were written to disk (R294: AetherCode-internal
+        // .aethercode/ssd/<slug>/ layout, R236 SSD file names:
+        // spec.md / design.md / tasks.md / dev.log).
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/constitution.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/spec.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/design.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/tasks.md")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/dev.log")));
+        assertTrue(Files.isRegularFile(cwd.resolve(".aethercode/ssd/foo/convergence.json")));
 
         // LLM was called once per required phase; optional phases
         // are skipped under auto mode (clarify, analyze, converge).
@@ -94,10 +96,10 @@ class SddRunnerTest {
         MockRepl repl = new MockRepl(true, 0);
         TestLogger log = new TestLogger();
 
-        runner.runAll(cwd, "001-foo", "intent", 0, false, true,
+        runner.runAll(cwd, "foo", "intent", 0, false, true,
                 llm, repl, log, 7);
 
-        Path clarify = cwd.resolve(".specify/specs/001-foo/clarify.json");
+        Path clarify = cwd.resolve(".aethercode/ssd/foo/clarify.json");
         assertTrue(Files.exists(clarify), "clarify.json should be written even when no questions surfaced");
         String body = Files.readString(clarify, StandardCharsets.UTF_8);
         assertTrue(body.contains("\"questions\": 0"));
@@ -118,7 +120,7 @@ class SddRunnerTest {
         TestLogger log = new TestLogger();
 
         List<SddRunner.PhaseResult> results = runner.runAll(
-                cwd, "001-foo", "add foo", 0, false, /*auto*/ false,
+                cwd, "foo", "add foo", 0, false, /*auto*/ false,
                 llm, repl, log, 7);
 
         // specify phase should report 1 revision (re-run after revise).
@@ -138,21 +140,25 @@ class SddRunnerTest {
         TestLogger log = new TestLogger();
 
         assertThrows(SddRunner.AbortException.class, () -> runner.runAll(
-                cwd, "001-foo", "intent", 0, false, false,
+                cwd, "foo", "intent", 0, false, false,
                 llm, repl, log, 7));
     }
 
     @Test
-    void next_slug_sequential_increments() throws Exception {
+    void next_slug_sequential_uses_raw_name_then_appends_dash_n_on_conflict() throws Exception {
         SddConfig config = SddConfig.fromBundled();
         SddRunner runner = new SddRunner(config);
 
-        // No existing specs dir → first slug is "001-foo"
-        assertEquals("001-foo", runner.nextSlug(cwd, "foo"));
+        // No existing dir → first slug is just the feature name
+        // (R294: dropped the NNN- prefix; AetherCode's internal
+        // SDD layout uses the raw feature slug).
+        assertEquals("foo", runner.nextSlug(cwd, "foo"));
 
-        // After we create 001-foo, the next one should be 002-bar.
-        Files.createDirectories(cwd.resolve(".specify/specs/001-foo"));
-        assertEquals("002-bar", runner.nextSlug(cwd, "bar"));
+        // After we create foo/, the next one with the same name
+        // appends "-2".
+        Files.createDirectories(cwd.resolve(".aethercode/ssd/foo"));
+        assertEquals("foo-2", runner.nextSlug(cwd, "foo"));
+        assertEquals("bar", runner.nextSlug(cwd, "bar"));
     }
 
     @Test

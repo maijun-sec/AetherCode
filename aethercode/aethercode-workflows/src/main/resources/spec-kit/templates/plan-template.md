@@ -1,10 +1,10 @@
 # Implementation Plan: [FEATURE]
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Branch**: `[<slug>]` | **Date**: [DATE] | **Spec**: [.aethercode/ssd/<slug>/spec.md]
 
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Input**: Feature specification from `.aethercode/ssd/<slug>/spec.md`
 
-**Note**: This template is filled in by the `/speckit.plan` slash command; its definition describes the execution workflow.
+**Note**: This template is filled in by AetherCode's SDD `plan` phase; the runner writes the result to `.aethercode/ssd/<slug>/design.md` (R236 SSD naming — this is the "plan" phase product even though the file is called `design.md` because AetherCode's internal SDD convention uses that name; the Spec Kit upstream convention uses `plan.md` for the same artefact).
 
 ## Summary
 
@@ -47,13 +47,14 @@
 ### Documentation (this feature)
 
 ```text
-specs/[###-feature]/
-├── plan.md              # This file (/speckit.plan command output)
-├── research.md          # Phase 0 output (/speckit.plan command)
-├── data-model.md        # Phase 1 output (/speckit.plan command)
-├── quickstart.md        # Phase 1 output (/speckit.plan command)
-├── contracts/           # Phase 1 output (/speckit.plan command)
-└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
+.aethercode/ssd/<slug>/
+├── design.md            # This file (R294 SDD "plan" phase output)
+├── spec.md              # Phase 1 output (R294 SDD "specify" phase)
+├── tasks.md             # Phase 2 output (R294 SDD "tasks" phase)
+├── clarify.json         # Optional quality gate (R294 SDD "clarify" phase)
+├── analyze.json         # Optional quality gate (R294 SDD "analyze" phase)
+├── convergence.json     # Phase 3 output (R294 SDD "converge" loop)
+└── constitution.md      # Phase 0 output (R294 SDD "constitution" phase)
 ```
 
 ### Source Code (repository root)

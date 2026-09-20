@@ -53,7 +53,7 @@ these principles before completion.
 This constitution supersedes ad-hoc convention where they conflict.
 
 - **Authority**: The principles above are binding gates. The Constitution
-  Check section of `plan.md` MUST be evaluated against these principles.
+  Check section of `design.md` MUST be evaluated against these principles.
 - **Amendments**: Changes to this document require a PR with rationale and
   maintainer approval.
 - **Versioning**: This document follows SemVer for governance:
