@@ -295,6 +295,22 @@ public final class SddRunner {
             }
         }
 
+        // R296: cap empty-output retries so the pipeline
+        // doesn't silently advance when the model emits a
+        // preamble-only reply that {@link #cleanOutput}
+        // filters down to "". The model occasionally produces
+        // "I'll draft the spec now..." without any actual
+        // markdown body (especially after a tool_use
+        // round-trip fails), and without this guard each
+        // phase would 0-byte the artefact and auto-accept,
+        // which reads as "the SDD bar flashes through 8
+        // phases in ~2s and nothing useful lands on disk".
+        // Three retries give the model a couple of chances to
+        // retry with full content; on the fourth failure we
+        // throw so the UI / driver can surface a real
+        // diagnostic instead of moving on.
+        final int MAX_EMPTY_RETRIES = 3;
+
         while (true) {
             String systemPrompt = buildSystemPrompt(phase);
             String userTemplate = config.phaseTemplate(phase);
@@ -308,7 +324,37 @@ public final class SddRunner {
                 userPrompt = SddConfig.substitute(userTemplate, bag);
                 log.log("[sdd] phase " + phase.specKitId() + " (initial)");
             }
-            String text = cleanOutput(llm.generate(systemPrompt, userPrompt, 4096));
+
+            // R296: if a previous attempt on this phase
+            // produced empty output, prefix the user prompt
+            // with an explicit "non-empty markdown required"
+            // directive so the model doesn't just repeat the
+            // same preamble-only reply.
+            String text = "";
+            for (int emptyAttempt = 0; emptyAttempt <= MAX_EMPTY_RETRIES && text.isEmpty(); emptyAttempt++) {
+                String promptForAttempt = userPrompt;
+                if (emptyAttempt > 0) {
+                    log.log("[sdd] " + outFile.getFileName() + " retry #" + emptyAttempt
+                            + " (previous attempt produced 0 chars after cleanOutput)");
+                    promptForAttempt = userPrompt
+                            + "\n\nIMPORTANT: your previous response contained no markdown body "
+                            + "(only a preamble like \"let me draft...\"). Reply again with the "
+                            + "actual " + outFile.getFileName() + " content starting with a "
+                            + "top-level heading (# or ## or ###) — no preamble, no narration, "
+                            + "just the artefact.";
+                }
+                text = cleanOutput(llm.generate(systemPrompt, promptForAttempt, 4096));
+            }
+
+            if (text.isEmpty()) {
+                String msg = "[sdd] phase " + phase.specKitId()
+                        + " produced 0 chars after " + (MAX_EMPTY_RETRIES + 1)
+                        + " attempts — aborting pipeline. The model is emitting preamble-only "
+                        + "replies that cleanOutput filters to empty; this is a model-side "
+                        + "tool_use regression, not an artefact-path issue.";
+                log.log(msg);
+                throw new AbortException(msg);
+            }
             Files.writeString(outFile, text, StandardCharsets.UTF_8);
             log.log("[sdd] wrote " + outFile + " (" + text.length() + " chars)");
             lastContent = text;

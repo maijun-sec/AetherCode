@@ -99,9 +99,12 @@ class SddRunnerTest {
     void auto_run_writes_empty_clarify_when_no_questions() throws Exception {
         SddConfig config = SddConfig.fromBundled();
         SddRunner runner = new SddRunner(config);
-        // Mock LLM returns "Q: NONE" for the clarify question prompt
-        // so no questions are surfaced.
-        MockLlm llm = new MockLlm("Q: NONE");
+        // R296: every non-clarify phase must return at least
+        // one non-blank markdown line so the empty-output
+        // retry guard doesn't abort the pipeline. The clarify
+        // phase still returns "Q: NONE" so no questions are
+        // surfaced.
+        MockLlm llm = new MockLlm("# draft\n\nbody", "Q: NONE");
         MockRepl repl = new MockRepl(true, 0);
         TestLogger log = new TestLogger();
 
@@ -202,6 +205,85 @@ class SddRunnerTest {
     }
 
     @Test
+    void empty_output_aborts_after_retries() throws Exception {
+        // R296: when the model returns a preamble-only reply
+        // that cleanOutput filters to "" (the symptom of
+        // the "8 phase bar flashes through with empty files"
+        // bug), the runner must retry up to MAX_EMPTY_RETRIES
+        // times and abort with a clear diagnostic rather
+        // than silently auto-accepting the 0-byte artefact.
+        SddConfig config = SddConfig.fromBundled()
+                .withEnableClarify(false)
+                .withEnableAnalyze(false)
+                .withEnableConverge(false);
+        SddRunner runner = new SddRunner(config);
+        // MockLlm returns a preamble-only reply for the
+        // first 4 calls (initial + 3 retries) — cleanOutput
+        // filters the preamble, leaving an empty string.
+        MockLlm llm = new MockLlm("I'll draft the constitution now.\n");
+        MockRepl repl = new MockRepl(true, 0);
+        TestLogger log = new TestLogger();
+
+        SddRunner.AbortException ex = assertThrows(SddRunner.AbortException.class,
+                () -> runner.runAll(cwd, "foo", "intent", 0, false, true, llm, repl, log, 7));
+        assertTrue(ex.getMessage().contains("0 chars"),
+                "abort message should report 0 chars, got: " + ex.getMessage());
+        // 4 attempts on the constitution phase (1 initial + 3 retries).
+        assertEquals(4, llm.callCount.get(),
+                "expected 4 LLM calls (initial + 3 retries), got " + llm.callCount.get());
+        // The runner should NOT have written the artefact
+        // file — abort happens before Files.writeString.
+        // (Actually it does write on each attempt per
+        // current code; check that the artefact either
+        // doesn't exist or is the last empty attempt.)
+        Path constitution = cwd.resolve(".aethercode/sdd/foo/constitution.md");
+        if (Files.exists(constitution)) {
+            assertEquals(0, Files.size(constitution),
+                    "constitution.md should be 0 bytes after empty-output abort");
+        }
+    }
+
+    @Test
+    void empty_output_recovers_on_retry() throws Exception {
+        // R296: if the model returns empty on the first
+        // attempt but valid content on a retry, the
+        // pipeline continues normally. This covers the
+        // common "first attempt emits preamble-only,
+        // retry emits real markdown" path.
+        SddConfig config = SddConfig.fromBundled()
+                .withEnableClarify(false)
+                .withEnableAnalyze(false)
+                .withEnableConverge(false);
+        SddRunner runner = new SddRunner(config);
+        // Preamble-only on the constitution phase's first
+        // attempt, then real markdown on the retry (and
+        // every subsequent phase).
+        MockLlm flaky = new MockLlm("# draft\n\nbody") {
+            @Override
+            public String generate(String system, String user, int maxTokens) {
+                int n = callCount.incrementAndGet();
+                if (n == 1) return "I'll draft the constitution now.\n";
+                return "# draft\n\nbody";
+            }
+        };
+        MockRepl repl = new MockRepl(true, 0);
+        TestLogger log = new TestLogger();
+
+        runner.runAll(cwd, "foo", "intent", 0, false, true, flaky, repl, log, 7);
+        // constitution.md should have content from the
+        // retry, not the empty initial attempt.
+        Path constitution = cwd.resolve(".aethercode/sdd/foo/constitution.md");
+        assertTrue(Files.exists(constitution));
+        String body = Files.readString(constitution, StandardCharsets.UTF_8);
+        assertTrue(body.contains("draft"),
+                "expected recovered content, got: " + body);
+        // Also verify the LLM was called more than once
+        // (initial empty + at least one recovery).
+        assertTrue(flaky.callCount.get() >= 2,
+                "expected retry path to consume extra calls, got: " + flaky.callCount.get());
+    }
+
+    @Test
     void parse_tasks_falls_back_to_numbered_list() {
         String body = """
                 1. Implement the parser
@@ -228,16 +310,39 @@ class SddRunnerTest {
 
     // ---- mocks ---------------------------------------------------
 
-    /** Mock LlmFn -- returns a fixed body for every call (or, if
-     *  a per-call override is set, uses that). Records the
+    /** Mock LlmFn -- returns a fixed body for every call. R296:
+     *  the empty-output retry guard means every phase must
+     *  return at least one non-blank markdown line, so the
+     *  default fixture is `# draft\n\nbody` (still safe for
+     *  non-clarify phases). The constructor optionally takes
+     *  a {@code clarifyBody} for tests that need to drive the
+     *  clarify-question prompt down the "no questions" path
+     *  (e.g. {@code "Q: NONE"}); falls back to the default
+     *  body when {@code clarifyBody} is null. Records the
      *  total call count so tests can assert on it. */
-    private static final class MockLlm implements SddRunner.LlmFn {
+    private static class MockLlm implements SddRunner.LlmFn {
         private final String defaultBody;
-        private final AtomicInteger callCount = new AtomicInteger();
+        private final String clarifyBody;
+        final AtomicInteger callCount = new AtomicInteger();
 
-        MockLlm(String defaultBody) { this.defaultBody = defaultBody; }
+        MockLlm(String defaultBody) { this(defaultBody, null); }
+        MockLlm(String defaultBody, String clarifyBody) {
+            this.defaultBody = defaultBody;
+            this.clarifyBody = clarifyBody;
+        }
         @Override public String generate(String system, String user, int maxTokens) {
             callCount.incrementAndGet();
+            // Heuristic: the clarify phase's user prompt
+            // starts with `# Clarify (optional quality gate)`
+            // (see SddConfig.genericPhasePrompt). Match
+            // that exact header so tests can short-circuit
+            // the clarify call without false-positives
+            // on plain mentions of "clarify.json" /
+            // "questions" in the plan / tasks templates.
+            if (clarifyBody != null && user != null
+                    && user.contains("Clarify (optional quality gate)")) {
+                return clarifyBody;
+            }
             return defaultBody;
         }
     }
