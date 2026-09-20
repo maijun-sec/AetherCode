@@ -233,6 +233,28 @@ public class SddCommand implements Callable<Integer> {
                 return 1;
             }
             repl = interactiveRepl;
+        } else if (auto) {
+            // R298: --auto also wires InteractiveRepl so the daemon
+            // emits phase-list / phase-start / phase-draft /
+            // phase-accepted / complete events on stdout. The
+            // pre-R298 --auto path skipped InteractiveRepl entirely,
+            // which meant the renderer's chip strip never flipped
+            // and the user saw the same "flash past" symptom as the
+            // MockSsdDriver canned fallback. InteractiveRepl.autoAccept
+            // supplies a synthetic InputStream that hands the REPL a
+            // fresh {"action":"accept"}\n on every readReply call,
+            // so the run auto-progresses internally while still
+            // surfacing every chip transition.
+            SddRunner r = new SddRunner(config);
+            String slug = r.nextSlug(cwd, feature);
+            interactiveRepl = InteractiveRepl.autoAccept(slug, config.activePhases());
+            try {
+                interactiveRepl.emitPhaseList();
+            } catch (java.io.IOException ioe) {
+                System.err.println("[sdd] failed to emit initial phase-list: " + ioe.getMessage());
+                return 1;
+            }
+            repl = interactiveRepl;
         } else {
             interactiveRepl = null;
             repl = makeReplFn(auto);

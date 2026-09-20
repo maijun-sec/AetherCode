@@ -151,6 +151,80 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
         return new InteractiveRepl(System.in, System.out, slug, phaseList);
     }
 
+    /** R298: {@code --auto} factory. The CLI's {@code --auto} flag
+     *  historically wired a non-Interactive REPL, which meant the
+     *  daemon never emitted NDJSON {@code phase-list} /
+     *  {@code phase-start} / {@code phase-draft} / {@code phase-accepted}
+     *  / {@code complete} events on stdout. The desktop UI therefore
+     *  received a {@code phase-draft} card per phase but no chip
+     *  state transitions, looking identical to the user to a
+     *  "flash past" mock-fallback run. This factory wires the
+     *  InteractiveRepl with a synthetic InputStream that supplies
+     *  {@code {"action":"accept"}} on demand, so the run auto-
+     *  progresses while still emitting every event the renderer
+     *  needs. Output goes to {@code System.out}; the REPL's
+     *  {@code log()} helper funnels {@code [sdd]} lines through
+     *  the {@code log} event kind. */
+    public static InteractiveRepl autoAccept(String slug, List<PhaseId> phaseList) {
+        return autoAccept(slug, System.out, phaseList);
+    }
+
+    /** R298 test-friendly overload: same as {@link #autoAccept(String, java.util.List)}
+     *  but writes events to the given {@link OutputStream} instead
+     *  of {@code System.out}. Lets the unit tests assert on the
+     *  exact bytes the renderer would see without juggling
+     *  System.setOut(). */
+    public static InteractiveRepl autoAccept(String slug, OutputStream out, List<PhaseId> phaseList) {
+        return new InteractiveRepl(new AutoAcceptInputStream(), out, slug, phaseList);
+    }
+
+    /** Streams a JSONL accept action every time {@link #readReply}
+     *  tries to read. Implementation: hold a single byte[] action
+     *  and a position cursor. When the consumer reads past the
+     *  end of the buffer, reset the cursor to 0 so the next read
+     *  replays the action. This works with BufferedReader's
+     *  chunked-read pattern (which broke on the naive
+     *  ByteArrayInputStream + reset because reset-to-mark-0 plus
+     *  mark-not-set threw InvalidMarkException in some Java
+     *  versions; markSupported() always returns true for BAIS so
+     *  we explicitly mark before reset). */
+    private static final class AutoAcceptInputStream extends InputStream {
+        private static final byte[] ACTION =
+            "{\"action\":\"accept\"}\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        private int pos = 0;
+
+        AutoAcceptInputStream() {
+            super();
+        }
+
+        @Override
+        public synchronized int read() throws IOException {
+            if (pos >= ACTION.length) {
+                pos = 0;
+                if (ACTION.length == 0) return -1;
+            }
+            return ACTION[pos++] & 0xff;
+        }
+
+        @Override
+        public synchronized int read(byte[] b, int off, int len) throws IOException {
+            if (len <= 0) return 0;
+            if (pos >= ACTION.length) {
+                pos = 0;
+                if (ACTION.length == 0) return -1;
+            }
+            int n = Math.min(len, ACTION.length - pos);
+            System.arraycopy(ACTION, pos, b, off, n);
+            pos += n;
+            return n;
+        }
+
+        @Override
+        public synchronized int available() {
+            return ACTION.length - pos;
+        }
+    }
+
     /** Emit the initial phase-list so the UI can render the TODO
      *  chips before the first LLM call. Idempotent — the runner
      *  may be constructed multiple times across phases. Each

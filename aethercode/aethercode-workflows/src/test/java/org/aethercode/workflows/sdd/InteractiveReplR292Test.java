@@ -262,4 +262,45 @@ class InteractiveReplR292Test {
         assertEquals("specify", r.get(0).get("phaseId"));
         assertEquals(1, r.get(0).get("revisions"));
     }
+
+    @Test
+    void autoAccept_emits_phase_events_without_blocking() throws Exception {
+        // R298: --auto factory must hand back a REPL that:
+        //   1. emits the same NDJSON event sequence (phase-list,
+        //      phase-draft, phase-accepted, complete) as
+        //      InteractiveRepl.stdio, so the desktop UI sees
+        //      chip transitions instead of an idle bar;
+        //   2. never blocks on stdin (each readReply gets a
+        //      synthetic {"action":"accept"}), so the CLI
+        //      pipeline can run end-to-end without a tty.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        InteractiveRepl repl = InteractiveRepl.autoAccept("auto-test", out,
+                List.of(PhaseId.CONSTITUTION, PhaseId.SPECIFY));
+        // Sanity: confirm() returns Optional.empty() (accept)
+        // for the constitution phase, without ever blocking on
+        // stdin — if the AutoAcceptInputStream reset is broken
+        // the second read would block on an empty stream.
+        java.util.Optional<String> r1 = repl.confirm(PhaseId.CONSTITUTION,
+                java.nio.file.Paths.get("constitution.md"),
+                "# constitution draft\n\nbody");
+        assertTrue(r1.isEmpty(), "first confirm() should auto-accept");
+        java.util.Optional<String> r2 = repl.confirm(PhaseId.SPECIFY,
+                java.nio.file.Paths.get("spec.md"),
+                "# spec draft\n\nbody");
+        assertTrue(r2.isEmpty(), "second confirm() should also auto-accept");
+        List<Object> events = eventsWrittenTo(out);
+        List<String> eventKinds = new ArrayList<>();
+        for (Object ev : events) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> m = (java.util.Map<String, Object>) ev;
+            eventKinds.add((String) m.get("event"));
+        }
+        // phase-draft + phase-accepted for each confirm().
+        long draftCount = eventKinds.stream().filter(k -> k.equals("phase-draft")).count();
+        long acceptedCount = eventKinds.stream().filter(k -> k.equals("phase-accepted")).count();
+        assertEquals(2, draftCount,
+                "expected 2 phase-draft events (one per confirm()), got: " + eventKinds);
+        assertEquals(2, acceptedCount,
+                "expected 2 phase-accepted events, got: " + eventKinds);
+    }
 }

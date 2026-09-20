@@ -359,7 +359,18 @@ public final class SddRunner {
             log.log("[sdd] wrote " + outFile + " (" + text.length() + " chars)");
             lastContent = text;
 
-            if (auto) {
+            // R298: --auto also routes through repl.confirm() when
+            // the REPL is the InteractiveRepl so the chip strip
+            // emits phase-draft + phase-accepted events for the
+            // desktop UI. The InteractiveRepl.autoAccept() factory
+            // (CLI --auto path) supplies a synthetic InputStream
+            // that hands back {"action":"accept"} immediately, so
+            // this confirm() call returns Optional.empty() without
+            // blocking on stdin. Pre-R298 auto short-circuited
+            // here and the renderer never saw the chip flip,
+            // reading as the same "flash past" symptom as the
+            // MockSsdDriver canned fallback.
+            if (auto && !(repl instanceof InteractiveRepl)) {
                 log.log("[sdd] auto-accept on " + outFile.getFileName());
                 bodies.put(phase.specKitId() + ".content", lastContent);
                 return revisionsThisPhase;
