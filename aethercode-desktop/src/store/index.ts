@@ -5678,12 +5678,16 @@ export const useStore = create<AppState>((set, get) => {
       // counter when multiple features live in the same
       // `.specify/specs/` dir.
       const featureSlug = `001-${slug}`;
-      // defaultSddEventSequence is imported below via the
-      // dynamic import (it lives in driver.ts to keep the
-      // mock + driver in one place). Pull it out so the
-      // events array can be built before we wire the
-      // driver.
-      const { MockSsdDriver, defaultSddEventSequence } = await import('../components/ssd/driver');
+      // We pull TauriSsdDriver + MockSsdDriver +
+      // defaultSddEventSequence together via dynamic import
+      // (chunk split): users who never flip 📐 pay zero. The
+      // mock sequence is built below and only consumed when
+      // no daemonInfo.jarPath is present.
+      const [{ TauriSsdDriver }, driverMod] = await Promise.all([
+        import('../components/ssd/tauriSsdDriver'),
+        import('../components/ssd/driver'),
+      ]);
+      const { MockSsdDriver, defaultSddEventSequence } = driverMod;
       const events = defaultSddEventSequence(featureSlug);
 
       // Push the user intent as a chat message so the
@@ -5717,7 +5721,47 @@ export const useStore = create<AppState>((set, get) => {
       // pulled in via the dynamic import earlier so the
       // canned events array can be built before the
       // driver wires its event handler.)
-      const driver = new MockSsdDriver(events, undefined, 280);
+      // R292 + R293 follow-up: choose the driver by what's
+      // available. The store was historically hard-coded to
+      // `MockSsdDriver` (R288/R289 left a "TauriSsdDriver
+      // later is a one-line change" comment), but R292 made
+      // the UI rely on per-phase accept/revise buttons that
+      // only make sense when the daemon is actually wired
+      // up. Without that wire the chips flip idle → done in
+      // ~4 s with no chance for the user to interact — i.e.
+      // exactly the "一闪而过 什么等待确认 全都是不存在的"
+      // regression the user hit.
+      //
+      // Decision rule:
+      //   - daemonInfo.jarPath present → spawn the JVM via
+      //     TauriSsdDriver (`--interactive` so each phase
+      //     pauses for an accept/revise command);
+      //   - otherwise (dev mode, no daemon) → fall back to
+      //     MockSsdDriver so the UI still works.
+      //
+      // The dynamic import is done at the top of this
+      // function (see above); here we just pick.
+      const jarPath = get().daemonInfo?.jarPath;
+      const cwd = get().cwd;
+      let driver: import('../components/ssd/driver').SsdDriver;
+      if (jarPath && cwd) {
+        // Real daemon subprocess. `--interactive` is mandatory
+        // here — without it the daemon runs in text-TTY mode
+        // and System.in.readLine() blocks forever waiting for
+        // keyboard input that never arrives, which would hang
+        // the whole pipeline.
+        driver = new TauriSsdDriver({
+          jarPath,
+          feature: featureSlug,
+          intent,
+          cwd,
+        });
+      } else {
+        // Dev fallback. Without it, removing the in-process mock
+        // would break UI development (you can't test the
+        // phase chips without standing up the daemon).
+        driver = new MockSsdDriver(events, undefined, 280);
+      }
       ssdDriverRef.driver = driver;
 
       // Wire the event handler. Closes over `set` so
@@ -5898,7 +5942,13 @@ export const useStore = create<AppState>((set, get) => {
     // mostly test hooks. Quit immediately aborts
     // and tears down.
     sendSsdCommand: (
-      cmd: { action: 'accept' } | { action: 'revise'; text: string } | { action: 'skip' } | { action: 'quit' },
+      cmd:
+        | { action: 'accept' }
+        | { action: 'revise'; text: string }
+        | { action: 'skip' }
+        | { action: 'quit' }
+        | { action: 'clarify-answer'; id: string; answer: string }
+        | { action: 'converge-iterate'; text: string },
     ) => {
       const driver = ssdDriverRef.driver;
       if (!driver) return;

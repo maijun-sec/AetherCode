@@ -281,6 +281,16 @@ public class SddCommand implements Callable<Integer> {
                 }
             }
             return 1;
+        } finally {
+            // R293: tear down the bounded-read executor so the
+            // JVM is free to exit. Without this the desktop
+            // driver sees the `sdd` subprocess hang on exit
+            // (and its `kill()` has to wait the full 5-min
+            // timeout). Exception path is the same as the
+            // success path — close unconditionally.
+            if (interactiveRepl != null) {
+                try { interactiveRepl.close(); } catch (Exception ignore) {}
+            }
         }
     }
 

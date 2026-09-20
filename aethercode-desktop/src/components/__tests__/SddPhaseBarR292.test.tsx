@@ -126,4 +126,130 @@ describe('SddPhaseBar R292 (Spec Kit 8 phases)', () => {
     fireEvent.click(screen.getByTestId('sdd-phase-bar-close'));
     expect(sendSsdCommand).toHaveBeenCalledWith({ action: 'quit' });
   });
+
+  // ---------- R293: per-phase accept/revise/skip action bar ----------
+
+  it('R293: renders accept / revise / skip buttons when a phase is pending-accept', () => {
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'specify', title: '需求分析', state: 'pending-accept', path: '.specify/specs/001-photo-organizer/spec.md' },
+        { id: 'plan',    title: '详细设计', state: 'idle' },
+      ],
+      sendSsdCommand: vi.fn(),
+    });
+    renderBar();
+    expect(screen.getByTestId('sdd-phase-actions').getAttribute('data-waiting-phase')).toBe('specify');
+    expect(screen.getByTestId('sdd-phase-actions').getAttribute('data-waiting-state')).toBe('pending-accept');
+    expect(screen.getByTestId('sdd-btn-accept')).toBeTruthy();
+    expect(screen.getByTestId('sdd-btn-revise')).toBeTruthy();
+    expect(screen.getByTestId('sdd-btn-skip')).toBeTruthy();
+  });
+
+  it('R293: clicking the accept button sends {action:"accept"} via sendSsdCommand', () => {
+    const sendSsdCommand = vi.fn();
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'specify', title: '需求分析', state: 'pending-accept' },
+      ],
+      sendSsdCommand,
+    });
+    renderBar();
+    fireEvent.click(screen.getByTestId('sdd-btn-accept'));
+    expect(sendSsdCommand).toHaveBeenCalledWith({ action: 'accept' });
+  });
+
+  it('R293: clicking the skip button sends {action:"skip"} via sendSsdCommand', () => {
+    const sendSsdCommand = vi.fn();
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'specify', title: '需求分析', state: 'pending-accept' },
+      ],
+      sendSsdCommand,
+    });
+    renderBar();
+    fireEvent.click(screen.getByTestId('sdd-btn-skip'));
+    expect(sendSsdCommand).toHaveBeenCalledWith({ action: 'skip' });
+  });
+
+  it('R293: the action bar collapses when no phase is waiting on user input', () => {
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'specify', title: '需求分析', state: 'done' },
+        { id: 'plan',    title: '详细设计', state: 'running' },
+      ],
+      sendSsdCommand: vi.fn(),
+    });
+    renderBar();
+    expect(screen.queryByTestId('sdd-phase-actions')).toBeNull();
+  });
+
+  it('R293: renders a text input + send button when a phase is clarify-pending', () => {
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'specify', title: '需求分析', state: 'done' },
+        { id: 'clarify', title: '需求澄清', state: 'clarify-pending', preview: 'Auth method\n\nWhich auth method?' },
+      ],
+      sendSsdCommand: vi.fn(),
+    });
+    renderBar();
+    expect(screen.getByTestId('sdd-clarify-input')).toBeTruthy();
+    expect(screen.getByTestId('sdd-btn-clarify-send')).toBeTruthy();
+    expect(screen.getByTestId('sdd-phase-actions').getAttribute('data-waiting-phase')).toBe('clarify');
+  });
+
+  it('R293: renders end / iterate buttons when a phase is converge-pending', () => {
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'converge', title: '收敛验证', state: 'converge-pending', optional: true },
+      ],
+      sendSsdCommand: vi.fn(),
+    });
+    renderBar();
+    expect(screen.getByTestId('sdd-btn-converge-accept')).toBeTruthy();
+    expect(screen.getByTestId('sdd-btn-converge-iterate')).toBeTruthy();
+  });
+
+  it('R293: chips are rendered as compact pills (no per-chip preview / description body)', () => {
+    // The previous R292 layout rendered a multi-line body
+    // per chip (preview + path + description). R293
+    // collapses it to a single-line pill with a glyph +
+    // number + title — verify the body class is gone.
+    useStore.setState({
+      sddEnabled: true,
+      ssdActive: true,
+      ssdSlug: '001-photo-organizer',
+      ssdPhases: [
+        { id: 'specify', title: '需求分析', state: 'pending-accept', preview: 'long content...', path: '/tmp/spec.md' },
+      ],
+      sendSsdCommand: vi.fn(),
+    });
+    renderBar();
+    const chip = screen.getByTestId('sdd-phase-specify');
+    // The old layout had .sdd-phase-body and .sdd-phase-preview
+    // children; the new layout only has glyph/num/title.
+    expect(chip.querySelector('.sdd-phase-body')).toBeNull();
+    expect(chip.querySelector('.sdd-phase-preview')).toBeNull();
+    // The waiting phase should still expose its path via
+    // the action bar (not the chip itself).
+    expect(chip.querySelector('[data-testid="sdd-phase-path-specify"]')).toBeNull();
+    expect(screen.getByTestId('sdd-phase-path-specify')).toBeTruthy();
+  });
 });

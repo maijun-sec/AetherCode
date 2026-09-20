@@ -20,6 +20,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * R292 — interactive REPL for the SDD runner. Mirrors the wire
@@ -94,6 +100,27 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
     private final BufferedReader in;
     private final String slug;
     private final List<PhaseId> phaseList;
+    /** R293: bounded-time readReply. The default
+     *  {@code System.in.readLine()} blocks forever, which is
+     *  fine for terminal REPLs but wrong for the desktop
+     *  driver — if the Tauri shell plugin's stdin pipe ever
+     *  silently breaks (EOF without an event, a mis-wired
+     *  Write call returning prematurely) the SDD run hangs
+     *  with no UI affordance to recover. We submit the read
+     *  to a single-thread executor and {@code .get(5 min)} on
+     *  the future; on timeout we auto-accept the current
+     *  phase and emit a {@code log} event so the driver can
+     *  surface a banner. */
+    private final ExecutorService readExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "sdd-readline");
+        t.setDaemon(true);
+        return t;
+    });
+    /** 5 minutes per phase is comfortably above any realistic
+     *  desktop interaction (the user has to read a 1-3 KB
+     *  draft, decide on a revision, and type it). */
+    private static final long READ_TIMEOUT_SECONDS =
+            Long.getLong("aethercode.sdd.readTimeoutSeconds", 300L);
     /** last inbound command; set by {@link #readReply}, consumed by
      *  {@link #confirm}. Held in a one-element array so the inner
      *  reader thread can publish without a second mutex. */
@@ -328,6 +355,15 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
 
     public boolean isAborted() { return aborted; }
 
+    /** R293: shut down the bounded-read executor. Called by
+     *  {@link SddRunner} after the orchestrator finishes so
+     *  the JVM is free to exit (otherwise the
+     *  {@code Executors.newSingleThreadExecutor} keeps a
+     *  non-daemon worker alive — see R293 lesson 619). */
+    public void close() {
+        readExecutor.shutdownNow();
+    }
+
     // ------------------------------------------------------------
     // internal: wire I/O + reply parsing
     // ------------------------------------------------------------
@@ -364,10 +400,33 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
 
     /** Block until a JSON command arrives on {@code in}, parse it,
      *  return the typed command. EOF on {@code in} means the driver
-     *  closed the pipe → treat as {@code quit}. */
+     *  closed the pipe → treat as {@code quit}. Bounded by
+     *  {@link #READ_TIMEOUT_SECONDS} — see the executor field for
+     *  why we don't trust raw {@code readLine()} to ever return
+     *  when the driver subprocess is healthy. */
     private InboundCommand readReply() throws IOException {
-        String line;
-        while ((line = in.readLine()) != null) {
+        while (true) {
+            String line;
+            try {
+                Future<String> f = readExecutor.submit(() -> in.readLine());
+                line = f.get(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                LOG.warn("InteractiveRepl: readReply timed out after {} s — auto-accepting the current phase", READ_TIMEOUT_SECONDS);
+                log("warn", "InteractiveRepl: readReply timed out — driver likely stuck; auto-accepting");
+                return new InboundCommand("accept", "", "");
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IOException("readReply interrupted", ie);
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause();
+                if (cause instanceof IOException) throw (IOException) cause;
+                throw new IOException("readReply execution failed", cause);
+            }
+            if (line == null) {
+                // EOF
+                aborted = true;
+                return new InboundCommand("quit", "", "");
+            }
             line = line.trim();
             if (line.isEmpty()) continue;
             try {
@@ -391,9 +450,6 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
                 LOG.warn("InteractiveRepl: bad inbound JSON, ignoring: {}", e.getMessage());
             }
         }
-        // EOF
-        aborted = true;
-        return new InboundCommand("quit", "", "");
     }
 
     /** Test/CLI plumbing: load a draft from disk so the driver

@@ -1,16 +1,21 @@
-/* R288 / R292 — SDD phase progress bar.
+/* R288 + R292 + R293 — SDD phase progress bar.
  *
- * Lives between MessageList and MessageInput. Compact chip strip
- * showing the eight Spec Kit phases (constitution / specify /
- * clarify / plan / analyze / tasks / implement / converge).
- * Optional quality gates (clarify / analyze / converge) render
- * half-opacity so the user can tell which phases are required
- * vs opt-in.
+ * Lives between MessageList and MessageInput. Compact chip
+ * strip showing the eight Spec Kit phases (constitution /
+ * specify / clarify / plan / analyze / tasks / implement /
+ * converge). Optional quality gates (clarify / analyze /
+ * converge) render half-opacity so the user can tell
+ * required vs opt-in. R293 collapses the previous
+ * 16-row layout (8 chips × marker/body/preview) to a
+ * single-line strip so the bar no longer hogs half the
+ * viewport, and adds an action bar under the strip when a
+ * phase is waiting on user input (pending-accept /
+ * clarify-pending / converge-pending).
  */
 
 .sdd-phase-bar {
   margin: 8px 16px 4px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: var(--bg-elevated, rgba(0, 0, 0, 0.03));
   border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
   border-radius: 8px;
@@ -30,6 +35,8 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
 }
 .sdd-phase-bar-title h3 {
   margin: 0;
@@ -41,6 +48,9 @@
 .sdd-phase-bar-subtitle {
   font-size: 11px;
   color: var(--text-dim, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sdd-phase-bar-close {
@@ -57,33 +67,35 @@
   color: var(--text);
 }
 
-/* R292: 8-phase grid. Use auto-fit so the strip wraps
- * gracefully on narrow windows instead of overflowing
- * horizontally. minmax(120px, 1fr) keeps each chip at a
- * legible width. */
+/* R293: single-line chip strip. Each chip is a flex row:
+ * glyph + number + title + optional tag. max-width caps
+ * the strip so long windows still wrap gracefully. */
 .sdd-phase-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .sdd-phase-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
   border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
-  border-radius: 6px;
+  border-radius: 999px;
   background: var(--bg, #fff);
-  transition: background 120ms ease, border-color 120ms ease;
+  font-size: 11px;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
 }
-/* R292: optional quality gates + the converge loop render
- * half-opacity until they're active. */
+
+/* Optional quality gates + converge loop render half-opacity
+ * until they're active. */
 .sdd-phase-item.sdd-phase-optional {
-  opacity: 0.62;
+  opacity: 0.55;
   border-style: dashed;
 }
 .sdd-phase-item.sdd-phase-optional.sdd-phase-running,
@@ -94,110 +106,81 @@
   border-style: solid;
 }
 
+/* State-based accent colours. Subtle — the bar is a
+ * status indicator, not a call-to-action. */
 .sdd-phase-item.sdd-phase-running {
   border-color: var(--accent, #4a8bf5);
-  background: rgba(74, 139, 245, 0.06);
+  background: rgba(74, 139, 245, 0.08);
 }
 .sdd-phase-item.sdd-phase-pending-accept {
   border-color: var(--warning, #e0a200);
-  background: rgba(224, 162, 0, 0.06);
+  background: rgba(224, 162, 0, 0.10);
 }
 .sdd-phase-item.sdd-phase-clarify-pending {
   border-color: #b48ead;
-  background: rgba(180, 142, 173, 0.06);
+  background: rgba(180, 142, 173, 0.10);
 }
 .sdd-phase-item.sdd-phase-converge-pending {
   border-color: #5b8def;
-  background: rgba(91, 141, 239, 0.06);
+  background: rgba(91, 141, 239, 0.10);
 }
 .sdd-phase-item.sdd-phase-done {
-  opacity: 0.7;
+  opacity: 0.55;
 }
 .sdd-phase-item.sdd-phase-skipped {
-  opacity: 0.4;
+  opacity: 0.35;
+  border-style: dashed;
 }
 .sdd-phase-item.sdd-phase-failed {
   border-color: var(--error, #c0392b);
   background: rgba(192, 57, 43, 0.08);
 }
 
-.sdd-phase-marker {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  min-width: 24px;
+/* The phase currently waiting on user input — pulse so
+ * the eye finds it. */
+.sdd-phase-item.sdd-phase-waiting {
+  animation: sdd-pulse 1.6s ease-in-out infinite;
 }
-.sdd-phase-num {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--bg-elevated, rgba(0, 0, 0, 0.05));
-  color: var(--text-dim, #888);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+
+.sdd-phase-glyph {
   font-size: 11px;
-  font-weight: 600;
-  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
-}
-.sdd-phase-running .sdd-phase-num {
-  background: var(--accent, #4a8bf5);
-  color: white;
-  border-color: var(--accent, #4a8bf5);
-  animation: sdd-pulse 1.4s ease-in-out infinite;
-}
-.sdd-phase-clarify-pending .sdd-phase-num {
-  background: #b48ead;
-  color: white;
-  border-color: #b48ead;
-}
-.sdd-phase-converge-pending .sdd-phase-num {
-  background: #5b8def;
-  color: white;
-  border-color: #5b8def;
-  animation: sdd-pulse 1.4s ease-in-out infinite;
-}
-.sdd-phase-done .sdd-phase-num {
-  background: var(--success, #27ae60);
-  color: white;
-  border-color: var(--success, #27ae60);
-}
-.sdd-phase-failed .sdd-phase-num {
-  background: var(--error, #c0392b);
-  color: white;
-  border-color: var(--error, #c0392b);
-}
-.sdd-phase-state-label {
-  font-size: 10px;
+  line-height: 1;
   color: var(--text-dim, #888);
-  white-space: nowrap;
+  min-width: 10px;
+  text-align: center;
 }
-.sdd-phase-running .sdd-phase-state-label,
-.sdd-phase-pending-accept .sdd-phase-state-label,
-.sdd-phase-clarify-pending .sdd-phase-state-label,
-.sdd-phase-converge-pending .sdd-phase-state-label {
+.sdd-phase-item.sdd-phase-running .sdd-phase-glyph,
+.sdd-phase-item.sdd-phase-pending-accept .sdd-phase-glyph,
+.sdd-phase-item.sdd-phase-clarify-pending .sdd-phase-glyph,
+.sdd-phase-item.sdd-phase-converge-pending .sdd-phase-glyph {
+  color: var(--text);
+}
+
+.sdd-phase-num {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim, #888);
+  min-width: 14px;
+  text-align: center;
+}
+.sdd-phase-item.sdd-phase-running .sdd-phase-num,
+.sdd-phase-item.sdd-phase-pending-accept .sdd-phase-num,
+.sdd-phase-item.sdd-phase-clarify-pending .sdd-phase-num,
+.sdd-phase-item.sdd-phase-converge-pending .sdd-phase-num {
+  color: var(--text);
+}
+
+.sdd-phase-title {
+  font-size: 11px;
   color: var(--text);
   font-weight: 500;
 }
-
-@keyframes sdd-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+.sdd-phase-item.sdd-phase-done .sdd-phase-title,
+.sdd-phase-item.sdd-phase-skipped .sdd-phase-title,
+.sdd-phase-item.sdd-phase-idle .sdd-phase-title {
+  color: var(--text-dim, #888);
 }
 
-.sdd-phase-body {
-  flex: 1;
-  min-width: 0;
-}
-.sdd-phase-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .sdd-phase-optional-tag {
   font-size: 9px;
   font-weight: 500;
@@ -207,33 +190,99 @@
   color: var(--text-dim, #888);
   background: var(--bg-elevated, rgba(0, 0, 0, 0.03));
 }
-.sdd-phase-desc {
+
+@keyframes sdd-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 139, 245, 0.0); }
+  50%      { box-shadow: 0 0 0 3px rgba(74, 139, 245, 0.18); }
+}
+
+/* ---------- Action bar (R293) ---------- */
+
+.sdd-phase-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, rgba(0, 0, 0, 0.12));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sdd-phase-actions-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.sdd-phase-actions-label strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sdd-phase-actions-hint {
   font-size: 10px;
   color: var(--text-dim, #888);
-  margin-top: 2px;
-  line-height: 1.4;
 }
-
-.sdd-phase-preview {
-  margin-top: 4px;
-  padding: 4px 6px;
+.sdd-phase-actions-path {
+  font-size: 10px;
+  color: var(--text-dim, #888);
   background: var(--bg, #fff);
   border: 1px dashed var(--border, rgba(0, 0, 0, 0.18));
-  border-radius: 4px;
-  font-size: 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 80px;
-  overflow-y: auto;
-  color: var(--text-dim, #666);
+  border-radius: 3px;
+  padding: 1px 4px;
+  align-self: flex-start;
 }
 
-.sdd-phase-bar-footer {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--border, rgba(0, 0, 0, 0.12));
+.sdd-phase-actions-buttons {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-.sdd-phase-bar-hint {
+
+.sdd-phase-actions-clarify {
+  flex: 1;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.sdd-phase-actions-input {
+  flex: 1;
+  min-width: 180px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.18));
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.sdd-btn {
   font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.18));
+  background: var(--bg, #fff);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.sdd-btn:hover { background: var(--bg-elevated, rgba(0, 0, 0, 0.04)); }
+.sdd-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sdd-btn-primary {
+  background: var(--accent, #4a8bf5);
+  color: white;
+  border-color: var(--accent, #4a8bf5);
+}
+.sdd-btn-primary:hover { background: var(--accent-hover, #3a7be5); }
+.sdd-btn-secondary {
+  background: rgba(224, 162, 0, 0.10);
+  border-color: rgba(224, 162, 0, 0.4);
+  color: #8a6a00;
+}
+.sdd-btn-ghost {
+  background: transparent;
+  border-color: var(--border, rgba(0, 0, 0, 0.18));
   color: var(--text-dim, #888);
 }
