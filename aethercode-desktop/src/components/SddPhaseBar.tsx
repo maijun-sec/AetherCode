@@ -132,7 +132,7 @@ export function SddPhaseBar() {
             {ssdActive && ssdSlug
               ? `8 阶段（${ssdSlug}）`
               : '8 阶段：原则 → 需求 → 澄清 → 设计 → 一致性 → 任务 → 实现 → 收敛'}
-            {' · R293: '}
+            {' · R298: '}
             <code className="sdd-phase-bar-debug">
               {(() => {
                 // Surface whether we're driving a real
@@ -142,8 +142,26 @@ export function SddPhaseBar() {
                 // "stub fell back because no jar was
                 // available". Both end up looking like
                 // "chips flipped" otherwise.
-                const jarPath = useStore.getState().daemonInfo?.jarPath;
-                return jarPath ? 'TauriSsdDriver (--auto)' : 'MockSsdDriver (no jar)';
+                const info = useStore.getState().daemonInfo;
+                const jarPath = info?.jarPath ?? '';
+                const cwd = info?.cwd ?? '';
+                if (jarPath) {
+                  // TauriSsdDriver branch — also show the
+                  // truncated jar path so the user can
+                  // verify the desktop resolved the same
+                  // release/R292/desktop/aethercode.jar
+                  // the standalone pipeline test used.
+                  const tail = jarPath.split(/[\\/]/).pop() || jarPath;
+                  return `TauriSsdDriver (${tail}, cwd=${cwd.split(/[\\/]/).pop() || cwd})`;
+                }
+                // R298: bare "no jar" was leaving the
+                // user in the dark. Show whatever the
+                // store actually has so we can see if
+                // jarPath is empty because the desktop
+                // picked up an external daemon (jarPath =
+                // "<external>") or because the desktop
+                // never attached one (jarPath = "").
+                return `MockSsdDriver (jarPath="${jarPath}", cwd="${cwd}")`;
               })()}
             </code>
           </span>

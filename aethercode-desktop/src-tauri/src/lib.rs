@@ -245,6 +245,17 @@ async fn ensure_daemon(
         eprintln!("[prior round] cwd: no project — need user to pick one");
         return Err("NEEDS_CWD".to_string());
     };
+    // R298: log the resolved cwd to %TEMP% so the renderer's
+    // "MockSsdDriver (no jar)" symptom can be diagnosed.
+    // eprintln goes to a console that the App never opens on
+    // Windows GUI mode.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true).append(true).open(
+            std::env::temp_dir().join("aethercode-desktop-find-jar.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[R298] ensure_daemon resolved cwd = {}", cwd.display());
+    }
 
     let java = find_java().ok_or_else(|| "java executable not found on PATH".to_string())?;
 
@@ -1083,6 +1094,14 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
             eprintln!("[prior round] find_jar_path: Tauri resource (exact) {}", exact.display());
             return Ok(exact);
         }
+        // R298: log a hit so a packaged App can be diagnosed.
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true).append(true).open(
+                std::env::temp_dir().join("aethercode-desktop-find-jar.log"))
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "[R298] find_jar_path hit: resource (exact) {}", exact.display());
+        }
         if let Ok(entries) = std::fs::read_dir(&resource_dir) {
             for e in entries.flatten() {
                 let p = e.path();
@@ -1228,6 +1247,19 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
                 }
             }
         }
+    }
+    // R298: also log to %TEMP%\aethercode-desktop-find-jar.log so
+    // a packaged App that has no console can still be diagnosed
+    // when SddPhaseBar reports "MockSsdDriver (no jar)". The
+    // existing eprintln! calls go to a console that the App
+    // never opens on Windows GUI mode, so the user-visible
+    // symptom had no companion diagnostic until now.
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true).append(true).open(
+            std::env::temp_dir().join("aethercode-desktop-find-jar.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[R298] find_jar_path: NONE FOUND — no aethercode-*.jar in any of the bundled-resource / next-to-exe / parent / ancestor walk paths");
     }
     Err("no aethercode-*.jar found".to_string())
 }

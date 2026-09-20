@@ -166,7 +166,7 @@ export interface SsdDriver {
   /** Begin the run. Called once by the panel on mount.
    *  Implementations spawn the subprocess / start the canned
    *  event loop. */
-  start(): void;
+  start(): void | Promise<void>;
   /** Stop the run. Called once on unmount. Implementations
    *  kill the subprocess / drain the mock queue. */
   stop(): void;

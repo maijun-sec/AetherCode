@@ -3700,6 +3700,15 @@ export const useStore = create<AppState>((set, get) => {
             throw e;
           }
           set({ daemonInfo: info, connectionState: 'connected', isConnected: true, reconnectAttempts: 0 });
+          // R298: log the resolved DaemonInfo so we can
+          // diagnose "MockSsdDriver (no jar)" symptoms
+          // without attaching a debugger.
+          // eslint-disable-next-line no-console
+          try {
+            console.log('[R298-sdd] daemonInfo jarPath=' + JSON.stringify(info?.jarPath)
+              + ' cwd=' + JSON.stringify(info?.cwd)
+              + ' port=' + (info as any)?.port);
+          } catch {}
           const [state, tools, actions, sessions, projects, tasks, metrics, traces, workflows] = await Promise.all([
             rpc.getState().catch(() => null),
             rpc.listTools().catch(() => ({ tools: [] })),
@@ -5976,7 +5985,28 @@ export const useStore = create<AppState>((set, get) => {
         }
       });
 
-      driver.start();
+      Promise.resolve(driver.start()).catch((err: unknown) => {
+      // R298: previous shape `driver.start();` was a
+      // fire-and-forget Promise — a spawn rejection (jar
+      // missing, java not on PATH, etc.) was silently
+      // swallowed and the UI was left with idle chips
+      // forever. Surface the error as a chat-stream system
+      // card so the user can tell whether the spawn even
+      // happened.
+      const msg = (err as Error)?.message ?? String(err);
+      set((s) => ({
+        messages: [...s.messages, {
+          id: newId('system'),
+          role: 'system' as const,
+          content: `📐 **SDD spawn failed**\n\n\`\`\`\n${msg}\n\`\`\`\n\nCheck the desktop logs ($TEMP/aethercode-daemon-port*.log) for the spawn trace.`,
+          timestamp: Date.now(),
+          metadata: { kind: 'sdd-spawn-error', message: msg },
+        }],
+        sddEnabled: false,
+        ssdActive: false,
+      }));
+      try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver?.stop(); } catch {}
+    });
     },
 
     // R289: tear down the active SSD run. No-op when
