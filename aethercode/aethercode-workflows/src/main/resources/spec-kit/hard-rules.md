@@ -38,9 +38,23 @@ hardRules: |
     - Output ONLY the artefact markdown, starting with the H1 heading
       defined in the phase template (no leading whitespace, no
       pre-title commentary).
-    - Keep all checklist / acceptance / [NEEDS CLARIFICATION] markers
-      exactly as defined in the template so downstream tooling can
-      parse them.
+    - Keep all `[NEEDS CLARIFICATION: ...]` markers EXACTLY as
+      defined in the template so the user's /speckit.clarify
+      phase can collect them. Do not silently drop them.
+    - FILL IN the user-supplied placeholders that are NOT
+      `[NEEDS CLARIFICATION]` markers, e.g. `[FEATURE NAME]`,
+      `[DATE]`, `[$ARGUMENTS]`, `[###-feature-name]`, `[Brief Title]`,
+      `[Describe this user journey in plain language]`,
+      `[Why this priority]`, `[Independent Test]`,
+      `[Given initial state], When [action], Then [expected outcome]`,
+      `[Specific capability, e.g. "allow users to create accounts"]`,
+      `[Measurable metric, e.g. "Users can complete account creation
+      in under 2 minutes"]`. Replace these with concrete content
+      derived from the user's intent / today's date / the current
+      feature slug.
+    - Acceptance-criteria / success-criteria placeholders ARE
+      user-supplied: fill them in. `[NEEDS CLARIFICATION]` blocks
+      are NOT user-supplied in this turn — keep them verbatim.
 
 maxWaitMs: 240000
 idleEndMs: 2500
