@@ -5743,6 +5743,18 @@ export const useStore = create<AppState>((set, get) => {
       // function (see above); here we just pick.
       const jarPath = get().daemonInfo?.jarPath;
       const cwd = get().cwd;
+      // R293 follow-up: surface the driver choice to the JS
+      // console + the desktop log so a user who reports
+      // "phase X flashed past" can tell whether they're
+      // hitting the canned mock (dev fallback) or a real
+      // subprocess. `--auto` is now the default until the
+      // Tauri shell 2.x stdin pipe is confirmed on Windows.
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[R293-sdd] driver choice:',
+          jarPath && cwd ? 'TauriSsdDriver' : 'MockSsdDriver (dev fallback)',
+          'jarPath=', jarPath, 'cwd=', cwd);
+      } catch {}
       let driver: import('../components/ssd/driver').SsdDriver;
       if (jarPath && cwd) {
         // Real daemon subprocess. `--interactive` is mandatory

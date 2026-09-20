@@ -133,6 +133,20 @@ export function SddPhaseBar() {
             {ssdActive && ssdSlug
               ? `8 阶段（${ssdSlug}）`
               : '8 阶段：原则 → 需求 → 澄清 → 设计 → 一致性 → 任务 → 实现 → 收敛'}
+            {' · R293: '}
+            <code className="sdd-phase-bar-debug">
+              {(() => {
+                // Surface whether we're driving a real
+                // subprocess or the in-process mock. Lets
+                // the user distinguish "real daemon ran
+                // and the LLM just answered fast" from
+                // "stub fell back because no jar was
+                // available". Both end up looking like
+                // "chips flipped" otherwise.
+                const jarPath = useStore.getState().daemonInfo?.jarPath;
+                return jarPath ? 'TauriSsdDriver (--auto)' : 'MockSsdDriver (no jar)';
+              })()}
+            </code>
           </span>
         </div>
         <button

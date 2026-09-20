@@ -133,6 +133,19 @@ export class TauriSsdDriver implements SsdDriver {
     this.stopped = false;
 
     const java = this.opts.javaPath ?? 'java';
+    // R293 follow-up: default to `--auto` because Tauri shell
+    // 2.x's stdin pipe behaviour on Windows is unreliable —
+    // the child.write() call sometimes never reaches the JVM's
+    // System.in, so the `--interactive` confirm() blocks until
+    // the 5-minute readReply timeout fires (and the user sees
+    // the whole thing "flash past" once the LLM chains run).
+    // With `--auto` the daemon accepts each phase internally
+    // and the UI just reflects the running/done chip transitions
+    // as the LLM calls land. The user still sees every phase
+    // draft in the chat stream as a `system` card.
+    //
+    // To re-enable per-phase accept/revise, flip the Settings
+    // toggle (R294) once the stdin pipe is fixed.
     const args = [
       // R172 daemon-stability: pass the JVM heap hint so the
       // SDD run has the same 4 GB budget as the main daemon.
@@ -145,7 +158,7 @@ export class TauriSsdDriver implements SsdDriver {
       'sdd',
       this.opts.feature,
       this.opts.intent,
-      '--interactive',
+      '--auto',
       // R281 + R283 lessons: pass --cwd so the subprocess
       // writes artefacts to the project root the user picked,
       // not the renderer's working directory.
