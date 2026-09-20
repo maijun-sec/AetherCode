@@ -86,6 +86,11 @@ export interface TauriSsdDriverOptions {
    *  subprocess. The UI surfaces toggles for these (clarify /
    *  analyze / converge on by default). */
   options?: {
+    /** R293: prefer `--auto` over `--interactive` when true.
+     *  Lets the daemon run end-to-end without waiting on
+     *  stdin — the safe default until the Tauri shell 2.x
+     *  Windows stdin pipe is verified. */
+    auto?: boolean;
     /** branch numbering strategy: "sequential" or "timestamp" */
     branchNumbering?: 'sequential' | 'timestamp';
     /** skip the optional /speckit.clarify quality gate */

@@ -5734,39 +5734,65 @@ export const useStore = create<AppState>((set, get) => {
       //
       // Decision rule:
       //   - daemonInfo.jarPath present → spawn the JVM via
-      //     TauriSsdDriver (`--interactive` so each phase
-      //     pauses for an accept/revise command);
+      //     TauriSsdDriver (`--auto` so each phase completes
+      //     without waiting on stdin — the Tauri shell 2.x
+      //     Windows stdin pipe is not yet verified to round-
+      //     trip commands back to the JVM, so `--interactive`
+      //     risks the daemon hanging on confirm() until the
+      //     5-min auto-accept timeout fires);
       //   - otherwise (dev mode, no daemon) → fall back to
       //     MockSsdDriver so the UI still works.
       //
       // The dynamic import is done at the top of this
       // function (see above); here we just pick.
-      const jarPath = get().daemonInfo?.jarPath;
-      const cwd = get().cwd;
-      // R293 follow-up: surface the driver choice to the JS
-      // console + the desktop log so a user who reports
-      // "phase X flashed past" can tell whether they're
-      // hitting the canned mock (dev fallback) or a real
-      // subprocess. `--auto` is now the default until the
-      // Tauri shell 2.x stdin pipe is confirmed on Windows.
+      const daemonInfo = get().daemonInfo;
+      let jarPath = daemonInfo?.jarPath ?? '';
+      let cwd = get().cwd ?? '';
+      // R293 follow-up: if cwd is empty but daemonInfo
+      // carries one, sync them. The desktop's Rust side
+      // populates `daemonInfo.cwd` at spawn time; the
+      // Zustand `cwd` field is normally populated by
+      // `setCwd`, but a race where the user clicks 📐
+      // before setCwd finishes would leave it null and
+      // silently fall back to mock — that's exactly the
+      // "chips flash past with no daemon work" symptom
+      // the user hit twice. Pulling daemonInfo.cwd is a
+      // safe last-resort sync.
+      if (!cwd && daemonInfo?.cwd) {
+        cwd = daemonInfo.cwd;
+        set({ cwd });
+      }
+      // R293 follow-up: surface the driver choice to the
+      // JS console + a chat-stream card so a user who
+      // reports "phase X flashed past" can tell at a
+      // glance whether they're hitting the canned mock
+      // (dev fallback) or a real subprocess. Without this
+      // card the chips look identical regardless of branch.
+      const driverChoice = (jarPath && cwd)
+        ? 'TauriSsdDriver'
+        : 'MockSsdDriver (dev fallback — daemon jar or cwd missing)';
+      // eslint-disable-next-line no-console
       try {
-        // eslint-disable-next-line no-console
-        console.log('[R293-sdd] driver choice:',
-          jarPath && cwd ? 'TauriSsdDriver' : 'MockSsdDriver (dev fallback)',
-          'jarPath=', jarPath, 'cwd=', cwd);
+        console.log('[R293-sdd] driver choice:', driverChoice, 'jarPath=', jarPath, 'cwd=', cwd);
       } catch {}
       let driver: import('../components/ssd/driver').SsdDriver;
       if (jarPath && cwd) {
-        // Real daemon subprocess. `--interactive` is mandatory
-        // here — without it the daemon runs in text-TTY mode
-        // and System.in.readLine() blocks forever waiting for
-        // keyboard input that never arrives, which would hang
-        // the whole pipeline.
+        // Real daemon subprocess. `--auto` runs every phase
+        // end-to-end without waiting for a stdin command —
+        // safer until the Tauri shell 2.x Windows stdin
+        // pipe is confirmed. The per-phase accept/revise
+        // buttons stay in the UI for future use once the
+        // pipe is verified.
         driver = new TauriSsdDriver({
           jarPath,
           feature: featureSlug,
           intent,
           cwd,
+          // R293 follow-up: flag the driver to spawn with
+          // --auto instead of --interactive. The CLI
+          // command shape was already extended with
+          // `--auto | --interactive` in R292.
+          options: { auto: true },
         });
       } else {
         // Dev fallback. Without it, removing the in-process mock
@@ -5775,6 +5801,21 @@ export const useStore = create<AppState>((set, get) => {
         driver = new MockSsdDriver(events, undefined, 280);
       }
       ssdDriverRef.driver = driver;
+      // R293 follow-up: push a one-line "driver choice" card
+      // into the chat stream so the user can see which
+      // branch fired. Otherwise the chips flipping mock-vs-real
+      // looks identical from the UI and the user has to guess.
+      set((s) => ({
+        messages: [...s.messages, {
+          id: newId('system'),
+          role: 'system' as const,
+          content: (driverChoice === 'TauriSsdDriver')
+            ? `📐 spawning daemon subprocess (auto)\n\n\`\`\`\njava -jar ${jarPath} sdd ${featureSlug} "${intent}" --auto --cwd ${cwd}\n\`\`\``
+            : `📐 **dev fallback (MockSsdDriver)**\n\ndaemon jar or cwd missing — running canned 14-event sequence.\n\n\`\`\`\njarPath=${jarPath || '(empty)'}\ncwd=${cwd || '(empty)'}\n\`\`\`\n\nThis means the SDD phases will flip idle → done in ~4 s with no LLM call. To wire up the real daemon:\n  - ensure \`daemonInfo\` is set in the store (Desktop's main daemon has started)\n  - ensure the Rust side populated \`jarPath\` (aethercode.jar sits next to aethercode-desktop.exe, or in the install directory)\n  - ensure \`cwd\` is set (pick a working directory on first launch)`,
+          timestamp: Date.now(),
+          metadata: { kind: 'sdd-driver-choice', driver: driverChoice },
+        }],
+      }));
 
       // Wire the event handler. Closes over `set` so
       // each event flips the right phase chip.
