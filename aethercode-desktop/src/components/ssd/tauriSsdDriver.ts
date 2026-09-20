@@ -262,10 +262,32 @@ export class TauriSsdDriver implements SsdDriver {
  *  unknown `kind` values — returns null so the panel's switch
  *  drops the line (the daemon's own parser does the same on
  *  bad input). R292: extended to cover the new
- *  `clarify-question`, `analysis`, `converge-check` kinds. */
+ *  `clarify-question`, `analysis`, `converge-check` kinds.
+ *
+ *  <h2>R297: wire-format compatibility</h2>
+ *  The daemon's InteractiveRepl emits each line as
+ *  {@code {"event": "phase-list", ...}} (see
+ *  {@link InteractiveRepl.emitPhaseList}); the renderer's
+ *  {@link SsdDriverEvent} discriminator is {@code kind}
+ *  (mirrors the {@link MockSsdDriver} default
+ *  {@link defaultSddEventSequence} fixture). Without remapping
+ *  every line would fail {@code obj.kind} check and be
+ *  silently dropped — symptom: SDD chips stay at `idle`
+ *  while the daemon subprocess is actually running
+ *  end-to-end ("flash past" without any phase chip ever
+ *  flipping). Accept either {@code kind} or {@code event};
+ *  the latter wins if both are present. */
 export function safeParseSsdEvent(line: string): SsdDriverEvent | null {
   try {
-    const obj = JSON.parse(line) as Record<string, unknown>;
+    const raw = JSON.parse(line) as Record<string, unknown>;
+    if (!raw) return null;
+    // R297: daemon emits `event`, MockSdrEmit emits `kind`.
+    // Normalise so the rest of the renderer can rely on a
+    // single discriminator field.
+    const obj: Record<string, unknown> =
+      typeof raw.kind === 'string'
+        ? raw
+        : { ...raw, kind: raw.event };
     if (!obj || typeof obj.kind !== 'string') return null;
     switch (obj.kind) {
       case 'phase-list':
