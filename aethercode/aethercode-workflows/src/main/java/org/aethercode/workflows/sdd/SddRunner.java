@@ -141,14 +141,14 @@ public final class SddRunner {
                                     int fromOrder,
                                     boolean force,
                                     boolean auto,
-                                    LlmFn llm,
+                                    ContentProvider content,
                                     ReplFn repl,
                                     Logger log,
                                     int toOrder) throws Exception {
         Objects.requireNonNull(cwd, "cwd");
         Objects.requireNonNull(slug, "slug");
         Objects.requireNonNull(intent, "intent");
-        Objects.requireNonNull(llm, "llm");
+        Objects.requireNonNull(content, "content");
         Objects.requireNonNull(repl, "repl");
         Objects.requireNonNull(log, "log");
 
@@ -203,7 +203,7 @@ public final class SddRunner {
             switch (phase) {
                 case CONSTITUTION -> {
                     Path p = featureDir.resolve("constitution.md");
-                    int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, "");
+                    int revs = runDraftPhase(phase, p, force, auto, content, repl, log, bodies, "");
                     writtenPaths.put("constitution.md", p);
                     bodies.put("constitutionContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
                     results.add(new PhaseResult(phase.specKitId(), p, revs));
@@ -211,13 +211,13 @@ public final class SddRunner {
                 case SPECIFY -> {
                     Path p = featureDir.resolve("spec.md");
                     String prior = readIfPresent(featureDir.resolve("constitution.md"));
-                    int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, prior);
+                    int revs = runDraftPhase(phase, p, force, auto, content, repl, log, bodies, prior);
                     bodies.put("specContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
                     writtenPaths.put("spec.md", p);
                     results.add(new PhaseResult(phase.specKitId(), p, revs));
                 }
                 case CLARIFY -> {
-                    int revs = runClarify(phase, featureDir, auto, llm, repl, log, bodies);
+                    int revs = runClarify(phase, featureDir, auto, content, repl, log, bodies);
                     results.add(new PhaseResult(phase.specKitId(), featureDir.resolve("clarify.json"), revs));
                 }
                 case PLAN -> {
@@ -228,33 +228,33 @@ public final class SddRunner {
                     // matches the model prompt's wording.
                     Path p = featureDir.resolve("design.md");
                     String prior = readIfPresent(featureDir.resolve("spec.md"));
-                    int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, prior);
+                    int revs = runDraftPhase(phase, p, force, auto, content, repl, log, bodies, prior);
                     bodies.put("planContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
                     writtenPaths.put("design.md", p);
                     results.add(new PhaseResult(phase.specKitId(), p, revs));
                 }
                 case ANALYZE -> {
-                    int revs = runAnalyze(phase, featureDir, auto, llm, repl, log);
+                    int revs = runAnalyze(phase, featureDir, auto, content, repl, log);
                     results.add(new PhaseResult(phase.specKitId(), featureDir.resolve("analyze.json"), revs));
                 }
                 case TASKS -> {
                     Path p = featureDir.resolve("tasks.md");
                     String prior = readIfPresent(featureDir.resolve("design.md"));
-                    int revs = runDraftPhase(phase, p, force, auto, llm, repl, log, bodies, prior);
+                    int revs = runDraftPhase(phase, p, force, auto, content, repl, log, bodies, prior);
                     bodies.put("tasksContent", bodies.getOrDefault(phase.specKitId() + ".content", ""));
                     writtenPaths.put("tasks.md", p);
                     results.add(new PhaseResult(phase.specKitId(), p, revs));
                 }
                 case IMPLEMENT -> {
                     Path tasksPath = featureDir.resolve("tasks.md");
-                    int revs = runImplement(phase, tasksPath, auto, llm, repl, log);
+                    int revs = runImplement(phase, tasksPath, auto, content, repl, log);
                     // R294: dev.log (R236 naming) instead of
                     // logs/implement.log (upstream Spec Kit).
                     Path devLog = featureDir.resolve("dev.log");
                     results.add(new PhaseResult(phase.specKitId(), devLog, revs));
                 }
                 case CONVERGE -> {
-                    int revs = runConverge(phase, featureDir, auto, llm, repl, log);
+                    int revs = runConverge(phase, featureDir, auto, content, repl, log);
                     Path conv = featureDir.resolve("convergence.json");
                     results.add(new PhaseResult(phase.specKitId(), conv, revs));
                 }
@@ -273,7 +273,7 @@ public final class SddRunner {
      *  for specify, spec.md for plan, plan.md for tasks). */
     private int runDraftPhase(PhaseId phase, Path outFile,
                               boolean force, boolean auto,
-                              LlmFn llm, ReplFn repl, Logger log,
+                              ContentProvider content, ReplFn repl, Logger log,
                               Map<String, Object> bodies, String priorContent) throws Exception {
         int revisionsThisPhase = 0;
         String revision = null;
@@ -343,7 +343,7 @@ public final class SddRunner {
                             + "top-level heading (# or ## or ###) — no preamble, no narration, "
                             + "just the artefact.";
                 }
-                text = cleanOutput(llm.generate(systemPrompt, promptForAttempt, 4096));
+                text = cleanOutput(content.requestContent(systemPrompt, promptForAttempt, 4096));
             }
 
             if (text.isEmpty()) {
@@ -403,7 +403,7 @@ public final class SddRunner {
      * answers received, applied-or-skipped). Auto mode writes an
      * empty manifest; non-interactive mode writes the same. */
     private int runClarify(PhaseId phase, Path featureDir, boolean auto,
-                           LlmFn llm, ReplFn repl, Logger log,
+                           ContentProvider content, ReplFn repl, Logger log,
                            Map<String, Object> bodies) throws Exception {
         Path specPath = featureDir.resolve("spec.md");
         Path clarifyOut = featureDir.resolve("clarify.json");
@@ -451,7 +451,7 @@ public final class SddRunner {
         String questionPrompt = "Read the spec below and surface 1-3 short questions about areas that are underspecified. "
                 + "One question per line, prefixed with 'Q:'. If nothing is unclear, output 'Q: NONE'.\n\n"
                 + "```\n" + specText + "\n```";
-        String qResponse = cleanOutput(llm.generate(
+        String qResponse = cleanOutput(content.requestContent(
                 "You surface underspecified areas in software specs.",
                 questionPrompt, 1024));
         List<String> questions = new ArrayList<>();
@@ -489,7 +489,7 @@ public final class SddRunner {
                 idx++;
             }
             applyPrompt.append("Current spec.md:\n```\n").append(specText).append("\n```");
-            String updated = cleanOutput(llm.generate(
+            String updated = cleanOutput(content.requestContent(
                     "You revise software spec documents based on user clarifications.",
                     applyPrompt.toString(), 4096));
             Files.writeString(specPath, updated, StandardCharsets.UTF_8);
@@ -506,7 +506,7 @@ public final class SddRunner {
      *  on the findings (Spec Kit's {@code /speckit.analyze} doesn't
      *  either; the user reads the report and decides). */
     private int runAnalyze(PhaseId phase, Path featureDir, boolean auto,
-                           LlmFn llm, ReplFn repl, Logger log) throws Exception {
+                           ContentProvider content, ReplFn repl, Logger log) throws Exception {
         if (!(repl instanceof InteractiveRepl ir)) {
             log.log("[sdd] non-interactive REPL — skipping analyze");
             return 0;
@@ -528,7 +528,7 @@ public final class SddRunner {
                 + "or any conflict between them. "
                 + "Output a short bullet list of issues, then a line 'CONVERGED: yes' or 'CONVERGED: no'.\n\n"
                 + "# spec.md\n" + spec + "\n\n# design.md\n" + design + "\n\n# tasks.md\n" + tasks;
-        String response = cleanOutput(llm.generate(
+        String response = cleanOutput(content.requestContent(
                 "You are a software consistency analyst.",
                 prompt, 2048));
         Path out = featureDir.resolve("analyze.json");
@@ -542,7 +542,7 @@ public final class SddRunner {
      *  runPhase4Dev but uses the AetherCode-internal filename
      *  (R294: dev.log, no logs/ subdirectory). */
     private int runImplement(PhaseId phase, Path tasksPath, boolean auto,
-                             LlmFn llm, ReplFn repl, Logger log) throws Exception {
+                             ContentProvider content, ReplFn repl, Logger log) throws Exception {
         Path implLog = tasksPath.getParent().resolve("dev.log");
         if (!Files.isRegularFile(tasksPath)) {
             log.log("[sdd] no tasks.md found at " + tasksPath + "; skipping implement");
@@ -577,7 +577,7 @@ public final class SddRunner {
                     + "\nFiles: " + String.join(", ", t.files)
                     + "\nAcceptance: " + t.acceptance
                     + "\nEst: " + t.estMin + " min";
-            String text = cleanOutput(llm.generate(systemPrompt, userPrompt, 2048));
+            String text = cleanOutput(content.requestContent(systemPrompt, userPrompt, 2048));
             out.append("## ").append(t.id).append(" — ").append(t.title).append("\n\n")
                     .append(text).append("\n\n");
             Files.writeString(implLog, out.toString(), StandardCharsets.UTF_8);
@@ -591,7 +591,7 @@ public final class SddRunner {
      *  the user gives up. The NDJSON {@code converge-check} event
      *  carries the model's findings + the iteration count. */
     private int runConverge(PhaseId phase, Path featureDir, boolean auto,
-                            LlmFn llm, ReplFn repl, Logger log) throws Exception {
+                            ContentProvider content, ReplFn repl, Logger log) throws Exception {
         Path conv = featureDir.resolve("convergence.json");
         Path implLog = featureDir.resolve("dev.log");
         String spec = readIfPresent(featureDir.resolve("spec.md"));
@@ -604,7 +604,7 @@ public final class SddRunner {
                     + (implSummary.length() > 4000 ? implSummary.substring(implSummary.length() - 4000) : implSummary)
                     + "\n\nOutput a JSON object with shape {converged: bool, issues: [string]}. "
                     + "Converged is true only if every FR in spec.md is covered by dev.log and there are no contradictions.";
-            String response = cleanOutput(llm.generate(
+            String response = cleanOutput(content.requestContent(
                     "You are a post-implementation reviewer.",
                     prompt, 2048));
             boolean converged = CONVERGED_TRUE.matcher(response).find()
@@ -634,7 +634,7 @@ public final class SddRunner {
             // Apply feedback: re-run implement with feedback appended.
             String feedbackPrompt = "Apply this feedback to the implementation:\n\n"
                     + feedback + "\n\n# dev.log\n" + implSummary;
-            String revised = cleanOutput(llm.generate(
+            String revised = cleanOutput(content.requestContent(
                     "You revise an implementation based on reviewer feedback.",
                     feedbackPrompt, 4096));
             Files.writeString(implLog, implSummary + "\n\n## converge iteration " + iteration + "\n\n"
@@ -815,9 +815,63 @@ public final class SddRunner {
         return out;
     }
 
-    /** LLM call. The runner passes the system prompt (constitution +
-     *  hard rules + phase template), the rendered user prompt, and
-     *  the max-tokens hint. */
+    /** R309 content request — replaces the old {@link LlmFn}.
+     *
+     * <p>The runner asks the {@code ContentProvider} for the
+     * markdown body of one phase (or one sub-step such as a
+     * single task in implement). The provider returns the raw
+     * text — the runner passes it through {@link #cleanOutput}
+     * and writes it to disk.
+     *
+     * <h2>Why we no longer hardwire LLM calls</h2>
+     *
+     * <p>Before R309 the runner held a hard {@code llm.generate}
+     * reference and called it for every phase body. The LLM
+     * it pointed at (AetherCodeEngine.query) returned a
+     * preamble-laden, template-underspecified reply that
+     * left every {@code [NEEDS CLARIFICATION: ...]} slot
+     * unfilled, so the user got back the spec-kit template
+     * verbatim with placeholders intact.
+     *
+     * <p>R308 user feedback: "生成的 spec.md 明显有问题，都是占位符，
+     * 没有实际的 spec 内容. 已经没必要往后测试了". The right
+     * fix is the one the user already telegraphed in R307:
+     * "不要完整的 spec kit 了，只把它的阶段、每个阶段的 md
+     * 文件给挪进来" — i.e. <em>don't make the daemon the LLM
+     * caller</em>. The daemon now exposes a content-request
+     * seam through the wire protocol; any LLM provider
+     * (Mavis agent, manual paste, an external service) can
+     * answer.
+     *
+     * <h2>Wire shape</h2>
+     *
+     * <p>The default implementation ({@link
+     * InteractiveRepl#requestContent}) emits a
+     * {@code phase-need-content} event carrying the three
+     * prompt strings + the {@code maxTokens} hint and
+     * blocks until the driver sends a {@code phase-content}
+     * command with the rendered markdown. The driver either
+     * forwards the request to an attached LLM (Mavis agent)
+     * or surfaces an input box for the user to paste the
+     * content they generated elsewhere.
+     *
+     * <h2>Signature stability</h2>
+     *
+     * <p>The signature is intentionally identical to the old
+     * {@code LlmFn.generate(system, user, maxTokens)} so the
+     * R292-R308 test mocks port with a one-line rename. The
+     * semantic shift is the meaning of the return value:
+     * "the content for this phase" instead of "the LLM's
+     * response to this prompt". */
+    @FunctionalInterface
+    public interface ContentProvider {
+        String requestContent(String systemPrompt, String userPrompt, int maxTokens) throws Exception;
+    }
+
+    /** @deprecated R309: use {@link ContentProvider} instead. Kept
+     *  as an alias so legacy test mocks keep compiling until we
+     *  migrate them all. */
+    @Deprecated
     @FunctionalInterface
     public interface LlmFn {
         String generate(String systemPrompt, String userPrompt, int maxTokens) throws Exception;

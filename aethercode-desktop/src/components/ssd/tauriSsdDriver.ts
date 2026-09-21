@@ -423,6 +423,7 @@ export function safeParseSsdEvent(line: string): SsdDriverEvent | null {
       case 'phase-accepted':
       case 'phase-skipped':
       case 'phase-error':
+      case 'phase-need-content':
       case 'clarify-question':
       case 'analysis':
       case 'converge-check':

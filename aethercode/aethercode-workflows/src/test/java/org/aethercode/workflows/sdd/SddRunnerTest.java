@@ -260,7 +260,7 @@ class SddRunnerTest {
         // every subsequent phase).
         MockLlm flaky = new MockLlm("# draft\n\nbody") {
             @Override
-            public String generate(String system, String user, int maxTokens) {
+            public String requestContent(String system, String user, int maxTokens) {
                 int n = callCount.incrementAndGet();
                 if (n == 1) return "I'll draft the constitution now.\n";
                 return "# draft\n\nbody";
@@ -320,7 +320,7 @@ class SddRunnerTest {
      *  (e.g. {@code "Q: NONE"}); falls back to the default
      *  body when {@code clarifyBody} is null. Records the
      *  total call count so tests can assert on it. */
-    private static class MockLlm implements SddRunner.LlmFn {
+    private static class MockLlm implements SddRunner.ContentProvider {
         private final String defaultBody;
         private final String clarifyBody;
         final AtomicInteger callCount = new AtomicInteger();
@@ -330,7 +330,7 @@ class SddRunnerTest {
             this.defaultBody = defaultBody;
             this.clarifyBody = clarifyBody;
         }
-        @Override public String generate(String system, String user, int maxTokens) {
+        @Override public String requestContent(String system, String user, int maxTokens) {
             callCount.incrementAndGet();
             // Heuristic: the clarify phase's user prompt
             // starts with `# Clarify (optional quality gate)`

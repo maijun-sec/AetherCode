@@ -55,6 +55,15 @@ import java.util.concurrent.TimeoutException;
  *   {"event": "phase-skipped", "phase": "specify", "reason": "already-accepted"}
  *   {"event": "phase-error", "phase": "specify", "message": "..."}
  *
+ *   {"event": "phase-need-content", "phase": "specify",
+ *    "systemPrompt": "...", "userPrompt": "...", "maxTokens": 4096}
+ *      // R309: daemon asks the driver for the rendered
+ *      // markdown body. The driver forwards to an LLM
+ *      // (Mavis agent / manual paste) and replies with a
+ *      // `phase-content` command. Spec kit phases that need
+ *      // content (constitution / specify / plan / tasks /
+ *      // implement / converge) all flow through this seam.
+ *
  *   {"event": "clarify-question", "id": "q1", "header": "Auth method",
  *    "question": "Which auth method should we use?"}
  *
@@ -76,6 +85,7 @@ import java.util.concurrent.TimeoutException;
  *   {"action": "quit"}                                      // abort the whole run
  *   {"action": "clarify-answer", "id": "q1", "answer": "..."}  // R292 new
  *   {"action": "converge-iterate", "text": "..."}          // R292 new (empty = accept non-converge)
+ *   {"action": "phase-content", "content": "..."}          // R309 new — answer a phase-need-content
  * </pre>
  *
  * <h2>Threading</h2>
@@ -90,7 +100,7 @@ import java.util.concurrent.TimeoutException;
  * Same rationale as R281: stable wire contract, rich metadata,
  * recoverability, no terminal assumptions.
  */
-public final class InteractiveRepl implements SddRunner.ReplFn {
+public final class InteractiveRepl implements SddRunner.ReplFn, SddRunner.ContentProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(InteractiveRepl.class);
 
@@ -429,6 +439,74 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
 
     public boolean isAborted() { return aborted; }
 
+    /** R309 {@link SddRunner.ContentProvider} implementation.
+     *
+     * <p>Emits a {@code phase-need-content} event carrying the
+     * three prompt strings + the {@code maxTokens} hint, then
+     * blocks on {@link #readReply} until the driver sends a
+     * {@code phase-content} command. Returns the rendered
+     * markdown body the driver supplied (which the caller —
+     * typically {@link SddRunner#runDraftPhase} — feeds
+     * through {@link SddRunner#cleanOutput} and writes to
+     * disk).
+     *
+     * <h2>Why the full prompts travel over the wire</h2>
+     *
+     * <p>The provider may live in a completely separate
+     * process (the desktop driver forwarding to a Mavis
+     * agent; a manual paste workflow; an external LLM
+     * service). Sending the prompts intact lets the
+     * provider reproduce the daemon's prompt shaping
+     * exactly, so the user can attach their project
+     * context (existing artefacts, build config, source
+     * layout) when generating the content.
+     *
+     * <h2>Out-of-order actions</h2>
+     *
+     * <p>If the driver emits {@code quit} while we're parked
+     * here we surface a clean abort (mirrors the behaviour
+     * of {@link #confirm} and {@link #askClarify}). Other
+     * out-of-order actions are logged and skipped — the
+     * driver may still be flushing earlier
+     * {@code phase-accepted} / {@code log} lines that
+     * crossed the request boundary. */
+    @Override
+    public String requestContent(String systemPrompt, String userPrompt, int maxTokens) throws IOException {
+        // Emit the request shape: an `export` field carrying
+        // the rendered prompt, plus the max-tokens hint so the
+        // provider can size its reply. The driver's UI side
+        // surfaces this as "please generate the X.md body"
+        // and forwards the prompt (often augmented with
+        // project context) to an LLM of your choice.
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("event", "phase-need-content");
+        ev.put("systemPrompt", systemPrompt);
+        ev.put("userPrompt", userPrompt);
+        ev.put("maxTokens", maxTokens);
+        writeOut(ev);
+
+        while (true) {
+            InboundCommand cmd = readReply();
+            if ("phase-content".equals(cmd.action())) {
+                if (cmd.content() == null || cmd.content().isEmpty()) {
+                    LOG.warn("InteractiveRepl: empty phase-content from driver — returning empty string");
+                    return "";
+                }
+                return cmd.content();
+            }
+            if ("quit".equals(cmd.action())) {
+                aborted = true;
+                emitAbort("user-quit");
+                throw new IOException("InteractiveRepl: user quit during phase-need-content");
+            }
+            // Out-of-order actions (skip / accept / revise) are
+            // logged and skipped — the driver may still be
+            // flushing earlier-phase acknowledgements.
+            LOG.warn("InteractiveRepl: ignoring out-of-order action {} while waiting for phase-content",
+                    cmd.action());
+        }
+    }
+
     /** R293: shut down the bounded-read executor. Called by
      *  {@link SddRunner} after the orchestrator finishes so
      *  the JVM is free to exit (otherwise the
@@ -487,7 +565,7 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
             } catch (TimeoutException te) {
                 LOG.warn("InteractiveRepl: readReply timed out after {} s — auto-accepting the current phase", READ_TIMEOUT_SECONDS);
                 log("warn", "InteractiveRepl: readReply timed out — driver likely stuck; auto-accepting");
-                return new InboundCommand("accept", "", "");
+                return new InboundCommand("accept", "", "", "");
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 throw new IOException("readReply interrupted", ie);
@@ -499,7 +577,7 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
             if (line == null) {
                 // EOF
                 aborted = true;
-                return new InboundCommand("quit", "", "");
+                return new InboundCommand("quit", "", "", "");
             }
             line = line.trim();
             if (line.isEmpty()) continue;
@@ -516,7 +594,15 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
                     text = (String) m.getOrDefault("answer", "");
                 }
                 String id = (String) m.getOrDefault("id", "");
-                return new InboundCommand(action, text == null ? "" : text, id);
+                // R309: phase-content carries the rendered
+                // markdown body in a `content` field rather
+                // than `text` to avoid colliding with revise
+                // / clarify-answer / converge-iterate, which
+                // all use `text`. The wire shape:
+                //   {"action":"phase-content","content":"# spec..."}
+                String content = (String) m.getOrDefault("content", "");
+                return new InboundCommand(action, text == null ? "" : text, id,
+                        content == null ? "" : content);
             } catch (Exception e) {
                 // Log and keep reading. The driver may emit log lines
                 // or partial JSONL during debugging — never crash the
@@ -535,5 +621,5 @@ public final class InteractiveRepl implements SddRunner.ReplFn {
         return Files.readString(path, StandardCharsets.UTF_8);
     }
 
-    private record InboundCommand(String action, String text, String id) {}
+    private record InboundCommand(String action, String text, String id, String content) {}
 }

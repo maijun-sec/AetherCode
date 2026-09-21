@@ -1663,7 +1663,7 @@ interface AppState {
     title: string;
     /** R292: render half-opacity when true (clarify / analyze / converge). */
     optional?: boolean;
-    state: 'idle' | 'running' | 'pending-accept' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed';
+    state: 'idle' | 'running' | 'pending-accept' | 'need-content' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed';
     preview?: string;
     path?: string;
     /** R306: when the daemon entered phase-start. Lets
@@ -1734,6 +1734,7 @@ interface AppState {
       | { action: 'quit' }
       | { action: 'clarify-answer'; id: string; answer: string }
       | { action: 'converge-iterate'; text: string }
+      | { action: 'phase-content'; content: string }
   ) => void;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
@@ -5817,7 +5818,7 @@ export const useStore = create<AppState>((set, get) => {
       // its own (matching) list — we seed it here so the
       // UI has something to render before the first event
       // lands.
-      const phaseTemplate: Array<{ id: string; title: string; optional?: boolean; state: 'idle' | 'running' | 'pending-accept' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed'; preview?: string; path?: string }> = [
+      const phaseTemplate: Array<{ id: string; title: string; optional?: boolean; state: 'idle' | 'running' | 'pending-accept' | 'need-content' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed'; preview?: string; path?: string }> = [
         { id: 'constitution', title: '项目原则',  state: 'idle' },
         { id: 'specify',      title: '需求分析',  state: 'idle' },
         { id: 'clarify',      title: '需求澄清',  state: 'idle', optional: true },
@@ -6135,6 +6136,41 @@ export const useStore = create<AppState>((set, get) => {
               }],
             }));
             break;
+          case 'phase-need-content':
+            // R309: the daemon is asking the driver for the
+            // rendered markdown body of this phase. We park
+            // the chip on `need-content` so SddPhaseBar
+            // shows an input pane for the user (or the
+            // attached LLM provider) to fill in. The
+            // systemPrompt + userPrompt + maxTokens travel
+            // alongside the event so a Mavis agent wired
+            // into the desktop can consume them verbatim
+            // and emit a phase-content reply.
+            set((s) => {
+              const now = Date.now();
+              const previewSnippet = ev.userPrompt.length > 240
+                ? ev.userPrompt.slice(0, 240) + '…'
+                : ev.userPrompt;
+              return {
+                ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                  ? { ...p, state: 'need-content' }
+                  : p),
+                messages: [...s.messages, {
+                  id: newId('system'),
+                  role: 'system' as const,
+                  content: `📝 **${ev.phase}**：需要生成内容\n\n${ev.systemPrompt ? `**systemPrompt**:\n\n\`\`\`\n${ev.systemPrompt}\n\`\`\`\n\n` : ''}**userPrompt** (前 240 字):\n\n\`\`\`\n${previewSnippet}\n\`\`\`\n\n(请在下方输入生成的内容后发送，daemon 会写入文件并进入下一阶段)`,
+                  timestamp: now,
+                  metadata: {
+                    kind: 'sdd-need-content',
+                    phase: ev.phase,
+                    systemPrompt: ev.systemPrompt,
+                    userPrompt: ev.userPrompt,
+                    maxTokens: ev.maxTokens,
+                  },
+                }],
+              };
+            });
+            break;
           case 'phase-draft':
             // Push the draft body to the chat list as
             // a `system` message so MessageList's
@@ -6146,6 +6182,22 @@ export const useStore = create<AppState>((set, get) => {
             // metadata marker. The chip moves to
             // 'pending-accept' to signal "ready for
             // you to accept/revise".
+            //
+            // R308: drop the ``` fenced block around
+            // the preview so MessageList's ReactMarkdown
+            // renderer can apply GFM styling to the
+            // spec body (h1 / h2 / lists / table). The
+            // previous shape (``` \n${preview}\n ```)
+            // survived through the renderer as one big
+            // <pre><code> block, so the user saw the
+            // raw markdown source and complained the
+            // "draft entry looks ugly" — they wanted
+            // markdown rendering. Wrapping the preview
+            // inline (no fences) lets ReactMarkdown
+            // apply heading / list / table styles
+            // while keeping the 📐 header / path /
+            // "等待确认" footer readable as plain
+            // markdown.
             set((s) => {
               const draftMsgId = newId('system');
               return {
@@ -6155,9 +6207,9 @@ export const useStore = create<AppState>((set, get) => {
                 messages: [...s.messages, {
                   id: draftMsgId,
                   role: 'system' as const,
-                  content: `📐 ${ev.phase} 阶段草案\n\n文件: \`${ev.path}\`\n\n\`\`\`\n${ev.preview}\n\`\`\`\n\n(等待确认 → 进入下一阶段)`,
+                  content: `📐 **${ev.phase}** 阶段草案\n\n文件: \`${ev.path}\`\n\n${ev.preview}\n\n_(等待确认 → 进入下一阶段)_`,
                   timestamp: Date.now(),
-                  metadata: { kind: 'ssd-draft', phase: ev.phase, path: ev.path },
+                  metadata: { kind: 'sdd-draft', phase: ev.phase, path: ev.path },
                 }],
               };
             });
@@ -6425,7 +6477,8 @@ export const useStore = create<AppState>((set, get) => {
         | { action: 'skip' }
         | { action: 'quit' }
         | { action: 'clarify-answer'; id: string; answer: string }
-        | { action: 'converge-iterate'; text: string },
+        | { action: 'converge-iterate'; text: string }
+        | { action: 'phase-content'; content: string },
     ) => {
       const driver = ssdDriverRef.driver;
       if (!driver) return;

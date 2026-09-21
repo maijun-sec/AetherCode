@@ -107,6 +107,17 @@ export type SsdDriverEvent =
   | { kind: 'phase-skipped'; phase: string; reason: string }
   | { kind: 'phase-error'; phase: string; message: string }
   | {
+      /** R309: daemon asks for the rendered markdown body
+       *  of a phase. Driver forwards the prompts to an
+       *  attached LLM (Mavis agent / manual paste) and
+       *  replies with a {@code phase-content} command. */
+      kind: 'phase-need-content';
+      phase: string;
+      systemPrompt: string;
+      userPrompt: string;
+      maxTokens: number;
+    }
+  | {
       kind: 'clarify-question';
       id: string;
       header: string;
@@ -147,7 +158,8 @@ export type SsdInboundCommand =
   | { action: 'skip' }
   | { action: 'quit' }
   | { action: 'clarify-answer'; id: string; answer: string }
-  | { action: 'converge-iterate'; text: string };
+  | { action: 'converge-iterate'; text: string }
+  | { action: 'phase-content'; content: string };
 
 /** abstract driver. Implementations:
  *  - {@link MockSsdDriver} for tests / dev mode

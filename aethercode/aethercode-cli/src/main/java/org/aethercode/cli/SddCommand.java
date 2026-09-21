@@ -8,6 +8,7 @@ import org.aethercode.workflows.sdd.SddConfig.PhaseId;
 import org.aethercode.workflows.sdd.SddConfig.SlugPolicy;
 import org.aethercode.workflows.sdd.SddRunner;
 import org.aethercode.workflows.sdd.SddRunner.AbortException;
+import org.aethercode.workflows.sdd.SddRunner.ContentProvider;
 import org.aethercode.workflows.sdd.SddRunner.LlmFn;
 import org.aethercode.workflows.sdd.SddRunner.Logger;
 import org.aethercode.workflows.sdd.SddRunner.ReplFn;
@@ -216,13 +217,25 @@ public class SddCommand implements Callable<Integer> {
         // we delegate to it. A null sessionId means "use
         // AppState's default", which is the right behaviour
         // for a one-shot CLI invocation.
-        Main cli = new Main();
-        cli.cwd = cwd;
-        AetherCodeEngine engine = cli.buildEngineForSession(null);
-        LlmFn llm = makeLlmFn(engine, config);
+        // R309: the runner no longer hardwires an LLM call;
+        // we hand it a {@link ContentProvider} that can be either
+        // the wire-protocol InteractiveRepl (interactive mode:
+        // driver / agent supplies content over stdin) or a
+        // legacy {@link LlmFn} backed by the in-process
+        // AetherCodeEngine (auto / terminal mode: daemon does
+        // its own LLM call). The daemon's SddRunner only knows
+        // about the {@link ContentProvider} seam — the choice
+        // happens here.
+        ContentProvider content;
         ReplFn repl;
         final InteractiveRepl interactiveRepl;
+        final AetherCodeEngine engine;
         if (interactive) {
+            // Interactive mode: the driver forwards
+            // phase-need-content events to its attached LLM
+            // (Mavis agent / manual paste) and replies with
+            // phase-content commands. No engine needed in the
+            // daemon process.
             SddRunner r = new SddRunner(config);
             String slug = r.nextSlug(cwd, feature);
             interactiveRepl = InteractiveRepl.stdio(slug, config.activePhases());
@@ -233,6 +246,8 @@ public class SddCommand implements Callable<Integer> {
                 return 1;
             }
             repl = interactiveRepl;
+            content = interactiveRepl;
+            engine = null;
         } else if (auto) {
             // R298: --auto also wires InteractiveRepl so the daemon
             // emits phase-list / phase-start / phase-draft /
@@ -245,6 +260,16 @@ public class SddCommand implements Callable<Integer> {
             // fresh {"action":"accept"}\n on every readReply call,
             // so the run auto-progresses internally while still
             // surfacing every chip transition.
+            //
+            // R309: --auto still calls the in-process LLM
+            // (AetherCodeEngine.query) because there's no driver
+            // attached to feed content over stdin. We wrap the
+            // legacy LlmFn as a ContentProvider so SddRunner's
+            // new seam doesn't care which mode we're in.
+            Main cli = new Main();
+            cli.cwd = cwd;
+            engine = cli.buildEngineForSession(null);
+            final LlmFn legacyLlm = makeLlmFn(engine, config);
             SddRunner r = new SddRunner(config);
             String slug = r.nextSlug(cwd, feature);
             interactiveRepl = InteractiveRepl.autoAccept(slug, config.activePhases());
@@ -255,9 +280,19 @@ public class SddCommand implements Callable<Integer> {
                 return 1;
             }
             repl = interactiveRepl;
+            content = (sys, usr, max) -> legacyLlm.generate(sys, usr, max);
         } else {
+            // Legacy terminal REPL — also keeps the
+            // AetherCodeEngine-backed LlmFn path so a manual
+            // `aethercode sdd` invocation in a terminal still
+            // produces a useful artefact (R292 behaviour).
+            Main cli = new Main();
+            cli.cwd = cwd;
+            engine = cli.buildEngineForSession(null);
+            final LlmFn legacyLlm = makeLlmFn(engine, config);
             interactiveRepl = null;
             repl = makeReplFn(auto);
+            content = (sys, usr, max) -> legacyLlm.generate(sys, usr, max);
         }
         Logger log = interactive ? (line -> interactiveRepl.log("info", line)) : line -> System.out.println(line);
 
@@ -265,7 +300,7 @@ public class SddCommand implements Callable<Integer> {
         try {
             String slug = runner.nextSlug(cwd, feature);
             List<SddRunner.PhaseResult> results = runner.runAll(cwd, slug, intent,
-                    fromPhase, force, auto, llm, repl, log, toPhase);
+                    fromPhase, force, auto, content, repl, log, toPhase);
             if (interactive) {
                 interactiveRepl.emitComplete(results);
             } else {
