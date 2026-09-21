@@ -5772,22 +5772,80 @@ export const useStore = create<AppState>((set, get) => {
       // exactly the "一闪而过 什么等待确认 全都是不存在的"
       // regression the user hit.
       //
-      // Decision rule:
-      //   - daemonInfo.jarPath present → spawn the JVM via
-      //     TauriSsdDriver (`--auto` so each phase completes
-      //     without waiting on stdin — the Tauri shell 2.x
-      //     Windows stdin pipe is not yet verified to round-
-      //     trip commands back to the JVM, so `--interactive`
-      //     risks the daemon hanging on confirm() until the
-      //     5-min auto-accept timeout fires);
-      //   - otherwise (dev mode, no daemon) → fall back to
-      //     MockSsdDriver so the UI still works.
+      // Decision rule (R302): pull jarPath + cwd from the Rust
+      // side via `get_app_paths` as the PRIMARY source. Falls
+      // back to `daemonInfo` from the store when Tauri isn't
+      // available (dev mode / tests).
+      //   - jarPath && cwd → spawn the JVM via TauriSsdDriver
+      //     in `--interactive` mode (R299 default — each phase
+      //     blocks until the user clicks ✅ / ✏️ / ⏭️);
+      //   - otherwise (dev mode, no daemon) → MockSsdDriver so
+      //     the UI still works without a real daemon.
       //
       // The dynamic import is done at the top of this
       // function (see above); here we just pick.
-      const daemonInfo = get().daemonInfo;
-      let jarPath = daemonInfo?.jarPath ?? '';
+      // R302 fix: pull jarPath + cwd from the Rust side via
+      // `get_app_paths` as the PRIMARY source of truth, instead
+      // of relying on `daemonInfo` (which the setCwd swap path
+      // clears to null and never refills — see the comment on
+      // the new R302 refill below). The Rust command always
+      // returns the resolved jarPath via `find_jar_path` and
+      // the in-memory / persisted cwd, so the renderer can
+      // spawn the daemon subprocess even when the in-memory
+      // `daemonInfo` is stale. Falls back to `daemonInfo` when
+      // `invoke` itself isn't available (dev mode / tests).
+      let jarPath = '';
       let cwd = get().cwd ?? '';
+      try {
+        const paths = await invoke<{ jarPath?: string; cwd?: string } | null>('get_app_paths');
+        if (paths?.jarPath) jarPath = paths.jarPath;
+        if (paths?.cwd && !cwd) {
+          cwd = paths.cwd;
+          set({ cwd });
+        }
+        // Also reflect into daemonInfo so other consumers
+        // (the SddPhaseBar diagnostic banner, the
+        // TauriSsdDriver dynamic-import chunk's readme) see
+        // the same values without a separate round-trip.
+        const cur = get().daemonInfo;
+        if (cur && (paths?.jarPath || paths?.cwd)) {
+          set({
+            daemonInfo: {
+              ...cur,
+              jarPath: paths?.jarPath || cur.jarPath,
+              cwd: paths?.cwd || cur.cwd,
+            },
+          });
+        }
+        // R302 diagnostic: confirm get_app_paths returned a
+        // non-empty jarPath so we can verify the spawn side
+        // wired TauriSsdDriver (not MockSsdDriver fallback).
+        try {
+          const line = `[R302-sdd-spawn-resolve] source=get_app_paths jarPath=${JSON.stringify(jarPath)} cwd=${JSON.stringify(cwd)} slug=${featureSlug} @ ${new Date().toISOString()}\n`;
+          try { console.log(line.trim()); } catch {}
+          try {
+            const tdir = await (await import('@tauri-apps/api/path')).tempDir();
+            const logPath = tdir ? `${tdir}\\aethercode-desktop-daemon-info.log` : 'aethercode-desktop-daemon-info.log';
+            await invoke('append_text_file', { path: logPath, contents: line }).catch(() => {});
+          } catch {}
+        } catch {}
+      } catch (e) {
+        // Tauri not available (dev / tests) — fall back to the
+        // store. This is the pre-R302 behaviour and lets the
+        // canned MockSsdDriver path continue to work for
+        // non-Tauri contexts.
+        const daemonInfo = get().daemonInfo;
+        jarPath = daemonInfo?.jarPath ?? '';
+        try {
+          const line = `[R302-sdd-spawn-resolve] source=daemonInfo-fallback jarPath=${JSON.stringify(jarPath)} cwd=${JSON.stringify(cwd)} slug=${featureSlug} err=${String((e as any)?.message ?? e)} @ ${new Date().toISOString()}\n`;
+          try { console.warn(line.trim()); } catch {}
+          try {
+            const tdir = await (await import('@tauri-apps/api/path')).tempDir();
+            const logPath = tdir ? `${tdir}\\aethercode-desktop-daemon-info.log` : 'aethercode-desktop-daemon-info.log';
+            await invoke('append_text_file', { path: logPath, contents: line }).catch(() => {});
+          } catch {}
+        } catch {}
+      }
       // R293 follow-up: if cwd is empty but daemonInfo
       // carries one, sync them. The desktop's Rust side
       // populates `daemonInfo.cwd` at spawn time; the
@@ -5798,8 +5856,8 @@ export const useStore = create<AppState>((set, get) => {
       // "chips flash past with no daemon work" symptom
       // the user hit twice. Pulling daemonInfo.cwd is a
       // safe last-resort sync.
-      if (!cwd && daemonInfo?.cwd) {
-        cwd = daemonInfo.cwd;
+      if (!cwd && get().daemonInfo?.cwd) {
+        cwd = get().daemonInfo!.cwd ?? '';
         set({ cwd });
       }
       // R293 follow-up: surface the driver choice to the
@@ -6315,6 +6373,40 @@ export const useStore = create<AppState>((set, get) => {
             // daemonInfo=null triggers the WS re-init
             // path in initialize().
           });
+          // R302 fix: refill daemonInfo from the freshly-promoted
+          // daemon so downstream consumers (TauriSsdDriver,
+          // SddPhaseBar diagnostic banner) see the new
+          // port/jarPath/cwd. Without this refill, daemonInfo
+          // stays null after swap_to_pre_warm and the next
+          // startSsdFlow() call silently falls back to
+          // MockSsdDriver — the "一闪而过" symptom the user hit
+          // across R292-R301. `get_daemon_info` returns the
+          // `state.daemon` mutex clone, which swap_to_pre_warm
+          // populates at lib.rs:599.
+          try {
+            const fresh = await invoke<DaemonInfo | null>('get_daemon_info');
+            if (fresh) {
+              set({ daemonInfo: fresh });
+              // R302 diagnostic: surface the refill into the
+              // same log so user can verify the swap populated
+              // a non-empty jarPath. Previously the chip strip
+              // would render `MockSsdDriver (jarPath='', cwd='')`
+              // and the run would silently fall back.
+              try {
+                const line = `[R302-setCwd] daemonInfo refilled port=${fresh.port} jarPath=${JSON.stringify(fresh.jarPath)} cwd=${JSON.stringify(fresh.cwd)} spawned=${fresh.spawned} @ ${new Date().toISOString()}\n`;
+                try { console.log(line.trim()); } catch {}
+                try {
+                  const tdir = await (await import('@tauri-apps/api/path')).tempDir();
+                  const logPath = tdir ? `${tdir}\\aethercode-desktop-daemon-info.log` : 'aethercode-desktop-daemon-info.log';
+                  await invoke('append_text_file', { path: logPath, contents: line }).catch(() => {});
+                } catch {}
+              } catch {}
+            }
+          } catch (e) {
+            try {
+              console.warn('[R302-setCwd] get_daemon_info after swap failed:', e);
+            } catch {}
+          }
         } else {
           // No swap happened (no daemon was up yet).
           // Just update the cwd slot; ensure_daemon
