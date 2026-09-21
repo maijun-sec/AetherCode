@@ -143,9 +143,15 @@ describe('SddPhaseBar R292 (Spec Kit 8 phases)', () => {
     renderBar();
     expect(screen.getByTestId('sdd-phase-actions').getAttribute('data-waiting-phase')).toBe('specify');
     expect(screen.getByTestId('sdd-phase-actions').getAttribute('data-waiting-state')).toBe('pending-accept');
+    // R300: ✅ 接受 + ⏭️ 跳过 stay as buttons; ✏️ 修改 is
+    // now an inline textarea (sdd-revise-textarea) with a
+    // 📤 发送修订 submit button (sdd-btn-send-revise). All
+    // three control surfaces (accept / textarea+send / skip)
+    // are rendered, but they no longer share a single row.
     expect(screen.getByTestId('sdd-btn-accept')).toBeTruthy();
-    expect(screen.getByTestId('sdd-btn-revise')).toBeTruthy();
     expect(screen.getByTestId('sdd-btn-skip')).toBeTruthy();
+    expect(screen.getByTestId('sdd-revise-textarea')).toBeTruthy();
+    expect(screen.getByTestId('sdd-btn-send-revise')).toBeTruthy();
   });
 
   it('R293: clicking the accept button sends {action:"accept"} via sendSsdCommand', () => {
@@ -223,8 +229,14 @@ describe('SddPhaseBar R292 (Spec Kit 8 phases)', () => {
       sendSsdCommand: vi.fn(),
     });
     renderBar();
+    // R300: ✅ 结束 stays as a primary button, but the 🔁
+    // 再迭代 path is now an inline textarea + 📤 发送反馈
+    // (R300's inline-iterate UX). The textarea + send button
+    // share `data-testid="sdd-converge-textarea"` and
+    // `data-testid="sdd-btn-send-converge"`.
     expect(screen.getByTestId('sdd-btn-converge-accept')).toBeTruthy();
-    expect(screen.getByTestId('sdd-btn-converge-iterate')).toBeTruthy();
+    expect(screen.getByTestId('sdd-converge-textarea')).toBeTruthy();
+    expect(screen.getByTestId('sdd-btn-send-converge')).toBeTruthy();
   });
 
   it('R293: chips are rendered as compact pills (no per-chip preview / description body)', () => {

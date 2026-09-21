@@ -240,6 +240,34 @@
   flex-wrap: wrap;
 }
 
+/* R300: inline-iterate text input row that lives directly under
+ * the action buttons. The user types their revision / review notes,
+ * and the adjacent 📤 button (or Ctrl/⌘+Enter) ships the dispatch.
+ * The two-block design (accept/skip row + iterate row) lets the user
+ * keep their typed text while reviewing the current draft, and
+ * never lose focus to a `prompt()` modal. */
+.sdd-phase-actions-revise {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.sdd-phase-actions-textarea {
+  flex: 1;
+  min-width: 240px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.18));
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  font-size: 12px;
+  color: var(--text);
+  font-family: inherit;
+  resize: vertical;
+  min-height: 32px;
+  max-height: 160px;
+}
+
 .sdd-phase-actions-clarify {
   flex: 1;
   display: flex;

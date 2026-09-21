@@ -226,41 +226,75 @@ export function SddPhaseBar() {
           </div>
 
           {waitingPhase.state === 'pending-accept' && (
-            <div className="sdd-phase-actions-buttons">
-              <button
-                type="button"
-                className="sdd-btn sdd-btn-primary"
-                onClick={() => sendSsdCommand({ action: 'accept' })}
-                data-testid="sdd-btn-accept"
-                title="接受草案，进入下一阶段"
-              >
-                ✅ 接受
-              </button>
-              <button
-                type="button"
-                className="sdd-btn sdd-btn-secondary"
-                onClick={() => {
-                  const text = reviseText.trim() ||
-                    prompt(`请输入修订意见（${waitingPhase.title}）`, '') || '';
-                  if (!text) return;
-                  sendSsdCommand({ action: 'revise', text });
-                  setReviseText('');
-                }}
-                data-testid="sdd-btn-revise"
-                title="把意见发回去让 LLM 改写"
-              >
-                ✏️ 修改
-              </button>
-              <button
-                type="button"
-                className="sdd-btn sdd-btn-ghost"
-                onClick={() => sendSsdCommand({ action: 'skip' })}
-                data-testid="sdd-btn-skip"
-                title="跳过此阶段（仅可选质量门生效）"
-              >
-                ⏭️ 跳过
-              </button>
-            </div>
+            <>
+              {/* R300: top row — accept / skip. The user-driven
+                  refine flow lives in the textarea below, so
+                  "accept" is the only path that closes the
+                  phase; "skip" stays in the row for optional
+                  quality gates (clarify / analyze). */}
+              <div className="sdd-phase-actions-buttons">
+                <button
+                  type="button"
+                  className="sdd-btn sdd-btn-primary"
+                  onClick={() => sendSsdCommand({ action: 'accept' })}
+                  data-testid="sdd-btn-accept"
+                  title="接受草案，进入下一阶段"
+                >
+                  ✅ 接受
+                </button>
+                <button
+                  type="button"
+                  className="sdd-btn sdd-btn-ghost"
+                  onClick={() => sendSsdCommand({ action: 'skip' })}
+                  data-testid="sdd-btn-skip"
+                  title="跳过此阶段（仅可选质量门生效）"
+                >
+                  ⏭️ 跳过
+                </button>
+              </div>
+              {/* R300: inline revision textarea. The user types
+                  their refinement prompt here; pressing 📤 发送
+                  (or Ctrl/⌘+Enter) sends `{action:"revise",
+                  text:...}` to the daemon subprocess's stdin.
+                  The daemon re-runs the same phase's LLM call
+                  with the user's text appended as a "previous
+                  reviewer's notes" block, emits a fresh
+                  `phase-draft`, and re-enters `pending-accept`
+                  so the user can iterate again or accept. This
+                  keeps the per-phase confirm interactive
+                  instead of forcing the user to drop into a
+                  `window.prompt()` dialog. */}
+              <div className="sdd-phase-actions-revise">
+                <textarea
+                  className="sdd-phase-actions-textarea"
+                  placeholder="输入修改意见（可多次迭代）— LLM 会基于当前内容重新生成"
+                  value={reviseText}
+                  onChange={(e) => setReviseText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && reviseText.trim()) {
+                      sendSsdCommand({ action: 'revise', text: reviseText.trim() });
+                      setReviseText('');
+                    }
+                  }}
+                  rows={2}
+                  data-testid="sdd-revise-textarea"
+                />
+                <button
+                  type="button"
+                  className="sdd-btn sdd-btn-secondary"
+                  disabled={!reviseText.trim()}
+                  onClick={() => {
+                    if (!reviseText.trim()) return;
+                    sendSsdCommand({ action: 'revise', text: reviseText.trim() });
+                    setReviseText('');
+                  }}
+                  data-testid="sdd-btn-send-revise"
+                  title="Ctrl/⌘+Enter 也能发送"
+                >
+                  📤 发送修订
+                </button>
+              </div>
+            </>
           )}
 
           {waitingPhase.state === 'clarify-pending' && (
@@ -321,32 +355,52 @@ export function SddPhaseBar() {
           )}
 
           {waitingPhase.state === 'converge-pending' && (
-            <div className="sdd-phase-actions-buttons">
-              <button
-                type="button"
-                className="sdd-btn sdd-btn-primary"
-                onClick={() => sendSsdCommand({ action: 'converge-iterate', text: '' } as any)}
-                data-testid="sdd-btn-converge-accept"
-                title="接受非收敛结论，结束整个 SDD"
-              >
-                ✅ 结束
-              </button>
-              <button
-                type="button"
-                className="sdd-btn sdd-btn-secondary"
-                onClick={() => {
-                  const text = convergeText.trim() ||
-                    prompt(`请输入迭代反馈（${waitingPhase.title}）`, '') || '';
-                  if (!text) return;
-                  sendSsdCommand({ action: 'converge-iterate', text } as any);
-                  setConvergeText('');
-                }}
-                data-testid="sdd-btn-converge-iterate"
-                title="带反馈再迭代一轮"
-              >
-                🔁 再迭代
-              </button>
-            </div>
+            <>
+              <div className="sdd-phase-actions-buttons">
+                <button
+                  type="button"
+                  className="sdd-btn sdd-btn-primary"
+                  onClick={() => sendSsdCommand({ action: 'converge-iterate', text: '' } as any)}
+                  data-testid="sdd-btn-converge-accept"
+                  title="接受当前 review 结论，结束整个 SDD"
+                >
+                  ✅ 结束
+                </button>
+              </div>
+              {/* R300: same inline-iterate pattern as pending-accept —
+                  type review feedback, press 📤 发送 (or Ctrl/⌘+Enter)
+                  to push another review iteration round-trip. */}
+              <div className="sdd-phase-actions-revise">
+                <textarea
+                  className="sdd-phase-actions-textarea"
+                  placeholder="review 反馈 — 可多次迭代"
+                  value={convergeText}
+                  onChange={(e) => setConvergeText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && convergeText.trim()) {
+                      sendSsdCommand({ action: 'converge-iterate', text: convergeText.trim() } as any);
+                      setConvergeText('');
+                    }
+                  }}
+                  rows={2}
+                  data-testid="sdd-converge-textarea"
+                />
+                <button
+                  type="button"
+                  className="sdd-btn sdd-btn-secondary"
+                  disabled={!convergeText.trim()}
+                  onClick={() => {
+                    if (!convergeText.trim()) return;
+                    sendSsdCommand({ action: 'converge-iterate', text: convergeText.trim() } as any);
+                    setConvergeText('');
+                  }}
+                  data-testid="sdd-btn-send-converge"
+                  title="Ctrl/⌘+Enter 也能发送"
+                >
+                  📤 发送反馈
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
