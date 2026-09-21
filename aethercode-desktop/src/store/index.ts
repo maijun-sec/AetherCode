@@ -5841,11 +5841,23 @@ export const useStore = create<AppState>((set, get) => {
           feature: featureSlug,
           intent,
           cwd,
-          // R293 follow-up: flag the driver to spawn with
-          // --auto instead of --interactive. The CLI
-          // command shape was already extended with
-          // `--auto | --interactive` in R292.
-          options: { auto: true },
+          // R299: spawn with --interactive (not --auto). The
+          // user wants per-phase confirmation: each phase
+          // drafts, then the chip flips to `pending-accept`
+          // and waits for the user to click ✅ / ✏️ / ⏭️
+          // before the daemon moves to the next phase.
+          // Pre-R299 this was `--auto` (R293 default) because
+          // the Tauri shell 2.x Windows stdin pipe wasn't
+          // verified to round-trip — that decision left the
+          // user staring at idle chips for 1-2 minutes while
+          // the daemon ran through phases unattended. Now
+          // that R293 also added a 5-min readReply timeout
+          // (the daemon auto-accepts if the driver never
+          // sends a command), the user-driven path is
+          // safe: if the pipe is broken, each phase
+          // surfaces a "driver likely stuck" warning card
+          // and falls back to auto-accept after 5 minutes.
+          options: { auto: false },
         });
       } else {
         // Dev fallback. Without it, removing the in-process mock
