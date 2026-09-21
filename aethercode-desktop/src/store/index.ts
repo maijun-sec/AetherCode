@@ -661,6 +661,97 @@ function readStreamStaleMs(): number {
 const STREAM_STALE_MS = readStreamStaleMs();
 const STREAM_CHECK_INTERVAL_MS = 5_000;
 
+/**
+ * R303: translate a raw Tauri SDD-spawn rejection into a
+ * user-facing markdown message. The catch block above dumps
+ * the raw error string into a system card, but Tauri's
+ * shell-plugin errors read like Windows event-log entries
+ * ("Command plugin:shell|spawn not allowed by ACL") which
+ * non-Tauri users can't act on. Map the common cases to
+ * actionable text and let the raw error ride along in a
+ * collapsed `<details>` block.
+ *
+ * Cases covered (matched in order, first wins):
+ *  1. ACL denied (`plugin:<x>|<y> not allowed by ACL`) — the
+ *     Tauri capability file is missing the permission. Tell
+ *     the user which package build they need (this is a
+ *     packaging bug, not user config).
+ *  2. Java executable not found (`ENOENT` on `java.exe` /
+ *     `No such file or directory`) — `java` isn't on PATH
+ *     OR the resolved path is wrong.
+ *  3. Jar missing — the resolved jar path doesn't exist
+ *     (portable mode: jar must sit next to the exe; NSIS:
+ *     installed by the bundle).
+ *  4. Cwd missing — `get_app_paths` returned NEEDS_CWD
+ *     because the user hasn't picked a project folder.
+ *  5. Generic — fall through and show the raw error
+ *     directly. Most other failures are real bugs and
+ *     shouldn't be hidden behind a translation.
+ */
+function friendlySddSpawnError(raw: string, jarPath: string, cwd: string, slug: string): string {
+  // 1. ACL — most common since R293 when TauriSsdDriver
+  //    started using @tauri-apps/plugin-shell's Command.
+  if (/not allowed by ACL/i.test(raw)) {
+    return [
+      '📐 **SDD 子进程无法启动 — 桌面权限缺失**',
+      '',
+      `\`TauriSsdDriver\` 需要 \`@tauri-apps/plugin-shell\` 的 \`spawn\` / \`stdin_write\` / \`kill\` 权限来启动 \`aethercode.jar\` 子进程并接收你的 ✅ / ✏️ / ⏭️ 指令。当前 desktop 安装包缺少这些权限。`,
+      '',
+      '**解法**：从最新 build 重新安装 desktop（`release\\R292\\desktop\\aethercode-desktop.exe`）。这次 build 已在 `src-tauri/capabilities/default.json` 加上了 4 个 shell 权限（`shell:allow-spawn` / `shell:allow-stdin-write` / `shell:allow-kill` / `shell:allow-execute`）。',
+      '',
+      '如果已经是最新 build 还报这个错，请贴 `%TEMP%\\aethercode-desktop-daemon-info.log` 末尾的 `[R303-sdd-spawn-failed]` 行给我定位。',
+    ].join('\n');
+  }
+  // 2. Java missing
+  if (/ENOENT|No such file or directory/i.test(raw) && /java/i.test(raw)) {
+    return [
+      '📐 **SDD 子进程无法启动 — 找不到 Java**',
+      '',
+      `\`java\` 不在 PATH，或者 desktop 的 Rust 端解析出的路径不对。`,
+      '',
+      '**解法**：',
+      '  - 确认本机装了 JDK（>= 17），命令行 `java -version` 能输出',
+      '  - 或者用 JDK 绝对路径：Settings → Advanced → Java Path 填 `C:\\Program Files\\Java\\jdk-17\\bin\\java.exe`',
+    ].join('\n');
+  }
+  // 3. Jar missing
+  if (jarPath && /jar/i.test(raw) && /not found|missing|exist/i.test(raw)) {
+    return [
+      '📐 **SDD 子进程无法启动 — 找不到 aethercode.jar**',
+      '',
+      `解析出的 jar 路径：`,
+      '',
+      '```',
+      jarPath,
+      '```',
+      '',
+      '**解法**：',
+      '  - **Portable 模式**：把 `aethercode.jar` 复制到跟 `aethercode-desktop.exe` 同目录',
+      '  - **NSIS / MSI 安装**：jar 应该在安装目录下；如缺失，重装安装包',
+    ].join('\n');
+  }
+  // 4. NEEDS_CWD
+  if (/NEEDS_CWD/i.test(raw)) {
+    return [
+      '📐 **SDD 子进程无法启动 — 没有选项目目录**',
+      '',
+      `desktop 在 \`get_app_paths\` 时发现 \`state.cwd\` 和 \`persisted_cwd\` 都是空的。`,
+      '',
+      '**解法**：用左上角 📁 选个项目目录（任意带 .git / .aethercode 的文件夹都行），再触发 SDD。',
+    ].join('\n');
+  }
+  // 5. Generic
+  return [
+    '📐 **SDD spawn failed**',
+    '',
+    `slug: ${slug || '(none)'}`,
+    `jarPath: ${jarPath || '(empty)'}`,
+    `cwd: ${cwd || '(empty)'}`,
+    '',
+    '详细错误见下方 Raw error 折叠块。',
+  ].join('\n');
+}
+
 type SetStateFn = (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
 type GetStateFn = () => AppState;
 
@@ -6129,7 +6220,7 @@ export const useStore = create<AppState>((set, get) => {
         }
       });
 
-      Promise.resolve(driver.start()).catch((err: unknown) => {
+      Promise.resolve(driver.start()).catch(async (err: unknown) => {
       // R298: previous shape `driver.start();` was a
       // fire-and-forget Promise — a spawn rejection (jar
       // missing, java not on PATH, etc.) was silently
@@ -6137,18 +6228,44 @@ export const useStore = create<AppState>((set, get) => {
       // forever. Surface the error as a chat-stream system
       // card so the user can tell whether the spawn even
       // happened.
-      const msg = (err as Error)?.message ?? String(err);
+      //
+      // R303: the raw Tauri error string is technically
+      // accurate but very unfriendly for non-Tauri users
+      // ("Command plugin:shell|spawn not allowed by ACL" reads
+      // like a Windows event log entry). Translate the
+      // common cases into actionable user-facing text and
+      // keep the raw error under a collapsible block for
+      // debugging.
+      const raw = (err as Error)?.message ?? String(err);
+      const friendly = friendlySddSpawnError(raw, jarPath, cwd, featureSlug);
+      // Always include the raw error so future regressions
+      // still have a paper trail — collapse it under a
+      // `details` marker the user can expand on demand.
+      const content = friendly
+        + `\n\n<details><summary>Raw error (show technical details)</summary>\n\n\`\`\`\n${raw}\n\`\`\`\n</details>`
+        + `\n\nDiagnostic log: \`%TEMP%\\aethercode-desktop-daemon-info.log\``;
       set((s) => ({
         messages: [...s.messages, {
           id: newId('system'),
           role: 'system' as const,
-          content: `📐 **SDD spawn failed**\n\n\`\`\`\n${msg}\n\`\`\`\n\nCheck the desktop logs ($TEMP/aethercode-daemon-port*.log) for the spawn trace.`,
+          content,
           timestamp: Date.now(),
-          metadata: { kind: 'sdd-spawn-error', message: msg },
+          metadata: { kind: 'sdd-spawn-error', message: raw, friendly },
         }],
         sddEnabled: false,
         ssdActive: false,
       }));
+      // R303: log the friendly translation too so the
+      // desktop-side diagnostic log records both the raw
+      // Tauri error and the user-facing message.
+      try {
+        const tdir = (await import('@tauri-apps/api/path')).tempDir();
+        if (tdir) {
+          const logPath = `${tdir}\\aethercode-desktop-daemon-info.log`;
+          const line = `[R303-sdd-spawn-failed] slug=${featureSlug} friendly="${friendly.replace(/\n/g, ' ').slice(0, 200)}" raw=${raw.replace(/\n/g, ' ').slice(0, 200)}\n`;
+          await invoke('append_text_file', { path: logPath, contents: line }).catch(() => {});
+        }
+      } catch {}
       try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver?.stop(); } catch {}
     });
     },
