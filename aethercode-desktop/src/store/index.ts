@@ -1666,6 +1666,15 @@ interface AppState {
     state: 'idle' | 'running' | 'pending-accept' | 'clarify-pending' | 'converge-pending' | 'done' | 'skipped' | 'failed';
     preview?: string;
     path?: string;
+    /** R306: when the daemon entered phase-start. Lets
+     *  SddPhaseBar show "running for 12s" and compute
+     *  per-phase durations. Wall-clock ms. */
+    startedAt?: number;
+    /** R306: when the daemon emitted phase-accepted /
+     *  phase-skipped / phase-error. Lets SddPhaseBar
+     *  render a finished-phase badge with the total
+     *  duration. Wall-clock ms. */
+    endedAt?: number;
   }>;
   /** R289: true while a driver is wired up and emitting
    *  events (i.e. between `startSsdFlow` and the final
@@ -6108,10 +6117,22 @@ export const useStore = create<AppState>((set, get) => {
             }));
             break;
           case 'phase-start':
+            // R306: push a chat message so the user sees
+            // "constitution: starting" in real time. Without
+            // this, the chat only updates when a draft arrives
+            // and the user has no idea what phase is currently
+            // running between drafts.
             set((s) => ({
               ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
-                ? { ...p, state: 'running' }
+                ? { ...p, state: 'running', startedAt: Date.now() }
                 : p),
+              messages: [...s.messages, {
+                id: newId('system'),
+                role: 'system' as const,
+                content: `▶️ **${ev.phase}**：启动`,
+                timestamp: Date.now(),
+                metadata: { kind: 'sdd-phase-start', phase: ev.phase },
+              }],
             }));
             break;
           case 'phase-draft':
@@ -6142,25 +6163,71 @@ export const useStore = create<AppState>((set, get) => {
             });
             break;
           case 'phase-accepted':
-            set((s) => ({
-              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
-                ? { ...p, state: 'done', preview: undefined }
-                : p),
-            }));
+            // R306: push a chat message with the duration
+            // so the user can see "constitution: ✓ 12s"
+            // alongside the draft message that came
+            // before it.
+            set((s) => {
+              const now = Date.now();
+              const phaseInfo = s.ssdPhases.find((p) => p.id === ev.phase);
+              const durSec = phaseInfo?.startedAt
+                ? Math.max(0, Math.round((now - phaseInfo.startedAt) / 1000))
+                : 0;
+              return {
+                ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                  ? { ...p, state: 'done', preview: undefined, endedAt: now }
+                  : p),
+                messages: [...s.messages, {
+                  id: newId('system'),
+                  role: 'system' as const,
+                  content: `✓ **${ev.phase}**：已确认（${durSec}s）`,
+                  timestamp: now,
+                  metadata: { kind: 'sdd-phase-accepted', phase: ev.phase, durationMs: now - (phaseInfo?.startedAt ?? now) },
+                }],
+              };
+            });
             break;
           case 'phase-skipped':
-            set((s) => ({
-              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
-                ? { ...p, state: 'skipped' }
-                : p),
-            }));
+            set((s) => {
+              const now = Date.now();
+              const phaseInfo = s.ssdPhases.find((p) => p.id === ev.phase);
+              const durSec = phaseInfo?.startedAt
+                ? Math.max(0, Math.round((now - phaseInfo.startedAt) / 1000))
+                : 0;
+              return {
+                ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                  ? { ...p, state: 'skipped', endedAt: now }
+                  : p),
+                messages: [...s.messages, {
+                  id: newId('system'),
+                  role: 'system' as const,
+                  content: `⏭️ **${ev.phase}**：已跳过（${durSec}s）`,
+                  timestamp: now,
+                  metadata: { kind: 'sdd-phase-skipped', phase: ev.phase, durationMs: now - (phaseInfo?.startedAt ?? now) },
+                }],
+              };
+            });
             break;
           case 'phase-error':
-            set((s) => ({
-              ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
-                ? { ...p, state: 'failed' }
-                : p),
-            }));
+            set((s) => {
+              const now = Date.now();
+              const phaseInfo = s.ssdPhases.find((p) => p.id === ev.phase);
+              const durSec = phaseInfo?.startedAt
+                ? Math.max(0, Math.round((now - phaseInfo.startedAt) / 1000))
+                : 0;
+              return {
+                ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                  ? { ...p, state: 'failed', endedAt: now }
+                  : p),
+                messages: [...s.messages, {
+                  id: newId('system'),
+                  role: 'system' as const,
+                  content: `❌ **${ev.phase}**：失败（${durSec}s）\n\n\`\`\`\n${(ev as any).message ?? '未知错误'}\n\`\`\``,
+                  timestamp: now,
+                  metadata: { kind: 'sdd-phase-error', phase: ev.phase, message: (ev as any).message },
+                }],
+              };
+            });
             break;
           case 'clarify-question':
             // R292: the runner surfaced a question about
@@ -6228,13 +6295,45 @@ export const useStore = create<AppState>((set, get) => {
             // mark any still-idle phases as skipped,
             // and turn the toggle off so the bar
             // collapses.
-            set((s) => ({
-              ssdActive: false,
-              ssdPhases: s.ssdPhases.map((p) => p.state === 'idle' || p.state === 'running' || p.state === 'pending-accept'
-                ? { ...p, state: 'skipped' }
-                : p),
-              sddEnabled: false,
-            }));
+            //
+            // R306: also push a summary message so the
+            // user sees "🎉 8 阶段完成 (3 min 12 s)" with
+            // per-phase totals instead of the bar just
+            // silently collapsing.
+            set((s) => {
+              const now = Date.now();
+              const finished = s.ssdPhases.map((p) => ({
+                id: p.id,
+                title: p.title,
+                state: p.state,
+                startedAt: p.startedAt,
+                endedAt: p.endedAt,
+                durationMs: (p.startedAt && p.endedAt) ? p.endedAt - p.startedAt : 0,
+              }));
+              const totalDurMs = finished.reduce((acc, p) => acc + (p.durationMs || 0), 0);
+              const totalSec = Math.round(totalDurMs / 1000);
+              const summary = finished
+                .filter((p) => p.durationMs > 0)
+                .map((p) => {
+                  const dur = Math.round((p.durationMs || 0) / 1000);
+                  return `  - ${p.id}: ${dur}s (${p.state})`;
+                })
+                .join('\n');
+              return {
+                ssdActive: false,
+                ssdPhases: s.ssdPhases.map((p) => p.state === 'idle' || p.state === 'running' || p.state === 'pending-accept'
+                  ? { ...p, state: 'skipped' }
+                  : p),
+                sddEnabled: false,
+                messages: [...s.messages, {
+                  id: newId('system'),
+                  role: 'system' as const,
+                  content: `🎉 **SDD 完成** — 总耗时 ${totalSec}s\n\n${summary || '(无 phase 完成)'}\n\n产物: \`<cwd>/.aethercode/sdd/${s.ssdSlug}/\``,
+                  timestamp: now,
+                  metadata: { kind: 'sdd-complete', totalMs: totalDurMs },
+                }],
+              };
+            });
             try { ssdDriverRef.unsubscribe?.(); ssdDriverRef.driver?.stop(); } catch {}
             ssdDriverRef = { driver: null, unsubscribe: null };
             break;

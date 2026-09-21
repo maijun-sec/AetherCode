@@ -123,7 +123,22 @@ export function SddPhaseBar() {
   const byId = new Map<string, typeof ssdPhases[number]>();
   for (const p of ssdPhases) byId.set(p.id, p);
 
-  return (
+  // R306: progress summary in the header. Counts done /
+// skipped phases; the rest are still in flight (idle /
+// running / pending-accept / clarify-pending /
+// converge-pending) or failed. Render "X/8 完成" so the
+// user can see overall progress without reading every
+// chip.
+const completedCount = ssdPhases.filter(
+  (p) => p.state === 'done' || p.state === 'skipped',
+).length;
+const totalCount = ssdPhases.length || 8;
+const runningPhase = ssdPhases.find((p) => p.state === 'running');
+const runningFor = runningPhase?.startedAt
+  ? Math.max(0, Math.round((Date.now() - runningPhase.startedAt) / 1000))
+  : 0;
+
+return (
     <section className="sdd-phase-bar" aria-label="SDD 阶段进度" data-testid="sdd-phase-bar">
       <header className="sdd-phase-bar-header">
         <div className="sdd-phase-bar-title">
@@ -132,6 +147,19 @@ export function SddPhaseBar() {
             {ssdActive && ssdSlug
               ? `8 阶段（${ssdSlug}）`
               : '8 阶段：原则 → 需求 → 澄清 → 设计 → 一致性 → 任务 → 实现 → 收敛'}
+            {ssdActive && ssdPhases.length > 0 && (
+              <>
+                {' · '}
+                <strong className="sdd-phase-bar-progress" data-testid="sdd-phase-bar-progress">
+                  {completedCount}/{totalCount} 完成
+                </strong>
+                {runningPhase && (
+                  <span className="sdd-phase-bar-running" data-testid="sdd-phase-bar-running">
+                    {' · '}{runningPhase.title} {runningFor}s
+                  </span>
+                )}
+              </>
+            )}
             {' · R298: '}
             <code className="sdd-phase-bar-debug">
               {(() => {
@@ -194,10 +222,17 @@ export function SddPhaseBar() {
           const title = phase?.title ?? phaseTitleZh(id);
           const optional = phase?.optional ?? OPTIONAL_PHASES.has(id);
           const isWaiting = waitingPhase?.id === id;
+          const isRunning = state === 'running';
+          // R306: per-phase duration for finished phases.
+          // "constitution: ✓ 12s" lets the user see which
+          // phase took how long at a glance.
+          const durSec = (phase?.startedAt && phase?.endedAt)
+            ? Math.max(0, Math.round((phase.endedAt - phase.startedAt) / 1000))
+            : null;
           return (
             <li
               key={id}
-              className={`sdd-phase-item sdd-phase-${state}${optional ? ' sdd-phase-optional' : ''}${isWaiting ? ' sdd-phase-waiting' : ''}`}
+              className={`sdd-phase-item sdd-phase-${state}${optional ? ' sdd-phase-optional' : ''}${isWaiting ? ' sdd-phase-waiting' : ''}${isRunning ? ' sdd-phase-active' : ''}`}
               data-testid={`sdd-phase-${id}`}
               data-state={state}
               title={isWaiting ? `${title} · ${STATE_LABEL[state] ?? state}` : title}
@@ -205,6 +240,9 @@ export function SddPhaseBar() {
               <span className="sdd-phase-glyph" aria-hidden="true">{STATE_GLYPH[state] ?? '○'}</span>
               <span className="sdd-phase-num">{i + 1}</span>
               <span className="sdd-phase-title">{title}</span>
+              {durSec !== null && state === 'done' && (
+                <span className="sdd-phase-duration" data-testid={`sdd-phase-duration-${id}`}>{durSec}s</span>
+              )}
               {optional && <span className="sdd-phase-optional-tag" title="可选质量门">可选</span>}
             </li>
           );
