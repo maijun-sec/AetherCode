@@ -5875,7 +5875,7 @@ export const useStore = create<AppState>((set, get) => {
           id: newId('system'),
           role: 'system' as const,
           content: (driverChoice === 'TauriSsdDriver')
-            ? `📐 spawning daemon subprocess (auto)\n\n\`\`\`\njava -jar ${jarPath} sdd ${featureSlug} "${intent}" --auto --cwd ${cwd}\n\`\`\``
+            ? `📐 spawning daemon subprocess (interactive)\n\n\`\`\`\njava -jar ${jarPath} sdd ${featureSlug} "${intent}" --interactive --cwd ${cwd}\n\`\`\`\n\n(R299: \`--interactive\` mode — 每个 phase 完成后 daemon 会等用户在 SDD 面板里点 ✅ / ✏️ / ⏭️ 才能进入下一阶段)`
             : `📐 **dev fallback (MockSsdDriver)**\n\ndaemon jar or cwd missing — running canned 14-event sequence.\n\n\`\`\`\njarPath=${jarPath || '(empty)'}\ncwd=${cwd || '(empty)'}\n\`\`\`\n\nThis means the SDD phases will flip idle → done in ~4 s with no LLM call. To wire up the real daemon:\n  - ensure \`daemonInfo\` is set in the store (Desktop's main daemon has started)\n  - ensure the Rust side populated \`jarPath\` (aethercode.jar sits next to aethercode-desktop.exe, or in the install directory)\n  - ensure \`cwd\` is set (pick a working directory on first launch)`,
           timestamp: Date.now(),
           metadata: { kind: 'sdd-driver-choice', driver: driverChoice },
@@ -5885,6 +5885,40 @@ export const useStore = create<AppState>((set, get) => {
       // Wire the event handler. Closes over `set` so
       // each event flips the right phase chip.
       ssdDriverRef.unsubscribe = driver.onEvent((ev) => {
+        // R301: log every inbound event so we can tell
+        // whether the desktop is actually receiving the
+        // daemon's NDJSON stream. If the chip flips but no
+        // R301-sdd-event lines appear, the wire format fix
+        // (R297) regressed; if the lines appear but the
+        // chip never lands on pending-accept, the
+        // phase-draft handler is broken.
+        try {
+          // eslint-disable-next-line no-console
+          console.log('[R301-sdd-event] kind=' + ev.kind);
+          const logLine = `[R301-sdd-event] kind=${ev.kind}` +
+            ((ev as any).phase ? ` phase=${(ev as any).phase}` : '') +
+            ((ev as any).action ? ` action=${(ev as any).action}` : '') +
+            `\n`;
+          // Inline log via the Tauri `append_text_file`
+          // command — same target the Rust side uses for
+          // R298-ensure lines, so all R301 diagnostics
+          // land in one place. We import dynamically to
+          // keep the SDD code path out of the initial
+          // bundle (mirrors the dynamic-import pattern in
+          // TauriSsdDriver).
+          Promise.resolve((async () => {
+            try {
+              const tdir = await (await import('@tauri-apps/api/path')).tempDir();
+              if (!tdir) return;
+              const logPath = `${tdir}\\aethercode-desktop-daemon-info.log`;
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('append_text_file', {
+                path: logPath,
+                contents: logLine,
+              }).catch(() => {});
+            } catch {}
+          })());
+        } catch {}
         switch (ev.kind) {
           case 'phase-list':
             set((s) => ({

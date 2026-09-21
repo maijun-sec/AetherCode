@@ -53,6 +53,7 @@
  */
 
 import { Command } from '@tauri-apps/plugin-shell';
+import { invoke } from '@tauri-apps/api/core';
 import type {
   SsdDriver,
   SsdDriverEvent,
@@ -192,7 +193,31 @@ export class TauriSsdDriver implements SsdDriver {
     // an AsyncIterable<string> of decoded lines.
     const cmd: any = Command.create(java, args);
     this.command = cmd;
+    // R301: log the spawn attempt + final args so the user
+    // can verify the desktop side really fired the right
+    // subprocess (--interactive vs --auto, --cwd path).
+    const logPath = await getSddLogPath();
+    try {
+        // eslint-disable-next-line no-console
+        console.log('[R301-sdd] spawn java: ' + java + ' ' + args.join(' '));
+        if (logPath) {
+            await invoke('append_text_file', {
+                path: logPath,
+                contents: `[R301-sdd-spawn] java=${java} args=${args.join(' ')}\n`,
+            }).catch(() => {});
+        }
+    } catch {}
     const spawned: any = await cmd.spawn();
+    try {
+        // eslint-disable-next-line no-console
+        console.log('[R301-sdd] spawn returned pid=' + (spawned?.pid ?? spawned?.child?.pid ?? '?'));
+        if (logPath) {
+            await invoke('append_text_file', {
+                path: logPath,
+                contents: `[R301-sdd-spawned] pid=${spawned?.pid ?? spawned?.child?.pid ?? '?'} hasStdout=${Boolean(spawned?.stdout ?? (spawned as any)?.output)}\n`,
+            }).catch(() => {});
+        }
+    } catch {}
     this.child = spawned?.child ?? spawned;
     const stdout: AsyncIterable<string> | undefined =
         spawned?.stdout ?? (spawned as any)?.output;
@@ -224,7 +249,34 @@ export class TauriSsdDriver implements SsdDriver {
   sendCommand(cmd: SsdInboundCommand): void {
     if (this.stopped || !this.child) return;
     const line = JSON.stringify(cmd) + '\n';
+    // R301: log the inbound command so we can tell whether
+    // the desktop-side user input actually round-trips to
+    // the JVM's System.in. If R301-sdd-stdin lines never
+    // appear the desktop never called sendCommand; if they
+    // appear but the daemon still auto-accepts, the Tauri
+    // shell 2.x Windows stdin pipe is silently dropping
+    // bytes (the most likely remaining root cause).
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[R301-sdd-stdin] action=' + cmd.action + ' textLen=' + ((cmd as any).text?.length ?? 0));
+      const logPath = getSddLogPath();
+      if (logPath) {
+        invoke('append_text_file', {
+          path: logPath,
+          contents: `[R301-sdd-stdin] action=${cmd.action} textLen=${(cmd as any).text?.length ?? 0}\n`,
+        }).catch(() => {});
+      }
+    } catch {}
     void this.child.write(line).catch((e: unknown) => {
+      try {
+        const logPath = getSddLogPath();
+        if (logPath) {
+          invoke('append_text_file', {
+            path: logPath,
+            contents: `[R301-sdd-stdin-failed] action=${cmd.action} err=${(e as Error)?.message ?? String(e)}\n`,
+          }).catch(() => {});
+        }
+      } catch {}
       for (const h of [...this.handlers]) {
         h({ kind: 'error', message: `stdin write failed: ${(e as Error)?.message ?? String(e)}` });
       }
@@ -252,6 +304,19 @@ export class TauriSsdDriver implements SsdDriver {
     if (this.stopped) return;
     this.stopped = true;
     try {
+      // R301: log teardown so the user can distinguish
+      // "driver cleanly quit" from "process crashed" from
+      // "we were already hung waiting on stdin".
+      try {
+        const logPath = getSddLogPath();
+        if (logPath) {
+          const { invoke } = await import('@tauri-apps/api/core');
+          invoke('append_text_file', {
+            path: logPath,
+            contents: `[R301-sdd-stop] reason=user-request pid=${(this.child as any)?.pid ?? '?'}\n`,
+          }).catch(() => {});
+        }
+      } catch {}
       if (this.child) {
         await this.child.kill();
       }
@@ -339,4 +404,21 @@ async function resolveAgainstCwd(path: string, cwd: string): Promise<string> {
   const left = cwd.replace(/[\\/]+$/, '');
   const right = path.replace(/^[\\/]+/, '');
   return `${left}${sep}${right}`;
+}
+
+/** R301: resolve the absolute path of the SDD diagnostic
+ *  log file (`%TEMP%\aethercode-desktop-daemon-info.log`).
+ *  Returns null in tests / when the Tauri runtime isn't
+ *  available — callers should treat null as "best-effort,
+ *  skip the log write". We compute this on every call
+ *  rather than caching, since `tempDir()` is a single
+ *  syscall and the result is cheap. */
+async function getSddLogPath(): Promise<string | null> {
+  try {
+    const tdir = await (await import('@tauri-apps/api/path')).tempDir();
+    if (!tdir) return null;
+    return `${tdir}\\aethercode-desktop-daemon-info.log`;
+  } catch {
+    return null;
+  }
 }
