@@ -10,9 +10,27 @@
     "core:webview:default",
     "dialog:default",
     "shell:default",
-    "shell:allow-spawn",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "java",
+          "cmd": "java",
+          "args": true
+        }
+      ]
+    },
     "shell:allow-stdin-write",
     "shell:allow-kill",
-    "shell:allow-execute"
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "java",
+          "cmd": "java",
+          "args": true
+        }
+      ]
+    }
   ]
 }

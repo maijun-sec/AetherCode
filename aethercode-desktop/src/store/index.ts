@@ -702,6 +702,36 @@ function friendlySddSpawnError(raw: string, jarPath: string, cwd: string, slug: 
       '如果已经是最新 build 还报这个错，请贴 `%TEMP%\\aethercode-desktop-daemon-info.log` 末尾的 `[R303-sdd-spawn-failed]` 行给我定位。',
     ].join('\n');
   }
+  // 1b. Scope — ACL is granted but `java` is not in the
+  //     shell-plugin's allow-list. Tauri's shell plugin
+  //     requires BOTH the `shell:allow-spawn` permission
+  //     AND a scope entry that names the program. The
+  //     capability file currently lists:
+  //       { "identifier": "shell:allow-spawn",
+  //         "allow": [{ "name": "java", "cmd": "java", "args": true }] }
+  //     If you see this error, the capability file is
+  //     missing the scope object or the build hasn't
+  //     shipped the latest default.json yet.
+  if (/configured shell scope|program not allowed/i.test(raw)) {
+    return [
+      '📐 **SDD 子进程无法启动 — shell scope 未配置**',
+      '',
+      `Tauri 2.x shell 插件需要**两层**才能启动 \`java\`：ACL 权限（\`shell:allow-spawn\`）+ 程序白名单（\`scope\`）。`,
+      '',
+      '当前 desktop 缺第二层：\`java\` 没在 `src-tauri/capabilities/default.json` 的 `shell:allow-spawn.allow` 列表里。',
+      '',
+      '**解法**：从最新 build 重新安装 desktop（`release\\R292\\desktop\\aethercode-desktop.exe`）。这次 build 已把 `shell:allow-spawn` 改成 object 形式：',
+      '',
+      '```json',
+      '{',
+      '  "identifier": "shell:allow-spawn",',
+      '  "allow": [{ "name": "java", "cmd": "java", "args": true }]',
+      '}',
+      '```',
+      '',
+      '如果已经是最新 build 还报这个错，请贴 `%TEMP%\\aethercode-desktop-daemon-info.log` 末尾的 `[R304-sdd-spawn-failed]` 行给我定位（说明 build 跟源代码不同步，或 jar 用的不是 `java` 而是别的可执行名）。',
+    ].join('\n');
+  }
   // 2. Java missing
   if (/ENOENT|No such file or directory/i.test(raw) && /java/i.test(raw)) {
     return [
@@ -6262,7 +6292,7 @@ export const useStore = create<AppState>((set, get) => {
         const tdir = (await import('@tauri-apps/api/path')).tempDir();
         if (tdir) {
           const logPath = `${tdir}\\aethercode-desktop-daemon-info.log`;
-          const line = `[R303-sdd-spawn-failed] slug=${featureSlug} friendly="${friendly.replace(/\n/g, ' ').slice(0, 200)}" raw=${raw.replace(/\n/g, ' ').slice(0, 200)}\n`;
+          const line = `[R304-sdd-spawn-failed] slug=${featureSlug} friendly="${friendly.replace(/\n/g, ' ').slice(0, 200)}" raw=${raw.replace(/\n/g, ' ').slice(0, 200)}\n`;
           await invoke('append_text_file', { path: logPath, contents: line }).catch(() => {});
         }
       } catch {}

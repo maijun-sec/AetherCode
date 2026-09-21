@@ -59,23 +59,55 @@ function readSrc(rel: string): string {
   return readFileSync(join(root, rel), 'utf-8');
 }
 
-describe('R303: Tauri shell ACL for TauriSsdDriver + friendly spawn-error translation', () => {
+describe('R303 + R304: Tauri shell ACL + scope for TauriSsdDriver + friendly spawn-error translation', () => {
   const capabilities = JSON.parse(readSrc('src-tauri/capabilities/default.json'));
   const storeSrc = readSrc('src/store/index.ts');
 
-  it('capabilities/default.json grants shell:allow-spawn for TauriSsdDriver', () => {
+  it('capabilities/default.json grants shell:default + shell:allow-spawn (R303 ACL)', () => {
     expect(Array.isArray(capabilities.permissions), 'permissions must be an array').toBe(true);
     expect(capabilities.permissions).toContain('shell:default');
-    expect(capabilities.permissions).toContain('shell:allow-spawn');
+    // R304: shell:allow-spawn is now an OBJECT with scope, not a string.
+    // Find the object entry.
+    const spawnEntry = capabilities.permissions.find(
+      (p: any) => typeof p === 'object' && p?.identifier === 'shell:allow-spawn',
+    );
+    expect(spawnEntry, 'shell:allow-spawn must be an object entry (not a bare string)').toBeDefined();
+    expect(Array.isArray(spawnEntry.allow)).toBe(true);
   });
 
-  it('capabilities/default.json grants shell:allow-stdin-write for per-phase accept/revise', () => {
+  it('capabilities/default.json R304 scope: shell:allow-spawn.allow whitelists `java`', () => {
+    const spawnEntry = capabilities.permissions.find(
+      (p: any) => typeof p === 'object' && p?.identifier === 'shell:allow-spawn',
+    );
+    expect(spawnEntry).toBeDefined();
+    const javaEntry = spawnEntry.allow.find(
+      (e: any) => e?.name === 'java' && e?.cmd === 'java',
+    );
+    expect(javaEntry, 'scope must include { name: "java", cmd: "java" }').toBeDefined();
+    // args:true means any argument list is allowed (TauriSsdDriver
+    // passes dynamic args like -Xmx4g, -jar, jarPath, feature,
+    // intent, --interactive, --cwd, cwdPath).
+    expect(javaEntry.args === true || Array.isArray(javaEntry.args)).toBe(true);
+  });
+
+  it('capabilities/default.json grants shell:allow-stdin-write + shell:allow-kill', () => {
     expect(capabilities.permissions).toContain('shell:allow-stdin-write');
+    expect(capabilities.permissions).toContain('shell:allow-kill');
   });
 
-  it('capabilities/default.json grants shell:allow-kill + shell:allow-execute', () => {
-    expect(capabilities.permissions).toContain('shell:allow-kill');
-    expect(capabilities.permissions).toContain('shell:allow-execute');
+  it('capabilities/default.json R304: shell:allow-execute also has scope for `java`', () => {
+    // Defensive — even though TauriSsdDriver currently uses
+    // `Command.spawn()`, the alternate `Command.execute()` API
+    // shares the same scope registry. Scope it now so future
+    // drivers don't hit the same "program not allowed" error.
+    const execEntry = capabilities.permissions.find(
+      (p: any) => typeof p === 'object' && p?.identifier === 'shell:allow-execute',
+    );
+    expect(execEntry, 'shell:allow-execute must be an object entry').toBeDefined();
+    const javaEntry = execEntry.allow.find(
+      (e: any) => e?.name === 'java' && e?.cmd === 'java',
+    );
+    expect(javaEntry, 'execute scope must include { name: "java", cmd: "java" }').toBeDefined();
   });
 
   it('src/store/index.ts defines a friendlySddSpawnError translator', () => {
@@ -90,26 +122,43 @@ describe('R303: Tauri shell ACL for TauriSsdDriver + friendly spawn-error transl
     // "not allowed by ACL" message after R303 ships.
     const fnBlock = storeSrc.slice(
       storeSrc.indexOf('function friendlySddSpawnError'),
-      storeSrc.indexOf('function friendlySddSpawnError') + 4000,
+      storeSrc.indexOf('function friendlySddSpawnError') + 5500,
     );
     expect(fnBlock).toMatch(/not allowed by ACL/i);
     expect(fnBlock).toMatch(/ENOENT|No such file or directory/i);
     expect(fnBlock).toMatch(/NEEDS_CWD/i);
   });
 
-  it('startSsdFlow catch handler calls friendlySddSpawnError + logs R303-sdd-spawn-failed', () => {
-    // The R303 catch block must:
+  it('R304: friendlySddSpawnError also handles shell-scope rejection', () => {
+    // The R304 scope case: user fixed by re-installing the
+    // R303 build but gets a different "program not allowed on
+    // the configured shell scope" error because the
+    // capability file needs the scope object too. The
+    // translator must point the user at R304 in that case.
+    const fnBlock = storeSrc.slice(
+      storeSrc.indexOf('function friendlySddSpawnError'),
+      storeSrc.indexOf('function friendlySddSpawnError') + 5500,
+    );
+    expect(fnBlock).toMatch(/configured shell scope|program not allowed/i);
+    expect(fnBlock).toMatch(/R304/);
+    expect(fnBlock).toMatch(/scope/i);
+  });
+
+  it('startSsdFlow catch handler calls friendlySddSpawnError + logs R304-sdd-spawn-failed', () => {
+    // The R303/R304 catch block must:
     //   1. Build a `friendly` string via the translator
     //   2. Append a <details> Raw error block
     //   3. Log to %TEMP%\aethercode-desktop-daemon-info.log
-    //      with the [R303-sdd-spawn-failed] prefix
+    //      with the [R304-sdd-spawn-failed] prefix (R304
+    //      supersedes R303's prefix to reflect the scope
+    //      case addition)
     const catchMarker = 'Promise.resolve(driver.start()).catch(async (err: unknown) => {';
     const catchIdx = storeSrc.indexOf(catchMarker);
     expect(catchIdx, 'startSsdFlow catch handler must exist').toBeGreaterThan(0);
     const catchBlock = storeSrc.slice(catchIdx, catchIdx + 3000);
     expect(catchBlock).toContain('friendlySddSpawnError(');
     expect(catchBlock).toContain('<details>');
-    expect(catchBlock).toContain('R303-sdd-spawn-failed');
+    expect(catchBlock).toMatch(/R30[34]-sdd-spawn-failed/);
     expect(catchBlock).toContain('append_text_file');
   });
 
