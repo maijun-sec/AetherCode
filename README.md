@@ -21,6 +21,7 @@ AetherCode 是一个**多 surface 的 AI agent 平台**。
 | **MCP 协议桥** | 4 种 transport (stdio / socket / SSE / WebSocket) + diff-based hot reload + OAuth + HealthCheck | 配 `mcp.json` 即可接入 |
 | **YAML Workflow 引擎** | 8 步流水线 (Loader → Validator → SkillComposer → VariableSubstitution → ...) + 6 个内置 workflow | `tdd-feature` / `code-review` / `migrate-deps` 等 |
 | **Skill 系统** | 5 个内置 + Markdown + frontmatter 格式,激活时注入 system prompt | `/agents` 选 |
+| **SDD 工作流** | 8 阶段规格化开发 (constitution→specify→clarify→plan→analyze→tasks→implement→converge),复用 [github/spec-kit](https://github.com/github/spec-kit) 的阶段定义 + markdown 模板 | `aethercode sdd <feature> "<intent>"` 或 Desktop 📐 按钮 |
 | **Hook 编排** | 3 阶段 (pre / deny / post) + 7 个内置 hook (BashSafety / PathSanitizer / Redaction / Truncation ...) | 纯函数,可注册可替换 |
 | **A2A 协议 (v0.3)** | 4 层架构 + 4 个 JSON-RPC method + 6 task state + 手工 JSON-RPC 编码 | 跨 agent 通信,带 SSE streaming |
 | **Bank 跨设备同步** | HTTPS + TLS + Bearer Token, USER/PROJECT scope 跨设备共享 | `~/.aethercode/bank/` |

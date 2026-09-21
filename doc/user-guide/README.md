@@ -14,6 +14,7 @@
 | [`Memory-能力与使用指南.md`](./Memory-能力与使用指南.md) | Memory 系统的 7 类分层、4 阶编排、跨进程 RPC 怎么用 | 22 KB | 截至 R233 (2026-09-07) |
 | [`agents.md`](./agents.md) | 怎么写自定义 agent + per-agent model (R109-3) | ~7 KB | v0.2.x |
 | [`troubleshooting.md`](./troubleshooting.md) | 12 个常见问题 + 修复方法 (provider timeout / loop detected / SmartScreen / 等) | ~10 KB | v0.2.x |
+| [`SDD.md`](./SDD.md) | Spec-Driven Development — 8 阶段工作流、Spec Kit 上游模板怎么用、产物路径 | ~9 KB | R306 |
 
 > **R250+7 doc 重构**: 原 `doc/GETTING-STARTED.md` / `doc/AGENTS.md` / `doc/TROUBLESHOOTING.md` 整合到这里,内容保留原文,顶部加 "整合自" 标注。
 
@@ -28,6 +29,7 @@
 | 跑 Desktop / TUI,把每个能力点勾一遍 | `使用说明-Desktop与TUI能力测试清单.md` |
 | 写自定义 agent (per-persona system prompt) | `agents.md` |
 | 遇到 "no current provider" / loop / SmartScreen 等问题 | `troubleshooting.md` |
+| 跑 SDD 8 阶段工作流(spec-kit 模板) | [`SDD.md`](./SDD.md) |
 | 看 5 分钟 SSD demo | → [`../tech-docs/ssd-demo.md`](../tech-docs/ssd-demo.md) |
 | 看完整 JSON-RPC API | → [`../tech-docs/api.md`](../tech-docs/api.md) |
 | 看 memory 系统的实现原理 | → [`../tech-docs/memory-system.md`](../tech-docs/memory-system.md) |
