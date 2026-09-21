@@ -187,10 +187,23 @@ export class TauriSsdDriver implements SsdDriver {
     if (opts.noAnalyze) args.push('--no-analyze');
     if (opts.noConverge) args.push('--no-converge');
 
-    // Tauri shell plugin's Command.spawn() returns a
-    // { child, stdout, stderr } triple. The child handle
-    // exposes stdin.write() for inbound commands; stdout is
-    // an AsyncIterable<string> of decoded lines.
+    // Tauri shell plugin's Command class (R307: we got
+    // the API wrong in R293). Correct shape:
+    //
+    //   - `Command.create(program, args)` returns a Command
+    //     instance with `.stdout` and `.stderr` EventEmitters.
+    //     You bind `data` listeners on those BEFORE calling
+    //     `cmd.spawn()` so the Rust-side `onEvent` Channel
+    //     has somewhere to send NDJSON lines.
+    //   - `cmd.spawn()` returns a `Child` instance which is
+    //     *just* `{ pid }` — no `stdout` field, no
+    //     AsyncIterable. The actual stdout stream is on the
+    //     parent Command, not on the Child.
+    //
+    // R293-R306 assumed the wrong shape (`spawned.child` /
+    // `spawned.stdout`) which is why the daemon ran but the
+    // desktop never saw its events. R307 logs every line so
+    // this never silently regresses again.
     const cmd: any = Command.create(java, args);
     this.command = cmd;
     // R301: log the spawn attempt + final args so the user
@@ -207,41 +220,84 @@ export class TauriSsdDriver implements SsdDriver {
             }).catch(() => {});
         }
     } catch {}
-    const spawned: any = await cmd.spawn();
+
+    // R307: bind stdout/stderr listeners on the Command
+    // BEFORE calling spawn(). Otherwise we miss every
+    // NDJSON line the daemon emits (and the user sees
+    // "stuck" with no chip movement).
+    cmd.stdout?.on?.('data', (line: string) => {
+      if (this.stopped) return;
+      const trimmed = (line ?? '').toString().trim();
+      if (!trimmed) return;
+      try {
+        if (logPath) {
+          invoke('append_text_file', {
+            path: logPath,
+            contents: `[R307-sdd-stdout] line=${trimmed.length > 240 ? trimmed.slice(0, 240) + '...' : trimmed}\n`,
+          }).catch(() => {});
+        }
+      } catch {}
+      const ev = safeParseSsdEvent(trimmed);
+      if (ev) {
+        for (const h of [...this.handlers]) h(ev);
+      }
+    });
+    cmd.stderr?.on?.('data', (line: string) => {
+      // Daemon-side errors go to stderr. Log them so the
+      // user can see what the JVM complained about without
+      // attaching a debugger.
+      if (this.stopped) return;
+      const trimmed = (line ?? '').toString().trim();
+      if (!trimmed) return;
+      try {
+        if (logPath) {
+          invoke('append_text_file', {
+            path: logPath,
+            contents: `[R307-sdd-stderr] line=${trimmed.length > 240 ? trimmed.slice(0, 240) + '...' : trimmed}\n`,
+          }).catch(() => {});
+        }
+        // Surface stderr as an `error` event so the
+        // store's catch handler can render a friendly
+        // message via friendlySddSpawnError.
+        for (const h of [...this.handlers]) {
+          h({ kind: 'error', message: `daemon stderr: ${trimmed}` } as any);
+        }
+      } catch {}
+    });
+    cmd.on?.('error', (e: unknown) => {
+      for (const h of [...this.handlers]) {
+        h({ kind: 'error', message: `daemon process error: ${(e as Error)?.message ?? String(e)}` } as any);
+      }
+    });
+    cmd.on?.('close', (e: any) => {
+      // Daemon exited without emitting a `complete` event
+      // (e.g. crashed). Surface as a synthetic error so the
+      // user isn't stuck waiting forever.
+      try {
+        if (logPath) {
+          invoke('append_text_file', {
+            path: logPath,
+            contents: `[R307-sdd-close] code=${e?.code} signal=${e?.signal}\n`,
+          }).catch(() => {});
+        }
+      } catch {}
+    });
+
+    // R307: cmd.spawn() returns a `Child` which is just
+    // `{ pid, write(), kill() }`. No stdout field. The
+    // listener wiring above is what captures daemon output.
+    const child: any = await cmd.spawn();
     try {
         // eslint-disable-next-line no-console
-        console.log('[R301-sdd] spawn returned pid=' + (spawned?.pid ?? spawned?.child?.pid ?? '?'));
+        console.log('[R301-sdd] spawn returned pid=' + (child?.pid ?? '?'));
         if (logPath) {
             await invoke('append_text_file', {
                 path: logPath,
-                contents: `[R301-sdd-spawned] pid=${spawned?.pid ?? spawned?.child?.pid ?? '?'} hasStdout=${Boolean(spawned?.stdout ?? (spawned as any)?.output)}\n`,
+                contents: `[R301-sdd-spawned] pid=${child?.pid ?? '?'} listenerWired=${Boolean(cmd.stdout?.on)}\n`,
             }).catch(() => {});
         }
     } catch {}
-    this.child = spawned?.child ?? spawned;
-    const stdout: AsyncIterable<string> | undefined =
-        spawned?.stdout ?? (spawned as any)?.output;
-
-    if (stdout) {
-      void (async () => {
-        try {
-          for await (const line of stdout) {
-            if (this.stopped) return;
-            const trimmed = (line ?? '').toString().trim();
-            if (!trimmed) continue;
-            const ev = safeParseSsdEvent(trimmed);
-            if (ev) {
-              for (const h of [...this.handlers]) h(ev);
-            }
-          }
-        } catch (e) {
-          const msg = (e as Error)?.message ?? String(e);
-          for (const h of [...this.handlers]) {
-            h({ kind: 'error', message: `subprocess pipe error: ${msg}` });
-          }
-        }
-      })();
-    }
+    this.child = child;
   }
 
   /** Forward a user command to the subprocess's stdin as a

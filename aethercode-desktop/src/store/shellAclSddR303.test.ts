@@ -162,6 +162,46 @@ describe('R303 + R304: Tauri shell ACL + scope for TauriSsdDriver + friendly spa
     expect(catchBlock).toContain('append_text_file');
   });
 
+  it('R307: TauriSsdDriver binds cmd.stdout EventEmitter (the API R293-R306 got wrong)', () => {
+    // R307 fix: @tauri-apps/plugin-shell 2.x's `Command`
+    // class has `.stdout` and `.stderr` EventEmitters. You
+    // bind `data` listeners BEFORE calling cmd.spawn() so
+    // the Rust-side `onEvent` Channel has somewhere to send
+    // NDJSON lines. The pre-R307 code read
+    // `spawned.stdout` / `spawned.output` which never
+    // existed — `Child` is just `{ pid, write, kill }`.
+    // The daemon ran but the desktop saw zero events, and
+    // the user was stuck. This test pins the new shape so
+    // future regressions show up immediately.
+    const driverSrc = readSrc('src/components/ssd/tauriSsdDriver.ts');
+    // Wrong API must be gone
+    expect(driverSrc).not.toMatch(/spawned\?\.stdout\s*\?\?/);
+    expect(driverSrc).not.toMatch(/spawned\?\.output/);
+    // Right API must be present
+    expect(driverSrc).toMatch(/cmd\.stdout\?\.on\?\.?\s*\(?\s*['"]data['"]/);
+    expect(driverSrc).toMatch(/cmd\.stderr\?\.on\?\.?\s*\(?\s*['"]data['"]/);
+    // Child is assigned from cmd.spawn() return value
+    // directly (no .child wrapper)
+    expect(driverSrc).toMatch(/const child:\s*any\s*=\s*await\s+cmd\.spawn\(\)/);
+    expect(driverSrc).toMatch(/this\.child\s*=\s*child\b/);
+  });
+
+  it('R307: TauriSsdDriver logs stdout + stderr to daemon-info.log', () => {
+    const driverSrc = readSrc('src/components/ssd/tauriSsdDriver.ts');
+    expect(driverSrc).toContain('[R307-sdd-stdout]');
+    expect(driverSrc).toContain('[R307-sdd-stderr]');
+    expect(driverSrc).toContain('[R307-sdd-close]');
+    // safeParseSsdEvent must be called from within the
+    // cmd.stdout data handler (i.e. AFTER the listener
+    // wiring). The function is also defined at module
+    // scope, so we anchor on the listener block.
+    const listenerBlock = driverSrc.slice(
+      driverSrc.indexOf("cmd.stdout?.on?.('data'"),
+      driverSrc.indexOf("cmd.stdout?.on?.('data'") + 1500,
+    );
+    expect(listenerBlock).toContain('safeParseSsdEvent');
+  });
+
   it('R303 friendly translator mentions R303 capability change in the user message', () => {
     // The user-facing ACL message should point at the
     // build that added the permissions so a confused
