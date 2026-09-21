@@ -3702,12 +3702,39 @@ export const useStore = create<AppState>((set, get) => {
           set({ daemonInfo: info, connectionState: 'connected', isConnected: true, reconnectAttempts: 0 });
           // R298: log the resolved DaemonInfo so we can
           // diagnose "MockSsdDriver (no jar)" symptoms
-          // without attaching a debugger.
-          // eslint-disable-next-line no-console
+          // without attaching a debugger. Console output is
+          // not visible in a packaged Tauri app, so also
+          // append to %TEMP%\aethercode-desktop-daemon-info.log
+          // via the append_text_file Tauri command — survives
+          // App restarts so the user's previous session's
+          // daemonInfo is still observable.
           try {
-            console.log('[R298-sdd] daemonInfo jarPath=' + JSON.stringify(info?.jarPath)
-              + ' cwd=' + JSON.stringify(info?.cwd)
-              + ' port=' + (info as any)?.port);
+            const jarPath = JSON.stringify(info?.jarPath);
+            const cwd = JSON.stringify(info?.cwd);
+            const port = (info as any)?.port;
+            const line = `[R298-sdd] daemonInfo jarPath=${jarPath} cwd=${cwd} port=${port} spawned=${(info as any)?.spawned} @ ${new Date().toISOString()}\n`;
+            // eslint-disable-next-line no-console
+            try { console.log(line.trim()); } catch {}
+            try {
+              const tmpPath = (await import('@tauri-apps/api/path'))
+                .tempDir().catch(() => '');
+              // Normalize: if tempDir() returned an empty
+              // string (path API not loaded), fall back to
+              // a bare filename so the append lands next to
+              // the App's CWD instead of being silently
+              // dropped. The Tauri command's parent check
+              // accepts "." as an existing directory.
+              const logPath = tmpPath && typeof tmpPath === 'string' && (tmpPath as string).length > 0
+                ? `${tmpPath}\\aethercode-desktop-daemon-info.log`
+                : 'aethercode-desktop-daemon-info.log';
+              // Surface the path + result so the user can
+              // find the file even when the call fails.
+              const result = await invoke('append_text_file', { path: logPath, contents: line })
+                .then(() => 'OK').catch((e: any) => 'ERR=' + String(e?.message ?? e));
+              try { console.log('[R298-sdd] log path=', logPath, 'result=', result); } catch {}
+            } catch (e) {
+              try { console.log('[R298-sdd] log write threw:', e); } catch {}
+            }
           } catch {}
           const [state, tools, actions, sessions, projects, tasks, metrics, traces, workflows] = await Promise.all([
             rpc.getState().catch(() => null),
@@ -5784,9 +5811,22 @@ export const useStore = create<AppState>((set, get) => {
       const driverChoice = (jarPath && cwd)
         ? 'TauriSsdDriver'
         : 'MockSsdDriver (dev fallback — daemon jar or cwd missing)';
+      // R298: also append to %TEMP%\aethercode-desktop-daemon-info.log
+      // so the user's "MockSsdDriver (no jar)" symptom can be
+      // diagnosed without a debugger.
       // eslint-disable-next-line no-console
       try {
-        console.log('[R293-sdd] driver choice:', driverChoice, 'jarPath=', jarPath, 'cwd=', cwd);
+        const line = `[R298-sdd-flow] driverChoice=${driverChoice} jarPath=${JSON.stringify(jarPath)} cwd=${JSON.stringify(cwd)} slug=${featureSlug} @ ${new Date().toISOString()}\n`;
+        try { console.log(line.trim()); } catch {}
+        try {
+          const tmpPath = (await import('@tauri-apps/api/path'))
+            .tempDir().catch(() => '');
+          const logPath = tmpPath
+            ? `${tmpPath}\\aethercode-desktop-daemon-info.log`
+            : 'aethercode-desktop-daemon-info.log';
+          await invoke('append_text_file', { path: logPath, contents: line })
+            .catch(() => {});
+        } catch {}
       } catch {}
       let driver: import('../components/ssd/driver').SsdDriver;
       if (jarPath && cwd) {

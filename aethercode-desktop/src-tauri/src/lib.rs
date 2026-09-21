@@ -193,11 +193,55 @@ async fn ensure_daemon(
 
     for &port in DEFAULT_DAEMON_PORTS {
         if is_healthy(port).await {
-            let info = DaemonInfo::from_port(port, false, Path::new("<external>"), Path::new(""));
+            // R298 follow-up. Pre-R298 path set
+            // `jar_path = "<external>"` and `cwd = ""` here,
+            // which left the renderer with an empty
+            // `daemonInfo.jarPath` and `cwd` — the renderer's
+            // `SddPhaseBar` then dropped into the MockSsdDriver
+            // branch and the SDD subprocess never got spawned.
+            // Now: even when attaching to an externally-managed
+            // daemon, populate the resolved jar (so the spawner
+            // knows what to reuse) and the resolved cwd (so the
+            // SDD pipeline writes artefacts under the right
+            // directory). `spawned = false` flags that this
+            // App didn't launch the JVM — it's still safe to
+            // talk to it. We use the App's resolved cwd, not the
+            // daemon's internal cwd, because the desktop is
+            // the one driving the user's project and the
+            // attach path is for "I started and you happen to
+            // be alive on a default port already".
+            let resolved_jar = find_jar_path(&app)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            let cwd_for_info = {
+                let explicit = state.cwd.lock().await.clone();
+                if let Some(c) = explicit { c }
+                else {
+                    state.persisted_cwd.lock().await.clone()
+                        .unwrap_or_else(|| PathBuf::from(""))
+                }
+            };
+            let info = DaemonInfo::from_port(
+                port, false,
+                Path::new(&resolved_jar),
+                &cwd_for_info,
+            );
             let tx = open_ws(&info.ws_url, app.clone(), state.swapping.clone()).await?;
             *ws_guard = Some(tx);
             *daemon_guard = Some(info.clone());
             *HANDLE.lock().await = Some(info.clone());
+            // R298: log the attach so the user can verify the
+            // App attached to a known port AND has a real jar
+            // path to spawn SDD from.
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true).append(true).open(
+                    std::env::temp_dir().join("aethercode-desktop-daemon-info.log"))
+            {
+                use std::io::Write;
+                let _ = writeln!(f,
+                    "[R298-attach] external daemon on port {}: jar={} cwd={}",
+                    port, resolved_jar, cwd_for_info.display());
+            }
             return Ok(info);
         }
     }
@@ -211,6 +255,19 @@ async fn ensure_daemon(
         )
     })?;
     eprintln!("[R81] jar: {}", jar.display());
+    // R298 follow-up: log the resolved jar + cwd into the
+    // same rolling log the renderer uses, so a packaged App
+    // that reports "MockSsdDriver (no jar)" can be diagnosed
+    // without a debugger. Renders a clean diff between
+    // "desktop never found the jar" and "desktop found the
+    // jar but the renderer never received it".
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true).append(true).open(
+            std::env::temp_dir().join("aethercode-desktop-daemon-info.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[R298-ensure] jar={} (portable)", jar.display());
+    }
     eprintln!(
         "[R172] daemon JVM args: {:?}{}",
         daemon_jvm_args(),
@@ -824,6 +881,33 @@ async fn write_text_file(path: String, contents: String) -> Result<(), String> {
         }
     }
     std::fs::write(&p, contents).map_err(|e| format!("write failed: {}", e))
+}
+
+/// R298: append (don't truncate) a UTF-8 string to a file. Used
+/// by the renderer to mirror the desktop's runtime observations
+/// (daemonInfo at every reconnect, SDD spawn decisions, etc.)
+/// into a single rolling log in %TEMP% so the user-visible
+/// "MockSsdDriver (no jar)" symptom can be diagnosed without
+/// attaching a debugger or opening the WebView DevTools (which
+/// isn't enabled in release builds). The file persists across
+/// App restarts and is read-only from outside the App — we
+/// intentionally do not surface it in the UI to avoid leaking
+/// internal state. See `aethercode-desktop-daemon-info.log`
+/// in %TEMP% for the most recent daemonInfo snapshot.
+#[tauri::command]
+async fn append_text_file(path: String, contents: String) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!("parent directory does not exist: {}", parent.display()));
+        }
+    }
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true).append(true).open(&p)
+        .map_err(|e| format!("append open failed: {}", e))?;
+    f.write_all(contents.as_bytes())
+        .map_err(|e| format!("append write failed: {}", e))
 }
 
 /// R287: read a UTF-8 text file by absolute path.
@@ -1577,7 +1661,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ensure_daemon, rpc_call, get_daemon_info, get_app_paths, set_cwd, get_cwd, disconnect,
             pre_warm_daemon, swap_to_pre_warm, discard_pre_warm,
-            write_text_file, read_text_file,
+            write_text_file, read_text_file, append_text_file,
             // bank surface from Rust over HTTP
             bank_stats, bank_recall, bank_recall_all_kinds
         ])
