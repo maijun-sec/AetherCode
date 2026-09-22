@@ -48,7 +48,9 @@ describe('R322 SddPhaseBar lettered ABCDE choices', () => {
   });
 
   it('skip button only renders for optional phases', () => {
-    expect(bar).toMatch(/\{waitingPhase\.optional\s*&&\s*\([\s\S]*?data-sdd-choice="C"[\s\S]*?\)\}/);
+    // R323: skip button now also checks running phase's optional
+    // flag (since we removed the waitingPhase guard).
+    expect(bar).toMatch(/waitingPhase\?\.optional\s*\?\?\s*sddPhases\.find\(\(p\)\s*=>\s*p\.state\s*===\s*'running'\)\?\.optional/);
   });
 
   it('rerun button calls sendSsdCommand("rerun")', () => {
@@ -100,5 +102,20 @@ describe('R322 CSS: letter badges + grid layout', () => {
   it('CSS defines .sdd-btn-letter badge style', () => {
     expect(css).toMatch(/\.sdd-btn-letter\s*\{/);
     expect(css).toMatch(/font-family:\s*ui-monospace/);
+  });
+});
+
+describe('R323 action row always renders when sddActive', () => {
+  /**
+   * R323 regression: in the previous round the action row was
+   * gated behind `waitingPhase &&` — meaning the user saw NO
+   * buttons at all if the chip state machine failed to flip a
+   * phase to 'pending-confirm'. The state machine was the bug;
+   * we fix it by always rendering the buttons whenever an SDD
+   * run is active. The buttons operate on `sddCurrentPhase`
+   * regardless of the chip's per-phase state.
+   */
+  it('source: SddPhaseBar renders action row when sddActive=true (no waitingPhase required)', () => {
+    expect(bar).toMatch(/\{sddActive\s*&&\s*\(/);
   });
 });

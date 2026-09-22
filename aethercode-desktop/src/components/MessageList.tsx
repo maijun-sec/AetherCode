@@ -1081,6 +1081,9 @@ export function MessageList() {
       const path = pathMatch ? pathMatch[1].trim() : undefined;
       // Apply the phase update.
       useStore.getState().sddApplyPhaseUpdate(phaseId, state, path);
+      try {
+        console.log('[SDD scan]', { phaseId, state, path, allPhases: useStore.getState().sddPhases.map((p) => ({ id: p.id, state: p.state })) });
+      } catch {}
       break;
     }
   }, [messages]);

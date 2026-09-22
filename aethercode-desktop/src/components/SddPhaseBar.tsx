@@ -201,20 +201,36 @@ export function SddPhaseBar() {
         })}
       </ol>
 
-      {waitingPhase && (
+      {sddActive && (
         <div
           className="sdd-phase-actions"
           data-testid="sdd-phase-actions"
-          data-waiting-phase={waitingPhase.id}
-          data-waiting-state={waitingPhase.state}
+          data-waiting-phase={waitingPhase?.id ?? sddPhases.find((p) => p.state === 'running')?.id ?? ''}
+          data-waiting-state={waitingPhase?.state ?? (sddPhases.find((p) => p.state === 'running')?.state ?? 'idle')}
         >
           <div className="sdd-phase-actions-label">
-            <strong>{waitingPhase.title}</strong>
+            <strong>
+              {waitingPhase
+                ? waitingPhase.title
+                : (sddPhases.find((p) => p.state === 'running')?.title ?? 'SDD 流程')}
+              {' · '}
+              {waitingPhase
+                ? '⏸ 待确认'
+                : (sddPhases.find((p) => p.state === 'running')
+                    ? '◐ 进行中'
+                    : '○ 空闲')}
+            </strong>
             <span className="sdd-phase-actions-hint">
-              {'LLM 已生成该阶段的草案，请确认 / 修改 / 跳过（agent 在 chat 里等你回复）'}
+              {waitingPhase
+                ? 'LLM 已生成该阶段的草案，请选择 ABCDE（agent 在 chat 里等你回复）'
+                : (sddPhases.find((p) => p.state === 'running')
+                    ? 'agent 正在跑这一阶段；可在跑完后点 A/B/C/D/E 或输入其他意见'
+                    : 'SDD 流程已就绪 — 可点 D 重跑当前阶段 / E 暂停')}
             </span>
-            {waitingPhase.path && (
-              <code className="sdd-phase-actions-path" data-testid={`sdd-phase-path-${waitingPhase.id}`}>{waitingPhase.path}</code>
+            {(waitingPhase?.path ?? sddPhases.find((p) => p.state === 'running')?.path) && (
+              <code className="sdd-phase-actions-path" data-testid="sdd-phase-actions-path">
+                {waitingPhase?.path ?? sddPhases.find((p) => p.state === 'running')?.path}
+              </code>
             )}
           </div>
 
@@ -228,7 +244,14 @@ export function SddPhaseBar() {
            *    D — 🔁 重新生成当前阶段 (rerun)
            *    E — ✋ 暂停（agent 不动，等用户进一步指示） (pause)
            *  Below: free-text input ("其他") wired to sendSsdCommand
-           *  as a generic modify command. */}
+           *  as a generic modify command.
+           *
+           *  R323: drop the `waitingPhase` guard. The buttons
+           *  should always be visible when an SDD run is active
+           *  so the user has a clear affordance regardless of
+           *  the chip state machine. The state machine still
+           *  matters for the chip colours / glyphs, but the
+           *  buttons are the user's primary interface. */}
           <div className="sdd-phase-actions-buttons" data-testid="sdd-phase-actions-buttons">
             <button
               type="button"
@@ -261,7 +284,7 @@ export function SddPhaseBar() {
               <span className="sdd-btn-letter">B</span>
               <span className="sdd-btn-label">✏️ 修改</span>
             </button>
-            {waitingPhase.optional && (
+            {(waitingPhase?.optional ?? sddPhases.find((p) => p.state === 'running')?.optional) && (
               <button
                 type="button"
                 className="sdd-btn sdd-btn-ghost"
