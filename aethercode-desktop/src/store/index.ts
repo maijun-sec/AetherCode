@@ -6064,10 +6064,25 @@ export const useStore = create<AppState>((set, get) => {
           id: newId('system'),
           role: 'system' as const,
           content: (driverChoice === 'TauriSsdDriver')
-            ? `📐 spawning daemon subprocess (interactive)\n\n\`\`\`\njava -jar ${jarPath} sdd ${featureSlug} "${intent}" --interactive --cwd ${cwd}\n\`\`\`\n\n(R299: \`--interactive\` mode — 每个 phase 完成后 daemon 会等用户在 SDD 面板里点 ✅ / ✏️ / ⏭️ 才能进入下一阶段)`
-            : `📐 **dev fallback (MockSsdDriver)**\n\ndaemon jar or cwd missing — running canned 14-event sequence.\n\n\`\`\`\njarPath=${jarPath || '(empty)'}\ncwd=${cwd || '(empty)'}\n\`\`\`\n\nThis means the SDD phases will flip idle → done in ~4 s with no LLM call. To wire up the real daemon:\n  - ensure \`daemonInfo\` is set in the store (Desktop's main daemon has started)\n  - ensure the Rust side populated \`jarPath\` (aethercode.jar sits next to aethercode-desktop.exe, or in the install directory)\n  - ensure \`cwd\` is set (pick a working directory on first launch)`,
+            ? `🚀 **启动 SDD 流程**\n\n模式：\`interactive\` — 每个 phase 完成后 daemon 会等用户在 SDD 面板里点 ✅ / ✏️ / ⏭️ 才能进入下一阶段\n\n- slug：\`${featureSlug}\`\n- 工作目录：\`${cwd}\`\n- 意图：${intent.length > 80 ? intent.slice(0, 80) + '…' : intent}\n\n(R299: 桌面默认 \`--interactive\` 模式)`
+            : `📐 **dev fallback (MockSsdDriver)**\n\ndaemon jar 或 cwd 缺失 — 跑内置 14-event 演示流（无 LLM 调用，~4s 跑完 8 个 phase）。\n\nTo wire up the real daemon:\n- ensure \`daemonInfo\` is set in the store (Desktop 主 daemon 已启动？)\n- ensure the Rust side populated \`jarPath\` (aethercode.jar 在 desktop 同目录？)\n- ensure \`cwd\` is set (首启选个 working directory)`,
           timestamp: Date.now(),
-          metadata: { kind: 'sdd-driver-choice', driver: driverChoice },
+          // R311: stash the full subprocess command line in
+          // metadata so a future "📋 复制完整命令" affordance
+          // can pull it out without re-deriving. The visible
+          // body stays generic (mode / slug / cwd / intent)
+          // so the user isn't shown the install path.
+          metadata: {
+            kind: 'sdd-driver-choice',
+            driver: driverChoice,
+            jarPath,
+            featureSlug,
+            cwd,
+            intent,
+            commandLine: driverChoice === 'TauriSsdDriver'
+              ? `java -jar ${jarPath} sdd ${featureSlug} "${intent}" --interactive --cwd ${cwd}`
+              : null,
+          },
         }],
       }));
 
