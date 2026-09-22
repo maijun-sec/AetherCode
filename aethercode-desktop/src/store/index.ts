@@ -105,6 +105,46 @@ function outputFileNameFor(id: SddPhaseId): string {
 // reads this and loads the sdd skill; the sdd skill sees
 // the phase number + inputFiles and runs the matching
 // phase reference.
+// R320: detect the dominant script of an intent so the
+// agent writes artifacts (constitution.md / spec.md /
+// design.md / tasks.md) in the user's language instead
+// of defaulting to English. Heuristic: any CJK Unified
+// Ideograph (一-鿿, U+4E00-U+9FFF) → 'zh'; CJK symbols /
+// hiragana / katakana → 'ja'; Hangul → 'ko'; Cyrillic →
+// 'ru'; otherwise 'en'. We default to 'en' when the intent
+// is too short to decide.
+function detectIntentLanguage(intent: string): 'zh' | 'en' | 'ja' | 'ko' | 'ru' | 'other' {
+  if (!intent) return 'en';
+  // CJK Unified Ideographs (most Chinese chars).
+  if (/[\u4E00-\u9FFF]/.test(intent)) return 'zh';
+  // Hiragana / Katakana / CJK Symbols and Punctuation.
+  if (/[\u3040-\u30FF]/.test(intent)) return 'ja';
+  // Hangul syllables.
+  if (/[\uAC00-\uD7AF]/.test(intent)) return 'ko';
+  // Cyrillic.
+  if (/[\u0400-\u04FF]/.test(intent)) return 'ru';
+  return 'en';
+}
+
+function languageHintBlock(lang: 'zh' | 'en' | 'ja' | 'ko' | 'ru' | 'other'): string {
+  if (lang === 'zh') {
+    return '请用**中文**撰写所有 spec / design / tasks / dev.log / convergence.json 中的描述性内容。代码标识符、文件路径、phase 名保持英文。pause message 也用中文。';
+  }
+  if (lang === 'ja') {
+    return 'Please write all artifacts (constitution.md / spec.md / design.md / tasks.md / dev.log / convergence.json) in **Japanese**. Code identifiers and file paths stay in English. Pause message in Japanese.';
+  }
+  if (lang === 'ko') {
+    return 'Please write all artifacts in **Korean**. Code identifiers and file paths stay in English. Pause message in Korean.';
+  }
+  if (lang === 'ru') {
+    return 'Please write all artifacts in **Russian**. Code identifiers and file paths stay in English. Pause message in Russian.';
+  }
+  if (lang === 'other') {
+    return 'Please write all artifacts in the user\'s language (mirror the user\'s prompt language). Code identifiers and file paths stay in English.';
+  }
+  return 'Please write all artifacts (constitution.md / spec.md / design.md / tasks.md / dev.log / convergence.json) in **English**. Pause message in English.';
+}
+
 // SDD skill bundle location on disk. The desktop reads the
 // files directly via Tauri `read_text_file` and inlines
 // their content into the chat prompt so the agent doesn't
@@ -133,10 +173,10 @@ const HIDDEN_SDD_CLOSE = '<!-- hidden-sdd:end -->';
 // the bundle into the prompt itself so the agent has the
 // full context without doing a file_search round-trip.
 //
-// Returns `{ visible, hidden, full }` so the caller can:
+// Returns `{ full, visible }` so the caller can:
 //   - send `full` to the agent as the user message
-//   - render `visible` (or `full` collapsed by the renderer)
-//     in the chat list
+//   - render `visible` in the chat list (renderer collapses
+//     the hidden-sdd block via MessageList.collapseHiddenSsd)
 async function buildPhasePrompt(opts: {
   phase: number;
   slug: string;
@@ -146,6 +186,12 @@ async function buildPhasePrompt(opts: {
   cwd: string;
   feedback?: string;
 }): Promise<{ full: string; visible: string }> {
+  // R320: detect intent language so artifacts match the
+  // user's prompt. Heuristic is CJK / Hangul / Cyrillic
+  // detection; falls back to English. Inject the hint
+  // into the hidden block (so the agent sees it) but not
+  // the visible block (so the user isn't drowned).
+  const lang = detectIntentLanguage(opts.intent);
   const phaseId = phaseIdFor(opts.phase);
   const outputFile = outputFileNameFor(phaseId);
   const isOptional = SDD_OPTIONAL.has(phaseId);
@@ -215,13 +261,17 @@ ${actionHint}
 \`\`\`
 
 **不要**一次跑多个 phase。**不要**写源代码（除 phase 7 implement 外）。**不要**用 Plan Panel 跳过阶段。
+
+## Language
+${languageHintBlock(lang)}
 ${HIDDEN_SDD_CLOSE}
 
 ## Original user intent
 ${opts.intent}`;
+  const langLabel = lang === 'zh' ? '中文' : lang === 'ja' ? '日本語' : lang === 'ko' ? '한국어' : lang === 'ru' ? 'Русский' : 'English';
   const visibleBlock = `[sdd-task: ${opts.slug}, phase: ${opts.phase}, action: ${opts.action}]
 
-📐 **SDD 模式** · slug: \`${opts.slug}\` · phase ${opts.phase}/${SDD_PHASE_IDS.length}
+📐 **SDD 模式** · slug: \`${opts.slug}\` · phase ${opts.phase}/${SDD_PHASE_IDS.length} · 产物语言: ${langLabel}
 
 ## User intent
 ${opts.intent}`;

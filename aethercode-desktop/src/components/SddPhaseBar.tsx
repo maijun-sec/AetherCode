@@ -33,6 +33,7 @@ const STATE_GLYPH: Record<string, string> = {
   'idle':             '○',
   'running':          '◐',
   'pending-confirm':  '⏸',
+  'pending-accept':   '⏸', // R320 alias (kept for any in-flight chips)
   'done':             '✓',
   'skipped':          '↷',
   'failed':           '✕',
@@ -42,6 +43,7 @@ const STATE_LABEL: Record<string, string> = {
   'idle':             '待开始',
   'running':          '进行中',
   'pending-confirm':  '待确认',
+  'pending-accept':   '待确认', // R320 alias
   'done':             '已完成',
   'skipped':          '已跳过',
   'failed':           '失败',

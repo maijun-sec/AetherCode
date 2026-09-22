@@ -1043,13 +1043,21 @@ export function MessageList() {
       const m = messages[i];
       if (m.role !== 'assistant' && m.role !== 'system') continue;
       const content = m.content ?? '';
-      // Pattern 1: ✅ 第 N 阶段完成 — <中文 title>
+      // Pattern 1: ✅ 第 N 阶段完成 — <中文 title> → pending-confirm
+      //            (R320: was 'done' — skipped the user-confirm
+      //             gate, so the SddPhaseBar never rendered
+      //             ✅/✏️/⏭️ buttons. Now we land on
+      //             'pending-confirm' and the buttons appear.
+      //             sendSsdCommand('approve') flips to 'done'
+      //             when the user accepts.)
       // Pattern 2: ⏭️ 第 N 阶段 — <中文 title>（可选）— 已跳过
-      // Pattern 3: 🎉 SDD 流程完成
+      //            → skipped (the user already told the agent
+      //              to skip — no confirm gate needed.)
+      // Pattern 3: 🎉 SDD 流程完成 → setSddEnabled(false)
       const doneRe = /第\s*(\d+)\s*阶段完成\s*—\s*([^\n\r]+)/;
       const skipRe = /第\s*(\d+)\s*阶段\s*—\s*([^\n\r]+?)\s*（可选）\s*—\s*已跳过/;
       let matched: RegExpMatchArray | null = content.match(doneRe);
-      let state: 'done' | 'skipped' = 'done';
+      let state: 'pending-confirm' | 'skipped' = 'pending-confirm';
       if (!matched) {
         matched = content.match(skipRe);
         if (matched) state = 'skipped';
@@ -1073,11 +1081,6 @@ export function MessageList() {
       const path = pathMatch ? pathMatch[1].trim() : undefined;
       // Apply the phase update.
       useStore.getState().sddApplyPhaseUpdate(phaseId, state, path);
-      // Also mark the previous phase (if any) as running→done.
-      // Actually: when phase N completes, phase N-1 was already
-      // done (since the agent goes serially). Just transitioning
-      // phase N to done is enough; the previous phases are
-      // already in done state from earlier messages.
       break;
     }
   }, [messages]);

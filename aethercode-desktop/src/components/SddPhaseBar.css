@@ -99,7 +99,7 @@
   border-style: dashed;
 }
 .sdd-phase-item.sdd-phase-optional.sdd-phase-running,
-.sdd-phase-item.sdd-phase-optional.sdd-phase-pending-accept,
+.sdd-phase-item.sdd-phase-optional.sdd-phase-pending-confirm,
 .sdd-phase-item.sdd-phase-optional.sdd-phase-clarify-pending,
 .sdd-phase-item.sdd-phase-optional.sdd-phase-converge-pending {
   opacity: 1;
@@ -107,11 +107,17 @@
 }
 
 /* State-based accent colours. Subtle — the bar is a
- * status indicator, not a call-to-action. */
+ * status indicator, not a call-to-action. R320: the
+ * `pending-confirm` state replaces R292's `pending-accept`
+ * (single user-gate term; choose-mapping sent to the agent
+ * via sendSsdCommand in the store). We keep `pending-accept`
+ * / `clarify-pending` / `converge-pending` aliases below
+ * for older chips that may still be in flight. */
 .sdd-phase-item.sdd-phase-running {
   border-color: var(--accent, #4a8bf5);
   background: rgba(74, 139, 245, 0.08);
 }
+.sdd-phase-item.sdd-phase-pending-confirm,
 .sdd-phase-item.sdd-phase-pending-accept {
   border-color: var(--warning, #e0a200);
   background: rgba(224, 162, 0, 0.10);
