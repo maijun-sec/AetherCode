@@ -22,11 +22,14 @@ import { EndOfTaskPanel } from './components/EndOfTaskPanel';
 import { WorkflowProgressBar } from './components/WorkflowProgressBar';
 import { WorkflowEditorModal } from './components/WorkflowEditorModal';
 import { StepDetailModal } from './components/StepDetailModal';
-// R288: SDD phase progress bar — renders between MessageList
-// and PermissionPromptBanner / MessageInput when sddEnabled
-// is on. Shows the 4 phases (需求 / 设计 / 任务 / 实现) and
-// their states (idle / running / pending-accept / done).
-import { SddPhaseBar } from './components/SddPhaseBar';
+// R312: SDD removed. Spec-Driven Development is now driven
+// directly by the Mavis agent in chat — users ask
+// "用 spec-kit 流程帮我生成 X spec" and the agent reads
+// the spec-kit templates (from its skill bundle),
+// generates each artefact with the chat LLM, and writes
+// it under `<cwd>/.aethercode/sdd/<slug>/`. No separate
+// driver / chip strip / phase button — see
+// doc/user-guide/SDD.md.
 import { SubagentToast } from './components/SubagentToast';
 import { AppProvider, useApp } from './state/AppContext';
 import { QueryProvider, buildQueryClient } from './rpc/queryClient';
@@ -175,12 +178,9 @@ function Shell() {
           <Route path="/settings/permissions" element={<SettingsPage onClose={() => navigate('/')} initialTab="permissions" />} />
           <Route path="/settings/models" element={<SettingsPage onClose={() => navigate('/')} initialTab="models" />} />
           <Route path="/settings/workflows" element={<SettingsPage onClose={() => navigate('/')} initialTab="workflows" />} />
-          {/* R288: /settings/sdd removed. Spec-Driven Development is
-              now an inline flow attached to MessageInput (📐 toggle
-              above the input box) plus an inline SddPhaseBar — not a
-              settings tab. Putting SDD under Settings conflated
-              "settings" (model/picker/toggles) with a workflow
-              control surface; they are different things. */}
+          {/* R312: /settings/sdd removed (already R288). SDD removed
+              entirely (R312) — Spec-Driven Development is now a
+              chat-driven agent flow, no separate UI surface. */}
           <Route path="/settings" element={<SettingsPage onClose={() => navigate('/')} />} />
           <Route
             path="/sessions/:id"
@@ -298,11 +298,9 @@ function MainLayout(p: MainLayoutProps) {
             <MessageList />
           </ErrorBoundary>
         )}
-        {/* R288: SDD phase progress bar — sits at the bottom of
-            the chat area (just above PermissionPromptBanner /
-            MessageInput). When sddEnabled is off, the bar returns
-            null and takes no space. */}
-        <SddPhaseBar />
+        {/* R312: SddPhaseBar removed. Spec-Driven Development is now
+            driven by the Mavis agent in chat (see
+            doc/user-guide/SDD.md). */}
         {/* The tool authorization prompt sits between the message list and the input so the input remains the bottom-most actionable element on the page. */}
         <PermissionPromptBanner />
         <MessageInput />

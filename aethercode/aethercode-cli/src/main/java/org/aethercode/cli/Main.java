@@ -41,11 +41,6 @@ import java.util.concurrent.Callable;
         description = "Java AI agent — local-first, MCP-friendly, ready for the JVM.",
         subcommands = { McpCommand.class, TuiCommand.class, TaskCli.class, GrantsCli.class,
                         SessionCommand.class, WorkflowCommand.class,
-                        // R292: in-process SDD (Spec-Driven Development) pipeline
-                        //       — Spec Kit 6 phases (constitution/specify/plan/
-                        //       tasks/implement/converge) + 2 optional quality gates.
-                        //       Replaces the R236 SSD command.
-                        SddCommand.class,
                         // aethercode a2a <host> card | send | stream | get | cancel
                         A2aCommand.class }
 )

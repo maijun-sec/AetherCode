@@ -922,24 +922,17 @@ function LegacyMessage({ m }: { m: ChatMessage }) {
   if (m.role === 'system') {
     const errorClass = m.isError ? ' message-system-error' : ' message-system-info';
     // R308: SDD phase-* system messages carry markdown
-    // content (📐 + **bold** + the phase draft preview body,
-    // which itself is markdown). Render them with
-    // ReactMarkdown so headers / lists / code blocks /
-    // tables in the preview body are styled instead of
-    // displayed as raw markdown source. Other system
-    // messages (reconnect / error / workflow / compaction
-    // / busy / disconnected) stay plain text — they're
+    // content is plain text — reconnect / error /
+    // workflow / compaction / busy / disconnected are
     // short diagnostics like `[Error] xxx` or
     // `[Disconnected] xxx` where escaping the brackets
-    // would be more confusing than helpful.
-    const mdKind = (m as { metadata?: { kind?: unknown } }).metadata?.kind;
-    const isSddMsg = typeof mdKind === 'string' && mdKind.startsWith('sdd-');
+    // would be more confusing than helpful. (R312:
+    // SDD-specific markdown rendering removed with the
+    // SDD flow itself — see doc/user-guide/SDD.md.)
     return (
-      <div className={`message message-system${errorClass}${isSddMsg ? ' message-system-sdd' : ''}`}>
+      <div className={`message message-system${errorClass}`}>
         <div className="message-content">
-          {isSddMsg
-            ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-            : m.content}
+          {m.content}
         </div>
       </div>
     );

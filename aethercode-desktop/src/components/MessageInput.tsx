@@ -167,12 +167,6 @@ export function MessageInput() {
     modelMismatchPrompt,
     dismissModelMismatch,
     acceptModelMismatch,
-    // R288: SDD mode toggle. The 📐 pill above the
-    // input flips sddEnabled; SddPhaseBar reads the
-    // same field and renders the 4-phase progress
-    // bar below MessageList when on.
-    sddEnabled,
-    setSddEnabled,
   } = useStore();
   const ref = useRef<HTMLTextAreaElement>(null);
   const [showTools, setShowTools] = useState(false);
@@ -715,45 +709,19 @@ export function MessageInput() {
             🧠 思考
           </button>
         </div>
-        {/* R294/R295: SDD toggle (with 📐 icon preserved
-         * from R288) and the daemon's quality preset
-         * dropdown are merged into one `.config-group` so
-         * the input bar stays compact. The 4 quality pills
-         * (low / medium / high / xhigh) were previously a
-         * row of buttons the user couldn't parse; R295
-         * collapses them into a single `<select>` mirroring
-         * the Model select's affordance, with each option's
-         * `title` carrying the daemon-side description
-         * (temperature / maxTokens / extended-thinking
-         * flags) so users can hover to see what each preset
-         * actually does. The active variant name is shown
-         * as the select's value. */}
+        {/* R312: SDD toggle gone. The 4 quality pills
+         * (low / medium / high / xhigh) become their own
+         * `.config-group` mirroring the Model select's
+         * affordance. Each option's `title` carries the
+         * daemon-side description (temperature /
+         * maxTokens / extended-thinking flags) so users
+         * can hover to see what each preset actually does.
+         * The active variant name is shown as the
+         * select's value. */}
         <div
-          className="config-group config-group-sdd-quality"
-          data-testid="sdd-quality-group"
+          className="config-group"
+          data-testid="quality-group"
         >
-          <button
-            type="button"
-            className={`config-toggle config-toggle-sdd ${sddEnabled ? 'config-toggle-active' : ''}`}
-            onClick={() => setSddEnabled(!sddEnabled)}
-            title={sddEnabled
-              ? '已开启 SDD：下一次输入将进入 8 阶段流程（constitution → spec → design → tasks → ...）'
-              : '开启 SDD：constitution → spec → design → tasks → implement（产物落到 .aethercode/sdd/<slug>/）'}
-            aria-pressed={sddEnabled}
-            data-testid="sdd-toggle"
-          >
-            <span className="config-toggle-sdd-icon" aria-hidden="true">📐</span>
-            <span>SDD</span>
-          </button>
-          {/* R295: quality preset selector. Replaces the
-           * 4-pill row (R285 design). Click the dropdown
-           * to switch active variant; the current value
-           * stays shown as the select's value, matching
-           * the Model select's affordance. Each option's
-           * title carries the daemon's preset description
-           * so the user can hover to read what each
-           * preset (temperature / maxTokens / extended
-           * thinking) actually does. */}
           <select
             className="config-select config-select-quality"
             data-testid="message-input-quality"

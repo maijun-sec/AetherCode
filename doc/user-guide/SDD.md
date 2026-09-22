@@ -1,14 +1,21 @@
 # SDD — Spec-Driven Development
 
-> **面向**: 终端用户 / 第一次用 `aethercode sdd` 的人
-> **基线**: R306 (2026-09-21) — 8 阶段流式状态已上桌面
-> **依赖**: [github/spec-kit](https://github.com/github/spec-kit) — 阶段定义 + markdown 模板来自上游
+> **面向**: 终端用户 / 第一次用 AetherCode 跑 SDD 的人
+> **基线**: R312 (2026-09-22) — daemon SDD 流程已下线,Mavis agent 在 chat 里直接驱动 8 阶段
+> **依赖**: [github/spec-kit](https://github.com/github/spec-kit) — 阶段定义 + markdown 模板来源
 
 ---
 
 ## 这是什么
 
-**AetherCode 的 SDD (Spec-Driven Development)** 是一个 8 阶段的规格化工作流,从立项到实现到收敛全自动跑一遍。它**沿用** GitHub spec-kit 的阶段定义和 markdown 模板,但**不集成 spec-kit CLI 本体**——AetherCode 的 `SddRunner` 直接读 spec-kit 的模板、调 LLM、写产物,不走外部 subprocess。
+**AetherCode 的 SDD (Spec-Driven Development)** 是一个 8 阶段的规格化工作流,从立项到实现到收敛全自动跑一遍。它**沿用** GitHub spec-kit 的阶段定义和 markdown 模板,由 **Mavis agent 在 chat 里直接驱动**——LLM 调用由 Mavis agent 自己发起,产物文件由 agent 用工具直接写到 `<cwd>/.aethercode/sdd/<slug>/`。
+
+R312 之前,SDD 跑在 daemon 的独立 SDD 流程里(desktop 端通过 `java -jar aethercode.jar sdd ...` 子进程启动),用户反馈两点:
+
+1. **"LLM 生成结果需要用户进去" 是不合理的**——SDD 阶段的 LLM 调用应该是 agent 自己触发,不是把生成内容粘贴回来让 agent 接力。
+2. **"SSD 通过调用 jar 命令实现" 是过度设计**——Mavis agent 本身就有 LLM 调用 + 文件读写工具,8 phase 流程 agent 自然能跑,不需要单独的 daemon SDD 编排器。
+
+R312 把 daemon 端的 SDD 编排(`SddRunner` / `SddConfig` / `InteractiveRepl` / `SddCommand` / spec-kit 模板资源)和 desktop 端的 SDD UI(`SddPhaseBar` / `ssd/driver.ts` / `ssd/tauriSsdDriver.ts` / 11 个 SDD 测试)全部删掉。**SDD 现在是 Mavis agent 的一个标准能力**:用户在 chat 里说"用 SDD 流程帮我生成 X spec",agent 读 spec-kit 模板、调 chat LLM、写文件、按阶段推进。
 
 阶段拆解:
 
@@ -16,59 +23,41 @@
 |---|---|---|---|---|---|
 | 1 | `constitution` | 项目原则 | `templates/constitution-template.md` | `.aethercode/sdd/<slug>/constitution.md` | ✅ |
 | 2 | `specify` | 需求分析 | `templates/specify-template.md` | `.aethercode/sdd/<slug>/spec.md` | ✅ |
-| 3 | `clarify` | 需求澄清 | `templates/clarify-template.md` (推理用) | `.aethercode/sdd/<slug>/clarify.json` | ❌ 可选 |
+| 3 | `clarify` | 需求澄清 | (agent 推理) | `.aethercode/sdd/<slug>/clarify.json` | ❌ 可选 |
 | 4 | `plan` | 详细设计 | `templates/plan-template.md` | `.aethercode/sdd/<slug>/design.md` | ✅ |
-| 5 | `analyze` | 一致性分析 | `templates/analyze-template.md` (推理用) | `.aethercode/sdd/<slug>/analyze.json` | ❌ 可选 |
+| 5 | `analyze` | 一致性分析 | (agent 推理) | `.aethercode/sdd/<slug>/analyze.json` | ❌ 可选 |
 | 6 | `tasks` | 任务分析 | `templates/tasks-template.md` | `.aethercode/sdd/<slug>/tasks.md` | ✅ |
-| 7 | `implement` | 执行实现 | (R236 SSD 内部模板) | `.aethercode/sdd/<slug>/dev.log` | ✅ |
-| 8 | `converge` | 收敛验证 | (R236 SSD 内部模板) | `.aethercode/sdd/<slug>/convergence.json` | ❌ 可选 |
-
-**模板来源**: `aethercode-workflows/src/main/resources/spec-kit/{templates,memory}/` 5 个 markdown 文件
-+ `hard-rules.md`(R292 加的,统一 LLM 输出格式)。
+| 7 | `implement` | 执行实现 | (agent 自己用工具实现) | `.aethercode/sdd/<slug>/dev.log` | ❌ 可选 |
+| 8 | `converge` | 收敛验证 | (agent 自己 review) | `.aethercode/sdd/<slug>/convergence.json` | ❌ 可选 |
 
 ---
 
 ## 怎么跑
 
-### 命令行 (standalone)
+### 在 chat 里说一句话
 
-```bash
-java -jar aethercode.jar sdd <feature> "<intent>" [options]
+打开 AetherCode Desktop / TUI / 任意接 Mavis agent 的界面,在 chat 里说:
+
+```
+用 SDD 流程帮我生成 java-maven 的 spec:
+Build a java maven project, support at least 5 sorting algorithms,
+int/short/long arrays, full unit tests
 ```
 
-`<feature>` 是项目内的子目录名 (≤10 ASCII 字符,kebab-case),`<intent>` 是需求描述。
+或者更简洁:
 
-常用选项:
-
-| 选项 | 含义 |
-|---|---|
-| `--auto` | 自动跑完 8 阶段,不暂停等用户 |
-| `--interactive` | 每个 phase 跑完停下来等 ✅/✏/⏭️(默认) |
-| `--no-clarify` | 跳过澄清 |
-| `--no-analyze` | 跳过一致性分析 |
-| `--no-converge` | 跳过收敛循环 |
-| `--cwd <dir>` | 产物写到哪个目录(默认当前目录) |
-| `--branch-numbering sequential\|timestamp` | 编号方案(目前 sequential 占位未实现) |
-
-**示例**:
-
-```bash
-# 交互式跑 SDD(java maven 排序项目)
-java -jar aethercode.jar sdd java-maven \
-  "Build a java maven project, support at least 5 sorting algorithms, \
-   int/short/long arrays, full unit tests"
-
-# 一键全跑
-java -jar aethercode.jar sdd photo-albums "Build a photo album app" --auto
+```
+/sdd java-maven Build a java maven project with 5+ sorting algorithms
 ```
 
-### Desktop GUI
+agent 会:
 
-打开 Desktop → 输入 prompt → 选 SDD toggle (📐) → 发送。chip strip 显示 8 阶段,每个 phase 跑完停一次等确认。
-
-- ✅ 接受 → 进入下一阶段
-- ✏️ 修改 → 输入修改意见,Daemon 重新生成
-- ⏭️ 跳过 → 仅对可选阶段生效(clarify / analyze / converge)
+1. 创建目录 `<cwd>/.aethercode/sdd/java-maven/`
+2. 读 spec-kit 的 constitution / specify / plan / tasks 模板(在 agent 的 spec-kit skill bundle 里)
+3. 按 8 阶段顺序,每个阶段调 chat LLM 生成 markdown
+4. 把产物写到对应路径
+5. 每个阶段完成后向 chat 报告一次(简短总结 + 文件路径)
+6. 用户可以在任何阶段插入修改意见,agent 重新跑该阶段
 
 ### 产物路径
 
@@ -80,103 +69,118 @@ java -jar aethercode.jar sdd photo-albums "Build a photo album app" --auto
 ├── design.md           # 阶段 4
 ├── analyze.json        # 阶段 5 (可选)
 ├── tasks.md            # 阶段 6
-├── dev.log             # 阶段 7 — 每个 task 一段代码 patch
+├── dev.log             # 阶段 7 (可选,每个 task 一段实现记录)
 └── convergence.json    # 阶段 8 (可选)
 ```
 
-AetherCode 内部路径约定(R294 起,**不是 Spec Kit 上游的 `.specify/specs/<NNN>-<slug>/`**):
-- 目录名用 `.aethercode/sdd/`(daemon 子命令 `sdd` 的镜像)
-- 设计文件叫 `design.md` 不是 `plan.md`(沿用 R236 SSD 命名)
-- 实现日志叫 `dev.log` 不是 `logs/implement.log`
+约定(R294 起,沿用 R236 SSD 命名,**不是 Spec Kit 上游的 `.specify/specs/<NNN>-<slug>/`**):
+- 目录名 `.aethercode/sdd/`
+- 设计文件 `design.md`(不是 `plan.md`)
+- 实现日志 `dev.log`(不是 `logs/implement.log`)
+- slug 用 ≤10 ASCII 字符,kebab-case,冲突时追加 `-2`/`-3` 后缀
+
+---
+
+## 跟旧版 SDD 的区别
+
+R312 之前,R292-R311 投入 16 rounds 做了一个 daemon-driven 的 SDD:
+
+- daemon 端: `SddRunner` / `SddConfig` / `InteractiveRepl` / `SddCommand` + 5 个 spec-kit 模板 jar 资源
+- desktop 端: `SddPhaseBar` + 8 chip strip + `ssd/tauriSsdDriver.ts` + 11 个测试 + wire format NDJSON 协议
+- 用户在 desktop 点 SDD toggle → daemon 起子进程跑 8 phase → 每个 phase 通过 stdin pipe 等用户确认
+
+**R312 全删了**,理由:
+
+1. **架构错位**——Mavis agent 已经有 LLM 调用 + 工具能力,daemon 再起一个独立的 SDD 编排器是重复造轮子。
+2. **强制用户介入不必要的环节**——`phase-content` wire 协议要求用户在 desktop 面板里粘贴 LLM 生成的 markdown,违背"agent 自动驱动"的基本直觉。
+3. **过度复杂**——16 rounds 修了 8 层 "一闪而过" 问题(stdout listener / shell ACL / scope / setCwd 回填等),本质上是 RPC 协议层叠出来的复杂度,本来可以用 agent 直驱避免。
+
+**R312 之后**:
+- ✅ agent 在 chat 里看到 "用 SDD 流程生成 X" → 自动按 8 阶段推进
+- ✅ 每个阶段产物直接写文件,用户不需要操作任何面板
+- ✅ 用户可以在 chat 中途给反馈("constitution 第 3 条改成 ...", "spec 加个 edge case"),agent 重新跑对应阶段
+- ❌ 没有专门的 SDD toggle、chip strip、wire 协议
+- ❌ 没有 `aethercode sdd` 命令行入口
 
 ---
 
 ## 上游: github/spec-kit
 
-**AetherCode SDD 直接复用** [github/spec-kit](https://github.com/github/spec-kit) 的:
+**AetherCode SDD 沿用** [github/spec-kit](https://github.com/github/spec-kit) 的:
 
 1. **阶段定义** — 7 个 slash command 的拆分和命名(constitution / specify / clarify / plan / analyze / tasks / implement)
 2. **Markdown 模板** — `templates/constitution-template.md`、`templates/specify-template.md`、`templates/plan-template.md`、`templates/tasks-template.md`
-3. **Phase id** — kebab-case 命名(constitution / specify / plan / tasks / implement / clarify / analyze)
+3. **Phase id** — kebab-case 命名
 
 **AetherCode 不集成** spec-kit 本体的:
 
-- ❌ `specify` CLI(Python)— 我们用 JVM daemon,不走外部 subprocess
-- ❌ Slash command 文件(`.claude/commands/*.md`)— 我们在 daemon 内部加载模板,不走 AI agent CLI
+- ❌ `specify` CLI(Python)— 我们用 Mavis agent 直接驱动
+- ❌ Slash command 文件(`.claude/commands/*.md`)— 不走 AI agent CLI
 - ❌ `setup-plan.sh` / `update-claude-md.sh` 等 helper 脚本
 - ❌ Spec Kit 的 6 phase 顺序(我们是 8 phase,加了 converge loop)
 
 **AetherCode 在 spec-kit 之上加的**:
 
-- ✅ `converge` 第 8 阶段(post-implementation review loop,R292 起)
-- ✅ `.aethercode/sdd/<slug>/` 路径布局(R294 起)
-- ✅ `design.md` / `dev.log` 文件命名(R236 SSD 沿用)
+- ✅ `converge` 第 8 阶段(post-implementation review loop)
+- ✅ `.aethercode/sdd/<slug>/` 路径布局
+- ✅ `design.md` / `dev.log` 文件命名
 - ✅ 中文 phase title(项目原则 / 需求分析 / 详细设计 / 任务分析 / 执行实现 / 需求澄清 / 一致性分析 / 收敛验证)
-- ✅ Per-phase 用户确认流(R299 `--interactive` 默认)— spec-kit 上游没这个,人是自己跑 slash command
-
-如果上游 spec-kit 更新了阶段定义或模板,流程:对照[1.2 节]的 markdown 列表,从
-[github/spec-kit/templates](https://github.com/github/spec-kit/tree/main/templates)
-拉新版本覆盖 jar 资源即可,daemon 代码不用改。
+- ✅ Mavis agent 在 chat 里直接驱动(不需要独立编排器)
 
 ---
 
 ## 实现细节(简版)
 
-涉及到的模块:
+SDD 现在是 Mavis agent 的内置能力,涉及到的模块:
 
 | 模块 | 角色 |
 |---|---|
-| `aethercode-workflows/src/main/java/.../sdd/SddConfig.java` | 8 phase 定义 + options |
-| `aethercode-workflows/src/main/java/.../sdd/SddRunner.java` | 8 phase 顺序调度 + LLM 调用 + artifact 写盘 |
-| `aethercode-workflows/src/main/java/.../sdd/InteractiveRepl.java` | 跟 stdin/stdout 交互(读用户指令) |
-| `aethercode-cli/src/main/java/.../cli/SddCommand.java` | `aethercode sdd` CLI 注册 |
-| `aethercode-workflows/src/main/resources/spec-kit/{templates,memory,hard-rules}.md` | 模板(从 spec-kit 上游嵌入) |
-| `aethercode-desktop/src/components/ssd/tauriSsdDriver.ts` | Desktop → Daemon 桥(通过 stdin pipe) |
-| `aethercode-desktop/src/components/ssd/driver.ts` | Wire format 定义 + MockSsdDriver(dev fallback) |
-| `aethercode-desktop/src/components/SddPhaseBar.tsx` | 8 chip strip + per-phase action bar |
+| Mavis agent 内置 spec-kit skill bundle | 8 phase 模板 + 阶段定义 |
+| Mavis agent 工具: `read_file` / `write_file` / `chat_llm` | 读模板、写产物、调 LLM |
+| 用户 chat 输入 | 触发 SDD 流程 + 中途反馈 |
 
-`SddRunner` 用的 LLM 调用是**阻塞**的(`LlmFn.generate()`),所以单次 phase 内
-desktop 端只能等 phase 完成才能看到产物。R306(R293-306) 加了:
+**对比 R312 前的实现**:
 
-- ✅ 每阶段开始 / 完成时向 chat stream 推系统消息
-- ✅ chip strip 显示实时进度 (`X/8 完成`)
-- ✅ 当前 phase 蓝色脉冲
-- ✅ 完成时显示总耗时 + 每 phase 时间表
-
-**没做**的(R307+ 才能):
-
-- ❌ LLM 流式输出(token-by-token)— 目前是 phase-draft 一次性 dump
-- ❌ Spec Kit 完整集成(`specify` CLI)— 我们只用了模板
-
-如果将来要做"流式 LLM 输出"或"完整 spec-kit 集成",从这里开始:
-
-- `LlmFn` 改成 `LlmStreamFn`(yield token)
-- `SddRunner` 改用 streaming
-- 新 `phase-draft-chunk` NDJSON 事件
-- `TauriSsdDriver` 转发 chunks 到 renderer
-- Desktop handler: debounce 100ms 更新"drafting..."message
+| | R312 前(daemon-driven) | R312 后(Mavis agent-driven) |
+|---|---|---|
+| LLM 调用方 | daemon `SddRunner` | Mavis agent(直接调 chat LLM) |
+| 模板加载 | daemon jar 资源 | agent skill bundle |
+| 产物写入 | daemon `InteractiveRepl` | agent `write_file` 工具 |
+| 用户交互 | desktop `SddPhaseBar` + chip strip + textarea | chat 里直接说 |
+| Wire 协议 | NDJSON stdin/stdout pipe | 不需要 |
+| 进程模型 | `java -jar ... sdd ...` 子进程 | 无,chat 里直接走 |
+| 复杂度 | 16 rounds × 8 层修复 | 1 个 skill bundle |
 
 ---
 
 ## 故障排查
 
-### "java: command not found"
+### "agent 没有跑 SDD"
 
-`java` 不在 PATH。spec-kit 的硬性依赖。
+确保 chat 输入里明确提到 "SDD" 或 "用 spec-kit 流程"。Mavis agent 看到关键词会触发 SDD skill;否则会按普通 chat 处理。
 
-### SDD 一闪而过
+### "某个 phase 产物不对"
 
-R302 修过 setCwd 后 daemonInfo 没回填;R303 修 shell 插件 ACL;R304 修 scope 白名单。
-如果还一闪,先看 `%TEMP%\aethercode-desktop-daemon-info.log` 末尾 `[R302-sdd-spawn-resolve]` /
-`[R304-sdd-spawn-failed]` 行。
+直接在 chat 里说:
 
-### 某个 phase 卡住不动
+```
+spec.md 第 3 节 "性能需求" 改一下,目标应该是 < 100ms 不是 < 1s
+```
 
-可能性:
+agent 会:
+1. 读现有的 `<cwd>/.aethercode/sdd/<slug>/spec.md`
+2. 调 LLM 修改第 3 节
+3. 把更新后的内容写回文件
 
-1. LLM provider timeout(默认 30s)— 看 daemon 端 stderr
-2. 用户没在 Desktop 点 ✅ — chip strip 底部有 "等待确认" 提示
-3. STDIN pipe 卡住(R293 follow-up 的 5min readReply 超时会兜底)
+### "我想跳过可选阶段(clarify / analyze / converge)"
+
+chat 里说:
+
+```
+跑 SDD 但跳过 clarify 和 converge
+```
+
+agent 会按 6 阶段跑(必需 4 + analyze 共 6)。
 
 ### 产物路径不对
 
@@ -188,6 +192,6 @@ AetherCode 用 `.aethercode/sdd/<slug>/`(R294 起),不是上游 spec-kit 的
 ## 参考
 
 - [github/spec-kit 上游](https://github.com/github/spec-kit) — 阶段定义 + 模板
-- [AetherCode 内部 R292 集成 round notes](../round-notes/R292-SDD-SPEC-KIT-INTEGRATION.md) — 最早集成 SDD 的设计
-- [AetherCode 内部 R306 round notes](../round-notes/R306-...-real-time-status.md) — chip strip 实时状态最新进展
+- [AetherCode 内部 R312 round notes](../round-notes/R312-SDD-AGENT-DRIVEN.md) — 干掉 daemon SDD 流程,改由 Mavis agent 驱动
 - [AetherCode 内部 R294 round notes](../round-notes/R294-SDD-INTERNAL-PATH-LAYOUT.md) — 路径布局决定
+- [AetherCode 内部 R236 SSD round notes](../round-notes/R236-SSD-NAMING.md) — `design.md` / `dev.log` 命名沿用

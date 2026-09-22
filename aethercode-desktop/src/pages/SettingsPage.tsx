@@ -23,12 +23,11 @@ import {
   useSetPreset,
 } from '../rpc/mutations';
 import type { Grant, PermissionPreset, WorkflowSummary } from '../rpc/types';
-// R288: SDD driver imports removed from SettingsPage. SDD is
-//   no longer a settings tab; it lives as an inline flow
-//   attached to MessageInput. The SsdDriver / SsdPanel
-//   implementations stay in src/components/ssd/ — the
-//   inline flow reuses them via the new SddPhaseBar
-//   component (see MessageInput + SddPhaseBar).
+// R312: SDD is no longer a desktop-managed flow at all —
+//   it lives entirely in chat, driven by the Mavis agent
+//   (see doc/user-guide/SDD.md). The old SsdDriver / SddPhaseBar
+//   scaffolding was removed with R312; no SDD imports live
+//   here anymore.
 import { useStore } from '../store';
 import type { ProviderInfo } from '../lib/methods';
 import './SettingsPage.css';
