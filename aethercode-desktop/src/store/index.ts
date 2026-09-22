@@ -35,6 +35,173 @@ export type { ChildStepEvent } from './types';
 // `reduceSubagent`; the StatusBar / toast read the result.
 // Re-export the view types so other files don't need to
 // import directly from the reducer module.
+
+// R317: SDD per-phase handler helpers — kept at module
+// scope so they can be unit-tested without spinning up a
+// store. Used by `startSsdFlow` and `sendSsdCommand`.
+type SddPhaseId = 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
+type SddAction = 'run' | 'modify' | 'skip';
+
+const SDD_PHASE_IDS: SddPhaseId[] = [
+  'constitution', 'specify', 'clarify', 'plan',
+  'analyze', 'tasks', 'implement', 'converge',
+];
+const SDD_OPTIONAL: ReadonlySet<SddPhaseId> = new Set(['clarify', 'analyze', 'converge']);
+
+// Map phase number (1-8) ↔ phase id.
+function phaseIdFor(n: number): SddPhaseId {
+  return SDD_PHASE_IDS[n - 1] ?? 'constitution';
+}
+function phaseNumberFor(id: SddPhaseId): number {
+  return SDD_PHASE_IDS.indexOf(id) + 1;
+}
+
+// Derive `<sdd-task-preset>` from intent: lowercase,
+// kebab-case, alphanumeric, ≤10 ASCII chars. Falls back
+// to a timestamp-derived slug when the intent has no
+// alphanumeric characters.
+function deriveSlug(intent: string): string {
+  return intent
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 10)
+    || `sd-${Date.now().toString(36).slice(-6)}`;
+}
+
+// Compute the input files for phase N. Each phase N
+// reads all earlier phase outputs. Phase 1 has no
+// required inputs.
+function inputFilesForPhase(
+  n: number,
+  slug: string,
+  cwd: string,
+): string[] {
+  const dir = `${cwd}/.aethercode/sdd/${slug}`;
+  const out: string[] = [];
+  for (let i = 1; i < n; i++) {
+    const id = phaseIdFor(i);
+    const fname = outputFileNameFor(id);
+    if (fname) out.push(`${dir}/${fname}`);
+  }
+  return out;
+}
+
+// Map phase id → output filename.
+function outputFileNameFor(id: SddPhaseId): string {
+  switch (id) {
+    case 'constitution': return 'constitution.md';
+    case 'specify':      return 'spec.md';
+    case 'clarify':      return 'clarify.json';
+    case 'plan':         return 'design.md';
+    case 'analyze':      return 'analyze.json';
+    case 'tasks':        return 'tasks.md';
+    case 'implement':    return 'dev.log';
+    case 'converge':     return 'convergence.json';
+  }
+}
+
+// Build the instruction text sent to chat. The agent
+// reads this and loads the sdd skill; the sdd skill sees
+// the phase number + inputFiles and runs the matching
+// phase reference.
+function buildPhasePrompt(opts: {
+  phase: number;
+  slug: string;
+  intent: string;
+  action: SddAction;
+  inputFiles: string[];
+  cwd: string;
+  feedback?: string;
+}): string {
+  const phaseId = phaseIdFor(opts.phase);
+  const outputFile = outputFileNameFor(phaseId);
+  const isOptional = SDD_OPTIONAL.has(phaseId);
+  const dir = `${opts.cwd}/.aethercode/sdd/${opts.slug}`;
+  const inputsBlock = opts.inputFiles.length === 0
+    ? '(no input files — this is the entry phase)'
+    : opts.inputFiles.map((f, i) => `${i + 1}. \`${f}\``).join('\n');
+  const actionHint =
+    opts.action === 'run'
+      ? 'Run this phase end-to-end: read inputs → fill template → write the single output file → emit pause message → STOP. Do NOT advance to another phase.'
+      : opts.action === 'modify'
+      ? `Apply the user's feedback below to the existing output, then re-emit the pause message and STOP. Do NOT advance.\n\n## User feedback\n${opts.feedback ?? ''}`
+      : `Write the skip sentinel \`{"skipped": true, "reason": "user-opted-out"}\` as the output file content, then emit the pause message and STOP. Do NOT advance.`;
+  return `[sdd-task: ${opts.slug}, phase: ${opts.phase}, action: ${opts.action}]
+
+加载 \`agents/mavis/skills/sdd/SKILL.md\` + \`references/phase-${opts.phase}-${phaseId}.md\`。严格按 per-phase handler 跑，**只跑一个 phase，写完 output 后 HARD PAUSE**。
+
+## Inputs (必须 read_file 这些，没有就报错)
+${inputsBlock}
+
+## Output (唯一允许写)
+\`${dir}/${outputFile}\`
+
+绝对禁止写到其他路径（小写文件名、lowercase kebab-case、严格 .aethercode/sdd/<slug>/ 布局）。
+
+## Phase: ${opts.phase} (${phaseId})${isOptional ? ' — OPTIONAL' : ' — REQUIRED'}
+
+## Action: ${opts.action}
+${actionHint}
+
+## Pause message (写完 output 后输出)
+\`\`\`
+✅ **第 ${opts.phase} 阶段完成 — <phase 中文 title>**
+
+产物：\`${dir}/${outputFile}\`
+摘要：<一句话核心决定>
+
+请回复：
+  ✅ 继续下一阶段
+  ✏️ 修改 <具体意见>
+  ⏭️ 跳过下一阶段（仅对可选阶段生效）
+\`\`\`
+
+## Original user intent
+${opts.intent}
+
+**不要**一次跑多个 phase。**不要**写源代码（除 phase 7 implement 外）。**不要**用 Plan Panel 跳过阶段。`;
+}
+
+// Find the next phase to run after the current one. Skip
+// phases that are already done or skipped. Returns null
+// if there are no more phases to run.
+function nextPhase(
+  phases: ReadonlyArray<{ id: SddPhaseId; state: string }>,
+  currentN: number,
+): number | null {
+  for (let n = currentN + 1; n <= SDD_PHASE_IDS.length; n++) {
+    const id = phaseIdFor(n);
+    const p = phases.find((x) => x.id === id);
+    if (!p) continue;
+    if (p.state === 'done' || p.state === 'skipped') continue;
+    return n;
+  }
+  return null;
+}
+
+// Build the phase-state.json checkpoint object. The
+// agent can read this to verify the run state.
+function makePhaseState(s: {
+  sddSlug: string;
+  sddIntent: string;
+  sddCurrentPhase: number | null;
+  sddPhases: ReadonlyArray<{ id: SddPhaseId; state: string }>;
+  cwd: string;
+}): Record<string, unknown> {
+  const phaseStatus: Record<string, string> = {};
+  for (const p of s.sddPhases) {
+    phaseStatus[String(phaseNumberFor(p.id))] = p.state;
+  }
+  return {
+    slug: s.sddSlug,
+    cwd: s.cwd,
+    intent: s.sddIntent,
+    currentPhase: s.sddCurrentPhase,
+    phaseStatus,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+}
 import {
   INITIAL_SUBAGENT,
   reduceSubagent,
@@ -1534,10 +1701,21 @@ interface AppState {
    *  The store mirrors the slug the agent is using so the
    *  SddPhaseBar can show it in the footer. */
   sddSlug: string;
+  /** The user's original intent. Mirrored into
+   *  `phase-state.json` so the agent can re-derive phase
+   *  content without depending on chat history. */
+  sddIntent: string;
   /** True while an SDD run is active (toggle was on + user sent
    *  the trigger message + agent hasn't written `abort.md` or
    *  `convergence.json`). */
   sddActive: boolean;
+  /** R317: which phase is currently being executed (1-8).
+   *  Desktop is the single source of truth — the agent reads
+   *  `[phase: <N>]` from each chat message we send, then
+   *  loads the matching phase reference and runs that one
+   *  phase. Never set this from agent output; only the
+   *  approve / modify / skip buttons advance it. */
+  sddCurrentPhase: number | null;
   /** Per-phase chip state. R315: 8 phases with optional flag
    *  for clarify / analyze / converge. State transitions:
    *  idle → running → pending-confirm → done | skipped | failed.
@@ -3608,6 +3786,8 @@ export const useStore = create<AppState>((set, get) => {
     sddEnabled: false,
     sddSlug: '',
     sddActive: false,
+    sddCurrentPhase: null,
+    sddIntent: '',
     sddPhases: [],
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
@@ -5015,16 +5195,21 @@ export const useStore = create<AppState>((set, get) => {
       }));
     },
     startSsdFlow: async (intent: string) => {
-      // R315: this is the trigger entry — when the user has the
-      // SDD toggle on and hits Enter, we (a) init local UI state
-      // and (b) send a chat message that contains the SDD skill's
-      // core rules inlined as a system-style block. R316 fix: an
-      // earlier version of this only prepended `[sdd] <intent>` and
-      // trusted the agent to discover+follow the sdd skill bundle.
-      // In practice the agent's default agentic loop was too eager
-      // and it skipped straight to implement (writing pom.xml
-      // before any spec markdown). Inlining the core rules here
-      // guarantees the agent sees them in the prompt itself.
+      // R317: per-phase handler mode. We (a) derive slug,
+      // (b) mkdir the SDD output directory, (c) write
+      // `phase-state.json` so the agent can verify the run
+      // state if it wants, (d) initialize the 8 phase chips
+      // in store, and (e) send a phase-1 instruction to
+      // chat. Subsequent phase advances go through
+      // `sendSsdCommand('approve')` below — never through
+      // agent self-decision.
+      const slug = deriveSlug(intent);
+      const cwd = get().cwd ?? '';
+      const dir = `${cwd}/.aethercode/sdd/${slug}`;
+      // Phase 1 has no input files. Inputs for subsequent
+      // phases are computed by `inputFilesForPhase()`.
+      const phase1InputFiles: string[] = [];
+      // 8-phase chip template.
       const phaseTemplate: Array<{
         id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
         title: string;
@@ -5043,70 +5228,50 @@ export const useStore = create<AppState>((set, get) => {
       set({
         sddActive: true,
         sddPhases: phaseTemplate,
-        sddSlug: '',
+        sddSlug: slug,
+        sddCurrentPhase: 1,
+        sddIntent: intent,
       });
-      // R316: inline the sdd skill's core rules directly into the
-      // prompt so the agent sees them regardless of skill discovery.
-      // Mirrors the SKILL.md at agents/mavis/skills/sdd/SKILL.md.
-      const rules = `[sdd-skill-rules]
-你**必须**严格按 spec-kit 8 阶段规格化流程 (SDD) 执行以下 intent，不许按普通 agentic loop 跑。
-
-## 硬规则 (违反任何一条 = 整个 SDD run 失败)
-1. 严格 8 阶段顺序：constitution → specify → [clarify] → plan → [analyze] → tasks → implement → [converge]。
-2. REQUIRED phases (constitution / specify / plan / tasks / implement) 一律不许跳过。
-3. 每个阶段写完产物后 **HARD PAUSE**：禁止调任何 tool，只能输出 pause message 等用户 ✅ / ✏️ / ⏭️。
-4. Phase 1-6 **禁止写源代码**（包括 pom.xml / build.gradle / src/ 等）。只写 spec / design markdown。
-5. 产物路径 **严格**：\`<cwd>/.aethercode/sdd/<sdd-task-preset>/<file>\`（小写文件名，lowercase kebab-case slug）。
-   - constitution.md / spec.md / design.md / tasks.md / dev.log / clarify.json / analyze.json / convergence.json
-   - 绝对禁止写到 \`<cwd>/SPEC.md\` / \`<cwd>/DESIGN.md\` / \`<cwd>/pom.xml\` 等散落位置。
-   - 绝对禁止大写文件名（SPEC.md / DESIGN.md）。
-
-## Per-phase protocol (强制)
-每个 phase 开始前**必须**先 \`read_file\` 加载该 phase 的 reference，然后**只**写该 phase 的 artifact 文件：
-- Phase 1: \`agents/mavis/skills/sdd/references/phase-1-constitution.md\` → 写 \`<cwd>/.aethercode/sdd/<slug>/constitution.md\`
-- Phase 2: \`.../phase-2-specify.md\` → 写 \`spec.md\`
-- Phase 3 (opt): \`.../phase-3-clarify.md\` → 写 \`clarify.json\`
-- Phase 4: \`.../phase-4-plan.md\` → 写 \`design.md\`
-- Phase 5 (opt): \`.../phase-5-analyze.md\` → 写 \`analyze.json\`
-- Phase 6: \`.../phase-6-tasks.md\` → 写 \`tasks.md\`
-- Phase 7: \`.../phase-7-implement.md\` → 写 \`dev.log\` + 写源代码
-- Phase 8 (opt): \`.../phase-8-converge.md\` → 写 \`convergence.json\`
-
-## Pre-flight (Phase 1 开始前必须)
-1. \`bash ls <cwd>\` 检查目录状态
-2. 如果 \`<cwd>/.aethercode/sdd/<slug>/constitution.md\` 已存在 → 询问 (a) 续跑 (b) 复制到新目录
-3. **默认**创建新目录 \`<slug>-<timestamp>\` 避免污染
-4. \`<slug>\` 从 intent 派生：≤10 ASCII chars, kebab-case, lowercase
-
-## 每阶段后必须输出的 pause message (用户回复才进下一阶段)
-\`\`\`
-✅ 第 N 阶段完成 — <phase 中文 title>
-
-产物：\`<abs-path>/<file>\`
-摘要：<一句话核心决定>
-
-请回复：
-  ✅ 继续下一阶段
-  ✏️ 修改 <具体意见>
-  ⏭️ 跳过下一阶段（仅对可选阶段生效）
-\`\`\`
-
-最终完成时输出：
-\`\`\`
-✅ 第 8 阶段完成 — 收敛验证
-
-产物：<abs-path>/convergence.json
-
-🎉 **SDD 流程完成**
-\`\`\`
-
-## User intent
-${intent}
-
-## 关键：这是 SDD 流程，不许用 Plan Panel 跳过阶段
-不要用 agent 默认的 todo / Plan Panel 模式跑。不许先写代码再补 spec。
-[/sdd-skill-rules]`;
-      set({ currentInput: rules });
+      // Best-effort: mkdir the SDD directory + write a
+      // phase-state.json checkpoint. Failures here are
+      // non-fatal — the chat flow proceeds; the agent's
+      // own write_file call will surface a clearer error
+      // if the dir is truly unwritable.
+      try {
+        await invoke('mkdir_p', { path: dir, root: cwd || null });
+        const state = {
+          slug,
+          cwd,
+          intent,
+          currentPhase: 1,
+          phaseStatus: {
+            '1': 'running',
+            '2': 'idle', '3': 'idle', '4': 'idle',
+            '5': 'idle', '6': 'idle', '7': 'idle', '8': 'idle',
+          },
+          startedAt: new Date().toISOString(),
+          lastUpdatedAt: new Date().toISOString(),
+        };
+        await invoke('write_text_file', {
+          path: `${dir}/phase-state.json`,
+          contents: JSON.stringify(state, null, 2),
+        });
+      } catch (e) {
+        // log but don't block
+        try { console.warn('[store] startSsdFlow pre-create failed:', e); } catch {}
+      }
+      // Build the phase-1 instruction block. The agent
+      // uses the sdd skill; this block tells it exactly
+      // which phase to run and which inputs (none) to read.
+      const phase1Instruction = buildPhasePrompt({
+        phase: 1,
+        action: 'run',
+        slug,
+        intent,
+        inputFiles: phase1InputFiles,
+        cwd,
+      });
+      set({ currentInput: phase1Instruction });
       await get().sendMessage();
     },
     stopSsdFlow: () => {
@@ -5128,15 +5293,124 @@ ${intent}
       if (input) set({ currentInput: target });
     },
     sendSsdCommand: (cmd, text) => {
-      // Map UI button to a chat message the SDD skill understands.
-      let msg: string;
-      if (cmd === 'approve') msg = '✅';
-      else if (cmd === 'modify') msg = `✏️ ${text ?? ''}`;
-      else if (cmd === 'skip') msg = '⏭️';
-      else msg = '';
-      if (!msg) return;
-      set({ currentInput: msg });
-      void get().sendMessage();
+      // R317: per-phase handler mode. Desktop is the single
+      // source of truth for which phase runs next. Each
+      // branch:
+      //   approve → advance to next phase, build prompt with
+      //   that phase's inputFiles, send to chat
+      //   modify  → stay on current phase, build prompt with
+      //   user feedback text, send to chat
+      //   skip    → if optional, write `{skipped:true}`
+      //   sentinel + advance; if required, refuse
+      const s = get();
+      const sddSlug = s.sddSlug;
+      const sddCurrentPhase = s.sddCurrentPhase;
+      const sddPhases = s.sddPhases;
+      const sddIntent = s.sddIntent;
+      const cwd = s.cwd ?? '';
+      if (!sddSlug || !sddCurrentPhase) {
+        try { console.warn('[store] sendSsdCommand: no active SDD run'); } catch {}
+        return;
+      }
+      // Mark the current phase done / running based on the action.
+      if (cmd === 'approve') {
+        // Done. Advance to next non-skipped phase.
+        const next = nextPhase(sddPhases, sddCurrentPhase);
+        set((st) => ({
+          sddPhases: st.sddPhases.map((p) =>
+            p.id === phaseIdFor(sddCurrentPhase) ? { ...p, state: 'done', endedAt: Date.now() } : p,
+          ),
+          sddCurrentPhase: next ?? sddCurrentPhase,
+        }));
+        if (next == null) {
+          set({ sddActive: false });
+          try { void invoke('write_text_file', { path: `${cwd}/.aethercode/sdd/${sddSlug}/phase-state.json`, contents: JSON.stringify(makePhaseState({ ...get(), cwd }), null, 2) }); } catch {}
+          return;
+        }
+        set((st) => ({
+          sddPhases: st.sddPhases.map((p) =>
+            p.id === phaseIdFor(next) ? { ...p, state: 'running', startedAt: Date.now() } : p,
+          ),
+        }));
+        const inputFiles = inputFilesForPhase(next, sddSlug, cwd);
+        const prompt = buildPhasePrompt({
+          phase: next, slug: sddSlug, intent: sddIntent, action: 'run', inputFiles, cwd,
+        });
+        try {
+          void invoke('write_text_file', {
+            path: `${cwd}/.aethercode/sdd/${sddSlug}/phase-state.json`,
+            contents: JSON.stringify(makePhaseState({ ...get(), cwd }), null, 2),
+          });
+        } catch {}
+        set({ currentInput: prompt });
+        void get().sendMessage();
+        return;
+      }
+      if (cmd === 'modify') {
+        // Stay on current phase, send modify instruction.
+        const inputFiles = inputFilesForPhase(sddCurrentPhase, sddSlug, cwd);
+        const prompt = buildPhasePrompt({
+          phase: sddCurrentPhase,
+          slug: sddSlug,
+          intent: sddIntent,
+          action: 'modify',
+          inputFiles,
+          cwd,
+          feedback: text ?? '',
+        });
+        set({ currentInput: prompt });
+        void get().sendMessage();
+        return;
+      }
+      if (cmd === 'skip') {
+        const phaseDef = sddPhases.find((p) => p.id === phaseIdFor(sddCurrentPhase));
+        if (!phaseDef?.optional) {
+          try { console.warn('[store] sendSsdCommand: cannot skip required phase', sddCurrentPhase); } catch {}
+          set((st) => ({
+            messages: [...st.messages, {
+              id: newId('system'),
+              role: 'system' as const,
+              content: `⛔ 第 ${sddCurrentPhase} 阶段（${phaseDef?.title ?? ''}）是必需阶段，不能跳过。回复 'yes 跳过' 才允许。`,
+              timestamp: Date.now(),
+            }],
+          }));
+          return;
+        }
+        set((st) => ({
+          sddPhases: st.sddPhases.map((p) =>
+            p.id === phaseDef.id ? { ...p, state: 'skipped', endedAt: Date.now() } : p,
+          ),
+        }));
+        const next = nextPhase(sddPhases, sddCurrentPhase);
+        if (next == null) {
+          set({ sddActive: false });
+          return;
+        }
+        set((st) => ({
+          sddPhases: st.sddPhases.map((p) =>
+            p.id === phaseIdFor(next) ? { ...p, state: 'running', startedAt: Date.now() } : p,
+          ),
+          sddCurrentPhase: next,
+        }));
+        const inputFiles = inputFilesForPhase(next, sddSlug, cwd);
+        const prompt = buildPhasePrompt({
+          phase: next,
+          slug: sddSlug,
+          intent: sddIntent,
+          action: 'run',
+          inputFiles,
+          cwd,
+        });
+        try {
+          void invoke('write_text_file', {
+            path: `${cwd}/.aethercode/sdd/${sddSlug}/phase-state.json`,
+            contents: JSON.stringify(makePhaseState({ ...get(), cwd }), null, 2),
+          });
+        } catch {}
+        set({ currentInput: prompt });
+        void get().sendMessage();
+        return;
+      }
     },
     refreshAgents: async () => {
       try {

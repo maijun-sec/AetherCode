@@ -927,6 +927,30 @@ async fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("read failed: {}", e))
 }
 
+/// R317: mkdir -p for the renderer. Used by SddPhaseBar to
+/// pre-create `<cwd>/.aethercode/sdd/<slug>/` before phase 1
+/// starts, so the agent's write_file calls land in a known
+/// directory without racing with shell-side mkdir. Path
+/// traversal guard: refuse absolute paths that point outside
+/// the project's root (the desktop's resolved cwd), so a
+/// malicious renderer can't make us mkdir anywhere on disk.
+#[tauri::command]
+async fn mkdir_p(path: String, root: Option<String>) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    if let Some(root_str) = root.as_ref() {
+        let root_p = std::path::PathBuf::from(root_str);
+        // Refuse if `path` is not under `root`.
+        if !p.starts_with(&root_p) {
+            return Err(format!(
+                "mkdir_p rejected: {} is not under root {}",
+                p.display(),
+                root_p.display()
+            ));
+        }
+    }
+    std::fs::create_dir_all(&p).map_err(|e| format!("mkdir failed: {}", e))
+}
+
 #[tauri::command]
 async fn get_daemon_info(state: State<'_, AppState>) -> Result<Option<DaemonInfo>, String> {
     Ok(state.daemon.lock().await.clone())
@@ -1661,7 +1685,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ensure_daemon, rpc_call, get_daemon_info, get_app_paths, set_cwd, get_cwd, disconnect,
             pre_warm_daemon, swap_to_pre_warm, discard_pre_warm,
-            write_text_file, read_text_file, append_text_file,
+            write_text_file, read_text_file, append_text_file, mkdir_p,
             // bank surface from Rust over HTTP
             bank_stats, bank_recall, bank_recall_all_kinds
         ])

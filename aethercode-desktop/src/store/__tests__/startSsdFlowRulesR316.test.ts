@@ -2,20 +2,25 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * R316 — startSsdFlow must inline the SDD skill's core rules into
- * the chat message so the agent sees them regardless of skill
- * discovery. Earlier R315 only prepended `[sdd] <intent>` and
- * trusted skill discovery; the agent's default agentic loop was
- * too eager and skipped straight to implement (writing pom.xml
- * before any spec markdown). R316 inlines the rules explicitly.
+ * R317 — startSsdFlow + sendSsdCommand build a per-phase prompt
+ * that the agent loads the sdd skill from. The prompt must:
+ *   1. Tag the chat message as `[sdd-task: <slug>, phase: <N>, action: <run|modify|skip>]`
+ *      so the agent knows which phase to run.
+ *   2. Reference the per-phase reference file (e.g.
+ *      `phase-1-constitution.md`) so the agent loads the right
+ *      instructions.
+ *   3. List the phase's input files explicitly — the agent
+ *      must read these via read_file, not infer from memory.
+ *   4. Name the single output file the phase must write,
+ *      under `<cwd>/.aethercode/sdd/<slug>/` (lowercase, kebab).
+ *   5. Forbid writing SPEC.md / DESIGN.md / pom.xml in cwd root.
+ *   6. Mandate HARD PAUSE after each phase.
+ *   7. Embed the user's original intent verbatim.
  *
  * This test reads the desktop store source and asserts the
- * trigger string contains:
- *   1. The 8-phase order
- *   2. The mandatory phase artifact names
- *   3. The strict lowercase path convention
- *   4. The pause-message shape (so renderer scan picks it up)
- *   5. The original intent verbatim
+ * buildPhasePrompt() helper satisfies (1)-(7). If a future
+ * round relaxes the prompt (e.g. lets the agent self-pick
+ * the next phase), this test fails immediately.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,31 +28,59 @@ import { join } from 'node:path';
 const STORE_TS = join(process.cwd(), 'src', 'store', 'index.ts');
 const source = readFileSync(STORE_TS, 'utf8');
 
-describe('startSsdFlow — R316 inlines SDD skill rules', () => {
-  it('contains the 8-phase order', () => {
-    expect(source).toMatch(/constitution\s*→\s*specify\s*→\s*\[clarify\]\s*→\s*plan\s*→\s*\[analyze\]\s*→\s*tasks\s*→\s*implement\s*→\s*\[converge\]/);
+describe('startSsdFlow — R317 per-phase prompt contract', () => {
+  it('tags the prompt with [sdd-task: <slug>, phase: <N>, action: <run|modify|skip>]', () => {
+    expect(source).toMatch(/\[sdd-task:\s*\$\{[^}]+\},\s*phase:\s*\$\{[^}]+\},\s*action:\s*\$\{[^}]+\}\]/);
   });
 
-  it('forbids writing pom.xml / SPEC.md / DESIGN.md in cwd root', () => {
-    expect(source).toMatch(/绝对禁止写到.*SPEC\.md/);
-    expect(source).toMatch(/绝对禁止写到.*DESIGN\.md/);
-    expect(source).toMatch(/绝对禁止写到.*pom\.xml/);
+  it('instructs the agent to load the per-phase reference file', () => {
+    expect(source).toMatch(/references\/phase-\$\{[^}]+\}-\$\{[^}]+\}\.md/);
   });
 
-  it('requires lowercase filenames', () => {
-    expect(source).toMatch(/绝对禁止大写文件名/);
+  it('lists the phase input files explicitly', () => {
+    // inputFilesForPhase builds the list; buildPhasePrompt
+    // formats it as `${i + 1}. \`${f}\`` — the prompt source
+    // has to call inputFilesForPhase and embed it.
+    expect(source).toMatch(/inputFilesForPhase/);
+    expect(source).toMatch(/inputsBlock/);
   });
 
-  it('mentions the per-phase reference files at the agent', () => {
-    expect(source).toMatch(/phase-1-constitution\.md/);
-    expect(source).toMatch(/phase-7-implement\.md/);
+  it('mandates a single output file under .aethercode/sdd/<slug>/', () => {
+    expect(source).toMatch(/\$\{dir\}\/\$\{outputFile\}/);
   });
 
-  it('mentions the pause-message shape renderer scans for', () => {
-    expect(source).toMatch(/✅ 第 N 阶段完成/);
+  it('pins the correct lowercase output filenames + strict path', () => {
+    // The buildPhasePrompt helper produces the canonical
+    // lowercase filename list. If a future refactor adds
+    // uppercase variants (e.g. SPEC.md) the helpers would
+    // catch it; this source-pin catches it earlier.
+    expect(source).toMatch(/case 'specify':\s+return 'spec\.md';/);
+    expect(source).toMatch(/case 'plan':\s+return 'design\.md';/);
+    expect(source).toMatch(/constitution\.md/);
+    expect(source).toMatch(/dev\.log/);
+    expect(source).toMatch(/convergence\.json/);
+    // The strict-path wording in the prompt.
+    expect(source).toMatch(/绝对禁止写到其他路径/);
+    expect(source).toMatch(/\.aethercode\/sdd\/<slug>\//);
   });
 
-  it('inlines the user intent into the trigger string', () => {
-    expect(source).toMatch(/\$\{intent\}/);
+  it('mandates HARD PAUSE — agent must not advance on its own', () => {
+    expect(source).toMatch(/HARD PAUSE/);
+    expect(source).toMatch(/Do NOT advance/i);
+  });
+
+  it('embeds the original user intent', () => {
+    expect(source).toMatch(/Original user intent/);
+    expect(source).toMatch(/\$\{[^}]+\.intent\}/);
+  });
+
+  it('phase 1 has no input files (entry phase)', () => {
+    expect(source).toMatch(/no input files — this is the entry phase/);
+  });
+
+  it('phase N reads prior phase outputs', () => {
+    // For each phase i in 1..N, the prompt references
+    // `${dir}/${fname}` for prior outputs.
+    expect(source).toMatch(/for \(let i = 1; i < n; i\+\+\)/);
   });
 });
