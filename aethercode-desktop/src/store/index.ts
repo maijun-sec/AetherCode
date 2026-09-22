@@ -1875,6 +1875,16 @@ interface AppState {
    *  MessageList when scanning chat messages for the SDD
    *  pause-message pattern. */
   sddApplyPhaseUpdate: (phase: string, state: 'idle' | 'running' | 'pending-confirm' | 'done' | 'skipped' | 'failed', path?: string) => void;
+  /** R324: pre-mark an `idle` phase as 'skipped' ahead of time
+   *  so the agent skips it when it reaches that phase. The
+   *  user clicks the chip's ⏭ button while a previous phase
+   *  is running; by the time the agent gets to the marked
+   *  phase, nextPhase() treats it as already-handled. */
+  sddSkipPhase: (phaseId: string) => Promise<void>;
+  /** R324: jump directly to a future phase, marking every
+   *  intervening phase as 'skipped'. The agent starts running
+   *  the target phase on the next sendMessage(). */
+  sddJumpToPhase: (phaseN: number) => Promise<void>;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
    *  calls this on open. The agent body
@@ -5347,6 +5357,91 @@ export const useStore = create<AppState>((set, get) => {
           return next;
         }),
       }));
+    },
+    sddSkipPhase: async (phaseId) => {
+      // R324: mark an `idle` or `running` phase as 'skipped'.
+      // Only works for `optional` phases — REQUIRED phases
+      // (constitution / specify / plan / tasks / implement)
+      // cannot be skipped, we surface a system warning instead.
+      const s = get();
+      if (!s.sddActive) return;
+      const phase = s.sddPhases.find((p) => p.id === phaseId);
+      if (!phase) return;
+      if (!phase.optional) {
+        try {
+          console.warn('[store] sddSkipPhase: cannot skip non-optional phase', phaseId);
+        } catch {}
+        set((st) => ({
+          messages: [...st.messages, {
+            id: newId('system'),
+            role: 'system' as const,
+            content: `⛔ 第 ${phase.id} 阶段（${phase.title}）是必需阶段，不能跳过。`,
+            timestamp: Date.now(),
+          }],
+        }));
+        return;
+      }
+      const now = Date.now();
+      set((st) => ({
+        sddPhases: st.sddPhases.map((p) => {
+          if (p.id !== phaseId) return p;
+          if (p.state !== 'idle' && p.state !== 'running') return p;
+          return { ...p, state: 'skipped', endedAt: now };
+        }),
+      }));
+      // If we skipped the currently running phase (rare — only
+      // happens for OPTIONAL running phases like analyze), the
+      // agent is still on that phase; the next sendSsdCommand
+      // or pause-message scan will pick up the skip state and
+      // advance naturally.
+    },
+    sddJumpToPhase: async (phaseN) => {
+      // R324: jump directly to phase N, marking every
+      // intervening phase as 'skipped' (REQUIRED + optional
+      // alike). The agent then runs phase N immediately. This
+      // is a "destructive" override — the user is explicitly
+      // saying "skip 1..N-1, just run N". Surfaces a system
+      // message so the chat history shows what happened.
+      const s = get();
+      if (!s.sddActive) return;
+      const cwd = s.cwd ?? '';
+      const slug = s.sddSlug;
+      if (phaseN < 1 || phaseN > SDD_PHASE_IDS.length) return;
+      const now = Date.now();
+      const phaseIdN = phaseIdFor(phaseN);
+      set((st) => ({
+        sddPhases: st.sddPhases.map((p) => {
+          const idx = SDD_PHASE_IDS.indexOf(p.id) + 1;
+          if (idx >= phaseN) return p;
+          if (p.state === 'done' || p.state === 'skipped' || p.state === 'failed') return p;
+          return { ...p, state: 'skipped', endedAt: now };
+        }),
+        sddCurrentPhase: phaseN,
+        messages: [...st.messages, {
+          id: newId('system'),
+          role: 'system' as const,
+          content: `⏩ 已跳到第 ${phaseN} 阶段（${phaseIdN}）。中间阶段标记为 skipped。`,
+          timestamp: Date.now(),
+        }],
+      }));
+      // Build the new phase prompt and dispatch.
+      const inputFiles = inputFilesForPhase(phaseN, slug, cwd);
+      const block = await buildPhasePrompt({
+        phase: phaseN,
+        slug,
+        intent: s.sddIntent,
+        action: 'run',
+        inputFiles,
+        cwd,
+      });
+      set((st) => ({
+        sddPhases: st.sddPhases.map((p) => {
+          if (p.id !== phaseIdN) return p;
+          return { ...p, state: 'running', startedAt: now, endedAt: undefined, path: undefined };
+        }),
+        currentInput: block.full,
+      }));
+      void get().sendMessage();
     },
     startSsdFlow: async (intent: string) => {
       // R317: per-phase handler mode. We (a) derive slug,

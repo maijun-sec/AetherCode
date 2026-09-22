@@ -80,9 +80,12 @@ export function SddPhaseBar() {
   const sddPhases    = useStore((s) => s.sddPhases);
   const sddActive    = useStore((s) => s.sddActive);
   const sddSlug      = useStore((s) => s.sddSlug);
+  const sddCurrentPhase = useStore((s) => s.sddCurrentPhase);
   const setSddEnabled = useStore((s) => s.setSddEnabled);
   const stopSsdFlow  = useStore((s) => s.stopSsdFlow);
   const sendSsdCommand = useStore((s) => s.sendSsdCommand);
+  const sddSkipPhase = useStore((s) => s.sddSkipPhase);
+  const sddJumpToPhase = useStore((s) => s.sddJumpToPhase);
 
   // The single phase waiting on the user — serial, not concurrent.
   const waitingPhase = sddPhases.find((p) => p.state === 'pending-confirm');
@@ -181,6 +184,18 @@ export function SddPhaseBar() {
           const durSec = (phase?.startedAt && phase?.endedAt)
             ? Math.max(0, Math.round((phase.endedAt - phase.startedAt) / 1000))
             : null;
+          // R324: skip / jump-to affordances are decided per-chip,
+// based on the chip's role (running / pending-confirm /
+// future / done / skipped). The skip / jump-to buttons
+// live inside each <li> so the user can plan ahead —
+// e.g. while phase 2 is running, they can already mark
+// phase 3 (clarify, optional) as skipped, or jump
+// straight to phase 6 (tasks).
+          const canSkipThisPhase =
+            sddActive && (state === 'idle' || state === 'running') && optional;
+          const canJumpToThisPhase =
+            sddActive && (state === 'idle') &&
+            (sddCurrentPhase != null && (i + 1) > sddCurrentPhase);
           return (
             <li
               key={id}
@@ -195,7 +210,45 @@ export function SddPhaseBar() {
               {durSec !== null && state === 'done' && (
                 <span className="sdd-phase-duration" data-testid={`sdd-phase-duration-${id}`}>{durSec}s</span>
               )}
-              {optional && <span className="sdd-phase-optional-tag" title="可选质量门">可选</span>}
+              {optional && state === 'idle' && (
+                <span className="sdd-phase-optional-tag" title="可选质量门">可选</span>
+              )}
+              {/* R324: chip-level skip / jump-to actions. These
+               *  let the user plan the run *before* the agent
+               *  reaches each phase — the previous design only
+               *  surfaced the skip button when the current phase
+               *  completed, which was too late (the user already
+               *  decided at phase N-1 whether phase N should run). */}
+              {canSkipThisPhase && (
+                <button
+                  type="button"
+                  className="sdd-phase-chip-action sdd-phase-chip-skip"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void sddSkipPhase(id);
+                  }}
+                  data-testid={`sdd-chip-skip-${id}`}
+                  title={`标记第 ${i + 1} 阶段（${title}）为已跳过 — agent 跑到这里时直接跳过`}
+                  aria-label={`跳过 ${title}`}
+                >
+                  ⏭
+                </button>
+              )}
+              {canJumpToThisPhase && (
+                <button
+                  type="button"
+                  className="sdd-phase-chip-action sdd-phase-chip-jump"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void sddJumpToPhase(i + 1);
+                  }}
+                  data-testid={`sdd-chip-jump-${id}`}
+                  title={`跳过中间的 phase，直接进入第 ${i + 1} 阶段（${title}）`}
+                  aria-label={`直达 ${title}`}
+                >
+                  ⏩
+                </button>
+              )}
             </li>
           );
         })}
@@ -234,24 +287,19 @@ export function SddPhaseBar() {
             )}
           </div>
 
-          {/* R322: top row — structured ABCDE choices. The user
-           *  explicitly asked for lettered buttons (instead of
-           *  icons) so they don't have to remember which emoji
-           *  means what. We render:
-           *    A — ✅ 接受并进入下一阶段 (approve)
-           *    B — ✏️ 修改当前阶段 (modify; text in textarea)
-           *    C — ⏭️ 跳过下一阶段 (skip; optional only)
-           *    D — 🔁 重新生成当前阶段 (rerun)
-           *    E — ✋ 暂停（agent 不动，等用户进一步指示） (pause)
-           *  Below: free-text input ("其他") wired to sendSsdCommand
-           *  as a generic modify command.
-           *
-           *  R323: drop the `waitingPhase` guard. The buttons
-           *  should always be visible when an SDD run is active
-           *  so the user has a clear affordance regardless of
-           *  the chip state machine. The state machine still
-           *  matters for the chip colours / glyphs, but the
-           *  buttons are the user's primary interface. */}
+          {/* R322 + R324: top row — ABDE actions (C-skip moved to the
+   *  chip strip itself; the user pre-persales which optional
+   *  phases to skip before they run). Buttons are compact,
+   *  single-letter badges + emoji + label, all on one row.
+   *  Layout: A (primary) / B (modify) / D (rerun) / E (pause).
+   *  Skip is no longer a global button — it's per-chip (R324).
+   *
+   *  R323: drop the `waitingPhase` guard. The buttons should
+   *  always be visible when an SDD run is active so the user
+   *  has a clear affordance regardless of the chip state
+   *  machine. The state machine still matters for the chip
+   *  colours / glyphs (⏸待确认 / ◐进行中 / ✓已完成), but the
+   *  buttons are the user's primary interface. */}
           <div className="sdd-phase-actions-buttons" data-testid="sdd-phase-actions-buttons">
             <button
               type="button"
@@ -262,7 +310,7 @@ export function SddPhaseBar() {
               title="A — 接受草案，进入下一阶段"
             >
               <span className="sdd-btn-letter">A</span>
-              <span className="sdd-btn-label">✅ 接受</span>
+              <span className="sdd-btn-label">接受</span>
             </button>
             <button
               type="button"
@@ -272,7 +320,6 @@ export function SddPhaseBar() {
                   sendSsdCommand('modify', reviseText.trim());
                   setReviseText('');
                 } else {
-                  // focus the textarea so the user can type
                   const el = document.querySelector('[data-testid="sdd-revise-textarea"]') as HTMLTextAreaElement | null;
                   el?.focus();
                 }
@@ -282,21 +329,8 @@ export function SddPhaseBar() {
               title="B — 修改当前阶段（在下方输入意见后发送）"
             >
               <span className="sdd-btn-letter">B</span>
-              <span className="sdd-btn-label">✏️ 修改</span>
+              <span className="sdd-btn-label">修改</span>
             </button>
-            {(waitingPhase?.optional ?? sddPhases.find((p) => p.state === 'running')?.optional) && (
-              <button
-                type="button"
-                className="sdd-btn sdd-btn-ghost"
-                onClick={() => sendSsdCommand('skip')}
-                data-testid="sdd-btn-skip"
-                data-sdd-choice="C"
-                title="C — 跳过下一阶段（仅可选阶段生效；REQUIRED 阶段会反问）"
-              >
-                <span className="sdd-btn-letter">C</span>
-                <span className="sdd-btn-label">⏭️ 跳过</span>
-              </button>
-            )}
             <button
               type="button"
               className="sdd-btn sdd-btn-ghost"
@@ -306,7 +340,7 @@ export function SddPhaseBar() {
               title="D — 重新生成当前阶段（覆盖现有产物）"
             >
               <span className="sdd-btn-letter">D</span>
-              <span className="sdd-btn-label">🔁 重跑</span>
+              <span className="sdd-btn-label">重跑</span>
             </button>
             <button
               type="button"
@@ -317,23 +351,34 @@ export function SddPhaseBar() {
               title="E — 暂停（agent 不动，等用户进一步指示）"
             >
               <span className="sdd-btn-letter">E</span>
-              <span className="sdd-btn-label">✋ 暂停</span>
+              <span className="sdd-btn-label">暂停</span>
             </button>
           </div>
-          {/* bottom row: ✏️ 修改 textarea + 📤 发送修订 */}
+          {/* bottom row: large textarea for free-text input. R324:
+           *  taller (min-height 56px / default 3 rows) so users
+           *  can comfortably write multi-line feedback. Auto-
+           *  grows via the autoSizeTextarea helper. */}
           <div className="sdd-phase-actions-revise">
             <textarea
               className="sdd-phase-actions-textarea"
               placeholder="其他意见 — 直接输入你的反馈（agent 会把它当作 phase 修改指令，按 Ctrl/⌘+Enter 发送）"
               value={reviseText}
-              onChange={(e) => setReviseText(e.target.value)}
+              onChange={(e) => {
+                setReviseText(e.target.value);
+                // Auto-grow: shrink-to-fit when content is
+                // short, grow up to max-height when content is
+                // long. Cheap (one reflow per keystroke).
+                const el = e.currentTarget;
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && reviseText.trim()) {
                   sendSsdCommand('modify', reviseText.trim());
                   setReviseText('');
                 }
               }}
-              rows={2}
+              rows={3}
               data-testid="sdd-revise-textarea"
             />
             <button

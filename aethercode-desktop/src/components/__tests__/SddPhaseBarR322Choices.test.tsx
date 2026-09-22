@@ -32,25 +32,30 @@ const store = readFileSync(STORE, 'utf8');
 const input = readFileSync(INPUT, 'utf8');
 
 describe('R322 SddPhaseBar lettered ABCDE choices', () => {
-  it('renders five lettered buttons A/B/C/D/E', () => {
+  it('renders four lettered buttons A/B/D/E (C-skip moved to chip strip)', () => {
     expect(bar).toMatch(/data-testid="sdd-btn-accept"[\s\S]*?data-sdd-choice="A"/);
     expect(bar).toMatch(/data-testid="sdd-btn-modify"[\s\S]*?data-sdd-choice="B"/);
-    expect(bar).toMatch(/data-testid="sdd-btn-skip"[\s\S]*?data-sdd-choice="C"/);
     expect(bar).toMatch(/data-testid="sdd-btn-rerun"[\s\S]*?data-sdd-choice="D"/);
     expect(bar).toMatch(/data-testid="sdd-btn-pause"[\s\S]*?data-sdd-choice="E"/);
   });
 
-  it('each button has a letter badge + emoji + label', () => {
-    expect(bar).toMatch(/<span className="sdd-btn-letter">A<\/span>/);
-    expect(bar).toMatch(/<span className="sdd-btn-label">✅ 接受<\/span>/);
-    expect(bar).toMatch(/<span className="sdd-btn-letter">D<\/span>/);
-    expect(bar).toMatch(/<span className="sdd-btn-label">🔁 重跑<\/span>/);
+  it('does NOT render a global C-skip button (R324: skip moved to chip)', () => {
+    expect(bar).not.toMatch(/data-testid="sdd-btn-skip"/);
   });
 
-  it('skip button only renders for optional phases', () => {
-    // R323: skip button now also checks running phase's optional
-    // flag (since we removed the waitingPhase guard).
-    expect(bar).toMatch(/waitingPhase\?\.optional\s*\?\?\s*sddPhases\.find\(\(p\)\s*=>\s*p\.state\s*===\s*'running'\)\?\.optional/);
+  it('each button has a letter badge + label (R324: emoji dropped from labels, badge-only)', () => {
+    expect(bar).toMatch(/<span className="sdd-btn-letter">A<\/span>/);
+    expect(bar).toMatch(/<span className="sdd-btn-label">接受<\/span>/);
+    expect(bar).toMatch(/<span className="sdd-btn-letter">D<\/span>/);
+    expect(bar).toMatch(/<span className="sdd-btn-label">重跑<\/span>/);
+  });
+
+  it('C-skip button removed from action row (R324: moved to per-chip)', () => {
+    // The previous C-skip button (with `waitingPhase.optional` /
+    // `running phase.optional` guard) is gone. Skip is now per-
+    // chip via the sdd-chip-skip-${id} buttons. Verify the old
+    // skip-button code path no longer exists.
+    expect(bar).not.toMatch(/data-testid="sdd-btn-skip"/);
   });
 
   it('rerun button calls sendSsdCommand("rerun")', () => {
@@ -95,13 +100,45 @@ describe('R322 MessageInput: widen skip/approve regex', () => {
 });
 
 describe('R322 CSS: letter badges + grid layout', () => {
-  it('CSS uses grid-template-columns for the buttons row', () => {
-    expect(css).toMatch(/\.sdd-phase-actions-buttons\s*\{[^}]*grid-template-columns/);
+  it('CSS uses inline-flex for the buttons row (R324: compact horizontal)', () => {
+    expect(css).toMatch(/\.sdd-phase-actions-buttons\s*\{[^}]*display:\s*inline-flex/);
   });
 
   it('CSS defines .sdd-btn-letter badge style', () => {
     expect(css).toMatch(/\.sdd-btn-letter\s*\{/);
     expect(css).toMatch(/font-family:\s*ui-monospace/);
+  });
+});
+
+describe('R324 chip-level skip / jump-to affordances', () => {
+  it('chip strip renders ⏭ skip button per optional phase (sddSkipPhase)', () => {
+    expect(bar).toMatch(/sddSkipPhase\(id\)/);
+    expect(bar).toMatch(/data-testid=\{`sdd-chip-skip-\$\{id\}`\}/);
+  });
+
+  it('chip strip renders ⏩ jump-to button for future phases (sddJumpToPhase)', () => {
+    expect(bar).toMatch(/sddJumpToPhase\(i \+ 1\)/);
+    expect(bar).toMatch(/data-testid=\{`sdd-chip-jump-\$\{id\}`\}/);
+  });
+
+  it('skip button gated on optional + idle/running', () => {
+    expect(bar).toMatch(/canSkipThisPhase\s*=\s*sddActive\s*&&\s*\(state\s*===\s*['"]idle['"]\s*\|\|\s*state\s*===\s*['"]running['"]\)\s*&&\s*optional/);
+  });
+
+  it('jump-to button gated on idle + future phase', () => {
+    expect(bar).toMatch(/canJumpToThisPhase\s*=\s*sddActive\s*&&\s*\(state\s*===\s*['"]idle['"]\)/);
+    expect(bar).toMatch(/\(i\s*\+\s*1\)\s*>\s*sddCurrentPhase/);
+  });
+});
+
+describe('R324 textarea auto-grows', () => {
+  it('textarea defaults to 3 rows (was 2)', () => {
+    expect(bar).toMatch(/<textarea[\s\S]*?rows=\{3\}/);
+  });
+
+  it('textarea auto-resizes via onChange scrollHeight', () => {
+    expect(bar).toMatch(/el\.style\.height\s*=\s*['"]auto['"]/);
+    expect(bar).toMatch(/Math\.min\(el\.scrollHeight,\s*200\)/);
   });
 });
 
