@@ -92,6 +92,22 @@ export function SddPhaseBar() {
     setReviseText('');
   }, [waitingPhase?.id]);
 
+  // tick once a second to refresh runningFor — cheap re-render
+  // of a single number, fine.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!sddPhases.find((p) => p.state === 'running')) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [sddPhases.find((p) => p.state === 'running')?.id]);
+
+  // R315: IMPORTANT — the early-return for sddEnabled MUST come
+  // after all hooks (Rules of Hooks: hooks must be called in the
+  // same order every render). Placing `return null` before a
+  // hook causes React to throw "Rendered fewer hooks than
+  // expected" the next time sddEnabled flips false→true, which
+  // crashes the whole tree → blank screen. Move it after every
+  // hook below.
   if (!sddEnabled) return null;
 
   const byId = new Map(sddPhases.map((p) => [p.id, p]));
@@ -105,15 +121,6 @@ export function SddPhaseBar() {
   const runningFor = runningPhase?.startedAt
     ? Math.max(0, Math.round((Date.now() - runningPhase.startedAt) / 1000))
     : 0;
-
-  // tick once a second to refresh runningFor — cheap re-render
-  // of a single number, fine.
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!runningPhase) return;
-    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [runningPhase?.id]);
 
   return (
     <section
