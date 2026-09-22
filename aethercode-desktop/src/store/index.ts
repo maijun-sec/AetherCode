@@ -105,7 +105,39 @@ function outputFileNameFor(id: SddPhaseId): string {
 // reads this and loads the sdd skill; the sdd skill sees
 // the phase number + inputFiles and runs the matching
 // phase reference.
-function buildPhasePrompt(opts: {
+// SDD skill bundle location on disk. The desktop reads the
+// files directly via Tauri `read_text_file` and inlines
+// their content into the chat prompt so the agent doesn't
+// need to discover them through filesystem paths (which
+// failed in practice — the agent's cwd is the user's
+// project, not the agent's home directory).
+const SDD_SKILL_BUNDLE_DIR = 'C:/Users/maijun/.minimax/agents/mavis/skills/sdd';
+const SDD_SKILL_FILENAME = 'SKILL.md';
+function sddSkillPath(): string { return `${SDD_SKILL_BUNDLE_DIR}/${SDD_SKILL_FILENAME}`; }
+function sddPhaseRefPath(phase: number): string {
+  const id = phaseIdFor(phase);
+  return `${SDD_SKILL_BUNDLE_DIR}/references/phase-${phase}-${id}.md`;
+}
+// Hidden block markers — the renderer (MessageList) collapses
+// everything between these markers in the user message so the
+// user sees only the original intent, while the agent gets
+// the full SDD instruction block. Pin them via source-pin tests.
+const HIDDEN_SDD_OPEN = '<!-- hidden-sdd:start -->';
+const HIDDEN_SDD_CLOSE = '<!-- hidden-sdd:end -->';
+
+// R318: build the per-phase chat prompt. This is async
+// because we read the SKILL.md + phase reference from disk
+// and inline their content — the agent's cwd is the user's
+// project (not the agent's home dir), so relative paths
+// like `agents/mavis/skills/sdd/...` never resolve. Inline
+// the bundle into the prompt itself so the agent has the
+// full context without doing a file_search round-trip.
+//
+// Returns `{ visible, hidden, full }` so the caller can:
+//   - send `full` to the agent as the user message
+//   - render `visible` (or `full` collapsed by the renderer)
+//     in the chat list
+async function buildPhasePrompt(opts: {
   phase: number;
   slug: string;
   intent: string;
@@ -113,7 +145,7 @@ function buildPhasePrompt(opts: {
   inputFiles: string[];
   cwd: string;
   feedback?: string;
-}): string {
+}): Promise<{ full: string; visible: string }> {
   const phaseId = phaseIdFor(opts.phase);
   const outputFile = outputFileNameFor(phaseId);
   const isOptional = SDD_OPTIONAL.has(phaseId);
@@ -127,9 +159,32 @@ function buildPhasePrompt(opts: {
       : opts.action === 'modify'
       ? `Apply the user's feedback below to the existing output, then re-emit the pause message and STOP. Do NOT advance.\n\n## User feedback\n${opts.feedback ?? ''}`
       : `Write the skip sentinel \`{"skipped": true, "reason": "user-opted-out"}\` as the output file content, then emit the pause message and STOP. Do NOT advance.`;
-  return `[sdd-task: ${opts.slug}, phase: ${opts.phase}, action: ${opts.action}]
+  // Read SKILL.md + phase reference. Failures degrade
+  // gracefully — the prompt still includes the path hints
+  // so the agent can read them itself if the read fails.
+  let skillBody = '(unable to read SKILL.md — see path below)';
+  let phaseRefBody = '(unable to read phase reference — see path below)';
+  try {
+    skillBody = await invoke<string>('read_text_file', { path: sddSkillPath() });
+  } catch { /* keep fallback */ }
+  try {
+    phaseRefBody = await invoke<string>('read_text_file', { path: sddPhaseRefPath(opts.phase) });
+  } catch { /* keep fallback */ }
+  // Hidden block: SDD instruction. Visible block: user intent.
+  const hiddenBlock = `[sdd-task: ${opts.slug}, phase: ${opts.phase}, action: ${opts.action}]
 
-加载 \`agents/mavis/skills/sdd/SKILL.md\` + \`references/phase-${opts.phase}-${phaseId}.md\`。严格按 per-phase handler 跑，**只跑一个 phase，写完 output 后 HARD PAUSE**。
+${HIDDEN_SDD_OPEN}
+加载 SKILL.md + phase-${opts.phase}-${phaseId}.md (内容已 inline 在下面)。
+
+## SKILL.md
+\`\`\`
+${skillBody}
+\`\`\`
+
+## references/phase-${opts.phase}-${phaseId}.md
+\`\`\`
+${phaseRefBody}
+\`\`\`
 
 ## Inputs (必须 read_file 这些，没有就报错)
 ${inputsBlock}
@@ -144,6 +199,8 @@ ${inputsBlock}
 ## Action: ${opts.action}
 ${actionHint}
 
+**严格**: 只跑当前一个 phase。写完 output 后 **HARD PAUSE**（不许调任何 tool），输出 pause message，等用户回复 ✅ / ✏️ / ⏭️。
+
 ## Pause message (写完 output 后输出)
 \`\`\`
 ✅ **第 ${opts.phase} 阶段完成 — <phase 中文 title>**
@@ -157,10 +214,18 @@ ${actionHint}
   ⏭️ 跳过下一阶段（仅对可选阶段生效）
 \`\`\`
 
-## Original user intent
-${opts.intent}
+**不要**一次跑多个 phase。**不要**写源代码（除 phase 7 implement 外）。**不要**用 Plan Panel 跳过阶段。
+${HIDDEN_SDD_CLOSE}
 
-**不要**一次跑多个 phase。**不要**写源代码（除 phase 7 implement 外）。**不要**用 Plan Panel 跳过阶段。`;
+## Original user intent
+${opts.intent}`;
+  const visibleBlock = `[sdd-task: ${opts.slug}, phase: ${opts.phase}, action: ${opts.action}]
+
+📐 **SDD 模式** · slug: \`${opts.slug}\` · phase ${opts.phase}/${SDD_PHASE_IDS.length}
+
+## User intent
+${opts.intent}`;
+  return { full: hiddenBlock, visible: visibleBlock };
 }
 
 // Find the next phase to run after the current one. Skip
@@ -5263,7 +5328,9 @@ export const useStore = create<AppState>((set, get) => {
       // Build the phase-1 instruction block. The agent
       // uses the sdd skill; this block tells it exactly
       // which phase to run and which inputs (none) to read.
-      const phase1Instruction = buildPhasePrompt({
+      // R318: buildPhasePrompt is async (reads SKILL.md +
+      // phase reference from disk and inlines them).
+      const phase1Block = await buildPhasePrompt({
         phase: 1,
         action: 'run',
         slug,
@@ -5271,7 +5338,15 @@ export const useStore = create<AppState>((set, get) => {
         inputFiles: phase1InputFiles,
         cwd,
       });
-      set({ currentInput: phase1Instruction });
+      // Send the FULL block to the agent (so it sees the
+      // SDD instruction), but show only the visible part
+      // in the chat list (so the user isn't drowned in
+      // technical details). The renderer (MessageList)
+      // already knows to use `messages[i].content` as-is;
+      // we therefore push `full` as the chat content and
+      // rely on the renderer's `<!-- hidden-sdd:start/end -->`
+      // collapse to hide the middle.
+      set({ currentInput: phase1Block.full });
       await get().sendMessage();
     },
     stopSsdFlow: () => {
@@ -5292,7 +5367,7 @@ export const useStore = create<AppState>((set, get) => {
       // Restore the user's original input box text.
       if (input) set({ currentInput: target });
     },
-    sendSsdCommand: (cmd, text) => {
+    sendSsdCommand: async (cmd, text) => {
       // R317: per-phase handler mode. Desktop is the single
       // source of truth for which phase runs next. Each
       // branch:
@@ -5333,7 +5408,7 @@ export const useStore = create<AppState>((set, get) => {
           ),
         }));
         const inputFiles = inputFilesForPhase(next, sddSlug, cwd);
-        const prompt = buildPhasePrompt({
+        const block = await buildPhasePrompt({
           phase: next, slug: sddSlug, intent: sddIntent, action: 'run', inputFiles, cwd,
         });
         try {
@@ -5342,14 +5417,14 @@ export const useStore = create<AppState>((set, get) => {
             contents: JSON.stringify(makePhaseState({ ...get(), cwd }), null, 2),
           });
         } catch {}
-        set({ currentInput: prompt });
+        set({ currentInput: block.full });
         void get().sendMessage();
         return;
       }
       if (cmd === 'modify') {
         // Stay on current phase, send modify instruction.
         const inputFiles = inputFilesForPhase(sddCurrentPhase, sddSlug, cwd);
-        const prompt = buildPhasePrompt({
+        const block = await buildPhasePrompt({
           phase: sddCurrentPhase,
           slug: sddSlug,
           intent: sddIntent,
@@ -5358,7 +5433,7 @@ export const useStore = create<AppState>((set, get) => {
           cwd,
           feedback: text ?? '',
         });
-        set({ currentInput: prompt });
+        set({ currentInput: block.full });
         void get().sendMessage();
         return;
       }
@@ -5393,7 +5468,7 @@ export const useStore = create<AppState>((set, get) => {
           sddCurrentPhase: next,
         }));
         const inputFiles = inputFilesForPhase(next, sddSlug, cwd);
-        const prompt = buildPhasePrompt({
+        const block = await buildPhasePrompt({
           phase: next,
           slug: sddSlug,
           intent: sddIntent,
@@ -5407,7 +5482,7 @@ export const useStore = create<AppState>((set, get) => {
             contents: JSON.stringify(makePhaseState({ ...get(), cwd }), null, 2),
           });
         } catch {}
-        set({ currentInput: prompt });
+        set({ currentInput: block.full });
         void get().sendMessage();
         return;
       }

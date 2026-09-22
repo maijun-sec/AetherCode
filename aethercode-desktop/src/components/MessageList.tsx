@@ -909,13 +909,29 @@ function LegacyMessage({ m }: { m: ChatMessage }) {
         </details>
       );
     }
-    return (
+    // R318: collapse any `<!-- hidden-sdd:start --> … <!-- hidden-ssd:end -->`
+// block in the user message. The SDD skill inlines a long
+// instruction block between those markers; the user only needs
+// to see the intent (everything after the closing marker) plus
+// a small "SDD mode" badge. The full content is still sent to the
+// agent via the chat list message.
+const HIDDEN_SDD_OPEN_R = /<!-- hidden-sdd:start -->[\s\S]*?<!-- hidden-sdd:end -->/;
+function collapseHiddenSdd(content: string): { visible: string; isSdd: boolean } {
+  const m = content.match(HIDDEN_SDD_OPEN_R);
+  if (!m) return { visible: content, isSdd: false };
+  const visiblePart = content.replace(HIDDEN_SDD_OPEN_R, '').trim();
+  return { visible: visiblePart, isSdd: true };
+}
+
+const { visible: visibleContent, isSdd } = collapseHiddenSdd(m.content);
+return (
       <div className="message message-user">
         <div className="message-meta">
           <span className="message-role">you</span>
           <span className="message-time">{fmtTime(m.timestamp)}</span>
+          {isSdd && <span className="message-sdd-badge" title="SDD 模式下，agent 收到了完整 phase 指令">📐 SDD</span>}
         </div>
-        <div className="message-content">{m.content}</div>
+        <div className="message-content">{visibleContent}</div>
       </div>
     );
   }

@@ -66,7 +66,7 @@ describe('startSsdFlow — R317 per-phase prompt contract', () => {
 
   it('mandates HARD PAUSE — agent must not advance on its own', () => {
     expect(source).toMatch(/HARD PAUSE/);
-    expect(source).toMatch(/Do NOT advance/i);
+    expect(source).toMatch(/Do NOT advance/);
   });
 
   it('embeds the original user intent', () => {
