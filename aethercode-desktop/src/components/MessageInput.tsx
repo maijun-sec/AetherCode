@@ -558,6 +558,23 @@ export function MessageInput() {
           }
           return;
         }
+        // R317: when SDD toggle is on, route the user's intent
+        // through startSsdFlow() instead of plain sendMessage().
+        // startSsdFlow prepends the per-phase instruction
+        // (`[sdd-task: <slug>, phase: 1, action: run]`) so the
+        // agent loads the sdd skill and runs phase 1 only,
+        // rather than defaulting to its agentic-loop habit of
+        // writing pom.xml + src/ straight off.
+        const intent = currentInput.trim();
+        if (useStore.getState().sddEnabled && intent) {
+          setCurrentInput('');
+          try {
+            await useStore.getState().startSsdFlow(intent);
+          } catch (e) {
+            console.warn('[MessageInput] startSsdFlow failed:', e);
+          }
+          return;
+        }
         sendMessage();
       }
     } else if (e.key === 'Escape') {
