@@ -280,7 +280,7 @@ public class SddCommand implements Callable<Integer> {
                 return 1;
             }
             repl = interactiveRepl;
-            content = (sys, usr, max) -> legacyLlm.generate(sys, usr, max);
+            content = (phase, sys, usr, max) -> legacyLlm.generate(sys, usr, max);
         } else {
             // Legacy terminal REPL — also keeps the
             // AetherCodeEngine-backed LlmFn path so a manual
@@ -292,7 +292,7 @@ public class SddCommand implements Callable<Integer> {
             final LlmFn legacyLlm = makeLlmFn(engine, config);
             interactiveRepl = null;
             repl = makeReplFn(auto);
-            content = (sys, usr, max) -> legacyLlm.generate(sys, usr, max);
+            content = (phase, sys, usr, max) -> legacyLlm.generate(sys, usr, max);
         }
         Logger log = interactive ? (line -> interactiveRepl.log("info", line)) : line -> System.out.println(line);
 

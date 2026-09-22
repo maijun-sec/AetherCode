@@ -6146,23 +6146,50 @@ export const useStore = create<AppState>((set, get) => {
             // alongside the event so a Mavis agent wired
             // into the desktop can consume them verbatim
             // and emit a phase-content reply.
+            //
+            // R310: the renderer does NOT display those
+            // prompt fields verbatim. The user complained
+            // "暴露内部信息, 影响用户体验" — the pre-R310
+            // message body wrapped systemPrompt + userPrompt
+            // in fenced code blocks for "transparency", which
+            // (a) leaked the spec-kit boilerplate the user
+            // never asked to see and (b) tripped the markdown
+            // renderer into rendering the whole chat as a
+            // giant <pre><code> block. We now surface a clean
+            // summary (phase name + artefact path + max-tokens
+            // hint) and stash the full prompts in metadata
+            // for debug / power-user inspection (open devtools
+            // and inspect `messages[i].metadata.systemPrompt`).
+            //
+            // R310: `ev.phase` was missing from the R309 wire
+            // event — the chip silently stayed on `running`
+            // and the user stared at a frozen UI. The
+            // `p.id === ev.phase` comparison below now finds
+            // the matching phase and flips it to
+            // `need-content` so the input pane appears.
             set((s) => {
               const now = Date.now();
-              const previewSnippet = ev.userPrompt.length > 240
-                ? ev.userPrompt.slice(0, 240) + '…'
-                : ev.userPrompt;
+              const phaseName = ev.phase ?? 'unknown';
+              // Find the artefact path the daemon intends to
+              // write so we can show "constitution.md" rather
+              // than just "constitution". The SddRunner
+              // computes the path inside its phase switch
+              // and emits it on phase-draft; until that lands
+              // we fall back to the convention
+              // `<cwd>/.aethercode/sdd/<slug>/<phase>.md`.
+              const phasePath = s.ssdPhases.find((p) => p.id === phaseName)?.path;
               return {
-                ssdPhases: s.ssdPhases.map((p) => p.id === ev.phase
+                ssdPhases: s.ssdPhases.map((p) => p.id === phaseName
                   ? { ...p, state: 'need-content' }
                   : p),
                 messages: [...s.messages, {
                   id: newId('system'),
                   role: 'system' as const,
-                  content: `📝 **${ev.phase}**：需要生成内容\n\n${ev.systemPrompt ? `**systemPrompt**:\n\n\`\`\`\n${ev.systemPrompt}\n\`\`\`\n\n` : ''}**userPrompt** (前 240 字):\n\n\`\`\`\n${previewSnippet}\n\`\`\`\n\n(请在下方输入生成的内容后发送，daemon 会写入文件并进入下一阶段)`,
+                  content: `📝 **${phaseName}**：需要生成内容${phasePath ? `\n\n产物: \`${phasePath}\`` : ''}\n\n请在下方输入生成的内容后点 📤 发送（或按 Ctrl/⌘+Enter）。daemon 会写入文件并进入下一阶段。`,
                   timestamp: now,
                   metadata: {
                     kind: 'sdd-need-content',
-                    phase: ev.phase,
+                    phase: phaseName,
                     systemPrompt: ev.systemPrompt,
                     userPrompt: ev.userPrompt,
                     maxTokens: ev.maxTokens,

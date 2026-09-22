@@ -343,7 +343,7 @@ public final class SddRunner {
                             + "top-level heading (# or ## or ###) — no preamble, no narration, "
                             + "just the artefact.";
                 }
-                text = cleanOutput(content.requestContent(systemPrompt, promptForAttempt, 4096));
+                text = cleanOutput(content.requestContent(phase.specKitId(), systemPrompt, promptForAttempt, 4096));
             }
 
             if (text.isEmpty()) {
@@ -452,6 +452,7 @@ public final class SddRunner {
                 + "One question per line, prefixed with 'Q:'. If nothing is unclear, output 'Q: NONE'.\n\n"
                 + "```\n" + specText + "\n```";
         String qResponse = cleanOutput(content.requestContent(
+                phase.specKitId(),
                 "You surface underspecified areas in software specs.",
                 questionPrompt, 1024));
         List<String> questions = new ArrayList<>();
@@ -490,6 +491,7 @@ public final class SddRunner {
             }
             applyPrompt.append("Current spec.md:\n```\n").append(specText).append("\n```");
             String updated = cleanOutput(content.requestContent(
+                    phase.specKitId(),
                     "You revise software spec documents based on user clarifications.",
                     applyPrompt.toString(), 4096));
             Files.writeString(specPath, updated, StandardCharsets.UTF_8);
@@ -529,6 +531,7 @@ public final class SddRunner {
                 + "Output a short bullet list of issues, then a line 'CONVERGED: yes' or 'CONVERGED: no'.\n\n"
                 + "# spec.md\n" + spec + "\n\n# design.md\n" + design + "\n\n# tasks.md\n" + tasks;
         String response = cleanOutput(content.requestContent(
+                phase.specKitId(),
                 "You are a software consistency analyst.",
                 prompt, 2048));
         Path out = featureDir.resolve("analyze.json");
@@ -577,7 +580,7 @@ public final class SddRunner {
                     + "\nFiles: " + String.join(", ", t.files)
                     + "\nAcceptance: " + t.acceptance
                     + "\nEst: " + t.estMin + " min";
-            String text = cleanOutput(content.requestContent(systemPrompt, userPrompt, 2048));
+            String text = cleanOutput(content.requestContent("task-" + t.id, systemPrompt, userPrompt, 2048));
             out.append("## ").append(t.id).append(" — ").append(t.title).append("\n\n")
                     .append(text).append("\n\n");
             Files.writeString(implLog, out.toString(), StandardCharsets.UTF_8);
@@ -605,6 +608,7 @@ public final class SddRunner {
                     + "\n\nOutput a JSON object with shape {converged: bool, issues: [string]}. "
                     + "Converged is true only if every FR in spec.md is covered by dev.log and there are no contradictions.";
             String response = cleanOutput(content.requestContent(
+                    phase.specKitId(),
                     "You are a post-implementation reviewer.",
                     prompt, 2048));
             boolean converged = CONVERGED_TRUE.matcher(response).find()
@@ -635,6 +639,7 @@ public final class SddRunner {
             String feedbackPrompt = "Apply this feedback to the implementation:\n\n"
                     + feedback + "\n\n# dev.log\n" + implSummary;
             String revised = cleanOutput(content.requestContent(
+                    phase.specKitId(),
                     "You revise an implementation based on reviewer feedback.",
                     feedbackPrompt, 4096));
             Files.writeString(implLog, implSummary + "\n\n## converge iteration " + iteration + "\n\n"
@@ -865,7 +870,32 @@ public final class SddRunner {
      * response to this prompt". */
     @FunctionalInterface
     public interface ContentProvider {
-        String requestContent(String systemPrompt, String userPrompt, int maxTokens) throws Exception;
+        /**
+         * Ask the content provider for the rendered markdown
+         * body of one phase (or one sub-step such as a single
+         * implement task). The {@code phase} argument is the
+         * Spec-Kit kebab-case id ({@code "constitution"},
+         * {@code "specify"}, {@code "plan"}, {@code "tasks"},
+         * {@code "implement"} / {@code "task-T001"},
+         * {@code "converge"}).
+         *
+         * <p>It travels in the wire {@code phase-need-content}
+         * event so the desktop renderer can flip the right
+         * chip's state to {@code need-content} and surface an
+         * input pane labelled with the matching phase name.
+         * Without {@code phase} the renderer couldn't tell
+         * which phase is parked and the UI silently freezes
+         * (R310 user feedback: "死在这里算怎么回事").
+         *
+         * <p>{@code systemPrompt} + {@code userPrompt} +
+         * {@code maxTokens} are forwarded verbatim so an
+         * attached LLM (Mavis agent) can reproduce the
+         * daemon's prompt shaping exactly. The renderer is
+         * free to ignore those — they're for the provider's
+         * consumption, not for display (R310: "暴露内部
+         * 信息, 影响用户体验").
+         */
+        String requestContent(String phase, String systemPrompt, String userPrompt, int maxTokens) throws Exception;
     }
 
     /** @deprecated R309: use {@link ContentProvider} instead. Kept

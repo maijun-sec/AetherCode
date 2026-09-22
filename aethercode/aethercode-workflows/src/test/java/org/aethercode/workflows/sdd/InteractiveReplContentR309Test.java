@@ -110,7 +110,7 @@ class InteractiveReplContentR309Test {
         // stdin (5-min readReply timeout), but we never wait
         // that long — we read the sink after a brief settle.
         Thread t = new Thread(() -> {
-            try { repl.requestContent("SYS-PROMPT-FIXTURE", "USR-PROMPT-FIXTURE", 4096); }
+            try { repl.requestContent("constitution", "SYS-PROMPT-FIXTURE", "USR-PROMPT-FIXTURE", 4096); }
             catch (Exception ignore) { /* expected to fail / hang */ }
         });
         t.setDaemon(true);
@@ -145,7 +145,7 @@ class InteractiveReplContentR309Test {
         String stdin = "{\"action\":\"phase-content\",\"content\":\"# Hello\\n\\nbody\"}\n";
         InteractiveRepl repl = replWith(stdin, sink);
 
-        String body = repl.requestContent("sys", "usr", 4096);
+        String body = repl.requestContent("specify", "sys", "usr", 4096);
         assertEquals("# Hello\n\nbody", body,
                 "ContentProvider.requestContent must return the phase-content command's content field verbatim");
     }
@@ -163,7 +163,7 @@ class InteractiveReplContentR309Test {
                 "{\"action\":\"phase-content\",\"content\":\"# Real body\"}\n";
         InteractiveRepl repl = replWith(stdin, sink);
 
-        String body = repl.requestContent("sys", "usr", 4096);
+        String body = repl.requestContent("plan", "sys", "usr", 4096);
         assertEquals("# Real body", body,
                 "requestContent must skip out-of-order actions and return the phase-content body");
     }
@@ -178,7 +178,7 @@ class InteractiveReplContentR309Test {
         // SddRunner.runDraftPhase aborts the whole run rather
         // than hang on stdin forever.
         try {
-            repl.requestContent("sys", "usr", 4096);
+            repl.requestContent("tasks", "sys", "usr", 4096);
             org.junit.jupiter.api.Assertions.fail("expected IOException when driver emits quit during phase-need-content");
         } catch (IOException ioe) {
             assertTrue(ioe.getMessage().toLowerCase().contains("quit"),

@@ -471,15 +471,29 @@ public final class InteractiveRepl implements SddRunner.ReplFn, SddRunner.Conten
      * {@code phase-accepted} / {@code log} lines that
      * crossed the request boundary. */
     @Override
-    public String requestContent(String systemPrompt, String userPrompt, int maxTokens) throws IOException {
-        // Emit the request shape: an `export` field carrying
-        // the rendered prompt, plus the max-tokens hint so the
-        // provider can size its reply. The driver's UI side
-        // surfaces this as "please generate the X.md body"
-        // and forwards the prompt (often augmented with
-        // project context) to an LLM of your choice.
+    public String requestContent(String phase, String systemPrompt, String userPrompt, int maxTokens) throws IOException {
+        // R310: the {@code phase} field travels in the
+        // outbound event so the desktop renderer can flip the
+        // matching chip from {@code running} to
+        // {@code need-content} and surface the right input
+        // pane. Pre-R310 this argument was missing — the
+        // event had no phase field and the renderer saw
+        // {@code ev.phase === undefined}, leaving the chip
+        // stuck on {@code running} and the user staring at a
+        // frozen UI ("死在这里算怎么回事" — R310 user feedback).
+        //
+        // The {@code systemPrompt} / {@code userPrompt} /
+        // {@code maxTokens} fields stay on the wire so an
+        // attached LLM (Mavis agent) can reproduce the
+        // daemon's prompt shaping exactly. The renderer is
+        // expected NOT to display those fields verbatim (R310
+        // feedback: "暴露内部信息, 影响用户体验") — it's free to
+        // ignore them. The {@code metadata} bag on the
+        // store-side system message still carries them for
+        // debug / power-user inspection.
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("event", "phase-need-content");
+        ev.put("phase", phase);
         ev.put("systemPrompt", systemPrompt);
         ev.put("userPrompt", userPrompt);
         ev.put("maxTokens", maxTokens);
