@@ -5016,10 +5016,15 @@ export const useStore = create<AppState>((set, get) => {
     },
     startSsdFlow: async (intent: string) => {
       // R315: this is the trigger entry — when the user has the
-      // SDD toggle on and hits Enter, we prepend an SDD-skill
-      // marker so the agent knows to load the skill. The agent
-      // itself drives the 8-phase run; this just initializes
-      // the local UI state and fires sendMessage.
+      // SDD toggle on and hits Enter, we (a) init local UI state
+      // and (b) send a chat message that contains the SDD skill's
+      // core rules inlined as a system-style block. R316 fix: an
+      // earlier version of this only prepended `[sdd] <intent>` and
+      // trusted the agent to discover+follow the sdd skill bundle.
+      // In practice the agent's default agentic loop was too eager
+      // and it skipped straight to implement (writing pom.xml
+      // before any spec markdown). Inlining the core rules here
+      // guarantees the agent sees them in the prompt itself.
       const phaseTemplate: Array<{
         id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
         title: string;
@@ -5040,14 +5045,68 @@ export const useStore = create<AppState>((set, get) => {
         sddPhases: phaseTemplate,
         sddSlug: '',
       });
-      // Prepend the SDD skill trigger so the agent definitely
-      // sees the keyword and loads the skill. The agent's
-      // sdd skill description matches "[sdd]" / "SDD" / "/sdd".
-      const trigger = `[sdd] ${intent}`;
-      // Stash the trigger into currentInput so the regular
-      // sendMessage flow picks it up.
-      set({ currentInput: trigger });
-      // Now actually send it via the regular path.
+      // R316: inline the sdd skill's core rules directly into the
+      // prompt so the agent sees them regardless of skill discovery.
+      // Mirrors the SKILL.md at agents/mavis/skills/sdd/SKILL.md.
+      const rules = `[sdd-skill-rules]
+你**必须**严格按 spec-kit 8 阶段规格化流程 (SDD) 执行以下 intent，不许按普通 agentic loop 跑。
+
+## 硬规则 (违反任何一条 = 整个 SDD run 失败)
+1. 严格 8 阶段顺序：constitution → specify → [clarify] → plan → [analyze] → tasks → implement → [converge]。
+2. REQUIRED phases (constitution / specify / plan / tasks / implement) 一律不许跳过。
+3. 每个阶段写完产物后 **HARD PAUSE**：禁止调任何 tool，只能输出 pause message 等用户 ✅ / ✏️ / ⏭️。
+4. Phase 1-6 **禁止写源代码**（包括 pom.xml / build.gradle / src/ 等）。只写 spec / design markdown。
+5. 产物路径 **严格**：\`<cwd>/.aethercode/sdd/<sdd-task-preset>/<file>\`（小写文件名，lowercase kebab-case slug）。
+   - constitution.md / spec.md / design.md / tasks.md / dev.log / clarify.json / analyze.json / convergence.json
+   - 绝对禁止写到 \`<cwd>/SPEC.md\` / \`<cwd>/DESIGN.md\` / \`<cwd>/pom.xml\` 等散落位置。
+   - 绝对禁止大写文件名（SPEC.md / DESIGN.md）。
+
+## Per-phase protocol (强制)
+每个 phase 开始前**必须**先 \`read_file\` 加载该 phase 的 reference，然后**只**写该 phase 的 artifact 文件：
+- Phase 1: \`agents/mavis/skills/sdd/references/phase-1-constitution.md\` → 写 \`<cwd>/.aethercode/sdd/<slug>/constitution.md\`
+- Phase 2: \`.../phase-2-specify.md\` → 写 \`spec.md\`
+- Phase 3 (opt): \`.../phase-3-clarify.md\` → 写 \`clarify.json\`
+- Phase 4: \`.../phase-4-plan.md\` → 写 \`design.md\`
+- Phase 5 (opt): \`.../phase-5-analyze.md\` → 写 \`analyze.json\`
+- Phase 6: \`.../phase-6-tasks.md\` → 写 \`tasks.md\`
+- Phase 7: \`.../phase-7-implement.md\` → 写 \`dev.log\` + 写源代码
+- Phase 8 (opt): \`.../phase-8-converge.md\` → 写 \`convergence.json\`
+
+## Pre-flight (Phase 1 开始前必须)
+1. \`bash ls <cwd>\` 检查目录状态
+2. 如果 \`<cwd>/.aethercode/sdd/<slug>/constitution.md\` 已存在 → 询问 (a) 续跑 (b) 复制到新目录
+3. **默认**创建新目录 \`<slug>-<timestamp>\` 避免污染
+4. \`<slug>\` 从 intent 派生：≤10 ASCII chars, kebab-case, lowercase
+
+## 每阶段后必须输出的 pause message (用户回复才进下一阶段)
+\`\`\`
+✅ 第 N 阶段完成 — <phase 中文 title>
+
+产物：\`<abs-path>/<file>\`
+摘要：<一句话核心决定>
+
+请回复：
+  ✅ 继续下一阶段
+  ✏️ 修改 <具体意见>
+  ⏭️ 跳过下一阶段（仅对可选阶段生效）
+\`\`\`
+
+最终完成时输出：
+\`\`\`
+✅ 第 8 阶段完成 — 收敛验证
+
+产物：<abs-path>/convergence.json
+
+🎉 **SDD 流程完成**
+\`\`\`
+
+## User intent
+${intent}
+
+## 关键：这是 SDD 流程，不许用 Plan Panel 跳过阶段
+不要用 agent 默认的 todo / Plan Panel 模式跑。不许先写代码再补 spec。
+[/sdd-skill-rules]`;
+      set({ currentInput: rules });
       await get().sendMessage();
     },
     stopSsdFlow: () => {
