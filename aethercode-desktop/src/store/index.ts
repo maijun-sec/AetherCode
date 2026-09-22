@@ -1520,6 +1520,54 @@ interface AppState {
   // ssdSlug / ssdIntent / startSsdFlow / stopSsdFlow / sendSsdCommand
   // all removed. Spec-Driven Development is now driven by the
   // Mavis agent directly in chat (see doc/user-guide/SDD.md).
+  // R315: brought back as UI-only state — the actual SDD run is
+  // driven by the Mavis agent in chat (via the sdd skill). The
+  // store tracks the toggle + per-phase chip state so the
+  // SddPhaseBar can render. Phase state is updated by scanning
+  // chat messages for the "✅ 第 N 阶段完成" pattern (set by the
+  // sdd skill's pause-message contract).
+  sddEnabled: boolean;
+  setSddEnabled: (on: boolean) => void;
+  /** Feature slug for the current SDD run. Empty string when no
+   *  run. Derived from intent by the agent (≤10 chars,
+   *  kebab-case, lowercase, conflicts append `-2`/`-3`).
+   *  The store mirrors the slug the agent is using so the
+   *  SddPhaseBar can show it in the footer. */
+  sddSlug: string;
+  /** True while an SDD run is active (toggle was on + user sent
+   *  the trigger message + agent hasn't written `abort.md` or
+   *  `convergence.json`). */
+  sddActive: boolean;
+  /** Per-phase chip state. R315: 8 phases with optional flag
+   *  for clarify / analyze / converge. State transitions:
+   *  idle → running → pending-confirm → done | skipped | failed.
+   *  Updated by `sddApplyPhaseUpdate()` called from
+   *  MessageList when it detects the agent's pause message. */
+  sddPhases: Array<{
+    id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
+    title: string;
+    optional?: boolean;
+    state: 'idle' | 'running' | 'pending-confirm' | 'done' | 'skipped' | 'failed';
+    path?: string;
+    startedAt?: number;
+    endedAt?: number;
+  }>;
+  /** Send the SDD trigger message + reset phase state. When the
+   *  user types an intent in the message box with sddEnabled
+   *  on, this pre-pends the SDD skill trigger prefix and
+   *  routes it through the regular sendMessage flow. */
+  startSsdFlow: (intent: string) => Promise<void>;
+  /** Tear down the current SDD run. Sends "abort" as a chat
+   *  message (the agent writes `abort.md`) and clears phase
+   *  state. No-op when no run is active. */
+  stopSsdFlow: () => void;
+  /** Send ✅ / ✏️ / ⏭️ as a chat message — the SDD skill maps
+   *  these to phase advances / re-runs / skips respectively. */
+  sendSsdCommand: (cmd: 'approve' | 'modify' | 'skip', text?: string) => void;
+  /** Internal action: update one phase's state. Called by
+   *  MessageList when scanning chat messages for the SDD
+   *  pause-message pattern. */
+  sddApplyPhaseUpdate: (phase: string, state: 'idle' | 'running' | 'pending-confirm' | 'done' | 'skipped' | 'failed', path?: string) => void;
   /** refresh the agent list from the
    *  daemon's listAgents. The Agents tab
    *  calls this on open. The agent body
@@ -3554,9 +3602,13 @@ export const useStore = create<AppState>((set, get) => {
     // row.
     currentVariant: null,
     activeVariant: null,
-    // R312: SDD mode state removed. Spec-Driven Development is
-    // now driven by the Mavis agent directly in chat
-    // (see doc/user-guide/SDD.md).
+    // R315: SDD UI state — toggle + slug + per-phase chip state.
+    // The actual SDD run is driven by the Mavis agent in chat
+    // (via the sdd skill); these fields are UI-only.
+    sddEnabled: false,
+    sddSlug: '',
+    sddActive: false,
+    sddPhases: [],
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
     // tab on open). Each entry has {name,
@@ -4939,6 +4991,94 @@ export const useStore = create<AppState>((set, get) => {
     // this on open. The cached list is in the
     // store; the editor fetches the body on
     // demand.
+    // R315: SDD actions. UI-only — drive the sdd skill via chat.
+    setSddEnabled: (on: boolean) => {
+      // toggling off mid-run tears down local chip state but
+      // does NOT send an abort message (the user might just be
+      // closing the panel). Real teardown happens via stopSsdFlow.
+      set({ sddEnabled: on });
+      if (!on) {
+        set({ sddActive: false, sddPhases: [], sddSlug: '' });
+      }
+    },
+    sddApplyPhaseUpdate: (phase, state, path) => {
+      set((s) => ({
+        sddPhases: s.sddPhases.map((p) => {
+          if (p.id !== phase) return p;
+          const now = Date.now();
+          const next = { ...p, state };
+          if (state === 'running' && !p.startedAt) next.startedAt = now;
+          if (state === 'done' || state === 'skipped' || state === 'failed') next.endedAt = now;
+          if (path) next.path = path;
+          return next;
+        }),
+      }));
+    },
+    startSsdFlow: async (intent: string) => {
+      // R315: this is the trigger entry — when the user has the
+      // SDD toggle on and hits Enter, we prepend an SDD-skill
+      // marker so the agent knows to load the skill. The agent
+      // itself drives the 8-phase run; this just initializes
+      // the local UI state and fires sendMessage.
+      const phaseTemplate: Array<{
+        id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
+        title: string;
+        optional?: boolean;
+        state: 'idle' | 'running' | 'pending-confirm' | 'done' | 'skipped' | 'failed';
+      }> = [
+        { id: 'constitution', title: '项目原则', state: 'idle' },
+        { id: 'specify',      title: '需求分析', state: 'idle' },
+        { id: 'clarify',      title: '需求澄清', state: 'idle', optional: true },
+        { id: 'plan',         title: '详细设计', state: 'idle' },
+        { id: 'analyze',      title: '一致性分析', state: 'idle', optional: true },
+        { id: 'tasks',        title: '任务分析', state: 'idle' },
+        { id: 'implement',    title: '执行实现', state: 'idle' },
+        { id: 'converge',     title: '收敛验证', state: 'idle', optional: true },
+      ];
+      set({
+        sddActive: true,
+        sddPhases: phaseTemplate,
+        sddSlug: '',
+      });
+      // Prepend the SDD skill trigger so the agent definitely
+      // sees the keyword and loads the skill. The agent's
+      // sdd skill description matches "[sdd]" / "SDD" / "/sdd".
+      const trigger = `[sdd] ${intent}`;
+      // Stash the trigger into currentInput so the regular
+      // sendMessage flow picks it up.
+      set({ currentInput: trigger });
+      // Now actually send it via the regular path.
+      await get().sendMessage();
+    },
+    stopSsdFlow: () => {
+      // Send "abort" as a chat message — the SDD skill will
+      // write `abort.md` and clear phase state. Then reset
+      // local UI state immediately.
+      const input = get().currentInput.trim();
+      const target = input || 'abort';
+      set({ currentInput: 'abort' });
+      // Fire and forget — don't await. The agent will see the
+      // message, write abort.md, and the chat flow finishes
+      // naturally.
+      void get().sendMessage();
+      // Reset local UI state right away so the chip strip
+      // collapses. If the run was already in done state,
+      // leave it alone (don't clobber a successful run).
+      set({ sddActive: false, sddSlug: '', sddPhases: [] });
+      // Restore the user's original input box text.
+      if (input) set({ currentInput: target });
+    },
+    sendSsdCommand: (cmd, text) => {
+      // Map UI button to a chat message the SDD skill understands.
+      let msg: string;
+      if (cmd === 'approve') msg = '✅';
+      else if (cmd === 'modify') msg = `✏️ ${text ?? ''}`;
+      else if (cmd === 'skip') msg = '⏭️';
+      else msg = '';
+      if (!msg) return;
+      set({ currentInput: msg });
+      void get().sendMessage();
+    },
     refreshAgents: async () => {
       try {
         const r = await rpc.listAgents();

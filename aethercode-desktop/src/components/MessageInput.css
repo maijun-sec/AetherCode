@@ -228,10 +228,15 @@
   font-weight: 600;
 }
 
-/* R312: SDD mode toggle and its dedicated CSS class
- * removed — SDD is now driven by the Mavis agent in chat
- * (see doc/user-guide/SDD.md). The .config-toggle-sdd
- * selector no longer matches any element. */
+/* R315: SDD mode toggle (reintroduced). When on, the user's next
+ * Enter routes through the sdd skill — the agent drives a strict
+ * 8-phase Spec-Driven Development flow with per-phase pause.
+ * Visual style: purple/indigo accent so the user can tell the
+ * two modes (thinking / SDD) apart at a glance. The pill flips
+ * to a filled soft-purple gradient when active. */
+.config-toggle-sdd {
+  /* Inherits .config-toggle layout. */
+}
 .config-toggle-sdd.config-toggle-active {
   background: linear-gradient(180deg, #ede9fe 0%, #ddd6fe 100%);
   color: #5b21b6;

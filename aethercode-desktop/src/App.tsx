@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { MessageList } from './components/MessageList';
+import { SddPhaseBar } from './components/SddPhaseBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
@@ -298,9 +299,15 @@ function MainLayout(p: MainLayoutProps) {
             <MessageList />
           </ErrorBoundary>
         )}
-        {/* R312: SddPhaseBar removed. Spec-Driven Development is now
+        {/* R315: SddPhaseBar reintroduced. The actual SDD run is
             driven by the Mavis agent in chat (see
-            doc/user-guide/SDD.md). */}
+            agents/mavis/skills/sdd). The bar is purely a UI
+            affordance — chip state is updated by MessageList
+            scanning chat messages for the "✅ 第 N 阶段完成"
+            pattern, and the ✅/✏️/⏭️ buttons send chat
+            messages (the agent interprets them as phase
+            advance / re-run / skip). */}
+        <SddPhaseBar />
         {/* The tool authorization prompt sits between the message list and the input so the input remains the bottom-most actionable element on the page. */}
         <PermissionPromptBanner />
         <MessageInput />

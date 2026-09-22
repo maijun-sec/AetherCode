@@ -201,6 +201,13 @@ export function MessageInput() {
   // any caller of this component.
   const [thinkingOn, setThinkingOn] = useState(true);
 
+  // R315: SDD mode. UI-only state — drives the sdd skill
+  // in chat (see agents/mavis/skills/sdd). When on, the next
+  // user turn is routed through the SDD skill with an [sdd]
+  // trigger prepended so the agent loads the skill bundle.
+  const sddEnabled = useStore((s) => s.sddEnabled);
+  const setSddEnabled = useStore((s) => s.setSddEnabled);
+
   // refresh the provider list on mount and whenever
   // the connection comes back. The daemon's listProviders
   // RPC returns every model across every provider
@@ -707,6 +714,28 @@ export function MessageInput() {
             aria-pressed={thinkingOn}
           >
             🧠 思考
+          </button>
+        </div>
+        {/* R315: SDD toggle. When on, the next Enter routes
+         * through the sdd skill — the agent runs a strict 8-phase
+         * spec-driven development flow with per-phase pause. The
+         * SddPhaseBar appears beneath the chat list to show the
+         * 8 phase chips + ✅/✏️/⏭️ action bar.
+         *
+         * Distinct from the Thinking pill: thinking controls the
+         * chat model, SDD controls the workflow envelope. Both
+         * can be on simultaneously — a SDD run still benefits
+         * from extended thinking. */}
+        <div className="config-group">
+          <button
+            type="button"
+            className={`config-toggle config-toggle-sdd ${sddEnabled ? 'config-toggle-active' : ''}`}
+            onClick={() => setSddEnabled(!sddEnabled)}
+            title={sddEnabled ? '关闭 SDD 模式' : '开启 SDD 模式'}
+            aria-pressed={sddEnabled}
+            data-testid="message-input-sdd-toggle"
+          >
+            📐 SDD
           </button>
         </div>
         {/* R312: SDD toggle gone. The 4 quality pills

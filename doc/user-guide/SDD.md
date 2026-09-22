@@ -21,14 +21,14 @@ R312 把 daemon 端的 SDD 编排(`SddRunner` / `SddConfig` / `InteractiveRepl` 
 
 | # | 阶段 (kebab-case id) | 中文 | Spec Kit 上游模板 | 产物文件 | 必需 |
 |---|---|---|---|---|---|
-| 1 | `constitution` | 项目原则 | `templates/constitution-template.md` | `.aethercode/sdd/<slug>/constitution.md` | ✅ |
-| 2 | `specify` | 需求分析 | `templates/specify-template.md` | `.aethercode/sdd/<slug>/spec.md` | ✅ |
-| 3 | `clarify` | 需求澄清 | (agent 推理) | `.aethercode/sdd/<slug>/clarify.json` | ❌ 可选 |
-| 4 | `plan` | 详细设计 | `templates/plan-template.md` | `.aethercode/sdd/<slug>/design.md` | ✅ |
-| 5 | `analyze` | 一致性分析 | (agent 推理) | `.aethercode/sdd/<slug>/analyze.json` | ❌ 可选 |
-| 6 | `tasks` | 任务分析 | `templates/tasks-template.md` | `.aethercode/sdd/<slug>/tasks.md` | ✅ |
-| 7 | `implement` | 执行实现 | (agent 自己用工具实现) | `.aethercode/sdd/<slug>/dev.log` | ❌ 可选 |
-| 8 | `converge` | 收敛验证 | (agent 自己 review) | `.aethercode/sdd/<slug>/convergence.json` | ❌ 可选 |
+| 1 | `constitution` | 项目原则 | `templates/constitution-template.md` | `.aethercode/sdd/<sdd-task-preset>/constitution.md` | ✅ |
+| 2 | `specify` | 需求分析 | `templates/specify-template.md` | `.aethercode/sdd/<sdd-task-preset>/spec.md` | ✅ |
+| 3 | `clarify` | 需求澄清 | (agent 推理) | `.aethercode/sdd/<sdd-task-preset>/clarify.json` | ❌ 可选 |
+| 4 | `plan` | 详细设计 | `templates/plan-template.md` | `.aethercode/sdd/<sdd-task-preset>/design.md` | ✅ |
+| 5 | `analyze` | 一致性分析 | (agent 推理) | `.aethercode/sdd/<sdd-task-preset>/analyze.json` | ❌ 可选 |
+| 6 | `tasks` | 任务分析 | `templates/tasks-template.md` | `.aethercode/sdd/<sdd-task-preset>/tasks.md` | ✅ |
+| 7 | `implement` | 执行实现 | (agent 自己用工具实现) | `.aethercode/sdd/<sdd-task-preset>/dev.log` | ❌ 可选 |
+| 8 | `converge` | 收敛验证 | (agent 自己 review) | `.aethercode/sdd/<sdd-task-preset>/convergence.json` | ❌ 可选 |
 
 ---
 
@@ -62,7 +62,7 @@ agent 会:
 ### 产物路径
 
 ```
-<cwd>/.aethercode/sdd/<slug>/
+<cwd>/.aethercode/sdd/<sdd-task-preset>/
 ├── constitution.md      # 阶段 1
 ├── spec.md             # 阶段 2
 ├── clarify.json        # 阶段 3 (可选)
@@ -73,11 +73,12 @@ agent 会:
 └── convergence.json    # 阶段 8 (可选)
 ```
 
-约定(R294 起,沿用 R236 SSD 命名,**不是 Spec Kit 上游的 `.specify/specs/<NNN>-<slug>/`**):
-- 目录名 `.aethercode/sdd/`
+约定(R314 起,**不是 Spec Kit 上游的 `.specify/specs/<NNN>-<slug>/`**):
+- 目录名 `.aethercode/sdd/<sdd-task-preset>/` — R314 起统称 `<sdd-task-preset>` (R294-R312 旧称 `<slug>`)
 - 设计文件 `design.md`(不是 `plan.md`)
 - 实现日志 `dev.log`(不是 `logs/implement.log`)
-- slug 用 ≤10 ASCII 字符,kebab-case,冲突时追加 `-2`/`-3` 后缀
+- `<sdd-task-preset>` 用 ≤10 ASCII 字符,kebab-case,lowercase,冲突时追加 `-2`/`-3` 后缀
+- 所有文件名**严格小写**:`constitution.md` / `spec.md` / `design.md` / `tasks.md` / `dev.log` / `*.json`
 
 ---
 

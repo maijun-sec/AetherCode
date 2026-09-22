@@ -998,6 +998,73 @@ export function MessageList() {
   // and re-registration and miss the transition.
   const pinnedRef = useRef(pinned);
   useEffect(() => { pinnedRef.current = pinned; }, [pinned]);
+  // R315: scan new chat messages for SDD phase-complete patterns.
+  // The agent's sdd skill emits a pause message in the exact
+  // shape "✅ 第 N 阶段完成 — <title>" (and optional sentinel
+  // "⏭️ 第 N 阶段 — <title>（可选）— 已跳过"). We translate
+  // each into a sddApplyPhaseUpdate() call so the chip strip
+  // flips state correctly. Path is parsed from the next code
+  // span (e.g. `<cwd>/.aethercode/sdd/<slug>/spec.md`).
+  useEffect(() => {
+    // Only run when an SDD run is active — otherwise we'd be
+    // scanning every message for nothing.
+    const s = useStore.getState();
+    if (!s.sddActive || !s.sddEnabled) return;
+    const PHASE_TITLE_TO_ID: Record<string, 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge'> = {
+      '项目原则':  'constitution',
+      '需求分析':  'specify',
+      '需求澄清':  'clarify',
+      '详细设计':  'plan',
+      '一致性分析': 'analyze',
+      '任务分析':  'tasks',
+      '执行实现':  'implement',
+      '收敛验证':  'converge',
+    };
+    // Find the most recent assistant/system message and parse it.
+    // We only look at messages that arrived after the toggle went
+    // on (the chip strip handles the rest of the state machine).
+    for (let i = messages.length - 1; i >= Math.max(0, messages.length - 12); i--) {
+      const m = messages[i];
+      if (m.role !== 'assistant' && m.role !== 'system') continue;
+      const content = m.content ?? '';
+      // Pattern 1: ✅ 第 N 阶段完成 — <中文 title>
+      // Pattern 2: ⏭️ 第 N 阶段 — <中文 title>（可选）— 已跳过
+      // Pattern 3: 🎉 SDD 流程完成
+      const doneRe = /第\s*(\d+)\s*阶段完成\s*—\s*([^\n\r]+)/;
+      const skipRe = /第\s*(\d+)\s*阶段\s*—\s*([^\n\r]+?)\s*（可选）\s*—\s*已跳过/;
+      let matched: RegExpMatchArray | null = content.match(doneRe);
+      let state: 'done' | 'skipped' = 'done';
+      if (!matched) {
+        matched = content.match(skipRe);
+        if (matched) state = 'skipped';
+      }
+      if (!matched) {
+        if (/🎉\s*\*\*SDD 流程完成\*\*/.test(content)) {
+          // Last phase done — collapse the bar. The agent has
+          // emitted `convergence.json` (or its skip sentinel).
+          // setSddEnabled(false) closes the bar.
+          useStore.getState().setSddEnabled(false);
+        }
+        continue;
+      }
+      const titleZh = (matched[2] ?? '').trim();
+      const phaseId = PHASE_TITLE_TO_ID[titleZh];
+      if (!phaseId) continue;
+      // Extract path from a code span on the next line (e.g.
+      // `产物：<cwd>/.aethercode/sdd/<slug>/spec.md`).
+      const pathRe = new RegExp('产物[:：]\\s*[`*]?([^`\\n\\r*]+)[`*]?');
+      const pathMatch = content.match(pathRe);
+      const path = pathMatch ? pathMatch[1].trim() : undefined;
+      // Apply the phase update.
+      useStore.getState().sddApplyPhaseUpdate(phaseId, state, path);
+      // Also mark the previous phase (if any) as running→done.
+      // Actually: when phase N completes, phase N-1 was already
+      // done (since the agent goes serially). Just transitioning
+      // phase N to done is enough; the previous phases are
+      // already in done state from earlier messages.
+      break;
+    }
+  }, [messages]);
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
