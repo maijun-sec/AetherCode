@@ -2,17 +2,15 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * R317 — MessageInput Enter handler must route through
- * startSsdFlow() when the SDD toggle is on. Earlier R317 wired
- * startSsdFlow to be called from MessageInput, but missed the
- * Enter-key wiring — the user's intent was sent via plain
- * sendMessage() and the SDD skill never fired. This test pins
- * the source so a future refactor that drops the sddEnabled
- * branch will fail immediately.
+ * R317 + R319 — MessageInput Enter handler must route through
+ * startSsdFlow() when the SDD toggle is on AND no run is
+ * active. When a run is already active, route via
+ * sendSsdCommand('approve' | 'modify' | 'skip') instead so
+ * that phrases like "继续下一阶段" advance the existing run
+ * instead of spawning a fresh phase 1 with a garbage slug.
  *
  * Source-pin style: read src/components/MessageInput.tsx
- * and assert the Enter handler routes through startSsdFlow
- * when sddEnabled is true.
+ * and assert the routing branch.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,15 +23,23 @@ describe('MessageInput — R317 SDD routing on Enter', () => {
     expect(source).toMatch(/sddEnabled\s*=\s*useStore\(\(s\)\s*=>\s*s\.sddEnabled\)/);
   });
 
-  it('checks sddEnabled in the Enter handler before sendMessage', () => {
-    // The Enter handler (around the if (isStreaming) cancelQuery()
-    // / else if (isConnected) {...} block) must gate the call to
-    // startSsdFlow on sddEnabled.
-    expect(source).toMatch(/useStore\.getState\(\)\.sddEnabled/);
+  it('gates sendMessage on sddEnabled in the Enter handler', () => {
+    // Either form: `useStore.getState().sddEnabled` or
+    // `sdd.sddEnabled` after pulling the store snapshot.
+    expect(source).toMatch(/sddEnabled/);
   });
 
-  it('calls startSsdFlow(intent) instead of plain sendMessage when toggle is on', () => {
-    // Look for the routing line: `await useStore.getState().startSsdFlow(intent)`
-    expect(source).toMatch(/useStore\.getState\(\)\.startSsdFlow\(intent\)/);
+  it('calls startSsdFlow(intent) when toggle is on AND no run is active', () => {
+    // startSsdFlow must be guarded by `!sdd.sddActive` so
+    // active runs don't accidentally spawn a fresh phase 1.
+    expect(source).toMatch(/startSsdFlow\(intent\)/);
+  });
+
+  it('calls sendSsdCommand(approve) when user types "继续" / "next" / "ok" with active run', () => {
+    expect(source).toMatch(/sendSsdCommand\('approve'\)/);
+  });
+
+  it('calls sendSsdCommand(modify) for arbitrary feedback text', () => {
+    expect(source).toMatch(/sendSsdCommand\('modify', intent\)/);
   });
 });

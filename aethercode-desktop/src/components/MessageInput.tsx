@@ -206,6 +206,7 @@ export function MessageInput() {
   // user turn is routed through the SDD skill with an [sdd]
   // trigger prepended so the agent loads the skill bundle.
   const sddEnabled = useStore((s) => s.sddEnabled);
+  const sddActive = useStore((s) => s.sddActive);
   const setSddEnabled = useStore((s) => s.setSddEnabled);
 
   // refresh the provider list on mount and whenever
@@ -566,12 +567,49 @@ export function MessageInput() {
         // rather than defaulting to its agentic-loop habit of
         // writing pom.xml + src/ straight off.
         const intent = currentInput.trim();
-        if (useStore.getState().sddEnabled && intent) {
+        // R319: when SDD run is already ACTIVE, treat the
+        // user's input as phase feedback / transition, NOT
+        // as a new SDD intent. A bare phrase like "继续下一
+        //阶段" should advance to the next phase, not spawn
+        // a fresh phase 1 with a garbage slug. We route via
+        // a small keyword table:
+        //   ✅ / 继续 / ok / next / 继续下一阶段 → approve
+        //   ✏️ / 修改 / 改 ... / 调整 ...         → modify (the
+        //                                              whole input
+        //                                              becomes the
+        //                                              feedback)
+        //   ⏭️ / 跳过 / skip                     → skip
+        //   anything else                       → modify (treat
+        //                                              as feedback
+        //                                              text for the
+        //                                              current
+        //                                              phase)
+        const sdd = useStore.getState();
+        if (sdd.sddEnabled && intent) {
           setCurrentInput('');
           try {
-            await useStore.getState().startSsdFlow(intent);
+            if (sdd.sddActive) {
+              // Run in flight — interpret the message as a
+              // phase command.
+              const lower = intent.toLowerCase();
+              if (/^(✅|继续下一阶段|继续|next|ok|advance|go)\s*$/.test(intent)
+                  || lower === '✅' || lower === 'next' || lower === 'ok' || lower === 'go') {
+                await sdd.sendSsdCommand('approve');
+              } else if (/^(⏭️|跳过|skip)\s*$/.test(intent)
+                  || lower === '⏭️' || lower === 'skip') {
+                await sdd.sendSsdCommand('skip');
+              } else {
+                // Treat as ✏️ feedback (whole input is the
+                // user's note on the current phase).
+                await sdd.sendSsdCommand('modify', intent);
+              }
+            } else {
+              // Toggle is on but no run yet — this is a new
+              // SDD intent; route via startSsdFlow.
+              await sdd.startSsdFlow(intent);
+            }
           } catch (e) {
-            console.warn('[MessageInput] startSsdFlow failed:', e);
+            console.warn('[MessageInput] SDD command failed:', e);
           }
           return;
         }
@@ -1186,9 +1224,13 @@ export function MessageInput() {
           onChange={(e) => setCurrentInput(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder={
-            isConnected
-              ? 'Type your message…  (Enter to send, Shift+Enter for newline, / for commands)'
-              : 'Connecting to daemon…'
+            !isConnected
+              ? 'Connecting to daemon…'
+              : sddActive
+              ? 'SDD 进行中 — 输入 ✅ 继续 / ⏭️ 跳过 / 或 phase 反馈'
+              : sddEnabled
+              ? 'SDD 模式已开 — 输入项目意图，按 Enter 启动 8 阶段流程'
+              : 'Type your message…  (Enter to send, Shift+Enter for newline, / for commands)'
           }
           rows={2}
           disabled={!isConnected}
