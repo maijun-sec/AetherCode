@@ -218,16 +218,48 @@ export function SddPhaseBar() {
             )}
           </div>
 
-          {/* top row: ✅ 接受 / ⏭️ 跳过 (skip only for optional) */}
-          <div className="sdd-phase-actions-buttons">
+          {/* R322: top row — structured ABCDE choices. The user
+           *  explicitly asked for lettered buttons (instead of
+           *  icons) so they don't have to remember which emoji
+           *  means what. We render:
+           *    A — ✅ 接受并进入下一阶段 (approve)
+           *    B — ✏️ 修改当前阶段 (modify; text in textarea)
+           *    C — ⏭️ 跳过下一阶段 (skip; optional only)
+           *    D — 🔁 重新生成当前阶段 (rerun)
+           *    E — ✋ 暂停（agent 不动，等用户进一步指示） (pause)
+           *  Below: free-text input ("其他") wired to sendSsdCommand
+           *  as a generic modify command. */}
+          <div className="sdd-phase-actions-buttons" data-testid="sdd-phase-actions-buttons">
             <button
               type="button"
               className="sdd-btn sdd-btn-primary"
               onClick={() => sendSsdCommand('approve')}
               data-testid="sdd-btn-accept"
-              title="接受草案，进入下一阶段（agent 会收到 ✅ 消息）"
+              data-sdd-choice="A"
+              title="A — 接受草案，进入下一阶段"
             >
-              ✅ 接受
+              <span className="sdd-btn-letter">A</span>
+              <span className="sdd-btn-label">✅ 接受</span>
+            </button>
+            <button
+              type="button"
+              className="sdd-btn sdd-btn-secondary"
+              onClick={() => {
+                if (reviseText.trim()) {
+                  sendSsdCommand('modify', reviseText.trim());
+                  setReviseText('');
+                } else {
+                  // focus the textarea so the user can type
+                  const el = document.querySelector('[data-testid="sdd-revise-textarea"]') as HTMLTextAreaElement | null;
+                  el?.focus();
+                }
+              }}
+              data-testid="sdd-btn-modify"
+              data-sdd-choice="B"
+              title="B — 修改当前阶段（在下方输入意见后发送）"
+            >
+              <span className="sdd-btn-letter">B</span>
+              <span className="sdd-btn-label">✏️ 修改</span>
             </button>
             {waitingPhase.optional && (
               <button
@@ -235,17 +267,41 @@ export function SddPhaseBar() {
                 className="sdd-btn sdd-btn-ghost"
                 onClick={() => sendSsdCommand('skip')}
                 data-testid="sdd-btn-skip"
-                title="跳过此阶段（仅可选质量门生效）"
+                data-sdd-choice="C"
+                title="C — 跳过下一阶段（仅可选阶段生效；REQUIRED 阶段会反问）"
               >
-                ⏭️ 跳过
+                <span className="sdd-btn-letter">C</span>
+                <span className="sdd-btn-label">⏭️ 跳过</span>
               </button>
             )}
+            <button
+              type="button"
+              className="sdd-btn sdd-btn-ghost"
+              onClick={() => sendSsdCommand('rerun')}
+              data-testid="sdd-btn-rerun"
+              data-sdd-choice="D"
+              title="D — 重新生成当前阶段（覆盖现有产物）"
+            >
+              <span className="sdd-btn-letter">D</span>
+              <span className="sdd-btn-label">🔁 重跑</span>
+            </button>
+            <button
+              type="button"
+              className="sdd-btn sdd-btn-ghost"
+              onClick={() => sendSsdCommand('pause')}
+              data-testid="sdd-btn-pause"
+              data-sdd-choice="E"
+              title="E — 暂停（agent 不动，等用户进一步指示）"
+            >
+              <span className="sdd-btn-letter">E</span>
+              <span className="sdd-btn-label">✋ 暂停</span>
+            </button>
           </div>
           {/* bottom row: ✏️ 修改 textarea + 📤 发送修订 */}
           <div className="sdd-phase-actions-revise">
             <textarea
               className="sdd-phase-actions-textarea"
-              placeholder="输入修改意见（agent 会基于当前内容重新生成）— Ctrl/⌘+Enter 发送"
+              placeholder="其他意见 — 直接输入你的反馈（agent 会把它当作 phase 修改指令，按 Ctrl/⌘+Enter 发送）"
               value={reviseText}
               onChange={(e) => setReviseText(e.target.value)}
               onKeyDown={(e) => {

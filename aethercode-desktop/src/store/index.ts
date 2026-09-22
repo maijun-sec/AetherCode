@@ -258,6 +258,14 @@ ${actionHint}
   ✅ 继续下一阶段
   ✏️ 修改 <具体意见>
   ⏭️ 跳过下一阶段（仅对可选阶段生效）
+
+<!-- choices:start
+A: ✅ 接受并进入下一阶段 → action=approve
+B: ✏️ 修改当前阶段 — 输入修改意见后按 Ctrl/⌘+Enter → action=modify
+C: ⏭️ 跳过下一阶段（仅当下一阶段是 OPTIONAL 才生效，否则 agent 会反问）→ action=skip
+D: 🔁 重新生成当前阶段 → action=rerun
+E: ✋ 暂停（agent 不动，等用户进一步指示）
+choices:end -->
 \`\`\`
 
 **不要**一次跑多个 phase。**不要**写源代码（除 phase 7 implement 外）。**不要**用 Plan Panel 跳过阶段。
@@ -1862,7 +1870,7 @@ interface AppState {
   stopSsdFlow: () => void;
   /** Send ✅ / ✏️ / ⏭️ as a chat message — the SDD skill maps
    *  these to phase advances / re-runs / skips respectively. */
-  sendSsdCommand: (cmd: 'approve' | 'modify' | 'skip', text?: string) => void;
+  sendSsdCommand: (cmd: 'approve' | 'modify' | 'skip' | 'rerun' | 'pause', text?: string) => void;
   /** Internal action: update one phase's state. Called by
    *  MessageList when scanning chat messages for the SDD
    *  pause-message pattern. */
@@ -5565,6 +5573,51 @@ export const useStore = create<AppState>((set, get) => {
         } catch {}
         set({ currentInput: block.full });
         void get().sendMessage();
+        return;
+      }
+      if (cmd === 'rerun') {
+        // R322: re-emit the SAME phase instruction with
+        // action='run' so the agent regenerates the phase
+        // from scratch. Used when the user wants a fresh
+        // draft of the current phase (e.g. "draft 不满意,
+        // 重新生成"). Flips the phase back to running.
+        set((st) => ({
+          sddPhases: st.sddPhases.map((p) => {
+            if (p.id !== phaseIdFor(sddCurrentPhase)) return p;
+            return { ...p, state: 'running', startedAt: Date.now(), endedAt: undefined, path: undefined };
+          }),
+        }));
+        const inputFiles = inputFilesForPhase(sddCurrentPhase, sddSlug, cwd);
+        const block = await buildPhasePrompt({
+          phase: sddCurrentPhase,
+          slug: sddSlug,
+          intent: sddIntent,
+          action: 'run',
+          inputFiles,
+          cwd,
+        });
+        try {
+          void invoke('write_text_file', {
+            path: `${cwd}/.aethercode/sdd/${sddSlug}/phase-state.json`,
+            contents: JSON.stringify(makePhaseState({ ...get(), cwd }), null, 2),
+          });
+        } catch {}
+        set({ currentInput: block.full });
+        void get().sendMessage();
+        return;
+      }
+      if (cmd === 'pause') {
+        // R322: pause without advancing. Surface a system
+        // message confirming the pause and let the user
+        // type a custom instruction next.
+        set((st) => ({
+          messages: [...st.messages, {
+            id: newId('system'),
+            role: 'system' as const,
+            content: `⏸️ 已暂停。请输入下一步指示（agent 等待你的命令，不会自动推进）。`,
+            timestamp: Date.now(),
+          }],
+        }));
         return;
       }
     },

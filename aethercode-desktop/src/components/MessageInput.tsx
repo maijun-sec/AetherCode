@@ -604,11 +604,22 @@ export function MessageInput() {
               // Run in flight — interpret the message as a
               // phase command.
               const lower = intent.toLowerCase();
-              if (/^(✅|继续下一阶段|继续|next|ok|advance|go)\s*$/.test(intent)
-                  || lower === '✅' || lower === 'next' || lower === 'ok' || lower === 'go') {
+              // R322: widened the keyword regex. The
+              // previous round's `^(⏭️|跳过|skip)\s*$` only
+              // matched the bare token — phrases like
+              // "跳过下一阶段" / "跳过 phase 3" / "跳过需求
+              // 澄清" fell through to the modify branch and
+              // the agent re-ran the current phase. We now
+              // accept any input starting with the skip /
+              // approve verb (with optional "下一阶段" /
+              // "next" / "phase N" / phase-title suffix).
+              if (/^(✅|继续下一阶段|继续|next|ok|advance|go)\b/i.test(intent)
+                  || lower === '✅' || lower === 'next' || lower === 'ok' || lower === 'go'
+                  || /^(approve|advance|next|continue)\b/i.test(lower)) {
                 await sdd.sendSsdCommand('approve');
-              } else if (/^(⏭️|跳过|skip)\s*$/.test(intent)
-                  || lower === '⏭️' || lower === 'skip') {
+              } else if (/^(⏭️|跳过|skip)\b/i.test(intent)
+                  || lower === '⏭️' || lower === 'skip'
+                  || /^(skip|skip[- ]?next)\b/i.test(lower)) {
                 await sdd.sendSsdCommand('skip');
               } else {
                 // Treat as ✏️ feedback (whole input is the
