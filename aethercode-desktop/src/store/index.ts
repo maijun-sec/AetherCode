@@ -816,6 +816,12 @@ interface EnginePrefs {
   // token when `data-theme="light"` is set on the
   // <html> element.
   theme?: 'dark' | 'light';
+  // R321: SDD toggle on/off. Persisted so the user's
+  // preferred mode survives desktop restarts (otherwise
+  // they retest with the toggle silently flipped off,
+  // their intent bypasses startSsdFlow, and the agent
+  // falls back to its agentic-loop vibe-coding habit).
+  sddEnabled?: boolean;
 }
 const ENGINE_PREFS_KEY = 'aethercode.enginePrefs';
 function readEnginePrefs(): EnginePrefs {
@@ -4134,6 +4140,17 @@ export const useStore = create<AppState>((set, get) => {
           // applied below, after the daemon's session list
           // is loaded.
           set({ defaultOpenBehavior: prefs.defaultOpenBehavior ?? 'new' });
+          // restore the user's SDD toggle preference
+          // (R321). Without this the toggle defaults back
+          // to off on every desktop restart, the user
+          // retests with the toggle silently flipped off,
+          // their intent bypasses startSsdFlow, and the
+          // agent defaults to its agentic-loop vibe-coding
+          // habit. The bug was invisible until we shipped
+          // a desktop build and the user retested.
+          if (typeof prefs.sddEnabled === 'boolean') {
+            set({ sddEnabled: prefs.sddEnabled });
+          }
           // restore the user's theme preference.
           // The [data-theme="light"] CSS overrides are
           // bound to document.documentElement, not the
@@ -5291,10 +5308,24 @@ export const useStore = create<AppState>((set, get) => {
       // toggling off mid-run tears down local chip state but
       // does NOT send an abort message (the user might just be
       // closing the panel). Real teardown happens via stopSsdFlow.
+      // R321: persist the toggle so it survives desktop
+      // restarts. Otherwise the user opens the app, the
+      // toggle defaults back to off, they type "用 SDD 流程"
+      // thinking they're in SDD mode, the intent bypasses
+      // startSsdFlow entirely, and the agent defaults to
+      // its agentic-loop vibe-coding habit. The bug was
+      // invisible until we shipped a desktop build and the
+      // user retested.
       set({ sddEnabled: on });
       if (!on) {
         set({ sddActive: false, sddPhases: [], sddSlug: '' });
       }
+      // best-effort persist; if localStorage is blocked we
+      // simply lose the toggle on next restart.
+      try {
+        const prefs = readEnginePrefs();
+        writeEnginePrefs({ ...prefs, sddEnabled: on });
+      } catch { /* localStorage may be unavailable */ }
     },
     sddApplyPhaseUpdate: (phase, state, path) => {
       set((s) => ({
