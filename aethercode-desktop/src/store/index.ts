@@ -5537,7 +5537,25 @@ export const useStore = create<AppState>((set, get) => {
     // terminal / pending state.
     sddScanAndApplyPhaseUpdate: () => {
       const s = get();
-      if (!s.sddActive || !s.sddEnabled) return null;
+      // R336: the guard no longer requires sddActive. The
+      // previous round required both sddActive AND sddEnabled,
+      // which meant if the user toggled SDD on via the toggle
+      // button (without going through the R331 mode picker)
+      // and then started an SDD run by typing an SDD intent
+      // into the chat (which routes through sendMessage — not
+      // startSsdFlow), sddActive stayed false, scan returned
+      // null every time, and chip 1 was stuck in `idle`. The
+      // user typed "继续" and the agent treated it as new
+      // chat input that modified phase 1's output, instead of
+      // the user meaning "advance to the next phase".
+      //
+      // Loosening the guard to sddEnabled-only: scan runs any
+      // time the toggle is on. The scan helper itself dedupes
+      // against terminal-state phases, so a chip that's
+      // already `done` / `pending-confirm` is not re-applied.
+      // If the user didn't actually start an SDD run, the
+      // scan finds no match and returns null — no harm done.
+      if (!s.sddEnabled) return null;
       const result = scanLatestSddPhaseInMessages(s.messages, s.sddPhases);
       if (!result) return null;
       get().sddApplyPhaseUpdate(result.phaseId, result.state, result.path);

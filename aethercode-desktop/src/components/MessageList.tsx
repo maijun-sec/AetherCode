@@ -438,6 +438,21 @@ const markdownComponents = {
   p: ({ node: _node, ...props }: any) => <p {...props} />,
 };
 
+// R336: strip HTML comments from rendered content. The agent
+// echoes machine-readable markers like
+//   <!-- choices:start A: ... E: ... choices:end -->
+// into its pause-message so it can self-correct if it loses
+// track of the available actions. React-markdown doesn't
+// render these as DOM nodes (it's HTML-safe by default), but
+// it DOES preserve them as text in the rendered output —
+// the user sees a long string of `<!-- ... -->` after every
+// pause message. We strip them before the markdown parser
+// sees the content so they're invisible.
+const HTML_COMMENT_R = /<!--[\s\S]*?-->/g;
+function stripHtmlComments(s: string): string {
+  return s.replace(HTML_COMMENT_R, '');
+}
+
 // parse the markdown at `## ` and `### ` headings so
 // the renderer can wrap each section in a <details> element
 // for in-app folding. The body of each section is rendered
@@ -489,7 +504,7 @@ export function AgentSectionView({
         </summary>
         <div className="agent-section-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {section.body}
+            {stripHtmlComments(section.body)}
           </ReactMarkdown>
         </div>
       </details>
@@ -505,7 +520,7 @@ export function AgentSectionView({
       <div className="agent-section-body">
         {section.body ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {section.body}
+            {stripHtmlComments(section.body)}
           </ReactMarkdown>
         ) : null}
       </div>
@@ -650,7 +665,7 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
         </summary>
         <div className="agent-block-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {block.md}
+            {stripHtmlComments(block.md)}
           </ReactMarkdown>
         </div>
       </details>
@@ -715,7 +730,7 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
         {!diffNode && body && (
           <div className="agent-block-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {body}
+              {stripHtmlComments(body)}
             </ReactMarkdown>
           </div>
         )}
@@ -732,7 +747,7 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
         </summary>
         <div className="agent-block-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {`> **${block.status}**: ${block.summary}`}
+            {stripHtmlComments(`> **${block.status}**: ${block.summary}`)}
           </ReactMarkdown>
         </div>
       </details>
@@ -909,7 +924,7 @@ function LegacyMessage({ m }: { m: ChatMessage }) {
         </details>
       );
     }
-    // R318: collapse any `<!-- hidden-sdd:start --> … <!-- hidden-ssd:end -->`
+    // R318: collapse any `<!-- hidden-sdd:start --> … <!-- hidden-sdd:end -->`
 // block in the user message. The SDD skill inlines a long
 // instruction block between those markers; the user only needs
 // to see the intent (everything after the closing marker) plus
