@@ -90,12 +90,11 @@ export function SddPhaseBar() {
   // The single phase waiting on the user — serial, not concurrent.
   const waitingPhase = sddPhases.find((p) => p.state === 'pending-confirm');
 
-  // Revision text input. Cleared when the phase advances so the
-  // next route's textarea is empty.
-  const [reviseText, setReviseText] = useState('');
-  useEffect(() => {
-    setReviseText('');
-  }, [waitingPhase?.id]);
+  // R325: the per-bar revision textarea is gone. Free-text
+  // feedback goes into the main chat input below (MessageInput
+  // already routes "继续" / "跳过" / plain text as
+  // sendSsdCommand calls). The bar now only owns the chip
+  // strip + (when waiting) the ABDE button row.
 
   // tick once a second to refresh runningFor — cheap re-render
   // of a single number, fine.
@@ -254,52 +253,38 @@ export function SddPhaseBar() {
         })}
       </ol>
 
-      {sddActive && (
+      {waitingPhase && (
         <div
           className="sdd-phase-actions"
           data-testid="sdd-phase-actions"
-          data-waiting-phase={waitingPhase?.id ?? sddPhases.find((p) => p.state === 'running')?.id ?? ''}
-          data-waiting-state={waitingPhase?.state ?? (sddPhases.find((p) => p.state === 'running')?.state ?? 'idle')}
+          data-waiting-phase={waitingPhase.id}
+          data-waiting-state={waitingPhase.state}
         >
           <div className="sdd-phase-actions-label">
             <strong>
-              {waitingPhase
-                ? waitingPhase.title
-                : (sddPhases.find((p) => p.state === 'running')?.title ?? 'SDD 流程')}
+              {waitingPhase.title}
               {' · '}
-              {waitingPhase
-                ? '⏸ 待确认'
-                : (sddPhases.find((p) => p.state === 'running')
-                    ? '◐ 进行中'
-                    : '○ 空闲')}
+              ⏸ 待确认
             </strong>
             <span className="sdd-phase-actions-hint">
-              {waitingPhase
-                ? 'LLM 已生成该阶段的草案，请选择 ABCDE（agent 在 chat 里等你回复）'
-                : (sddPhases.find((p) => p.state === 'running')
-                    ? 'agent 正在跑这一阶段；可在跑完后点 A/B/C/D/E 或输入其他意见'
-                    : 'SDD 流程已就绪 — 可点 D 重跑当前阶段 / E 暂停')}
+              {'点 A 接受 / B 修改（在下方输入意见）/ D 重跑 / E 暂停；或在 chat 里直接打字回 agent'}
             </span>
-            {(waitingPhase?.path ?? sddPhases.find((p) => p.state === 'running')?.path) && (
+            {waitingPhase.path && (
               <code className="sdd-phase-actions-path" data-testid="sdd-phase-actions-path">
-                {waitingPhase?.path ?? sddPhases.find((p) => p.state === 'running')?.path}
+                {waitingPhase.path}
               </code>
             )}
           </div>
 
-          {/* R322 + R324: top row — ABDE actions (C-skip moved to the
-   *  chip strip itself; the user pre-persales which optional
-   *  phases to skip before they run). Buttons are compact,
-   *  single-letter badges + emoji + label, all on one row.
-   *  Layout: A (primary) / B (modify) / D (rerun) / E (pause).
-   *  Skip is no longer a global button — it's per-chip (R324).
-   *
-   *  R323: drop the `waitingPhase` guard. The buttons should
-   *  always be visible when an SDD run is active so the user
-   *  has a clear affordance regardless of the chip state
-   *  machine. The state machine still matters for the chip
-   *  colours / glyphs (⏸待确认 / ◐进行中 / ✓已完成), but the
-   *  buttons are the user's primary interface. */}
+          {/* R322 + R324 + R325: ABDE actions. C-skip moved to
+           *  the chip strip (R324). R325 drops the per-bar
+           *  textarea — the user types free-text in the main
+           *  chat input below (MessageInput's keyword routing
+           *  already recognises "skip" / "approve" / plain
+           *  feedback as sendSsdCommand). The bar only shows
+           *  buttons when a phase is waiting for user input;
+           *  while a phase is running the bar collapses back
+           *  to just the chip strip. */}
           <div className="sdd-phase-actions-buttons" data-testid="sdd-phase-actions-buttons">
             <button
               type="button"
@@ -316,17 +301,15 @@ export function SddPhaseBar() {
               type="button"
               className="sdd-btn sdd-btn-secondary"
               onClick={() => {
-                if (reviseText.trim()) {
-                  sendSsdCommand('modify', reviseText.trim());
-                  setReviseText('');
-                } else {
-                  const el = document.querySelector('[data-testid="sdd-revise-textarea"]') as HTMLTextAreaElement | null;
-                  el?.focus();
-                }
+                // B: focus the main chat input — that's the
+                // large textarea below, which MessageInput's
+                // keyword routing already wires to sendSsdCommand.
+                const el = document.querySelector('.message-input-textarea') as HTMLTextAreaElement | null;
+                el?.focus();
               }}
               data-testid="sdd-btn-modify"
               data-sdd-choice="B"
-              title="B — 修改当前阶段（在下方输入意见后发送）"
+              title="B — 修改当前阶段（聚焦到下方 chat 输入框，直接打字）"
             >
               <span className="sdd-btn-letter">B</span>
               <span className="sdd-btn-label">修改</span>
@@ -354,48 +337,13 @@ export function SddPhaseBar() {
               <span className="sdd-btn-label">暂停</span>
             </button>
           </div>
-          {/* bottom row: large textarea for free-text input. R324:
-           *  taller (min-height 56px / default 3 rows) so users
-           *  can comfortably write multi-line feedback. Auto-
-           *  grows via the autoSizeTextarea helper. */}
-          <div className="sdd-phase-actions-revise">
-            <textarea
-              className="sdd-phase-actions-textarea"
-              placeholder="其他意见 — 直接输入你的反馈（agent 会把它当作 phase 修改指令，按 Ctrl/⌘+Enter 发送）"
-              value={reviseText}
-              onChange={(e) => {
-                setReviseText(e.target.value);
-                // Auto-grow: shrink-to-fit when content is
-                // short, grow up to max-height when content is
-                // long. Cheap (one reflow per keystroke).
-                const el = e.currentTarget;
-                el.style.height = 'auto';
-                el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && reviseText.trim()) {
-                  sendSsdCommand('modify', reviseText.trim());
-                  setReviseText('');
-                }
-              }}
-              rows={3}
-              data-testid="sdd-revise-textarea"
-            />
-            <button
-              type="button"
-              className="sdd-btn sdd-btn-secondary"
-              disabled={!reviseText.trim()}
-              onClick={() => {
-                if (!reviseText.trim()) return;
-                sendSsdCommand('modify', reviseText.trim());
-                setReviseText('');
-              }}
-              data-testid="sdd-btn-send-revise"
-              title="Ctrl/⌘+Enter 也能发送"
-            >
-              📤 发送修订
-            </button>
-          </div>
+          {/* R325: removed the per-bar textarea. Users type
+           *  free-text feedback in the main chat input below,
+           *  which is much larger and shares the keyboard
+           *  shortcuts the user is already familiar with.
+           *  MessageInput's Enter routing recognises "继续" /
+           *  "跳过" / "approve" / "skip" / plain feedback as
+           *  sendSsdCommand calls. */}
         </div>
       )}
     </section>

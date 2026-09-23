@@ -66,9 +66,13 @@ describe('R322 SddPhaseBar lettered ABCDE choices', () => {
     expect(bar).toMatch(/onClick=\{\(\)\s*=>\s*sendSsdCommand\(['"]pause['"]\)\}/);
   });
 
-  it('"其他" textarea still wired to modify command', () => {
-    expect(bar).toMatch(/data-testid="sdd-revise-textarea"/);
-    expect(bar).toMatch(/sendSsdCommand\(['"]modify['"],\s*reviseText\.trim\(\)\)/);
+  it('"其他" textarea removed (R325: use main chat input instead)', () => {
+    // R325 removed the per-bar textarea. Free-text feedback
+    // goes into the main chat input below. Verify the old
+    // textarea + 发送修订 button are gone.
+    expect(bar).not.toMatch(/data-testid="sdd-revise-textarea"/);
+    expect(bar).not.toMatch(/data-testid="sdd-btn-send-revise"/);
+    expect(bar).not.toMatch(/setReviseText/);
   });
 });
 
@@ -131,28 +135,27 @@ describe('R324 chip-level skip / jump-to affordances', () => {
   });
 });
 
-describe('R324 textarea auto-grows', () => {
-  it('textarea defaults to 3 rows (was 2)', () => {
-    expect(bar).toMatch(/<textarea[\s\S]*?rows=\{3\}/);
-  });
-
-  it('textarea auto-resizes via onChange scrollHeight', () => {
-    expect(bar).toMatch(/el\.style\.height\s*=\s*['"]auto['"]/);
-    expect(bar).toMatch(/Math\.min\(el\.scrollHeight,\s*200\)/);
+describe('R324 textarea removed (use main chat input)', () => {
+  it('no per-bar textarea exists', () => {
+    expect(bar).not.toMatch(/<textarea/);
   });
 });
 
-describe('R323 action row always renders when sddActive', () => {
+describe('R325 action row only renders when waitingPhase exists', () => {
   /**
-   * R323 regression: in the previous round the action row was
-   * gated behind `waitingPhase &&` — meaning the user saw NO
-   * buttons at all if the chip state machine failed to flip a
-   * phase to 'pending-confirm'. The state machine was the bug;
-   * we fix it by always rendering the buttons whenever an SDD
-   * run is active. The buttons operate on `sddCurrentPhase`
-   * regardless of the chip's per-phase state.
+   * R325: the action row was previously always visible when
+   * `sddActive` (R323 fix for the scan-state-machine bug). The
+   * user then complained it was too crowded while a phase was
+   * running — they wanted the buttons to appear ONLY when a
+   * phase was actually waiting for input. We now gate on
+   * `waitingPhase` again, which is safe because:
+   *   1. The chip scan is more reliable now (debug log added
+   *      in R322 to surface scan failures).
+   *   2. The user has multiple fallbacks: chip-skip /
+   *      chip-jump affordances (per-chip) + the main chat
+   *      input's keyword routing ("继续" / "跳过" / etc.).
    */
-  it('source: SddPhaseBar renders action row when sddActive=true (no waitingPhase required)', () => {
-    expect(bar).toMatch(/\{sddActive\s*&&\s*\(/);
+  it('source: SddPhaseBar gates action row on waitingPhase', () => {
+    expect(bar).toMatch(/\{waitingPhase\s*&&\s*\(/);
   });
 });
