@@ -268,6 +268,9 @@ export function SddPhaseBar() {
             </strong>
             <span className="sdd-phase-actions-hint">
               {'点 A 接受 / B 修改（在下方输入意见）/ D 重跑 / E 暂停；或在 chat 里直接打字回 agent'}
+              {PHASE_ORDER.indexOf(waitingPhase.id) < PHASE_ORDER.length - 1
+                ? '；当前阶段后还有可选的 C 跳下一阶段或 F 跳到指定阶段'
+                : ''}
             </span>
             {waitingPhase.path && (
               <code className="sdd-phase-actions-path" data-testid="sdd-phase-actions-path">
@@ -276,15 +279,17 @@ export function SddPhaseBar() {
             )}
           </div>
 
-          {/* R322 + R324 + R325: ABDE actions. C-skip moved to
-           *  the chip strip (R324). R325 drops the per-bar
-           *  textarea — the user types free-text in the main
-           *  chat input below (MessageInput's keyword routing
-           *  already recognises "skip" / "approve" / plain
-           *  feedback as sendSsdCommand). The bar only shows
-           *  buttons when a phase is waiting for user input;
-           *  while a phase is running the bar collapses back
-           *  to just the chip strip. */}
+          {/* R322 + R324 + R325 + R328: ABCDEF actions. C-skip-
+           *  next appears inline only when the *next* phase is
+           *  optional (clarify / analyze / converge); F-jump-to
+           *  shows a dropdown of every idle phase ahead of the
+           *  current waitingPhase so the user can pick a target
+           *  ("完成需求分析后直接到任务分析") without having to
+           *  click chip-strip buttons one at a time. R325 dropped
+           *  the per-bar textarea — the user types free-text in
+           *  the main chat input below (MessageInput's keyword
+           *  routing already wires "skip" / "approve" / plain
+           *  feedback to sendSsdCommand). */}
           <div className="sdd-phase-actions-buttons" data-testid="sdd-phase-actions-buttons">
             <button
               type="button"
@@ -336,6 +341,66 @@ export function SddPhaseBar() {
               <span className="sdd-btn-letter">E</span>
               <span className="sdd-btn-label">暂停</span>
             </button>
+            {/* R328: C-skip-next — inline in the action row when
+             *  the next phase is optional. (Per-chip ⏭ buttons
+             *  are still there for the user who's planning
+             *  multiple skips in advance.) */}
+            {(() => {
+              const waitingIdx = PHASE_ORDER.indexOf(waitingPhase.id);
+              const nextId = PHASE_ORDER[waitingIdx + 1];
+              const nextPhase = nextId ? sddPhases.find((p) => p.id === nextId) : undefined;
+              const nextOptional = nextPhase?.optional ?? OPTIONAL_PHASES.has(nextId ?? '');
+              if (!nextId || !nextOptional) return null;
+              return (
+                <button
+                  type="button"
+                  className="sdd-btn sdd-btn-ghost"
+                  onClick={() => sendSsdCommand('approve')} // approve from current = skip-next + advance
+                  data-testid="sdd-btn-skip-next"
+                  data-sdd-choice="C"
+                  title={`C — 跳过下一阶段（${nextPhase?.title ?? nextId}）`}
+                >
+                  <span className="sdd-btn-letter">C</span>
+                  <span className="sdd-btn-label">跳{(nextPhase?.title ?? nextId)}</span>
+                </button>
+              );
+            })()}
+            {/* R328: F-jump-to — pick any idle phase ahead of
+             *  current. Always rendered when there's at least
+             *  one idle phase; clicking submits sddJumpToPhase. */}
+            {(() => {
+              const waitingIdx = PHASE_ORDER.indexOf(waitingPhase.id);
+              const targets = PHASE_ORDER.slice(waitingIdx + 1)
+                .map((id, i) => ({ id, idx: waitingIdx + 1 + i + 1 }))
+                .filter(({ id }) => sddPhases.find((p) => p.id === id)?.state === 'idle');
+              if (targets.length === 0) return null;
+              return (
+                <select
+                  className="sdd-btn sdd-btn-jump"
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v) {
+                      void sddJumpToPhase(Number(v));
+                      e.target.value = '';
+                    }
+                  }}
+                  data-testid="sdd-btn-jump-to"
+                  data-sdd-choice="F"
+                  title="F — 直接进入某一阶段（跳过中间所有 phase）"
+                >
+                  <option value="" disabled>F 跳到…</option>
+                  {targets.map(({ id, idx }) => {
+                    const t = sddPhases.find((p) => p.id === id);
+                    return (
+                      <option key={id} value={String(idx)}>
+                        {idx} {t?.title ?? id}
+                      </option>
+                    );
+                  })}
+                </select>
+              );
+            })()}
           </div>
           {/* R325: removed the per-bar textarea. Users type
            *  free-text feedback in the main chat input below,

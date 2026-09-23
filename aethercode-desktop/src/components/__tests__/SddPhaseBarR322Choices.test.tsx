@@ -66,6 +66,17 @@ describe('R322 SddPhaseBar lettered ABCDE choices', () => {
     expect(bar).toMatch(/onClick=\{\(\)\s*=>\s*sendSsdCommand\(['"]pause['"]\)\}/);
   });
 
+  it('R328: C-skip-next button rendered inline when next phase is optional', () => {
+    expect(bar).toMatch(/data-testid="sdd-btn-skip-next"/);
+    expect(bar).toMatch(/data-sdd-choice="C"/);
+  });
+
+  it('R328: F-jump-to dropdown rendered with idle phase targets', () => {
+    expect(bar).toMatch(/data-testid="sdd-btn-jump-to"/);
+    expect(bar).toMatch(/data-sdd-choice="F"/);
+    expect(bar).toMatch(/sddJumpToPhase/);
+  });
+
   it('"其他" textarea removed (R325: use main chat input instead)', () => {
     // R325 removed the per-bar textarea. Free-text feedback
     // goes into the main chat input below. Verify the old

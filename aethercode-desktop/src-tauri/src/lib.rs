@@ -349,6 +349,18 @@ async fn spawn_daemon(
     ports: &[u16],
 ) -> Result<(DaemonInfo, std::process::Child), String> {
     let mut last_err = String::new();
+    // R328: pre-kill any orphan Java process holding a port
+    // in our range. Without this, a previous desktop session
+    // that crashed (or was killed without going through the
+    // normal teardown) leaves a daemon on, e.g., 18889. The
+    // next session's `pre_warm_daemon` then fails with
+    // "Address already in use: bind", silently aborts, and
+    // the user sees a disconnect when they next trigger a
+    // cwd swap. Killing the orphan before we try to bind
+    // makes the pre-warm / swap path self-healing.
+    for &port in ports {
+        kill_orphan_on_port(port);
+    }
     for &port in ports {
         // R83 debug: capture daemon stdout/stderr to a per-port log
         // file in %TEMP% so we can diagnose why stream_event
@@ -485,6 +497,62 @@ async fn spawn_daemon(
         }
     }
     Err(format!("Failed to spawn daemon: {}", last_err))
+}
+
+/// R328: kill any orphan `java` process holding the given
+/// TCP port. Windows-only — Linux uses SO_REUSEPORT and
+/// the JVM doesn't need this dance. We match by PID and
+/// process name (java) to avoid killing unrelated
+/// processes that might happen to bind a port.
+#[cfg(windows)]
+fn kill_orphan_on_port(port: u16) {
+    use std::process::Command;
+    // netstat -ano | findstr :PORT -> "  TCP    0.0.0.0:PORT    ... PID"
+    let out = Command::new("netstat")
+        .args(["-ano", "-p", "tcp"])
+        .output();
+    let stdout = match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(_) => return,
+    };
+    let needle = format!(":{}", port);
+    let mut pids: Vec<u32> = Vec::new();
+    for line in stdout.lines() {
+        // Match lines ending in ":<port>" — `findstr` doesn't
+        // give us a clean tab-separated table on every locale,
+        // so we anchor on the port token at end-of-address.
+        let trimmed = line.trim();
+        if !trimmed.contains(&needle.as_str()) { continue; }
+        // Last whitespace-separated field.
+        if let Some(pid_str) = trimmed.split_whitespace().last() {
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                if pid > 0 { pids.push(pid); }
+            }
+        }
+    }
+    for pid in pids {
+        // Filter to java.exe only — defensive against killing
+        // a process that happens to bind the same port.
+        let name = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        if name.to_lowercase().contains("java") {
+            eprintln!("[R328] killing orphan java pid={} holding port {}", pid, port);
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .output();
+            // Brief pause to release the socket.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_orphan_on_port(_port: u16) {
+    // no-op on non-Windows
 }
 
 /// R82+ Issue 3: pre-warm a daemon in a sibling cwd so the next
