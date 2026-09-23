@@ -1054,8 +1054,14 @@ export function MessageList() {
       //            → skipped (the user already told the agent
       //              to skip — no confirm gate needed.)
       // Pattern 3: 🎉 SDD 流程完成 → setSddEnabled(false)
-      const doneRe = /第\s*(\d+)\s*阶段完成\s*—\s*([^\n\r]+)/;
-      const skipRe = /第\s*(\d+)\s*阶段\s*—\s*([^\n\r]+?)\s*（可选）\s*—\s*已跳过/;
+// R327: widen the dash matching to accept em-dash (— U+2014),
+// en-dash (– U+2013), and ASCII hyphen-minus (-) — different
+// agent fronts have rendered pause messages with slightly
+// different glyphs and we don't want the chip scan to fail
+// silently for any of them. The character class covers all
+// three; capture group is the same shape.
+      const doneRe = /第\s*(\d+)\s*阶段完成\s*[—–-]\s*([^\n\r]+)/;
+      const skipRe = /第\s*(\d+)\s*阶段\s*[—–-]\s*([^\n\r]+?)\s*（可选）\s*[—–-]\s*已跳过/;
       let matched: RegExpMatchArray | null = content.match(doneRe);
       let state: 'pending-confirm' | 'skipped' = 'pending-confirm';
       if (!matched) {
@@ -1068,6 +1074,17 @@ export function MessageList() {
           // emitted `convergence.json` (or its skip sentinel).
           // setSddEnabled(false) closes the bar.
           useStore.getState().setSddEnabled(false);
+        }
+        // R327: log unmatched content so future dash / encoding
+        // regressions surface immediately. Without this, the
+        // scan runs, fails silently, and the user just sees
+        // "buttons didn't appear" with no diagnostic. The
+        // log is gated behind a content-shape heuristic so we
+        // don't spam the console for every non-pause message.
+        if (i === messages.length - 1 && /阶段/.test(content)) {
+          try {
+            console.warn('[SDD scan] no match in latest assistant message. content tail:', content.slice(-200));
+          } catch {}
         }
         continue;
       }
