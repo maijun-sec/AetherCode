@@ -211,7 +211,7 @@ async fn ensure_daemon(
         }
     }
 
-    for &port in DEFAULT_DAEMON_PORTS {
+    for &port in ALL_DESKTOP_DAEMON_PORTS {
         if is_healthy(port).await {
             // R298 follow-up. Pre-R298 path set
             // `jar_path = "<external>"` and `cwd = ""` here,
