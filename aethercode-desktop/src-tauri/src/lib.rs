@@ -56,6 +56,26 @@ const DAEMON_HEALTH_POLL_MS: u64 = 200;
 const DEFAULT_DAEMON_PORTS: &[u16] = &[7777, 7778, 17888];
 const DESKTOP_DAEMON_PORTS: &[u16] = &[17888, 18888, 19888, 20888, 21888, 22888];
 
+// R333: union of every port range any of our daemon
+// incarnations can listen on. Used by `kill_orphan_daemons`
+// to enforce "at most one AetherCode daemon alive at any
+// time" — the user explicitly asked for this constraint
+// because seeing two daemon processes (one primary, one
+// pre-warm, one orphan-from-previous-session) eat 2-3 GB
+// of native memory each is operationally confusing and
+// wastes RAM.
+//
+// We include both DESKTOP_DAEMON_PORTS (xxx88 — the
+// primary range) AND PRE_WARM_PORTS (xxx89 — the
+// pre-warm daemon range). The desktop spawns primaries
+// via `ensure_daemon`; pre-warm daemons are spawned via
+// `pre_warm_daemon`. Both are JVMs serving our chat
+// engine, and the user wants exactly one of them alive.
+const ALL_DESKTOP_DAEMON_PORTS: &[u16] = &[
+    17888, 18888, 19888, 20888, 21888, 22888,  // DESKTOP primary range
+    18889, 19889, 20889, 21889, 22889, 23889,  // PRE_WARM range
+];
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonInfo {
@@ -349,18 +369,24 @@ async fn spawn_daemon(
     ports: &[u16],
 ) -> Result<(DaemonInfo, std::process::Child), String> {
     let mut last_err = String::new();
-    // R328: pre-kill any orphan Java process holding a port
-    // in our range. Without this, a previous desktop session
-    // that crashed (or was killed without going through the
-    // normal teardown) leaves a daemon on, e.g., 18889. The
-    // next session's `pre_warm_daemon` then fails with
-    // "Address already in use: bind", silently aborts, and
-    // the user sees a disconnect when they next trigger a
-    // cwd swap. Killing the orphan before we try to bind
-    // makes the pre-warm / swap path self-healing.
-    for &port in ports {
-        kill_orphan_on_port(port);
-    }
+    // R333: enforce "at most one AetherCode daemon alive".
+    // Sweep every desktop-owned port and kill any java.exe
+    // that's holding one before we attempt to bind a new
+    // primary. This covers:
+    //   1. orphans from a previous desktop session that was
+    //      hard-killed (process gone but JVM kept running)
+    //   2. pre-warm daemons the previous session left alive
+    //   3. user-launched daemons (e.g. `start-daemon.bat`)
+    //      that the user explicitly wants killed when the
+    //      desktop takes over
+    //
+    // We log every kill so the user can correlate
+    // "disappearing daemons" with "desktop restarted". The
+    // log line includes the port so the user can identify
+    // which daemon (which session-dir) just got reaped.
+    eprintln!("[R333] pre-bind sweep: killing any java daemon on ports {:?}",
+        ALL_DESKTOP_DAEMON_PORTS);
+    kill_orphan_daemons();
     for &port in ports {
         // R83 debug: capture daemon stdout/stderr to a per-port log
         // file in %TEMP% so we can diagnose why stream_event
@@ -502,6 +528,26 @@ async fn spawn_daemon(
 /// R328: kill any orphan `java` process holding the given
 /// TCP port. Windows-only — Linux uses SO_REUSEPORT and
 /// the JVM doesn't need this dance. We match by PID and
+/// R333: kill any AetherCode daemon (java.exe) holding a
+/// port in `ALL_DESKTOP_DAEMON_PORTS`. Used by
+/// `spawn_daemon()` as the pre-bind sweep so the user never
+/// sees "primary daemon + orphan from a previous desktop
+/// session" running side-by-side. The previous round
+/// (R328) only swept the specific port the primary was
+/// about to bind, leaving any other daemon alive.
+///
+/// We also kill the "current" port (the one we're about to
+/// bind), because in the common "desktop was killed, user
+/// restarts" case, the previous instance is still holding
+/// it. R328's per-port sweep covered this; R333 widens the
+/// sweep to all primary-owned ports.
+#[cfg(windows)]
+fn kill_orphan_daemons() {
+    for &port in ALL_DESKTOP_DAEMON_PORTS {
+        kill_orphan_on_port(port);
+    }
+}
+
 /// process name (java) to avoid killing unrelated
 /// processes that might happen to bind a port.
 #[cfg(windows)]
