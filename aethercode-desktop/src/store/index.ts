@@ -1766,7 +1766,15 @@ interface AppState {
    *  immediately and the input draft is keyed by the new
    *  id (the prior round). Persisted as a fresh entry on the first
    *  message send. */
-  createNewSession: () => void;
+  createNewSession: (opts?: { mode?: 'normal' | 'sdd' | 'workflow' }) => void;
+  /** R331: open the mode-picker dialog before minting a new
+   *  session. The picker lets the user choose between
+   *  普通 / SDD 规范化 / Workflow at session-creation time;
+   *  this replaces R321's keyword auto-detect. The dialog
+   *  reads `pendingNewSession` and resolves by calling
+   *  `createNewSession({ mode })` with the user's choice
+   *  (or simply closes if the user cancels). */
+  pendingNewSession: { cwd: string | null } | null;
   /** delete a session from the daemon's SessionStore
    *  and from the localStorage cache. Refuses to delete the
    *  active session (the daemon rejects with
@@ -4060,6 +4068,11 @@ export const useStore = create<AppState>((set, get) => {
     sddCurrentPhase: null,
     sddIntent: '',
     sddPhases: [],
+    // R331: null = no picker open. Object = mode picker is
+    // open, awaiting user choice between 普通 / SDD 规范化 /
+    // Workflow. cwd is the directory the new session will
+    // bind to (or null for an unlinked session).
+    pendingNewSession: null,
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
     // tab on open). Each entry has {name,
@@ -5089,7 +5102,32 @@ export const useStore = create<AppState>((set, get) => {
     // after this hits the daemon with the new id; the
     // daemon's sessionId param is metadata only — the engine
     // still answers on its single transcript.
-    createNewSession: () => {
+    createNewSession: (opts) => {
+      // R331: route through the mode-picker dialog unless the
+      // caller has already chosen a mode. The picker replaces
+      // R321's keyword auto-detect — explicit user choice at
+      // session-creation time, no regex inference on chat
+      // input.
+      const mode = opts?.mode;
+      if (!mode) {
+        // Open the picker. The picker will call back into
+        // createNewSession with a chosen mode (or close +
+        // no-op if the user cancels).
+        set({ pendingNewSession: { cwd: get().cwd ?? null } });
+        return;
+      }
+      // R331: per-session mode. SDD mode flips the toggle on
+      // so the chip strip mounts immediately; normal /
+      // workflow mode flip it off so the user lands in a
+      // clean chat surface. Per-session metadata persistence
+      // is a follow-up — for now the toggle flips on
+      // session-create and stays in that state until the
+      // user manually toggles or creates another session.
+      if (mode === 'sdd') {
+        set({ sddEnabled: true });
+      } else if (mode === 'normal' || mode === 'workflow') {
+        set({ sddEnabled: false, sddActive: false, sddPhases: [], sddSlug: '' });
+      }
       if (draftTimer) { window.clearTimeout(draftTimer); draftTimer = null; }
       const oldSid = get().currentSessionId;
       if (oldSid) {
@@ -5130,6 +5168,7 @@ export const useStore = create<AppState>((set, get) => {
             ...get().sessions,
             { id: newId, name: undefined, lastUsedAt: Date.now(), messageCount: 0 },
           ],
+          pendingNewSession: null,
         });
       })();
     },

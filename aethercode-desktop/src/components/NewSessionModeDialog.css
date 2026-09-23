@@ -1,0 +1,104 @@
+.new-session-mode-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(2px);
+}
+
+.new-session-mode-dialog {
+  background: var(--color-bg-elevated, #1f2429);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 12px;
+  padding: 24px 28px 20px 28px;
+  min-width: 460px;
+  max-width: 560px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  color: var(--color-fg, #e6edf3);
+  font-family: inherit;
+}
+
+.new-session-mode-dialog-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.new-session-mode-dialog-subtitle {
+  margin: 0 0 18px 0;
+  color: var(--color-fg-muted, #8b949e);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.new-session-mode-dialog-list {
+  list-style: none;
+  margin: 0 0 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.new-session-mode-option {
+  width: 100%;
+  text-align: left;
+  background: var(--color-bg, #15191c);
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 120ms, background 120ms;
+}
+
+.new-session-mode-option:hover {
+  border-color: var(--color-accent, #58a6ff);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.new-session-mode-option-sdd {
+  border-color: rgba(88, 166, 255, 0.4);
+}
+
+.new-session-mode-option-sdd:hover {
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.new-session-mode-option-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.new-session-mode-option-desc {
+  color: var(--color-fg-muted, #8b949e);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.new-session-mode-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.new-session-mode-cancel {
+  background: transparent;
+  border: 1px solid var(--color-border, #30363d);
+  border-radius: 6px;
+  padding: 6px 14px;
+  color: var(--color-fg-muted, #8b949e);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.new-session-mode-cancel:hover {
+  color: var(--color-fg, #e6edf3);
+  border-color: var(--color-fg-muted, #8b949e);
+}

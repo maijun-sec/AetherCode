@@ -228,6 +228,13 @@ export function SessionList({ items: propItems, height, emptyMessage, onNewSessi
     // (sessions without a cwd binding) — clicking the
     // bottom button there used to silently create an
     // abc_4 session.
+    //
+    // R331: regardless of which path fires, both end up
+    // opening the mode picker. The picker reads
+    // `pendingNewSession.cwd` from the store, which has
+    // already been swapped if the user picked a different
+    // project. The picker then re-enters createNewSession
+    // with the chosen mode.
     if (onNewSession) {
       void onNewSession();
     } else {

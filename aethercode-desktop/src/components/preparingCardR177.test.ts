@@ -346,29 +346,30 @@ describe('R198: LeftPanel groups sessions by project (cwd) + new-session button'
   });
 });
 
-describe('R199: ProjectGroup "＋" on the current cwd skips the daemon-swap dance', () => {
+describe('R199 + R331: ProjectGroup "＋" on the current cwd skips the daemon-swap dance', () => {
   // when the user clicks "+" on the project group for
   // the cwd they're already on, we must NOT go through the
   // full pre_warm + swap + createSession dance. That dance
   // costs ~1-2s (JVM startup) and kills the current daemon,
   // which would discard the user's in-flight draft, mid-task
   // state, etc. For "I want a fresh session on the project
-  // I'm already on", we just call createNewSession() (which
-  // mints a session on the current daemon — same cwd, no
-  // engine swap). Only when the "+" is on a DIFFERENT
-  // project do we fall back to setCwd (which does the swap).
+  // I'm already on", we just call createNewSession() — which
+  // R331 routes through the mode picker.
+  //
+  // R331 changed the shape: createNewSession({}) at the end
+  // is the entry to the picker, not a direct session mint.
+  // The pin checks "sameCwd does NOT trigger setCwd" + "the
+  // different-cwd branch still does" + "the picker fires
+  // via createNewSession({}) at the tail".
   const projectGroupSrc = read('src/components/ProjectGroup.tsx');
 
-  it('useNewSessionInCwd short-circuits to createNewSession when curCwd === cwd', () => {
-    // We pin the structure: a sameCwd branch that calls
-    // createNewSession, and an else branch that calls
-    // setCwd. A refactor that drops the sameCwd short-
-    // circuit and always calls setCwd would re-introduce
-    // the 1-2s delay on every "+" click in the same
-    // project.
-    expect(projectGroupSrc).toMatch(
-      /sameCwd[\s\S]*?createNewSession\(\)[\s\S]*?setCwd\(cwd\)/,
-    );
+  it('useNewSessionInCwd short-circuits when curCwd === cwd (no setCwd)', () => {
+    // The !sameCwd branch is the only place setCwd fires.
+    // Same-cwd clicks go straight to the picker.
+    expect(projectGroupSrc).toMatch(/!sameCwd/);
+    expect(projectGroupSrc).not.toMatch(/if \(sameCwd\)\s*\{/);
+    expect(projectGroupSrc).toMatch(/setCwd\(cwd\)/);
+    expect(projectGroupSrc).toMatch(/await createNewSession\(\)/);
   });
 });
 

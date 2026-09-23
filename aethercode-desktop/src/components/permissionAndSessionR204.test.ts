@@ -89,17 +89,23 @@ describe('R204 #1: useNewSessionInCwd respects current cwd', () => {
     expect(pgSrc).toMatch(/export function useNewSessionInCwd\(\)\s*\{[\s\S]*?useStore\(\(s\) => s\.createNewSession\)[\s\S]*?return async \(cwd: string \| null\) => \{/);
   });
 
-  it('useNewSessionInCwd short-circuits when the per-group cwd matches the current cwd', () => {
-    // The same-cwd branch is the cheap path: it mints
-    // a session on the current daemon (no swap, no
-    // JVM spawn, no 1-2s wait). The different-cwd
-    // branch goes through setCwd which triggers the
-    // pre_warm + swap + createSession dance.
-    expect(pgSrc).toMatch(/if \(sameCwd\)\s*\{[\s\S]*?await createNewSession\(\)/);
+  it('useNewSessionInCwd short-circuits the same-cwd path (no setCwd, no daemon swap)', () => {
+    // The same-cwd branch is the cheap path: it must NOT
+    // call setCwd (which would trigger pre_warm + the 1-2s
+    // JVM spawn dance). R331 keeps the cheap path —
+    // createNewSession({}) at the end opens the mode
+    // picker, and the picker re-enters with the chosen mode.
+    expect(pgSrc).toMatch(/if \(!sameCwd\)[\s\S]*?setCwd\(cwd\)/);
+    expect(pgSrc).toMatch(/await createNewSession\(\)/);
   });
 
-  it('useNewSessionInCwd routes a different-cwd click through setCwd', () => {
-    expect(pgSrc).toMatch(/else\s*\{\s*\/\/ R199: different cwd[\s\S]*?await useStore\.getState\(\)\.setCwd\(cwd\)/);
+  it('useNewSessionInCwd routes a different-cwd click through setCwd before opening the picker', () => {
+    // The different-cwd branch still goes through setCwd
+    // — the daemon needs to swap so the new session binds
+    // to the right project. The picker opens AFTER the
+    // swap so `pendingNewSession.cwd` reflects the new
+    // cwd by the time the user picks a mode.
+    expect(pgSrc).toMatch(/!sameCwd[\s\S]*?setCwd\(cwd\)/);
   });
 });
 

@@ -585,18 +585,12 @@ export function MessageInput() {
         //                                              current
         //                                              phase)
         const sdd = useStore.getState();
-        // R321: auto-detect SDD intent. If the toggle is off
-        // but the user clearly asked for SDD ("SDD 流程" /
-        // "规格化" / "/sdd" / "spec-kit" / "用 SDD"), flip
-        // the toggle on automatically and route to
-        // startSsdFlow. The user's intent is unambiguous, and
-        // requiring them to remember to click a small toggle
-        // before typing is exactly the friction that lets the
-        // agent fall back to its agentic-loop vibe-coding
-        // habit on a fresh session. We only auto-enable when
-        // no run is in flight; mid-run input is treated as
-        // phase feedback (see below).
-        const sddIntentKeyword = /(?:^|\s)(?:SDD|sdd|规格化|spec-kit|speckit|规格驱动)(?:\s|$|流程|模式|跑|跑一下|来一次|生成|做)/i;
+        // R331: SDD-mode session is gated by the mode picker
+        // (sddEnabled was set to true when the session was
+        // created in SDD mode). Plain chat sessions never
+        // auto-promote to SDD — the user must pick SDD 规范化
+        // at session-creation time. We no longer infer SDD
+        // intent from chat input keywords.
         if (sdd.sddEnabled && intent) {
           setCurrentInput('');
           try {
@@ -633,22 +627,6 @@ export function MessageInput() {
             }
           } catch (e) {
             console.warn('[MessageInput] SDD command failed:', e);
-          }
-          return;
-        }
-        if (!sdd.sddEnabled && !sdd.sddActive && sddIntentKeyword.test(intent)) {
-          // The user clearly asked for SDD but the toggle is
-          // off. Flip it on, route to startSsdFlow. We do NOT
-          // silently re-enable — the SddPhaseBar + chat
-          // confirm that SDD mode is now active so the user
-          // understands why their next message goes through
-          // startSsdFlow.
-          try {
-            sdd.setSddEnabled(true);
-            setCurrentInput('');
-            await sdd.startSsdFlow(intent);
-          } catch (e) {
-            console.warn('[MessageInput] auto-SDD enable failed:', e);
           }
           return;
         }

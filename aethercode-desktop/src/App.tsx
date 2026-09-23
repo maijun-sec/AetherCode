@@ -18,6 +18,7 @@ import { AwaitingDecisionBanner } from './components/AwaitingDecisionBanner';
 import { PermissionPromptBanner } from './components/PermissionPromptBanner';
 import { CommandPalette } from './components/CommandPalette';
 import { SessionPickerModal } from './components/SessionPickerModal';
+import { NewSessionModeDialog } from './components/NewSessionModeDialog';
 import { LoopGuardBanner } from './components/LoopGuardBanner';
 import { EndOfTaskPanel } from './components/EndOfTaskPanel';
 import { WorkflowProgressBar } from './components/WorkflowProgressBar';
@@ -334,6 +335,9 @@ function MainLayout(p: MainLayoutProps) {
       {p.showSessionPicker && (
         <SessionPickerModal open={true} onClose={() => p.setShowSessionPicker(false)} />
       )}
+      {/* R331: mode picker. Self-driven by store.pendingNewSession;
+          mounts only when the user clicks "+ new session". */}
+      <NewSessionModeDialog />
       {p.showRpcPalette && <RpcCommandPalette onClose={() => p.setShowRpcPalette(false)} />}
       {/* R121 source-scan contract: the bare-identifier form `{showRpcPalette && <RpcCommandPalette onClose={() => setShowRpcPalette(false)} />}` must appear in App.tsx,
           so the IIFE establishes a same-named binding in this scope for literal matching, while `p.showRpcPalette` actually drives rendering. */}

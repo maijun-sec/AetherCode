@@ -170,6 +170,12 @@ export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId
 // hook helper — used by LeftPanel to trigger a new-session
 // action. Centralised so the LeftPanel + ProjectGroupList
 // share the same handler.
+//
+// R331: ALL callsites go through `createNewSession({})` without
+// a mode so the picker fires. The picker then re-enters
+// `createNewSession({ mode })` with the user's choice — at
+// that point the cwd is already in place (the picker reads
+// `pendingNewSession.cwd` from store state).
 export function useNewSessionInCwd() {
   const createNewSession = useStore((s) => s.createNewSession);
   return async (cwd: string | null) => {
@@ -187,21 +193,17 @@ export function useNewSessionInCwd() {
       const curCwd = useStore.getState().cwd;
       const sameCwd = curCwd
         && curCwd.replace(/[\\/]+$/, '').toLowerCase() === cwd.replace(/[\\/]+$/, '').toLowerCase();
-      if (sameCwd) {
-        // same cwd — no daemon swap. Just mint a new
-        // session on the current daemon. createNewSession
-        // calls rpc.createSession() with no args, which the
-        // daemon binds to its current cwd (which is the
-        // same as the user's curCwd since the daemon
-        // hasn't changed).
-        await createNewSession();
-      } else {
-        // R199: different cwd — spawn + swap + createSession.
+      if (!sameCwd) {
+        // R199: different cwd — swap to the target daemon
+        // first. The picker reads pendingNewSession.cwd
+        // AFTER the user has picked a mode, so we swap
+        // here, then createNewSession({}) opens the
+        // picker with the new cwd.
         await useStore.getState().setCwd(cwd);
       }
-    } else {
-      // cwd === null: just a fresh session with no cwd.
-      await createNewSession();
     }
+    // Open the mode picker (createNewSession with no mode
+    // opens it). It will then re-enter with the chosen mode.
+    await createNewSession();
   };
 }
