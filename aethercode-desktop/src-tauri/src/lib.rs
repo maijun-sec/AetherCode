@@ -1146,8 +1146,52 @@ async fn open_ws(
             }));
         };
 
+        // R332: WS keep-alive ping. The server side (Javalin
+        // / Jetty) is configured with a 5-minute idle
+        // timeout — but if the user is on a long SDD turn
+        // (multi-minute thinking + tool runs + file writes)
+        // and the chat stream goes quiet for >5 min with no
+        // WS frame in either direction, Jetty times out and
+        // the user sees a "reconnecting…" flash. A long
+        // task that ALSO crosses the 5-min boundary mid-way
+        // would disconnect mid-stream — the user reported
+        // this as "daemon 非常不稳定".
+        //
+        // The proper fix is a client-side ping every 30s so
+        // the server's idle counter never trips. Jetty's
+        // PongFrame handler is wired by the WS library, so
+        // we don't need to do anything on the read side —
+        // the server replies with Pongs automatically and
+        // the WS frame budget resets on either Ping or Pong.
+        //
+        // 30s is well below the 5-min server threshold with
+        // 10x margin, and well above the natural chat-stream
+        // heartbeat (~5s for text_delta chunks) so it
+        // doesn't add measurable bandwidth.
+        let mut ping_timer = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // first tick fires immediately — consume it so the
+        // first ping goes out 30s after task start, not
+        // immediately at task start (avoids a ping right
+        // after the connection handshake).
+        ping_timer.tick().await;
+
         loop {
             tokio::select! {
+                _ = ping_timer.tick() => {
+                    // R332: keep-alive ping. tokio-tungstenite
+                    // auto-responds to Pongs on the read side
+                    // via its WS library; we only need to
+                    // send the Ping frame ourselves.
+                    if let Err(e) = write.send(WsMessage::Ping(Vec::new())).await {
+                        let reason = format!("ws ping send failed: {}", e);
+                        eprintln!("[R332] {}", reason);
+                        for (_, r) in pending.drain() { let _ = r.send(Err("ws closed".into())); }
+                        notify_disconnect(reason);
+                        break;
+                    }
+                    eprintln!("[R332] ws ping sent (keep-alive)");
+                }
                 Some(req) = rx.recv() => {
                     let id = next_id;
                     next_id = next_id.wrapping_add(1);
