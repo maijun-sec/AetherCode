@@ -104,13 +104,22 @@ describe('R322 store: sendSsdCommand supports rerun + pause', () => {
   });
 });
 
-describe('R322 MessageInput: widen skip/approve regex', () => {
+describe('R322+R337 MessageInput: widen skip/approve regex (no \\b)', () => {
+  // R322 originally used `\b` as a trailing word boundary.
+  // R337 dropped `\b` because it's ASCII-only and breaks
+  // pure-Chinese keywords like "继续" / "继续下一阶段" / "跳过"
+  // (no `\b` between Chinese chars and end-of-string).
+  // Pin the prefix-only regex here so future edits don't
+  // reintroduce the regression.
   it('skip regex now matches "跳过下一阶段" / "跳过 phase 3"', () => {
-    expect(input).toMatch(/\/\^\(?⏭️\|跳过\|skip\)\\b\/i/);
+    expect(input).toMatch(/\/\^\(?⏭️\|跳过\|skip\)\/i/);
+    // The buggy `\b` form must NOT be present.
+    expect(input).not.toMatch(/\/\^\(?⏭️\|跳过\|skip\)\\b\/i/);
   });
 
   it('approve regex now matches "继续下一阶段" / "next" / "ok"', () => {
-    expect(input).toMatch(/\/\^\(?✅\|继续下一阶段\|继续\|next\|ok\|advance\|go\)\\b\/i/);
+    expect(input).toMatch(/\/\^\(?✅\|继续下一阶段\|继续\|next\|ok\|advance\|go\)\/i/);
+    expect(input).not.toMatch(/\/\^\(?✅\|继续下一阶段\|继续\|next\|ok\|advance\|go\)\\b\/i/);
   });
 });
 

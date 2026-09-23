@@ -598,22 +598,33 @@ export function MessageInput() {
               // Run in flight — interpret the message as a
               // phase command.
               const lower = intent.toLowerCase();
+              // R337: drop the `\b` trailing boundary. The
+              // previous round used `\b`, which is ASCII-only
+              // (`\w` = `[A-Za-z0-9_]`), so it never matched
+              // pure Chinese keywords like "继续" /
+              // "继续下一阶段" / "跳过" — they always fell
+              // through to the modify branch, and the agent
+              // saw them as action=modify feedback instead of
+              // as a phase-advance. Without a trailing
+              // constraint the regex matches any input that
+              // starts with the keyword — the same intent as
+              // R322 ("accept any input starting with the
+              // skip / approve verb, with optional '下一阶段'
+              // / 'next' / 'phase N' / phase-title suffix").
+              //
               // R322: widened the keyword regex. The
               // previous round's `^(⏭️|跳过|skip)\s*$` only
               // matched the bare token — phrases like
               // "跳过下一阶段" / "跳过 phase 3" / "跳过需求
               // 澄清" fell through to the modify branch and
-              // the agent re-ran the current phase. We now
-              // accept any input starting with the skip /
-              // approve verb (with optional "下一阶段" /
-              // "next" / "phase N" / phase-title suffix).
-              if (/^(✅|继续下一阶段|继续|next|ok|advance|go)\b/i.test(intent)
+              // the agent re-ran the current phase.
+              if (/^(✅|继续下一阶段|继续|next|ok|advance|go)/i.test(intent)
                   || lower === '✅' || lower === 'next' || lower === 'ok' || lower === 'go'
-                  || /^(approve|advance|next|continue)\b/i.test(lower)) {
+                  || /^(approve|advance|next|continue)/i.test(lower)) {
                 await sdd.sendSsdCommand('approve');
-              } else if (/^(⏭️|跳过|skip)\b/i.test(intent)
+              } else if (/^(⏭️|跳过|skip)/i.test(intent)
                   || lower === '⏭️' || lower === 'skip'
-                  || /^(skip|skip[- ]?next)\b/i.test(lower)) {
+                  || /^(skip|skip[- ]?next)/i.test(lower)) {
                 await sdd.sendSsdCommand('skip');
               } else {
                 // Treat as ✏️ feedback (whole input is the
