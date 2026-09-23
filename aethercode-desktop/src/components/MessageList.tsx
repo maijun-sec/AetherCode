@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useStore, ChatMessage, ChatStep, ChatSubTask } from '../store';
+import { useStore, ChatMessage, ChatStep, ChatSubTask, scanLatestSddPhaseInMessages, SDD_PHASE_DONE_RE, SDD_PHASE_SKIP_RE } from '../store';
 import { subscribeKind } from '../rpc/events';
 import { SubagentSpawnCard } from './chat/SubagentSpawnCard';
 import { StreamingIndicator } from './StreamingIndicator';
@@ -1021,6 +1021,15 @@ export function MessageList() {
   // each into a sddApplyPhaseUpdate() call so the chip strip
   // flips state correctly. Path is parsed from the next code
   // span (e.g. `<cwd>/.aethercode/sdd/<slug>/spec.md`).
+  //
+  // R330: this effect is now the SECOND of three triggers —
+  // the primary path lives in the store's run_end handler
+  // (content finalised) and a backup fires on every
+  // text_delta (streaming in progress). The MessageList effect
+  // still runs after each React commit, so it remains the
+  // canonical "messages array changed → re-scan" path. All
+  // three use the shared `scanLatestSddPhaseInMessages`
+  // helper, which dedupes so re-scans are idempotent.
   useEffect(() => {
     // Only run when an SDD run is active — otherwise we'd be
     // scanning every message for nothing.
@@ -1036,82 +1045,49 @@ export function MessageList() {
       console.log('[SDD scan] fired; sddActive=true; last role=', lastMsg?.role, 'content tail=',
         JSON.stringify((lastMsg?.content ?? '').slice(-300)));
     } catch {}
-    const PHASE_TITLE_TO_ID: Record<string, 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge'> = {
-      '项目原则':  'constitution',
-      '需求分析':  'specify',
-      '需求澄清':  'clarify',
-      '详细设计':  'plan',
-      '一致性分析': 'analyze',
-      '任务分析':  'tasks',
-      '执行实现':  'implement',
-      '收敛验证':  'converge',
-    };
-    // Find the most recent assistant/system message and parse it.
-    // We only look at messages that arrived after the toggle went
-    // on (the chip strip handles the rest of the state machine).
-    for (let i = messages.length - 1; i >= Math.max(0, messages.length - 12); i--) {
+    // Look for the SDD-completion sentinel anywhere in the
+    // recent message stream. Run-end finalised, but we still
+    // surface this from the message-scan path because the
+    // shared helper short-circuits on already-terminal phases.
+    for (let i = messages.length - 1; i >= Math.max(0, messages.length - 30); i--) {
       const m = messages[i];
       if (m.role !== 'assistant' && m.role !== 'system') continue;
-      const content = m.content ?? '';
-      // Pattern 1: ✅ 第 N 阶段完成 — <中文 title> → pending-confirm
-      //            (R320: was 'done' — skipped the user-confirm
-      //             gate, so the SddPhaseBar never rendered
-      //             ✅/✏️/⏭️ buttons. Now we land on
-      //             'pending-confirm' and the buttons appear.
-      //             sendSsdCommand('approve') flips to 'done'
-      //             when the user accepts.)
-      // Pattern 2: ⏭️ 第 N 阶段 — <中文 title>（可选）— 已跳过
-      //            → skipped (the user already told the agent
-      //              to skip — no confirm gate needed.)
-      // Pattern 3: 🎉 SDD 流程完成 → setSddEnabled(false)
-// R327: widen the dash matching to accept em-dash (— U+2014),
-// en-dash (– U+2013), and ASCII hyphen-minus (-) — different
-// agent fronts have rendered pause messages with slightly
-// different glyphs and we don't want the chip scan to fail
-// silently for any of them. The character class covers all
-// three; capture group is the same shape.
-      const doneRe = /第\s*(\d+)\s*阶段完成\s*[—–-]\s*([^\n\r]+)/;
-      const skipRe = /第\s*(\d+)\s*阶段\s*[—–-]\s*([^\n\r]+?)\s*（可选）\s*[—–-]\s*已跳过/;
-      let matched: RegExpMatchArray | null = content.match(doneRe);
-      let state: 'pending-confirm' | 'skipped' = 'pending-confirm';
-      if (!matched) {
-        matched = content.match(skipRe);
-        if (matched) state = 'skipped';
+      if (/🎉\s*\*\*SDD 流程完成\*\*/.test(m.content ?? '')) {
+        useStore.getState().setSddEnabled(false);
+        break;
       }
-      if (!matched) {
-        if (/🎉\s*\*\*SDD 流程完成\*\*/.test(content)) {
-          // Last phase done — collapse the bar. The agent has
-          // emitted `convergence.json` (or its skip sentinel).
-          // setSddEnabled(false) closes the bar.
-          useStore.getState().setSddEnabled(false);
-        }
-        // R327: log unmatched content so future dash / encoding
-        // regressions surface immediately. Without this, the
-        // scan runs, fails silently, and the user just sees
-        // "buttons didn't appear" with no diagnostic. The
-        // log is gated behind a content-shape heuristic so we
-        // don't spam the console for every non-pause message.
-        if (i === messages.length - 1 && /阶段/.test(content)) {
-          try {
-            console.warn('[SDD scan] no match in latest assistant message. content tail:', content.slice(-200));
-          } catch {}
-        }
-        continue;
-      }
-      const titleZh = (matched[2] ?? '').trim();
-      const phaseId = PHASE_TITLE_TO_ID[titleZh];
-      if (!phaseId) continue;
-      // Extract path from a code span on the next line (e.g.
-      // `产物：<cwd>/.aethercode/sdd/<slug>/spec.md`).
-      const pathRe = new RegExp('产物[:：]\\s*[`*]?([^`\\n\\r*]+)[`*]?');
-      const pathMatch = content.match(pathRe);
-      const path = pathMatch ? pathMatch[1].trim() : undefined;
-      // Apply the phase update.
-      useStore.getState().sddApplyPhaseUpdate(phaseId, state, path);
+    }
+    // Delegate the actual scan to the shared helper. The store
+    // also runs this from run_end + text_delta, but those
+    // callbacks don't always reach this React effect (timing
+    // / dedupe window). Calling it here means the UI state
+    // flips the same React render that messages changed.
+    const result = scanLatestSddPhaseInMessages(s.messages, s.sddPhases);
+    if (result) {
+      s.sddApplyPhaseUpdate(result.phaseId, result.state, result.path);
       try {
-        console.log('[SDD scan]', { phaseId, state, path, allPhases: useStore.getState().sddPhases.map((p) => ({ id: p.id, state: p.state })) });
+        console.log('[SDD scan] applied', { phaseId: result.phaseId, state: result.state, path: result.path });
       } catch {}
-      break;
+      return;
+    }
+    // R327: no-match diagnostic. Surface the unmatched content
+    // when the latest assistant message contains "阶段" but the
+    // regex still didn't match — that's the case the user
+    // reported in R327/R329 (dash variant we don't recognise).
+    const last = messages[messages.length - 1];
+    if (last && /阶段/.test(last.content ?? '')) {
+      // Only fire when the latest message has the marker
+      // AND no done/skip regex matched it. The shared helper
+      // already iterated 30 messages back, so reaching here
+      // means "no match in last 30 messages" → no-match.
+      try {
+        const triedDone = SDD_PHASE_DONE_RE.test(last.content ?? '');
+        const triedSkip = SDD_PHASE_SKIP_RE.test(last.content ?? '');
+        if (!triedDone && !triedSkip) {
+          console.warn('[SDD scan] no match in latest assistant message. content tail:',
+            (last.content ?? '').slice(-200));
+        }
+      } catch {}
     }
   }, [messages]);
   useEffect(() => {

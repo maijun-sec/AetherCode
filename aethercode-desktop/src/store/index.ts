@@ -372,6 +372,111 @@ export const UI_PERMISSION_MODES: { value: UiPermissionMode; label: string; titl
   { value: 'smart',  label: '智能授权', title: '读/查询/新增自动; 修改/删除/bash 询问', daemon: ['ACCEPT_EDITS'] },
   { value: 'bypass', label: '始终授权', title: '一路绿灯, 不再询问任何调用',           daemon: ['BYPASS_PERMISSIONS'] },
 ];
+
+// R330: shared SDD phase pause-message scanner.
+//
+// Used by THREE call sites so a missing match is impossible to
+// slip past:
+//   1. MessageList useEffect (deps=[messages]) — runs after
+//      React commits, primary trigger in normal flow.
+//   2. store text_delta handler — runs inline during streaming,
+//      so even mid-stream pauses are detected.
+//   3. store run_end handler — runs once content has finalised,
+//      bulletproof backstop regardless of React render timing.
+//
+// R327 widened the dash character class to em-dash / en-dash /
+// ASCII hyphen-minus. R330 widens it further to cover the rest
+// of the dash variants the agent renderer / markdown pipeline
+// have been observed to emit:
+//
+//   U+2014 —  EM DASH
+//   U+2013 –  EN DASH
+//   U+2010 ‐  HYPHEN
+//   U+2011 ‑  NON-BREAKING HYPHEN
+//   U+2012 ‒  FIGURE DASH
+//   U+002D -  HYPHEN-MINUS
+//
+// The character class accepts all six. We use RegExp constructor
+// with explicit \uXXXX escapes (TypeScript rejects a literal
+// class like `[—–-…]` because it parses the `-` as a range
+// separator between codepoints that aren't a valid range —
+// TS1517 "Range out of order in character class").
+//
+// A single literal codepoint is too brittle (Lesson 684);
+// producer-side glyph normalisation silently broke R327 and
+// earlier.
+export const SDD_PHASE_TITLE_TO_ID: Record<string, SddPhaseId> = {
+  '项目原则':  'constitution',
+  '需求分析':  'specify',
+  '需求澄清':  'clarify',
+  '详细设计':  'plan',
+  '一致性分析': 'analyze',
+  '任务分析':  'tasks',
+  '执行实现':  'implement',
+  '收敛验证':  'converge',
+};
+// Dashes as a single concatenated char class — explicit \uXXXX
+// so TS doesn't try to read them as ranges.
+const SDD_DASH_CLASS = '\\u2014\\u2013\\u2010\\u2011\\u2012\\u002d';
+export const SDD_PHASE_DONE_RE =
+  new RegExp(`第\\s*(\\d+)\\s*阶段完成\\s*[${SDD_DASH_CLASS}]\\s*([^\\n\\r]+)`);
+export const SDD_PHASE_SKIP_RE =
+  new RegExp(`第\\s*(\\d+)\\s*阶段\\s*[${SDD_DASH_CLASS}]\\s*([^\\n\\r]+?)\\s*（可选）\\s*[${SDD_DASH_CLASS}]\\s*已跳过`);
+const SDD_PHASE_PATH_RE = /产物[:：]\s*[`*]?([^`\n\r*]+)[`*]?/;
+
+export interface SddPhaseScanResult {
+  phaseId: SddPhaseId;
+  state: 'pending-confirm' | 'skipped';
+  path?: string;
+}
+
+/**
+ * Scan chat messages for the most recent SDD pause-message
+ * shape and return the phase update. Returns null when no
+ * match is found OR when the matched phase is already in a
+ * terminal / pending state (so re-scanning doesn't loop).
+ *
+ * Iterates from the most recent message backwards so a fresh
+ * pause wins over an older one. Bounds-checked at 30 messages —
+ * a single SDD turn rarely exceeds that, and the cap protects
+ * the streaming hot-path from O(n²) re-scanning.
+ */
+export function scanLatestSddPhaseInMessages(
+  messages: ReadonlyArray<{ role: string; content?: string }>,
+  sddPhases: ReadonlyArray<{ id: string; state: string }>,
+): SddPhaseScanResult | null {
+  const cap = Math.min(messages.length, 30);
+  for (let i = messages.length - 1; i >= messages.length - cap; i--) {
+    const m = messages[i];
+    if (!m || (m.role !== 'assistant' && m.role !== 'system')) continue;
+    const content = m.content ?? '';
+    let matched = content.match(SDD_PHASE_DONE_RE);
+    let state: 'pending-confirm' | 'skipped' = 'pending-confirm';
+    if (!matched) {
+      matched = content.match(SDD_PHASE_SKIP_RE);
+      if (matched) state = 'skipped';
+    }
+    if (!matched) continue;
+    const titleZh = (matched[2] ?? '').trim();
+    const phaseId = SDD_PHASE_TITLE_TO_ID[titleZh];
+    if (!phaseId) continue;
+    // De-dupe: if this phase is already in a terminal / pending
+    // state, don't re-apply — would flip a user-approved phase
+    // back to pending-confirm and re-show buttons.
+    const phase = sddPhases.find((p) => p.id === phaseId);
+    if (phase && (phase.state === 'pending-confirm' || phase.state === 'pending-accept'
+        || phase.state === 'done' || phase.state === 'skipped' || phase.state === 'failed')) {
+      return null;
+    }
+    const pathMatch = content.match(SDD_PHASE_PATH_RE);
+    return {
+      phaseId,
+      state,
+      path: pathMatch ? pathMatch[1].trim() : undefined,
+    };
+  }
+  return null;
+}
 /**
  * Map a UI tier (one of {@link UiPermissionMode}) to the
  * canonical daemon enum. Falls through to its input when
@@ -1875,6 +1980,13 @@ interface AppState {
    *  MessageList when scanning chat messages for the SDD
    *  pause-message pattern. */
   sddApplyPhaseUpdate: (phase: string, state: 'idle' | 'running' | 'pending-confirm' | 'done' | 'skipped' | 'failed', path?: string) => void;
+  /** R330: scan chat messages inline and apply the most
+   *  recent SDD pause-message as a phase update. Idempotent
+   *  — helper dedupes against phases already in a terminal
+   *  state. Called by text_delta + run_end handlers as a
+   *  backstop so React render timing can never cause a
+   *  "scan ran but state didn't update" regression. */
+  sddScanAndApplyPhaseUpdate: () => SddPhaseScanResult | null;
   /** R324: pre-mark an `idle` phase as 'skipped' ahead of time
    *  so the agent skips it when it reaches that phase. The
    *  user clicks the chip's ⏭ button while a previous phase
@@ -2658,6 +2770,16 @@ export const useStore = create<AppState>((set, get) => {
           prevEventWasText = true;
           return { messages: msgs, isStreaming: true, lastChunkTs: Date.now(), currentActivity: activity, steps, currentStepId };
         });
+        // R330: inline scan during streaming. Throttled to "only
+        // scan when no chip is currently pending-confirm" — once
+        // we set one, the helper dedupes and returns null, but
+        // skipping the work entirely saves the per-chunk regex
+        // match cost. The run_end handler is the canonical
+        // trigger; this is just an early-detection backstop for
+        // mid-stream pauses that don't trigger run_end.
+        if (!get().sddPhases.find((p) => p.state === 'pending-confirm')) {
+          get().sddScanAndApplyPhaseUpdate();
+        }
         break;
       }
       case 'tool_use_start': {
@@ -2897,6 +3019,16 @@ export const useStore = create<AppState>((set, get) => {
             if (cur?.kind === 'done') useStore.setState({ currentActivity: null });
           }, 2000);
         }
+        // R330: inline scan at run_end. This is the bulletproof
+        // backstop for SDD phase transitions — content has
+        // finalised, isStreaming is now false, and the
+        // MessageList useEffect may not have re-fired if the
+        // last text_delta's new msgs array was already
+        // observed. Without this, a phase-completion pause
+        // message can sit unread and the chip strip's button
+        // row never appears (the regression user reported in
+        // R329 retest). Synchronous, idempotent.
+        get().sddScanAndApplyPhaseUpdate();
         // refresh metrics so cumulative input/output tokens
         // surface in the TokenUsage panel after each run.
         void get().refreshMetrics().catch(() => {});
@@ -5357,6 +5489,23 @@ export const useStore = create<AppState>((set, get) => {
           return next;
         }),
       }));
+    },
+    // R330: scan chat messages for the most recent SDD pause
+    // shape and apply it as a phase update. Called inline by
+    // the text_delta + run_end handlers as a backstop that
+    // doesn't depend on React render timing. Idempotent —
+    // helper internally dedupes against phases already in
+    // terminal / pending state.
+    sddScanAndApplyPhaseUpdate: () => {
+      const s = get();
+      if (!s.sddActive || !s.sddEnabled) return null;
+      const result = scanLatestSddPhaseInMessages(s.messages, s.sddPhases);
+      if (!result) return null;
+      get().sddApplyPhaseUpdate(result.phaseId, result.state, result.path);
+      try {
+        console.log('[SDD store scan]', { phaseId: result.phaseId, state: result.state, path: result.path });
+      } catch {}
+      return result;
     },
     sddSkipPhase: async (phaseId) => {
       // R324: mark an `idle` or `running` phase as 'skipped'.
