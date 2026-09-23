@@ -1026,6 +1026,16 @@ export function MessageList() {
     // scanning every message for nothing.
     const s = useStore.getState();
     if (!s.sddActive || !s.sddEnabled) return;
+    // R329: log every scan-fire so we can correlate UI state
+    // with chat content. Logs the latest message's content
+    // (truncated) so future "buttons didn't appear" reports
+    // include both the regex decision and the raw bytes that
+    // went through it.
+    try {
+      const lastMsg = messages[messages.length - 1];
+      console.log('[SDD scan] fired; sddActive=true; last role=', lastMsg?.role, 'content tail=',
+        JSON.stringify((lastMsg?.content ?? '').slice(-300)));
+    } catch {}
     const PHASE_TITLE_TO_ID: Record<string, 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge'> = {
       '项目原则':  'constitution',
       '需求分析':  'specify',
