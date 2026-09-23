@@ -318,9 +318,12 @@ public class BashTool {
     }
 
     /** foreground mode. Runs the command, streams output,
-     *  waits for completion, returns the captured output. */
-    private static Tool.ToolResult runForeground(String command, File cwd, int timeout,
-                                                  boolean stream, Tool.CallContext ctx) {
+     *  waits for completion, returns the captured output.
+     *  Package-private (not just private) so R326's regression
+     *  test can call it directly without going through the
+     *  full tool surface. */
+    static Tool.ToolResult runForeground(String command, File cwd, int timeout,
+                                        boolean stream, Tool.CallContext ctx) {
         Process process = null;
         try {
             Process processRef = start(command, cwd);
@@ -401,15 +404,144 @@ public class BashTool {
     }
 
     private static Process start(String command, File cwd) throws java.io.IOException {
+        // R326: when the agent writes `mkdir -p <path>` (the
+        // standard Unix idiom for "create parent dirs and the
+        // leaf"), cmd.exe on Windows treats `-p` as a literal
+        // directory name and creates a sibling folder named
+        // exactly "-p" alongside the intended target. This is
+        // silent (no error) and pollutes the user's cwd with
+        // junk folders on every session that calls mkdir. The
+        // fix: detect `mkdir -p` on Windows and rewrite the
+        // command to use PowerShell's `New-Item -ItemType
+        // Directory -Force`, which IS recursive. We only
+        // rewrite when the command actually starts with `mkdir
+        // -p` (or `mkdir -pv` / `mkdir -p -v` variants) to
+        // avoid touching unrelated commands.
+        String effectiveCommand = command;
+        if (isWindows() && startsWithMkdirP(command)) {
+            effectiveCommand = rewriteMkdirPForWindows(command);
+        }
         ProcessBuilder pb = new ProcessBuilder();
         if (isWindows()) {
-            pb.command("cmd.exe", "/c", command);
+            pb.command("cmd.exe", "/c", effectiveCommand);
         } else {
-            pb.command("/bin/sh", "-c", command);
+            pb.command("/bin/sh", "-c", effectiveCommand);
         }
         pb.directory(cwd);
         pb.redirectErrorStream(false);
         return pb.start();
+    }
+
+    /**
+     * R326: returns {@code true} when the given command line
+     * starts with a {@code mkdir -p} (with optional extra
+     * flags like {@code -v} or {@code -pv}). The check is
+     * tolerant of leading whitespace and an optional path
+     * prefix like {@code /usr/bin/mkdir}. Anything else —
+     * including {@code mkdir} without {@code -p}, or
+     * {@code mkdir -p} appearing later in a pipe chain — is
+     * left untouched (the second case is rare in practice
+     * because the agent almost always runs mkdir as the first
+     * segment).
+     */
+    private static boolean startsWithMkdirP(String command) {
+        if (command == null) return false;
+        String s = command.stripLeading();
+        // Find `mkdir` only at a segment start (preceded by
+        // start-of-string, `;`, `&&`, or `||`). Otherwise we
+        // misidentify `echo mkdir -p /tmp` as starting with
+        // mkdir. Allow an optional path prefix like
+        // `/usr/bin/mkdir`.
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "(?:^|;|&&|\\|\\|)\\s*((?:\\S+/)?mkdir)\\b"
+            ).matcher(s);
+        if (!m.find()) return false;
+        // After `mkdir`, scan the next whitespace-delimited
+        // tokens. The first must be a flag string containing
+        // `-p`; we then look at the next token (the path) to
+        // confirm there is one.
+        String rest = s.substring(m.end()).stripLeading();
+        if (rest.isEmpty()) return false;
+        int sp = rest.indexOf(' ');
+        String firstArg = sp >= 0 ? rest.substring(0, sp) : rest;
+        if (!firstArg.matches("-[a-zA-Z]*p[a-zA-Z]*")) return false;
+        // Need at least one path token after the flags.
+        String afterFlags = sp >= 0 ? rest.substring(sp + 1).stripLeading() : "";
+        return !afterFlags.isEmpty();
+    }
+
+    /** R326: package-private wrapper so the regression test can
+     *  exercise the detection logic without going through the
+     *  full tool surface. */
+    static boolean startsWithMkdirPForTest(String command) {
+        return startsWithMkdirP(command);
+    }
+
+    /**
+     * R326: rewrite {@code mkdir -p [-flags] <path> [...more paths]}
+     * so that it works under cmd.exe. We replace {@code mkdir -p}
+     * with a single {@code powershell -NoProfile -Command
+     * "New-Item -ItemType Directory -Force -Path <path1>,<path2>"}
+     * call. The original command is otherwise preserved (so
+     * {@code && echo done} chaining still works).
+     *
+     * Implementation: find the first {@code mkdir -p ...}
+     * segment, parse out the path arguments (preserving
+     * quoting), and replace the whole segment with the
+     * PowerShell equivalent. Anything before / after the
+     * segment is left untouched.
+     */
+    private static String rewriteMkdirPForWindows(String command) {
+        // Find the `mkdir` token. We accept leading whitespace
+        // and a path prefix.
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "(^|\\s|;|&&|\\|\\|)mkdir(\\s+-?[a-zA-Z]+)*(\\s+.*?)(?=;|&&|\\|\\||$)"
+            ).matcher(command);
+        if (!m.find()) return command;
+        String prefix = m.group(1) != null ? m.group(1) : "";
+        String flags = m.group(2) != null ? m.group(2) : "";
+        String argsAndRest = m.group(3) != null ? m.group(3) : "";
+        // Parse out the path arguments — they end at the first
+        // shell metacharacter or end-of-string. Quoted paths
+        // may contain spaces. We collect everything up to the
+        // first unquoted `;`, `&&`, `||`, or end of string.
+        java.util.List<String> paths = new java.util.ArrayList<>();
+        java.util.regex.Matcher m2 = java.util.regex.Pattern.compile(
+                "\"([^\"]*)\"|'([^']*)'|(\\S+)"
+            ).matcher(argsAndRest);
+        while (m2.find()) {
+            String p = m2.group(1) != null ? m2.group(1)
+                    : m2.group(2) != null ? m2.group(2)
+                    : m2.group(3);
+            if (p == null || p.isEmpty()) continue;
+            // Stop when we hit a shell control token (it would
+            // appear as a bare token like `&&` or `;`).
+            if (p.equals("&&") || p.equals("||") || p.equals("|") || p.equals(";")) break;
+            // Skip flag-like tokens that aren't paths (e.g.
+            // `-m 0755` if user mixed Unix flags in).
+            if (p.startsWith("-") && !p.matches("-[a-zA-Z]*p[a-zA-Z]*")) continue;
+            paths.add(p);
+        }
+        if (paths.isEmpty()) return command;
+        // Quote each path for PowerShell (escape any inner
+        // single quotes by doubling them).
+        StringBuilder psPaths = new StringBuilder();
+        for (int i = 0; i < paths.size(); i++) {
+            if (i > 0) psPaths.append(',');
+            String p = paths.get(i);
+            psPaths.append('\'').append(p.replace("'", "''")).append('\'');
+        }
+        String psCmd = "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path "
+                + psPaths + "\"";
+        String before = command.substring(0, m.start() + prefix.length());
+        // Recompute the trailing rest from the original command
+        // (the matched group's boundaries don't always line up
+        // with `m.end()` once we've inspected sub-patterns).
+        int boundary = m.end();
+        String restOfCommand = boundary < command.length() ? command.substring(boundary) : "";
+        // Drop any flags we consumed (we keep them out of the
+        // ps call since `-Force` already implies recursive).
+        return before + psCmd + restOfCommand;
     }
 
     /**
