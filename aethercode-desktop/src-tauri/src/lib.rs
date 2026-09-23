@@ -211,6 +211,21 @@ async fn ensure_daemon(
         }
     }
 
+    // R333 follow-up: enforce "at most one AetherCode
+    // daemon alive" at the singleton-enforcement boundary.
+    // ensure_daemon is the renderer's cold-start + reconnect
+    // entry point — exactly the moment when it's safe to
+    // sweep every known port and kill any leftover daemon
+    // (orphan from a previous crashed session, user-
+    // launched daemon via start-daemon.bat, stale pre-warm
+    // from a previous cwd). Doing this here rather than in
+    // spawn_daemon matters because spawn_daemon is also
+    // called by pre_warm_daemon mid-session, and sweeping
+    // mid-session would kill the primary we just attached.
+    eprintln!("[R333] ensure_daemon: pre-bind sweep over ports {:?}",
+        ALL_DESKTOP_DAEMON_PORTS);
+    kill_orphan_daemons();
+
     for &port in ALL_DESKTOP_DAEMON_PORTS {
         if is_healthy(port).await {
             // R298 follow-up. Pre-R298 path set
@@ -369,24 +384,22 @@ async fn spawn_daemon(
     ports: &[u16],
 ) -> Result<(DaemonInfo, std::process::Child), String> {
     let mut last_err = String::new();
-    // R333: enforce "at most one AetherCode daemon alive".
-    // Sweep every desktop-owned port and kill any java.exe
-    // that's holding one before we attempt to bind a new
-    // primary. This covers:
-    //   1. orphans from a previous desktop session that was
-    //      hard-killed (process gone but JVM kept running)
-    //   2. pre-warm daemons the previous session left alive
-    //   3. user-launched daemons (e.g. `start-daemon.bat`)
-    //      that the user explicitly wants killed when the
-    //      desktop takes over
-    //
-    // We log every kill so the user can correlate
-    // "disappearing daemons" with "desktop restarted". The
-    // log line includes the port so the user can identify
-    // which daemon (which session-dir) just got reaped.
-    eprintln!("[R333] pre-bind sweep: killing any java daemon on ports {:?}",
-        ALL_DESKTOP_DAEMON_PORTS);
-    kill_orphan_daemons();
+    // R333 follow-up: the sweep is now performed by the
+    // CALLER (ensure_daemon for primary / pre_warm_daemon for
+    // pre-warm), not by spawn_daemon. The previous round
+    // (R333) put the sweep inside spawn_daemon, which broke
+    // the pre-warm path: when the desktop attached to the
+    // primary daemon on port X (e.g. 18889), then the
+    // pre-warm code path called spawn_daemon to bring up the
+    // pre-warm daemon on port Y (e.g. 19889), the sweep
+    // killed the just-attached primary on port X, breaking
+    // the live WS connection (os error 10054, "remote host
+    // forced connection close"). The sweep is a singleton-
+    // enforcement primitive; it's only safe to run at the
+    // "desktop takes over" boundary, NOT in the middle of
+    // an active session. ensure_daemon is that boundary —
+    // it's the entry point the renderer calls on cold start
+    // and on reconnect — so the sweep belongs there.
     for &port in ports {
         // R83 debug: capture daemon stdout/stderr to a per-port log
         // file in %TEMP% so we can diagnose why stream_event
