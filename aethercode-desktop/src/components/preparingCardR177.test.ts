@@ -473,12 +473,15 @@ describe('R200: 7 fixes from one user feedback round', () => {
     // at common window widths. The previous CSS had
     // `flex-wrap: wrap` + `cwd-group { max-width: 360px }`,
     // which on a 1280px window pushed cwd to row 2 because
-    // the input box itself is wide. R200'sets the strip to
+    // the input box itself is wide. R200 sets the strip to
     // `flex-wrap: nowrap` + `overflow-x: auto` so the row
     // stays one line (with horizontal scroll on tiny
-    // windows) and shrinks cwd's max-width to 220px.
+    // windows) and shrinks cwd's max-width.
+    // R339: bumped 220px → 280px so longer Windows paths
+    // like D:\work\workspace\idea\engine\... fit without
+    // ellipsising too aggressively.
     expect(miCss).toMatch(/\.input-config-bar\s*\{[\s\S]*?flex-wrap:\s*nowrap/);
-    expect(miCss).toMatch(/\.cwd-group\s*\{[\s\S]*?max-width:\s*220px/);
+    expect(miCss).toMatch(/\.cwd-group\s*\{[\s\S]*?max-width:\s*280px/);
   });
 
   it('#6: TaskSummary uses a single-row chip layout (CWD + id + model + perm + daemon)', () => {

@@ -13,6 +13,12 @@
 
 import { afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
+// @testing-library/jest-dom adds the custom matchers
+// (toBeInTheDocument, toHaveAttribute, toHaveTextContent,
+// etc.) onto Vitest's expect. Without this, every React
+// test that uses a DOM matcher crashes with
+// "Invalid Chai property: <matcher>".
+import '@testing-library/jest-dom/vitest';
 
 declare global {
   // eslint-disable-next-line no-var

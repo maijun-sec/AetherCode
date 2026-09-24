@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { ProviderModelPicker } from './ProviderModelPicker';
+import './ProviderModelPicker.css';
 import './SettingsPanel.css';
 
 interface SettingsPanelProps { onClose: () => void; }
@@ -306,53 +308,51 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 : `showing ${filteredProviders.length} configured · ${(availableProviders ?? []).length - filteredProviders.length} hidden (no API key)`}
             </small>
           </div>
-          {/* provider + model picker. The
-              first row picks the provider (e.g.
-              "minmax" / "glm" / "qwen" /
-              "deepseek" / "anthropic" etc.); the
-              second row picks the model within
-              that provider. We list the providers
-              as a single-line dropdown (one entry
-              per brand) and the models in a
-              second dropdown that swaps when the
-              provider changes. */}
-          <label className="settings-field">
-            <span>Provider</span>
-            <select
-              value={provider}
-              onChange={(e) => {
-                setLocalProvider(e.target.value);
-                // Reset the model picker to the
-                // new provider's defaultModel so
-                // the user doesn't accidentally
-                // submit a model that doesn't
-                // belong to the new provider.
-                const np = filteredProviders.find(
-                  (p: any) => p.name === e.target.value
-                );
-                setLocalProviderModel(np?.defaultModel ?? '');
-              }}
-            >
-              {filteredProviders.length === 0 ? (
-                <option value="" disabled>(no providers — daemon offline? or toggle "Show all")</option>
-              ) : filteredProviders.map((p: any) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}{p.name === currentProvider ? ' (current)' : ''}
-                  {p.apiKeyEnv ? ` · ${p.apiKeyEnv}` : ''}
-                  {/* R286: when the user has
-                      enabled "Show all", badge
-                      the unconfigured rows so the
-                      reason is obvious. The
-                      filter already gates the
-                      underlying list, so the
-                      dropdown only shows
-                      unconfigured rows when the
-                      user explicitly opted in. */}
-                  {showAllProviders && p.hasApiKey === false ? ' · (no API key)' : ''}
-                </option>
-              ))}
-            </select>
-            <small className="settings-hint">
+          {/* R341: 2-level provider/model picker. The
+              chip row replaces the legacy "single
+              dropdown with every brand" pattern;
+              the filter input narrows the model list
+              (per the user request "不建议一次全部
+              展示，因为太多了，可以有筛选"). Switching
+              chips resets the filter so the user sees
+              the new brand's full list. The picker
+              is controlled — the parent's local
+              provider / providerModel state owns
+              the selection; Save then routes through
+              store.switchProvider. */}
+          <ProviderModelPicker
+            providers={filteredProviders}
+            currentProvider={currentProvider}
+            currentModel={engineState?.model ?? null}
+            selectedProvider={provider}
+            onSelectProvider={(name) => {
+              setLocalProvider(name);
+              // Reset the model to the new provider's
+              // defaultModel so the user doesn't
+              // accidentally submit a model that
+              // doesn't belong to the new provider.
+              const np = filteredProviders.find(
+                (p: any) => p.name === name
+              );
+              const dm = np?.defaultModel;
+              setLocalProviderModel((dm ?? '') as string);
+            }}
+            onSwitch={(pName, mId) => {
+              // Controlled, so this just records the
+              // pending state — the actual store call
+              // fires on Save so the user can batch
+              // with permission / profile changes.
+              setLocalProvider(pName);
+              setLocalProviderModel(mId);
+            }}
+            showAll={showAllProviders}
+          />
+          {/* provider-level cost band hint. The
+              chip + model row are owned by the
+              picker; this hint just adds the same
+              R286 cost-band summary that lived
+              under the legacy model dropdown. */}
+          <small className="settings-hint">
               {selectedProvider?.baseUrl
                 ? `${selectedProvider.baseUrl}${
                     selectedProvider?.apiKeyEnv
@@ -360,41 +360,6 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                       : ''
                   }`
                 : 'pick a provider'}
-            </small>
-          </label>
-          <label className="settings-field">
-            <span>Model</span>
-            <select
-              value={providerModel}
-              onChange={(e) => setLocalProviderModel(e.target.value)}
-              disabled={modelsForProvider.length === 0}
-            >
-              {modelsForProvider.length === 0 ? (
-                <option value="" disabled>(no models for this provider)</option>
-              ) : modelsForProvider.map((m: any) => (
-                <option key={m.id} value={m.id}>
-                  {m.id}{m.default ? ' (default)' : ''}
-                  {' · '}${(m.inputPer1k ?? 0).toFixed(4)}/${(m.outputPer1k ?? 0).toFixed(4)} per 1k
-                  {/* R286: per-model pricing
-                      summary. Convert the
-                      per-1k USD rate to the
-                      standard $X/M-input +
-                      $Y/M-output label so the
-                      user can compare models at
-                      a glance without opening a
-                      calculator. M = million
-                      tokens, so ×1000 over the
-                      per-1k value. Free / blank
-                      rates (e.g. local stubs)
-                      show as "free" so the row
-                      doesn't read as $0.00 (a
-                      missing signal a 0 would
-                      give). */}
-                      {' · $' + ((m.inputPer1k ?? 0) * 1000).toFixed(2) + '/M in, $' + ((m.outputPer1k ?? 0) * 1000).toFixed(2) + '/M out'}
-                </option>
-              ))}
-            </select>
-            <small className="settings-hint">
               {selectedProvider && (() => {
                 // R286: provider-level cost
                 // summary. Sum the per-1k
@@ -410,12 +375,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 const outMin = Math.min(...modelsForProvider.map((mm: any) => mm.outputPer1k ?? 0));
                 const outMax = Math.max(...modelsForProvider.map((mm: any) => mm.outputPer1k ?? 0));
                 if (inMin === inMax && outMin === outMax) {
-                  return `${modelsForProvider.length} model(s) · $${(inMin * 1000).toFixed(2)}/M in, $${(outMin * 1000).toFixed(2)}/M out`;
+                  return ` · ${modelsForProvider.length} model(s) · $${(inMin * 1000).toFixed(2)}/M in, $${(outMin * 1000).toFixed(2)}/M out`;
                 }
-                return `${modelsForProvider.length} model(s) · in $${(inMin * 1000).toFixed(2)}–$${(inMax * 1000).toFixed(2)}/M, out $${(outMin * 1000).toFixed(2)}–$${(outMax * 1000).toFixed(2)}/M`;
+                return ` · ${modelsForProvider.length} model(s) · in $${(inMin * 1000).toFixed(2)}–$${(inMax * 1000).toFixed(2)}/M, out $${(outMin * 1000).toFixed(2)}–$${(outMax * 1000).toFixed(2)}/M`;
               })()}
             </small>
-          </label>
           <label className="settings-field">
             <span>Permission mode</span>
             <select value={perm} onChange={(e) => setLocalPerm(e.target.value)}>

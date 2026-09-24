@@ -92,10 +92,19 @@ describe('R286: Settings panel — per-model pricing summary', () => {
     // industry format. The Settings panel
     // shows both so the user can compare
     // models at a glance.
-    expect(tsxSrc).toMatch(/inputPer1k\s*\?\?\s*0\)\s*\*\s*1000/);
-    expect(tsxSrc).toMatch(/outputPer1k\s*\?\?\s*0\)\s*\*\s*1000/);
-    expect(tsxSrc).toMatch(/\/M\s+in/);
-    expect(tsxSrc).toMatch(/\/M\s+out/);
+    //
+    // R341: the per-model pricing moved out of
+    // SettingsPanel and into ProviderModelPicker
+    // (the new 2-level picker). The pattern now
+    // lives in the picker source. Check both
+    // surfaces — the panel still imports the
+    // picker (so the affordance is wired) and
+    // the picker has the actual formatRate.
+    expect(tsxSrc).toMatch(/ProviderModelPicker/);
+    const pickerSrc = readFileSync(join(root, 'components', 'ProviderModelPicker.tsx'), 'utf-8');
+    expect(pickerSrc).toMatch(/inputPer1k\s*\?\?\s*0/);
+    expect(pickerSrc).toMatch(/outputPer1k\s*\?\?\s*0/);
+    expect(pickerSrc).toMatch(/per 1k/);
   });
 
   it('shows provider-level cost band under the model picker', () => {
@@ -104,7 +113,10 @@ describe('R286: Settings panel — per-model pricing summary', () => {
     // hint under the picker shows the
     // min..max band so the user knows the
     // range without picking each model
-    // individually.
+    // individually. The cost band stays in
+    // SettingsPanel.tsx (it's a panel-level
+    // affordance) — only the per-row model
+    // pricing moved to ProviderModelPicker.
     expect(tsxSrc).toMatch(/modelsForProvider\.map\(\(mm:\s*any\)\s*=>\s*mm\.inputPer1k/);
     expect(tsxSrc).toMatch(/\$\{\(inMin\s*\*\s*1000\)\.toFixed\(2\)\}/);
   });

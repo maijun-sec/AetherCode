@@ -1,0 +1,197 @@
+/* R341 — 2-level provider/model picker styles.
+ *
+ * Visual constraints:
+ *   - provider chip row scrolls if it overflows (long
+ *     brand lists shouldn't truncate)
+ *   - selected chip is high-contrast; current chip has
+ *     a filled dot; non-current has an outline dot
+ *   - "(no key)" badges are subtle (muted gray) but
+ *     visible — the user opted into "Show all" so they
+ *     expect to see why a row is unusable
+ *   - model rows are full-width clickable buttons with
+ *     hover/active states
+ *   - the filter input has the same chrome as the
+ *     .message-input-wrap so it doesn't feel out of place
+ *     when dropped into the Settings panel / MessageInput
+ */
+
+.r341-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.r341-picker-provider-row {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  gap: 6px;
+  padding: 4px 2px 6px 2px;
+  border-bottom: 1px solid var(--border-color, rgba(127, 127, 127, 0.2));
+}
+
+.r341-picker-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
+  border-radius: 16px;
+  background: var(--chip-bg, transparent);
+  color: var(--chip-fg, inherit);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  user-select: none;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.r341-picker-chip:hover {
+  background: var(--chip-bg-hover, rgba(127, 127, 127, 0.08));
+}
+
+.r341-picker-chip-selected {
+  background: var(--chip-bg-selected, rgba(80, 120, 220, 0.18));
+  border-color: var(--chip-border-selected, rgba(80, 120, 220, 0.55));
+  color: var(--chip-fg-selected, inherit);
+}
+
+.r341-picker-chip-current.r341-picker-chip-selected {
+  border-color: rgba(80, 120, 220, 0.85);
+}
+
+.r341-picker-chip-no-key {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.r341-picker-chip-dot {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.r341-picker-chip-name {
+  font-weight: 500;
+}
+
+.r341-picker-chip-badge {
+  font-size: 10px;
+  color: var(--chip-badge-fg, rgba(127, 127, 127, 0.85));
+}
+
+.r341-picker-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.r341-picker-filter-label {
+  font-size: 12px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.r341-picker-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
+  border-radius: 4px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-family: inherit;
+}
+
+.r341-picker-filter-input:focus {
+  outline: 1px solid rgba(80, 120, 220, 0.6);
+  outline-offset: 0;
+}
+
+.r341-picker-filter-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.r341-picker-filter-count {
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 50px;
+  text-align: right;
+}
+
+.r341-picker-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 2px 0;
+}
+
+.r341-picker-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 120ms ease;
+}
+
+.r341-picker-model:hover {
+  background: var(--row-bg-hover, rgba(127, 127, 127, 0.08));
+}
+
+.r341-picker-model-current {
+  background: var(--row-bg-current, rgba(80, 120, 220, 0.15));
+}
+
+.r341-picker-model-current:hover {
+  background: var(--row-bg-current-hover, rgba(80, 120, 220, 0.22));
+}
+
+.r341-picker-model-id {
+  font-weight: 500;
+  flex: 0 0 auto;
+}
+
+.r341-picker-model-badge {
+  font-size: 10px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.r341-picker-model-badge-current {
+  color: rgba(80, 120, 220, 1);
+  font-weight: 600;
+}
+
+.r341-picker-model-rate {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.r341-picker-empty {
+  padding: 8px;
+  font-size: 12px;
+  opacity: 0.6;
+  font-style: italic;
+  text-align: center;
+}
