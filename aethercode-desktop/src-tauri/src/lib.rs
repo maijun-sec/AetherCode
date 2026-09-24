@@ -1783,7 +1783,7 @@ fn build_bank_client(info: &DaemonInfo) -> BankClient {
 /// R172 daemon-stability: assemble the JVM args that go
 /// before `-jar`. Two layers:
 ///
-///   1. Defaults: -Xms1g -Xmx4g -XX:+UseG1GC.
+///   1. Defaults: -Xms2g -Xmx8g -XX:+UseG1GC.
 ///      Pinned larger than the JVM's auto-1/4-RAM default
 ///      so a complex multi-tool task (Maven project
 ///      generation, repo-wide grep, code transformation
@@ -1793,9 +1793,18 @@ fn build_bank_client(info: &DaemonInfo) -> BankClient {
 ///      ≥ 4 GB and gives more predictable pauses than
 ///      Parallel for this kind of mixed allocation
 ///      workload.
+///      R338: heap doubled from `-Xms1g -Xmx4g` to
+///      `-Xms2g -Xmx8g` so a long-running complex
+///      generation (multi-algorithm Maven project with
+///      100% coverage, agent re-runs phases with full
+///      transcripts in memory) doesn't OOM mid-task. The
+///      daemon's WS=Private memory was ~570 MB at idle on
+///      the previous default; the 8 GB ceiling leaves
+///      headroom for ~3 concurrent transcribe + grep + file
+///      build pipelines.
 ///
 ///   2. Override: if the operator sets
-///      `AETHERCODE_DAEMON_JVM_OPTS` (e.g. `-Xmx8g
+///      `AETHERCODE_DAEMON_JVM_OPTS` (e.g. `-Xmx16g
 ///      -XX:+UseZGC`), that env var REPLACES the
 ///      defaults entirely. The split is intentional —
 ///      "I want a different collector" usually means
@@ -1804,9 +1813,10 @@ fn build_bank_client(info: &DaemonInfo) -> BankClient {
 ///      than to splice flags in.
 ///
 ///   3. Always-on (appended after either path above):
-///      -XX:MaxMetaspaceSize=256m so a runaway class
+///      -XX:MaxMetaspaceSize=512m so a runaway class
 ///      loader can't eat the OS's virtual memory before
-///      we get a clear OOM in the log.
+///      we get a clear OOM in the log. Bumped from
+///      256m alongside the heap doubling.
 fn daemon_jvm_args() -> Vec<String> {
     let mut args: Vec<String> = if let Ok(custom) = std::env::var("AETHERCODE_DAEMON_JVM_OPTS") {
         custom
@@ -1815,8 +1825,8 @@ fn daemon_jvm_args() -> Vec<String> {
             .collect()
     } else {
         vec![
-            "-Xms1g".to_string(),
-            "-Xmx4g".to_string(),
+            "-Xms2g".to_string(),
+            "-Xmx8g".to_string(),
             "-XX:+UseG1GC".to_string(),
         ]
     };
@@ -1830,7 +1840,7 @@ fn daemon_jvm_args() -> Vec<String> {
         .iter()
         .any(|a| a == "-XX:MaxMetaspaceSize" || a.starts_with("-XX:MaxMetaspaceSize="));
     if !has_metaspace_cap {
-        args.push("-XX:MaxMetaspaceSize=256m".to_string());
+        args.push("-XX:MaxMetaspaceSize=512m".to_string());
     }
     args
 }
