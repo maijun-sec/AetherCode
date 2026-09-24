@@ -6015,6 +6015,21 @@ public class AetherCodeMethods {
                 // between calls), so each refresh of the
                 // Settings page sees the current state.
                 pm.put("hasApiKey", p.hasApiKey());
+                // R341: new fields exposed via the RPC so the
+                // desktop can render the picker correctly:
+                //   enabled       — hide from picker when false
+                //   headers       — non-secret custom HTTP headers
+                //   timeout       — Spring AI timeout override (ms)
+                //   connectTimeout — Spring AI connect timeout (ms)
+                // apiKey is INTENTIONALLY omitted — the RPC MUST
+                // NOT carry secret material (R341 constitution
+                // Security rule "No key value in RPC response").
+                pm.put("enabled", p.enabled());
+                if (p.customHeaders() != null && !p.customHeaders().isEmpty()) {
+                    pm.put("headers", p.customHeaders());
+                }
+                if (p.timeoutMs() != null) pm.put("timeout", p.timeoutMs());
+                if (p.connectTimeoutMs() != null) pm.put("connectTimeout", p.connectTimeoutMs());
                 java.util.List<java.util.Map<String, Object>> ms = new java.util.ArrayList<>();
                 for (org.aethercode.core.providers.ModelSpec m : p.models()) {
                     java.util.Map<String, Object> mm = new java.util.LinkedHashMap<>();
@@ -6022,6 +6037,7 @@ public class AetherCodeMethods {
                     mm.put("inputPer1k", m.inputPer1k());
                     mm.put("outputPer1k", m.outputPer1k());
                     mm.put("context", m.context());
+                    mm.put("maxOutput", m.maxOutput());
                     mm.put("default", m.isDefault());
                     ms.add(mm);
                 }

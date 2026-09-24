@@ -1,0 +1,238 @@
+# R341 bundled provider catalogue — ProviderRegistry source of truth.
+#
+# Schema: ProviderYaml (see ProviderRegistry.java)
+#   - snake_case YAML keys; see ProviderSpec record for the Java side.
+#   - type defaults to "openai-compat" if absent
+#   - enabled defaults to true if absent
+#   - apiKey is optional (env var path is the safer default)
+#   - apiKeyEnv defaults to "API_KEY" if absent (almost never the right answer
+#     in practice; set explicitly per provider)
+#
+# Override / merge order at daemon startup:
+#   1. <userHome>/.aethercode/providers.yaml    (user override, full replace per name)
+#   2. THIS FILE                                (bundled default, shipped in jar)
+#   3. ProviderRegistry.bundledDefaults()       (Java fallback when THIS file is missing)
+#
+# To ADD a new provider, append an entry below. To HIDE a bundled
+# provider, set `enabled: false` in a user-level override entry of
+# the same name (full replace on name match).
+#
+# Numbers reflect publicly listed rates as of late 2025; see
+# doc/user-guide/providers.md for the rationale behind each price
+# and a per-brand recommendation.
+#
+# NOTE — two reader schemas in the repo:
+#   This file uses the ProviderYaml schema (ProviderRegistry reads
+#   it). The aethercode-models/resources/providers.yaml is a
+#   separate resource read by ModelRegistryLoader for the
+#   renderer's ModelCard / ModelPicker. They share the file name
+#   only by coincidence of historical layering — a future round
+#   should harmonise them. Until then, this file is the live
+#   daemon-side catalogue and bundledDefaults() is the last-resort
+#   fallback when this file is missing.
+
+providers:
+  - name: minmax
+    type: openai-compat
+    baseUrl: https://api.minimaxi.com/v1
+    apiKeyEnv: MINIMAX_API_KEY
+    defaultModel: MiniMax-M3
+    models:
+      - id: MiniMax-M3
+        context: 1000000
+        maxOutput: 512000
+        inputPer1k: 0.001
+        outputPer1k: 0.008
+        default: true
+      - id: MiniMax-Text-01
+        context: 1000000
+        maxOutput: 512000
+        inputPer1k: 0.001
+        outputPer1k: 0.008
+      - id: MiniMax-M1
+        context: 1000000
+        maxOutput: 512000
+        inputPer1k: 0.001
+        outputPer1k: 0.008
+
+  - name: glm
+    type: openai-compat
+    baseUrl: https://open.bigmodel.cn/api/paas/v4
+    apiKeyEnv: GLM_API_KEY
+    defaultModel: glm-4-flash
+    models:
+      - id: glm-4-flash
+        context: 1000000
+        maxOutput: 1000000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: glm-4-air
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0001
+        outputPer1k: 0.0001
+      - id: glm-4.5
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0006
+        outputPer1k: 0.002
+        default: true
+      - id: glm-4.5-air
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0002
+        outputPer1k: 0.0006
+      - id: glm-4.5-flash
+        context: 1000000
+        maxOutput: 1000000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: glm-z1-air
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: glm-4-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0007
+        outputPer1k: 0.0007
+
+  - name: qwen
+    type: openai-compat
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKeyEnv: DASHSCOPE_API_KEY
+    defaultModel: qwen-turbo
+    models:
+      - id: qwen-turbo
+        context: 1000000
+        maxOutput: 1000000
+        inputPer1k: 0.0003
+        outputPer1k: 0.0006
+      - id: qwen3-max
+        context: 256000
+        maxOutput: 256000
+        inputPer1k: 0.002
+        outputPer1k: 0.006
+      - id: qwen3-coder-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.001
+        outputPer1k: 0.005
+      - id: qwen3-vl-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.001
+        outputPer1k: 0.004
+      - id: qwen-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0008
+        outputPer1k: 0.002
+      - id: qwen-max
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0002
+        outputPer1k: 0.0006
+      - id: qwen-coder-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0008
+        outputPer1k: 0.002
+
+  - name: deepseek
+    type: openai-compat
+    baseUrl: https://api.deepseek.com
+    apiKeyEnv: DEEPSEEK_API_KEY
+    defaultModel: deepseek-chat
+    models:
+      - id: deepseek-chat
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00027
+        outputPer1k: 0.0011
+        default: true
+      - id: deepseek-v3
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00027
+        outputPer1k: 0.0011
+      - id: deepseek-v3.1
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00027
+        outputPer1k: 0.0011
+      - id: deepseek-reasoner
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00055
+        outputPer1k: 0.00219
+
+  - name: anthropic
+    type: openai-compat
+    baseUrl: https://api.anthropic.com/v1
+    apiKeyEnv: ANTHROPIC_API_KEY
+    defaultModel: claude-sonnet-4-5
+    models:
+      - id: claude-sonnet-4-5
+        context: 200000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+        default: true
+      - id: claude-opus-4-1
+        context: 200000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: claude-haiku-4-5
+        context: 200000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+
+  - name: openai
+    type: openai-compat
+    baseUrl: https://api.openai.com/v1
+    apiKeyEnv: OPENAI_API_KEY
+    defaultModel: gpt-4o
+    models:
+      - id: gpt-4o
+        context: 128000
+        maxOutput: 16384
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+        default: true
+      - id: gpt-4o-mini
+        context: 128000
+        maxOutput: 16384
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: o1
+        context: 200000
+        maxOutput: 100000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: o3-mini
+        context: 200000
+        maxOutput: 100000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+
+  - name: gemini
+    type: openai-compat
+    baseUrl: https://generativelanguage.googleapis.com/v1beta/openai
+    apiKeyEnv: GEMINI_API_KEY
+    defaultModel: gemini-2.5-pro
+    models:
+      - id: gemini-2.5-pro
+        context: 1000000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+        default: true
+      - id: gemini-2.5-flash
+        context: 1000000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0

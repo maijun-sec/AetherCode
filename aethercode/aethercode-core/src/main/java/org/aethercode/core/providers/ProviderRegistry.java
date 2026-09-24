@@ -60,21 +60,59 @@ public final class ProviderRegistry {
     /** Load from a YAML file. Missing file → bundled
      *  defaults (the four Chinese brands the user
      *  signed off on, plus the foreign brands as
-     *  "untested"). Malformed YAML → empty list +
-     *  a warning log; the renderer falls back to a
-     *  "no providers" empty state. */
+     *  "untested"). Malformed YAML → bundled yaml
+     *  (a defensive net — never an empty list). */
     public static ProviderRegistry loadFrom(Path yamlFile) {
         if (yamlFile == null || !Files.exists(yamlFile)) {
-            LOG.info("providers.yaml not found at {} — using bundled defaults", yamlFile);
-            return new ProviderRegistry(bundledDefaults());
+            LOG.info("providers.yaml not found at {} — using bundled YAML", yamlFile);
+            return loadBundled();
         }
         try {
             String raw = Files.readString(yamlFile);
             return parse(raw);
         } catch (IOException e) {
-            LOG.warn("failed to read providers.yaml at {}: {} — using empty registry",
+            LOG.warn("failed to read providers.yaml at {}: {} — falling back to bundled",
                     yamlFile, e.getMessage());
-            return new ProviderRegistry(List.of());
+            return loadBundled();
+        }
+    }
+
+    /** R341: load the bundled {@code aethercode-providers.yaml}
+     *  resource shipped in the {@code aethercode-core} jar. The
+     *  file lives at {@code /aethercode-providers.yaml} on the
+     *  classpath (NOT the legacy {@code providers.yaml} that
+     *  {@link org.aethercode.models.ModelRegistryLoader} reads
+     *  with a different schema — the two coexist by file-name
+     *  partitioning).
+     *
+     *  <p>Falls back to {@link #bundledDefaults()} when the
+     *  resource is missing (e.g. a custom build that excludes
+     *  resources). When the resource is present but malformed,
+     *  the {@link #parse(String)} warning log fires and we also
+     *  fall back to {@link #bundledDefaults()} so a syntax error
+     *  in the bundled yaml doesn't take down the daemon — the
+     *  user gets a working-but-legacy catalogue rather than a
+     *  crash. */
+    public static ProviderRegistry loadBundled() {
+        try (java.io.InputStream in = ProviderRegistry.class
+                .getResourceAsStream("/aethercode-providers.yaml")) {
+            if (in == null) {
+                LOG.warn("bundled aethercode-providers.yaml not found on classpath — using Java bundledDefaults()");
+                return new ProviderRegistry(bundledDefaults());
+            }
+            String raw = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            ProviderRegistry r = parse(raw);
+            if (r.byName.isEmpty()) {
+                LOG.warn("bundled aethercode-providers.yaml parsed to 0 providers — falling back to Java bundledDefaults()");
+                return new ProviderRegistry(bundledDefaults());
+            }
+            LOG.info("loaded bundled aethercode-providers.yaml: {} providers",
+                    r.byName.size());
+            return r;
+        } catch (java.io.IOException e) {
+            LOG.warn("failed to read bundled aethercode-providers.yaml: {} — using Java bundledDefaults()",
+                    e.getMessage());
+            return new ProviderRegistry(bundledDefaults());
         }
     }
 
@@ -165,6 +203,36 @@ public final class ProviderRegistry {
          *  low by default") can declare it once at
          *  the provider level. */
         public List<VariantYaml> variants;
+        /** R341: provider-level enable flag. When {@code false}
+         *  the renderer hides the provider from the picker
+         *  even if an API key is configured. Defaults to
+         *  {@code true} (missing = enabled) so legacy YAMLs
+         *  keep working unchanged. */
+        @JsonProperty("enabled")
+        public Boolean enabled;
+        /** R341: custom HTTP headers sent with every request
+         *  to this provider. Map preserves insertion order for
+         *  log readability. Header values must NOT contain
+         *  secrets (the header audit log dumps these at debug
+         *  level). Defaults to empty. */
+        @JsonProperty("headers")
+        public java.util.Map<String, String> headers;
+        /** R341: per-provider overall timeout in milliseconds.
+         *  {@code null} means "use the Spring AI default".
+         *  Wired through to {@code OpenAiChatOptions.builder()
+         *  .withTimeout(...)} at chat-client build time. */
+        @JsonProperty("timeout")
+        public Integer timeout;
+        /** R341: per-provider connect timeout in milliseconds.
+         *  {@code null} = Spring default. */
+        @JsonProperty("connectTimeout")
+        public Integer connectTimeout;
+        /** R341: inline API key (highest priority in the
+         *  resolution chain). When set, bypasses env-var
+         *  lookup entirely. Defaults to {@code null}
+         *  (env-var path is the safer default). */
+        @JsonProperty("apiKey")
+        public String apiKey;
 
         ProviderSpec toSpec() {
             List<ModelSpec> ms = new ArrayList<>();
@@ -210,9 +278,20 @@ public final class ProviderRegistry {
             List<Variant> providerVariants = variants != null
                     ? VariantYaml.toVariantList(variants)
                     : null;
+            // R341: build the 13-arg form with new fields.
+            // `enabled` defaults to true when absent — legacy
+            // YAMLs that don't mention the field stay enabled
+            // (Boolean.TRUE.equals(null) is false, which would
+            // silently hide every pre-R341 provider on the
+            // first launch after upgrade).
             return new ProviderSpec(
                     name, type, baseUrl,
-                    apiKeyEnv, defaultModel, ms, providerCompact, providerVariants);
+                    apiKeyEnv, defaultModel, ms, providerCompact, providerVariants,
+                    enabled == null || enabled,
+                    headers,
+                    timeout,
+                    connectTimeout,
+                    apiKey);
         }
     }
 

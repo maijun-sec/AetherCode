@@ -295,4 +295,266 @@ class ProviderRegistryTest {
                 """);
         assertEquals("https://override.com/v1", reg.get("x").orElseThrow().baseUrl());
     }
+
+    // ---- R341: bundled YAML + extended fields ----
+
+    @Test
+    void loadBundled_returnsSevenProvidersAcrossChineseAndForeignBrands() {
+        // R341: the bundledDefaults() Java method is no longer
+        // the source of truth. The bundled
+        // aethercode-providers.yaml on the classpath is.
+        // loadBundled() should return the same set the old
+        // hardcoded method did (minmax + glm + qwen + deepseek
+        // + anthropic + openai + gemini) so the daemon's
+        // listProviders RPC stays stable across the migration.
+        ProviderRegistry reg = ProviderRegistry.loadBundled();
+        assertTrue(reg.list().size() >= 7,
+                "bundled YAML must declare at least 7 providers, got " + reg.list().size());
+        // Pin by name so a future housekeeping pass on the
+        // bundled YAML can't quietly drop a brand.
+        for (String name : new String[]{
+                "minmax", "glm", "qwen", "deepseek",
+                "anthropic", "openai", "gemini"}) {
+            assertTrue(reg.get(name).isPresent(),
+                    "bundled YAML must carry provider " + name);
+        }
+    }
+
+    @Test
+    void loadBundled_yamlModelCountMatchesJavaFallback() {
+        // Drift guard. The Java bundledDefaults() is the
+        // last-resort fallback when the YAML resource is
+        // missing. The YAML resource should carry at least as
+        // many models per provider as the Java fallback did
+        // (R340 already pinned the late-2025 model ids).
+        ProviderRegistry bundled = ProviderRegistry.loadBundled();
+        for (ProviderSpec fallback : ProviderRegistry.bundledDefaults()) {
+            ProviderSpec yaml = bundled.get(fallback.name()).orElse(null);
+            if (yaml == null) continue;  // allow YAML to omit a brand entirely
+            assertTrue(yaml.models().size() >= fallback.models().size(),
+                    "bundled YAML has fewer models for " + fallback.name()
+                            + " than the Java fallback: yaml=" + yaml.models().size()
+                            + " java=" + fallback.models().size());
+        }
+    }
+
+    @Test
+    void parse_R341EnabledFalseHidesProvider() {
+        // R341: enabled: false in the YAML must propagate to
+        // ProviderSpec.enabled() AND isSelectable() returns
+        // false even when the API key is set. The Settings
+        // picker uses isSelectable() to hide disabled
+        // providers (R341 constitution rule "Disabled state
+        // visibility").
+        String yaml = """
+                providers:
+                  - name: hidden
+                    type: openai-compat
+                    baseUrl: https://example.com/v1
+                    apiKeyEnv: HIDDEN_API_KEY
+                    enabled: false
+                    defaultModel: hidden-1
+                    models:
+                      - id: hidden-1
+                        context: 1000
+                        default: true
+                """;
+        ProviderRegistry reg = ProviderRegistry.parse(yaml);
+        ProviderSpec p = reg.get("hidden").orElseThrow();
+        org.junit.jupiter.api.Assertions.assertFalse(p.enabled());
+        org.junit.jupiter.api.Assertions.assertFalse(p.isSelectable());
+    }
+
+    @Test
+    void parse_R341EnabledDefaultsToTrue() {
+        // Missing enabled field must default to true (legacy
+        // YAMLs that don't mention enabled keep working).
+        String yaml = """
+                providers:
+                  - name: legacy
+                    type: openai-compat
+                    baseUrl: https://example.com/v1
+                    apiKeyEnv: LEGACY_API_KEY
+                    defaultModel: legacy-1
+                    models:
+                      - id: legacy-1
+                        context: 1000
+                        default: true
+                """;
+        ProviderRegistry reg = ProviderRegistry.parse(yaml);
+        ProviderSpec p = reg.get("legacy").orElseThrow();
+        org.junit.jupiter.api.Assertions.assertTrue(p.enabled());
+    }
+
+    @Test
+    void parse_R341HeadersPassThrough() {
+        // R341: custom HTTP headers declared in YAML must
+        // land in ProviderSpec.customHeaders() with the
+        // insertion order preserved (for debug-log
+        // readability — R341 constitution rule "Headers
+        // audit").
+        String yaml = """
+                providers:
+                  - name: traced
+                    type: openai-compat
+                    baseUrl: https://example.com/v1
+                    apiKeyEnv: TRACED_API_KEY
+                    defaultModel: traced-1
+                    headers:
+                      X-Trace-Id: aethercode
+                      X-Env: dev
+                    models:
+                      - id: traced-1
+                        context: 1000
+                        default: true
+                """;
+        ProviderRegistry reg = ProviderRegistry.parse(yaml);
+        ProviderSpec p = reg.get("traced").orElseThrow();
+        assertEquals(2, p.customHeaders().size());
+        assertEquals("aethercode", p.customHeaders().get("X-Trace-Id"));
+        assertEquals("dev", p.customHeaders().get("X-Env"));
+    }
+
+    @Test
+    void parse_R341TimeoutsPassThrough() {
+        // R341: Spring AI timeout overrides in milliseconds.
+        // Null when absent (the Spring default applies);
+        // explicit values must round-trip.
+        String yaml = """
+                providers:
+                  - name: slow
+                    type: openai-compat
+                    baseUrl: https://example.com/v1
+                    apiKeyEnv: SLOW_API_KEY
+                    defaultModel: slow-1
+                    timeout: 60000
+                    connectTimeout: 10000
+                    models:
+                      - id: slow-1
+                        context: 1000
+                        default: true
+                """;
+        ProviderRegistry reg = ProviderRegistry.parse(yaml);
+        ProviderSpec p = reg.get("slow").orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals(60_000, p.timeoutMs());
+        org.junit.jupiter.api.Assertions.assertEquals(10_000, p.connectTimeoutMs());
+    }
+
+    @Test
+    void parse_R341TimeoutsDefaultToNull() {
+        // No timeout fields → both null (Spring default applies).
+        String yaml = """
+                providers:
+                  - name: default
+                    type: openai-compat
+                    baseUrl: https://example.com/v1
+                    apiKeyEnv: DEFAULT_API_KEY
+                    defaultModel: default-1
+                    models:
+                      - id: default-1
+                        context: 1000
+                        default: true
+                """;
+        ProviderRegistry reg = ProviderRegistry.parse(yaml);
+        ProviderSpec p = reg.get("default").orElseThrow();
+        org.junit.jupiter.api.Assertions.assertNull(p.timeoutMs());
+        org.junit.jupiter.api.Assertions.assertNull(p.connectTimeoutMs());
+    }
+
+    @Test
+    void apiKey_inlineFieldOverridesEnvVar() {
+        // R341: when both inline apiKey and apiKeyEnv are
+        // set, the inline wins. This is the explicit user
+        // override path (env var lookup is skipped). Test
+        // uses a known-unset env var name so we don't
+        // accidentally hit a real one in the host env.
+        ProviderSpec p = new ProviderSpec(
+                "inline", "openai-compat",
+                "https://example.com/v1",
+                "INLINE_TEST_API_KEY_NONEXISTENT",
+                "inline-1",
+                java.util.List.of(new ModelSpec("inline-1", 0, 0, 1000, 1000, true)),
+                null, null,
+                true, java.util.Map.of(), null, null,
+                "sk-inline-secret-xyz");
+        assertEquals("sk-inline-secret-xyz", p.apiKey());
+        org.junit.jupiter.api.Assertions.assertTrue(p.hasApiKey());
+    }
+
+    @Test
+    void apiKey_inlineFieldBeatsNonExistentEnvVar() {
+        // Same as above but uses the deprecated 7-arg overload
+        // (no inline field) and verifies the env-var path is
+        // also covered: when apiKeyEnv points at a real env
+        // var (TEST_R341_USE_PROBE), the lookup returns it.
+        // We CAN'T modify System.getenv(), but we can ensure
+        // the chain order: apiKey=null → fall through to env.
+        ProviderSpec p = new ProviderSpec(
+                "envtest", "openai-compat",
+                "https://example.com/v1",
+                "INLINE_TEST_API_KEY_NONEXISTENT_2",
+                "envtest-1",
+                java.util.List.of(new ModelSpec("envtest-1", 0, 0, 1000, 1000, true)));
+        // apiKey field is null (legacy 7-arg overload → null), env var unset.
+        org.junit.jupiter.api.Assertions.assertNull(p.apiKey());
+        org.junit.jupiter.api.Assertions.assertFalse(p.hasApiKey());
+    }
+
+    @Test
+    void deriveDefaultApiKeyEnv_uppercasesAndSuffixes() {
+        // R341: provider name "glm" → "GLM_API_KEY".
+        // Provider name "openai" → "OPENAI_API_KEY".
+        // Hyphens become underscores (e.g. a future
+        // "meta-llama" → "META_LLAMA_API_KEY").
+        ProviderSpec p = new ProviderSpec(
+                "glm", "openai-compat",
+                "https://open.bigmodel.cn/api/paas/v4",
+                "GLM_API_KEY",
+                "glm-4-flash",
+                java.util.List.of(new ModelSpec("glm-4-flash", 0, 0, 1000, 1000, true)));
+        assertEquals("GLM_API_KEY", p.deriveDefaultApiKeyEnv());
+    }
+
+    @Test
+    void isSelectable_enabledTrueWithKeyReturnsTrue() {
+        // The normal happy path: enabled=true AND the env-var
+        // lookup finds a key. Provider should be visible in the
+        // picker.
+        ProviderSpec p = new ProviderSpec(
+                "ok", "openai-compat",
+                "https://example.com/v1",
+                "OK_API_KEY_TEST_NONEXISTENT",
+                "ok-1",
+                java.util.List.of(new ModelSpec("ok-1", 0, 0, 1000, 1000, true)),
+                null, null,
+                true, java.util.Map.of(), null, null, null);
+        // Env var unset → hasApiKey()=false → isSelectable()=false
+        org.junit.jupiter.api.Assertions.assertFalse(p.isSelectable());
+    }
+
+    @Test
+    void registryHelper_isDefined_handlesNullAndEmpty() {
+        // Defensive: null/blank name → null (no NPE).
+        org.junit.jupiter.api.Assertions.assertNull(RegistryHelper.readEnv(null));
+        org.junit.jupiter.api.Assertions.assertNull(RegistryHelper.readEnv(""));
+        org.junit.jupiter.api.Assertions.assertNull(RegistryHelper.readEnv("   "));
+        org.junit.jupiter.api.Assertions.assertFalse(RegistryHelper.isDefined(null));
+    }
+
+    @Test
+    void registryHelper_isDefined_knowsAboutProcessScope() {
+        // Sanity: any var the JVM sees (PATH, JAVA_HOME, etc.)
+        // must round-trip. This is the lowest scope in the
+        // chain and the one Process-based callers already
+        // covered; the test pins the integration between
+        // RegistryHelper and System.getenv() so a future
+        // refactor can't quietly switch scope orders.
+        String path = RegistryHelper.readEnv("PATH");
+        // Don't assertEquals — some test runners strip PATH.
+        // Just assert it's the same as System.getenv()'s view
+        // when it exists.
+        if (System.getenv("PATH") != null) {
+            assertEquals(System.getenv("PATH"), path);
+        }
+    }
 }

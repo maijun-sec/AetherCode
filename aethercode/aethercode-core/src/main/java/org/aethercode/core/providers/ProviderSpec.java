@@ -1,6 +1,9 @@
 package org.aethercode.core.providers;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * spec for a single LLM provider. AetherCode
@@ -28,6 +31,27 @@ import java.util.List;
  * bundled default if that file is missing) by
  * {@link ProviderRegistry}. Tests can construct
  * an in-memory registry directly.
+ *
+ * <p><b>R341 — bundled YAML + extended fields</b>:
+ * <ul>
+ *   <li>{@code enabled} — when {@code false} the
+ *     renderer hides the provider entirely (a model
+ *     the user can't call should not appear in the
+ *     picker). Defaults to {@code true}.</li>
+ *   <li>{@code headers} — extra HTTP headers sent
+ *     with every request to this provider (e.g.
+ *     {@code X-Trace-Id} for tracing, or vendor
+ *     custom headers). Defaults to empty.</li>
+ *   <li>{@code timeout} / {@code connectTimeout}
+ *     — Spring AI timeout overrides in milliseconds.
+ *     {@code null} means "use Spring default".</li>
+ *   <li>{@code apiKey} — optional inline API key.
+ *     When present, takes priority over the env-var
+ *     fallback chain. {@link #apiKey()} resolves the
+ *     full 4-step chain (yaml inline → yaml apiKeyEnv
+ *     with 3-scope env → provider-name-derived
+ *     {@code <NAME>_API_KEY} → null).</li>
+ * </ul>
  */
 public record ProviderSpec(
         String name,
@@ -37,30 +61,14 @@ public record ProviderSpec(
         String defaultModel,
         List<ModelSpec> models,
         CompactSpec compact,
-        List<Variant> variants
+        List<Variant> variants,
+        boolean enabled,
+        Map<String, String> customHeaders,
+        Integer timeoutMs,
+        Integer connectTimeoutMs,
+        String apiKey
 ) {
-    /** Legacy 7-arg overload so existing test fixtures and
-     *  user providers.yaml files keep working. Maps to
-     *  the 8-arg form with {@code variants=null} (the
-     *  accessor then falls back to the model-level
-     *  variants list, then to
-     *  {@link Variant#BUILTIN}). */
-    public ProviderSpec(String name, String type, String baseUrl,
-                        String apiKeyEnv, String defaultModel,
-                        List<ModelSpec> models,
-                        CompactSpec compact) {
-        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, compact, null);
-    }
-
-    /** Legacy 6-arg overload (without the compact
-     *  arg). Kept so existing test fixtures and user
-     *  providers.yaml files keep working. */
-    public ProviderSpec(String name, String type, String baseUrl,
-                        String apiKeyEnv, String defaultModel,
-                        List<ModelSpec> models) {
-        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, null, null);
-    }
-
+    /** R341: 13-arg canonical constructor (current). */
     public ProviderSpec {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("provider name is required");
@@ -82,35 +90,113 @@ public record ProviderSpec(
                                 + " not in models list");
             }
         }
-        // Defensive copy.
+        // Defensive copies.
         models = List.copyOf(models);
+        customHeaders = (customHeaders == null || customHeaders.isEmpty())
+                ? Collections.emptyMap()
+                : Map.copyOf(customHeaders);
     }
 
-    /** Resolved at call time so tests can swap env
-     *  vars between calls. Returns null when the env
-     *  var is unset (caller decides what to do —
-     *  usually surface as "API key not set" in the
-     *  renderer's error pill). */
+    /** R341: 8-arg overload (R283 baseline). Maps to the 13-arg form
+     *  with {@code enabled=true}, no headers, no timeouts, no inline
+     *  apiKey. {@code variants=null} keeps the model-level fallback
+     *  chain intact. Kept so existing test fixtures and call sites
+     *  keep compiling. */
+    @Deprecated(since = "R341")
+    public ProviderSpec(String name, String type, String baseUrl,
+                        String apiKeyEnv, String defaultModel,
+                        List<ModelSpec> models,
+                        CompactSpec compact) {
+        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, compact, null,
+                true, Map.of(), null, null, null);
+    }
+
+    /** R341: 8-arg overload with variants (R285 baseline). Maps to
+     *  the 13-arg form with the same defaults as the 7-arg overload. */
+    @Deprecated(since = "R341")
+    public ProviderSpec(String name, String type, String baseUrl,
+                        String apiKeyEnv, String defaultModel,
+                        List<ModelSpec> models,
+                        CompactSpec compact,
+                        List<Variant> variants) {
+        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, compact, variants,
+                true, Map.of(), null, null, null);
+    }
+
+    /** R283: legacy 6-arg overload (without compact or variants).
+     *  Kept so existing test fixtures and user providers.yaml
+     *  files keep working. */
+    @Deprecated(since = "R283")
+    public ProviderSpec(String name, String type, String baseUrl,
+                        String apiKeyEnv, String defaultModel,
+                        List<ModelSpec> models) {
+        this(name, type, baseUrl, apiKeyEnv, defaultModel, models, null, null,
+                true, Map.of(), null, null, null);
+    }
+
+    /** R341: resolve the API key with the canonical 4-step chain:
+     * <ol>
+     *   <li>this provider's inline {@code apiKey} field (highest
+     *       priority; the user explicitly chose to embed it)</li>
+     *   <li>this provider's {@code apiKeyEnv} via
+     *       {@link RegistryHelper#readEnv(String)} — Process → User →
+     *       Machine scope lookup</li>
+     *   <li>provider-name-derived env var: {@code <UPPER_NAME>_API_KEY}
+     *       (e.g. {@code GLM_API_KEY} for the {@code glm} brand) via
+     *       the same 3-scope lookup</li>
+     *   <li>{@code null} when nothing resolved</li>
+     * </ol>
+     * Returns {@code null} when no source has a non-blank value (the
+     * renderer's Settings panel uses {@link #hasApiKey()} to decide
+     * whether to show or hide the provider). */
     public String apiKey() {
-        return System.getenv(apiKeyEnv);
+        // Step 1: yaml inline
+        if (apiKey != null && !apiKey.isBlank()) return apiKey;
+        // Step 2: yaml apiKeyEnv (when set to a real var name)
+        if (apiKeyEnv != null && !apiKeyEnv.isBlank() && !"API_KEY".equals(apiKeyEnv)) {
+            String k = RegistryHelper.readEnv(apiKeyEnv);
+            if (k != null) return k;
+        }
+        // Step 3: derived from provider name
+        String derived = deriveDefaultApiKeyEnv();
+        if (!derived.equals(apiKeyEnv)) {
+            String k = RegistryHelper.readEnv(derived);
+            if (k != null) return k;
+        }
+        // Step 4: nothing
+        return null;
     }
 
-    /** R282: true when {@link #apiKeyEnv} resolves to a
-     *  non-blank value in the current process environment.
-     *  The renderer's Settings panel uses this to filter
-     *  the model picker so providers the user hasn't
-     *  configured (no API key in env) don't show up —
-     *  otherwise the user sees a list of models they
-     *  can't actually call. Submodels of a configured
-     *  provider are still shown (the user might not have
-     *  purchased every model, but they CAN call it once
-     *  their account is set up). The {@link ProviderSpec#apiKeyEnv}
-     *  is the env-var name declared on the spec; the lookup
-     *  is dynamic (env vars can change between calls in
-     *  tests). */
+    /** Default API key env-var name derived from the provider's
+     *  {@code name}: uppercased + {@code _API_KEY} suffix
+     *  (e.g. {@code glm} → {@code GLM_API_KEY}). Returns the
+     *  original {@code apiKeyEnv} when the name is null/blank
+     *  (degenerate but defensive). */
+    String deriveDefaultApiKeyEnv() {
+        if (name == null || name.isBlank()) return apiKeyEnv != null ? apiKeyEnv : "API_KEY";
+        return name.toUpperCase().replace("-", "_") + "_API_KEY";
+    }
+
+    /** R282 + R341: true when {@link #apiKey()} resolves to a
+     *  non-blank value. The Settings panel filters the picker so
+     *  providers with no key are hidden (R341 constitution rule),
+     *  unless the provider is otherwise reachable (submodels are
+     *  not shown for unconfigured providers). */
     public boolean hasApiKey() {
         String k = apiKey();
         return k != null && !k.isBlank();
+    }
+
+    /** R341: true when the renderer should expose this provider in
+     *  the picker. Combines the explicit {@code enabled} flag with
+     *  the implicit "has an API key" check — a provider the user
+     *  can't call AND hasn't explicitly enabled is hidden. The
+     *  explicit {@code enabled: true} in user YAML can override a
+     *  missing key (e.g. the user wants the picker to show "ollama"
+     *  even though ollama doesn't need a key). */
+    public boolean isSelectable() {
+        return enabled && (hasApiKey() || apiKeyEnv == null
+                || apiKeyEnv.isBlank() || "API_KEY".equals(apiKeyEnv));
     }
 
     /** R283: look up the compaction configuration for
