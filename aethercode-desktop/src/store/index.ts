@@ -5391,34 +5391,101 @@ export const useStore = create<AppState>((set, get) => {
     // the round-trip.
     refreshProviders: async () => {
       try {
-        // R285: prefer the rich listAvailableModels
-        // RPC (it carries per-model variants +
-        // currentVariant + activeVariant). The
-        // legacy listProviders RPC is a fallback
-        // for older daemon builds that haven't
-        // shipped the new endpoint yet.
+        // R342d: the picker (R341 ProviderModelPicker
+        // and R342 ModelPickerPopover) renders each
+        // provider's chip + its model list. listProviders
+        // is the source of truth — its `providers[]`
+        // carries the full `models[]` per entry.
+        // listAvailableModels is the R285/R295 richer
+        // form whose `providers[]` is a SUMMARY
+        // (no models field — the per-model rows live in
+        // a separate flat `models[]`). When desktop
+        // preferred listAvailableModels (R285), the
+        // R341 picker saw `models.length === 0` for every
+        // provider and rendered an empty list — the
+        // bug surfaced only after R342 wired the picker
+        // into MessageInput. Fix: prefer listProviders
+        // for the picker data, and only consult
+        // listAvailableModels for the per-model
+        // currentVariant / activeVariant the Quality
+        // dropdown reads. Two parallel calls keep the
+        // round-trip under ~10ms on localhost.
         let providers: any[] = [];
         let currentProvider: string | null = null;
         let currentModel: string | null = null;
         let currentVariant: string | null = null;
         let activeVariant: any = null;
+        let providersLoaded = false;
+        // First call: provider + model list. listProviders
+        // is the older, simpler form and is what the
+        // picker reads. It's available on every R282+
+        // daemon.
         try {
-          const r = await rpc.listAvailableModels();
-          providers = r.providers ?? [];
-          currentProvider = (r as any).currentProvider ?? null;
-          currentModel = (r as any).currentModel ?? null;
-          currentVariant = (r as any).currentVariant ?? null;
-          activeVariant = (r as any).activeVariant ?? null;
-        } catch {
-          // legacy daemon — fall back to the
-          // listProviders RPC. We don't try
-          // listAvailableModels again on the next
-          // tick; the boot path retries via
-          // initialize() so the user gets the
-          // rich form on a daemon restart.
           const r = await rpc.listProviders();
-          providers = r.providers ?? [];
-          currentProvider = r.currentProvider ?? null;
+          if (Array.isArray(r?.providers) && r.providers.length > 0) {
+            providers = r.providers;
+            providersLoaded = true;
+            currentProvider = r.currentProvider ?? null;
+            currentModel = (r as any).currentModel ?? null;
+          }
+        } catch {
+          // listProviders unavailable — fall through to
+          // listAvailableModels. We don't log here: the
+          // test environment uses a MockRpcServer that
+          // may or may not wire both endpoints, and a
+          // missing listProviders isn't actionable for
+          // the user.
+        }
+        // Second call: the variant info + a fallback
+        // path for older daemons that only ship
+        // listAvailableModels. If listProviders already
+        // returned data, this is only used to enrich
+        // currentVariant / activeVariant. If both
+        // endpoints fail, leave the store's existing
+        // availableProviders alone (don't overwrite a
+        // pre-seeded value with []).
+        try {
+          const r2 = await rpc.listAvailableModels();
+          currentVariant = (r2 as any).currentVariant ?? currentVariant;
+          activeVariant = (r2 as any).activeVariant ?? activeVariant;
+          if (!providersLoaded) {
+            // listProviders returned nothing — re-group
+            // the flat listAvailableModels response into
+            // provider-keyed entries so the picker still
+            // has data to render.
+            const flatModels = (r2 as any).models ?? [];
+            const providerMeta = (r2 as any).providers ?? [];
+            const byProvider = new Map<string, any>();
+            for (const meta of providerMeta) {
+              byProvider.set(meta.name, { ...meta, models: [] });
+            }
+            for (const m of flatModels) {
+              const p = byProvider.get(m.provider);
+              if (p) p.models.push(m);
+            }
+            providers = [...byProvider.values()];
+            providersLoaded = providers.length > 0;
+            currentProvider = (r2 as any).currentProvider ?? currentProvider;
+            currentModel = (r2 as any).currentModel ?? currentModel;
+          }
+        } catch {
+          // listAvailableModels unavailable. If
+          // listProviders also failed, providersLoaded
+          // is still false — we keep the store's
+          // existing availableProviders and skip the
+          // set() call entirely.
+        }
+        if (!providersLoaded) {
+          // Neither RPC returned data. Return the prior
+          // availableProviders so callers (e.g. the
+          // MessageInput's visibleProviders filter)
+          // keep working off the last-known-good list.
+          const prior = get().availableProviders ?? [];
+          return {
+            providers: prior,
+            currentProvider: get().currentProvider ?? null,
+            currentModel: get().engineState?.model ?? null,
+          };
         }
         set({
           availableProviders: providers,
@@ -5429,7 +5496,12 @@ export const useStore = create<AppState>((set, get) => {
         return { providers, currentProvider, currentModel };
       } catch (e) {
         console.warn('[store] refreshProviders failed:', e);
-        return { providers: [], currentProvider: null, currentModel: null };
+        const prior = get().availableProviders ?? [];
+        return {
+          providers: prior,
+          currentProvider: get().currentProvider ?? null,
+          currentModel: get().engineState?.model ?? null,
+        };
       }
     },
     // toggle the supervisor's

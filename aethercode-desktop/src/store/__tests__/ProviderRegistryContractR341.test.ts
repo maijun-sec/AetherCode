@@ -272,6 +272,26 @@ describe('R341 listProviders WS contract — real daemon', () => {
     expect(names.has(response!.currentProvider!)).toBe(true);
   });
 
+  it('every provider carries a non-empty models[] (R342d picker regression guard)', () => {
+    // R342d: the desktop's refreshProviders used to prefer
+    // listAvailableModels, whose providers[] is a SUMMARY
+    // (no models field — the models live in a separate
+    // flat models[]). After R341 wired the picker into
+    // MessageInput (R342), every provider appeared with
+    // models.length === 0 and the picker rendered an
+    // empty list. Fix: refreshProviders now prefers
+    // listProviders, whose providers[] carries the full
+    // models[] per entry. This test pins the wire shape
+    // so a future daemon regression (dropping models from
+    // listProviders) trips here rather than silently
+    // breaking the picker in production.
+    if (!guard()) return;
+    for (const p of response!.providers) {
+      expect(Array.isArray(p.models)).toBe(true);
+      expect(p.models.length).toBeGreaterThan(0);
+    }
+  });
+
   it('every model carries maxOutput (R341 round-trip)', () => {
     if (!guard()) return;
     for (const p of response!.providers) {
