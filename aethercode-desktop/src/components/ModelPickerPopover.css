@@ -99,6 +99,19 @@
  * is computed in JS from the trigger's getBoundingClientRect
  * (see ModelPickerPopover.tsx), so this class only sets
  * the chrome (z-index, background, border, shadow, size).
+ *
+ * R342c: the popover is portaled to document.body, OUTSIDE
+ * the .app container that defines the --chat-text / --chat-bg
+ * / --chat-accent custom properties. CSS vars cascade, but
+ * vars defined on a sibling ancestor don't reach a portal
+ * mounted on document.body — the popover inherits
+ * document.body's color (browser default: black), which on
+ * our dark theme produced a dark-on-dark invisible mess.
+ * Hardcode the dark-theme values here so the popover reads
+ * correctly regardless of portal target. The picker inside
+ * (r341-picker) keeps its own var() with fallbacks so the
+ * Settings-panel version still picks up the app theme via
+ * cascade; the portal's root just sets the base palette.
  */
 .r342-model-picker-popover {
   position: fixed;
@@ -107,11 +120,55 @@
   max-width: 520px;
   max-height: 60vh;
   overflow: auto;
-  background: var(--chat-bg, #1e1e22);
-  border: 1px solid var(--chat-border, rgba(127, 127, 127, 0.4));
+  background: #252526; /* match the dark-theme chat surface */
+  color: #d4d4d4;       /* match the dark-theme --chat-text */
+  border: 1px solid rgba(127, 127, 127, 0.4);
   border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
   padding: 12px;
+}
+
+/* ensure the inner picker inherits the correct color. The
+ * r341-picker chips use `color: var(--chip-fg, inherit)`,
+ * so without an explicit color here the text would inherit
+ * document.body's default (black) — invisible on the dark
+ * popover bg. The picker rows also use `color: inherit`. */
+.r342-model-picker-popover .r341-picker {
+  gap: 10px;
+  color: inherit;
+}
+
+.r342-model-picker-popover .r341-picker-chip {
+  /* the chip row's --chip-bg falls back to transparent;
+   * that's fine on the popover bg. */
+}
+
+.r342-model-picker-popover .r341-picker-filter-input {
+  background: #1a1a1c; /* slightly darker than popover bg */
+  color: #d4d4d4;
+  border-color: rgba(127, 127, 127, 0.5);
+}
+
+.r342-model-picker-popover .r341-picker-filter-input::placeholder {
+  color: rgba(212, 212, 212, 0.45);
+}
+
+.r342-model-picker-popover .r341-picker-model {
+  /* model rows are full-width buttons; explicit color so
+   * even when the popover scrolls the row stays readable. */
+  color: inherit;
+}
+
+.r342-model-picker-popover .r341-picker-model:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.r342-model-picker-popover .r341-picker-model-current {
+  background: rgba(80, 120, 220, 0.18);
+}
+
+.r342-model-picker-popover .r341-picker-empty {
+  color: rgba(212, 212, 212, 0.55);
 }
 
 .r342-model-picker-popover-up {
@@ -124,11 +181,4 @@
   /* the top is set via inline style; this class is a
    * hook for future styling tweaks (e.g. add a small
    * caret pointing up at the trigger). */
-}
-
-/* when the picker is inside the popover, give it a
- * slight backdrop so the chip row's borders don't
- * visually merge with the popover's border. */
-.r342-model-picker-popover .r341-picker {
-  gap: 10px;
 }
