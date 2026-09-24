@@ -112,6 +112,34 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--no-color"}, description = "Disable ANSI colours in the TUI.")
     boolean noColor;
 
+    /**
+     * R343: explicit single-file providers.yaml override. When
+     * set, the daemon reads THIS file instead of the
+     * install-dir + cwd cascade — useful for ops scripts
+     * ("launch the daemon with a custom catalogue for the
+     * duration of this CI run") and for testing new
+     * catalogues without modifying the install. The
+     * {@code AETHERCODE_PROVIDERS_YAML} env var has the
+     * same effect; CLI flag wins when both are set.
+     *
+     * <p>When this flag is unset AND the env var is unset,
+     * the daemon uses the R343 cascade (install-dir yaml →
+     * cwd yaml → bundled yaml → bundledDefaults()).
+     */
+    @Option(names = {"--providers-yaml"}, description = "R343: explicit path to a single providers.yaml file. Overrides the install-dir + cwd cascade. Same as AETHERCODE_PROVIDERS_YAML env var (flag wins).")
+    Path providersYamlOverride;
+
+    /**
+     * R343: explicit install directory. Defaults to the
+     * directory holding the daemon jar (resolved via the
+     * jar's protection domain). Overriding this is mainly
+     * useful for dev / test contexts where the daemon is
+     * launched from a build / target dir and the operator
+     * wants to point at a separate "installed as if" tree.
+     */
+    @Option(names = {"--install-dir"}, description = "R343: install directory whose providers.yaml is the global catalogue. Default: parent dir of the daemon jar.")
+    Path installDirOverride;
+
     @Option(names = {"--mcp-config"}, description = "Path to mcp.json. Default: .aethercode/mcp.json in cwd.")
     Path mcpConfig;
 
@@ -476,16 +504,14 @@ public class Main implements Callable<Integer> {
         java.nio.file.Path settingsFile = cwd.resolve(".aethercode").resolve("settings.json");
         SettingsPermissions perms = SettingsPermissions.loadFrom(settingsFile);
 
-        // only MiniMax is wired. The model field is the only override.
-        // when --provider is set (or providers.yaml exists),
-        // resolve a ProviderSpec and pass it through. The legacy
-        // --api-key / --base-url path stays as a fallback for
-        // callers without a providers.yaml.
-        java.nio.file.Path providersFile = java.nio.file.Path.of(
-                System.getProperty("user.home"),
-                ".aethercode", "providers.yaml");
+        // R343: resolve providers via the cascade. The pre-R343
+        // flat user-home path is gone — the new two-tier
+        // config is (1) install-dir/providers.yaml (global)
+        // + (2) cwd/.aethercode/providers.yaml (per-project).
+        // Both `--providers-yaml` and `AETHERCODE_PROVIDERS_YAML`
+        // short-circuit the cascade for ops / CI scripts.
         org.aethercode.core.providers.ProviderRegistry providers =
-                org.aethercode.core.providers.ProviderRegistry.loadFrom(providersFile);
+                resolveProvidersRegistry(cwd);
         org.aethercode.core.providers.ProviderSpec providerSpec = null;
         if (providerName != null && !providerName.isBlank()) {
             providerSpec = providers.get(providerName)
@@ -768,5 +794,57 @@ public class Main implements Callable<Integer> {
         }
         String home = System.getProperty("user.home", ".");
         return java.nio.file.Path.of(home).resolve(".aethercode");
+    }
+
+    /**
+     * R343: resolve the {@link org.aethercode.core.providers.ProviderRegistry}
+     * via the two-tier cascade (install-dir + cwd) or an
+     * explicit single-file override.
+     *
+     * <p>Resolution order:
+     * <ol>
+     *   <li>{@code --providers-yaml} CLI flag → single file</li>
+     *   <li>{@code AETHERCODE_PROVIDERS_YAML} env var → single file</li>
+     *   <li>install-dir + cwd cascade (R343 default)</li>
+     *   <li>bundled classpath yaml + bundledDefaults() fallback</li>
+     * </ol>
+     *
+     * <p>The cwd is the same value the engine builds against
+     * (CLI {@code --cwd} flag or {@code user.dir}). The
+     * install dir is resolved from the daemon jar's
+     * protection domain unless {@code --install-dir} was
+     * passed.
+     */
+    private org.aethercode.core.providers.ProviderRegistry
+            resolveProvidersRegistry(java.nio.file.Path cwd) {
+        // 1+2: explicit single-file override (CLI flag wins).
+        Path explicit = providersYamlOverride;
+        if (explicit == null) {
+            String env = System.getenv("AETHERCODE_PROVIDERS_YAML");
+            if (env != null && !env.isBlank()) {
+                explicit = java.nio.file.Path.of(env);
+            }
+        }
+        if (explicit != null) {
+            org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(Main.class);
+            LOG.info("R343: loading explicit providers.yaml from {}", explicit);
+            return org.aethercode.core.providers.ProviderRegistry.loadFrom(explicit);
+        }
+
+        // 3: cascade. Install dir defaults to the daemon jar's
+        // parent unless --install-dir was passed.
+        Path installDir = installDirOverride;
+        if (installDir == null) {
+            installDir = org.aethercode.core.providers.ProviderRegistry
+                    .resolveInstallDir(Main.class);
+        }
+        // R343: first-install bootstrap. Copies the bundled
+        // providers.yaml.sample into <installDir>/providers.yaml
+        // when the live file is missing. After the first boot
+        // this is a no-op.
+        org.aethercode.core.providers.ProviderRegistry
+                .ensureSampleInstalled(installDir);
+        return org.aethercode.core.providers.ProviderRegistry
+                .loadCascade(installDir, cwd);
     }
 }

@@ -1,0 +1,313 @@
+# ---------------------------------------------------------------------------
+# AetherCode R343 — Global providers.yaml
+# ---------------------------------------------------------------------------
+#
+# This file is the operator-owned provider catalogue. The daemon
+# loads it at startup; an empty / missing file triggers a fallback
+# to the bundled classpath yaml (`/aethercode-providers.yaml` in
+# the jar), which is the canonical source of model ids and pricing.
+#
+# On FIRST daemon boot with no existing file in the install dir,
+# the daemon copies THIS bundled sample into
+# `<installDir>/providers.yaml` so the operator has a real file
+# to edit instead of an empty dir. Subsequent boots leave the
+# operator's edits alone — the bootstrap is one-shot. The MSI /
+# NSIS installers do the same write at install time.
+#
+# Schema: `ProviderYaml` (see aethercode-core/.../providers/
+# ProviderRegistry.java). snake_case YAML keys; ProviderSpec
+# record is the Java side.
+#
+# ---------------------------------------------------------------------------
+# R343 cascade resolution order
+# ---------------------------------------------------------------------------
+#
+#   1. --providers-yaml=<path> CLI flag (escape hatch for ops / CI)
+#   2. AETHERCODE_PROVIDERS_YAML env var (same shape as the flag)
+#   3. <installDir>/providers.yaml   ← THIS FILE (operator-owned)
+#   4. bundled classpath yaml       ← /aethercode-providers.yaml in the jar
+#   5. ProviderRegistry.bundledDefaults()  ← Java hardcoded last-resort
+#
+# Per-project overrides live at `<cwd>/.aethercode/providers.yaml`
+# and are MERGED on top of the global catalogue (not replaced).
+# Merge rules:
+#
+#   CAN do per-project:
+#     - toggle `enabled:` flag on an existing provider
+#     - override `headers:` (map — full replace, NOT deep merge)
+#     - override `timeout:` / `connectTimeout:` (milliseconds)
+#     - set inline `apiKey:` (highest priority — bypasses env)
+#     - set per-project `defaultProvider` (in renderer state)
+#     - disable a provider by listing `name: <name>, enabled: false`
+#
+#   CANNOT do per-project (would silently break things):
+#     - add a new provider name not in global  → DROPPED + WARN
+#     - add a new model id not in global       → DROPPED + WARN
+#     - change `baseUrl:` for a provider       → IGNORED (operator-owned)
+#     - change `name:` to rename a provider    → IGNORED (operator-owned)
+#     - set `defaultModel:` to a model id that
+#       doesn't exist on the global provider  → FALLBACK to global default + WARN
+#
+# ---------------------------------------------------------------------------
+# API key resolution chain (per provider)
+# ---------------------------------------------------------------------------
+#
+# 1. inline `apiKey:` in this yaml (highest priority — bypasses
+#    env-var lookup entirely; useful for embedded secrets in
+#    air-gapped installs).
+# 2. env var named in `apiKeyEnv:` (most common).
+# 3. derived `<UPPER_PROVIDER_NAME>_API_KEY` env var
+#    (e.g. provider `minmax` → `MINIMAX_KEY`).
+# 4. null — the provider shows up in the picker with
+#    hasApiKey=false (the user can't actually call it but
+#    can see what models it offers).
+#
+# The env-var lookup walks three scopes on Windows: Process
+# → User (HKCU\Environment, via `reg query`) → Machine
+# (HKLM\...\Session Manager\Environment). `setx VAR=value`
+# sets User scope; `setx VAR value /m` sets Machine scope.
+# The daemon reads both so projects don't need to log out
+# and back in for new env vars to take effect — the cascade
+# re-reads each daemon start.
+#
+# On macOS / Linux the standard System.getenv() (Process
+# scope + ~/.zshrc / ~/.bashrc via shell login) is the only
+# mechanism; export the var in the shell that starts the
+# daemon.
+#
+# ---------------------------------------------------------------------------
+# Common override examples
+# ---------------------------------------------------------------------------
+#
+# To disable a provider for every project on this machine:
+#   providers:
+#     - name: anthropic
+#       enabled: false
+#
+# To override the endpoint (e.g. a self-hosted OpenAI-compatible proxy):
+#   providers:
+#     - name: openai
+#       baseUrl: https://my-proxy.internal/v1
+#
+# To add custom headers (e.g. org routing):
+#   providers:
+#     - name: openai
+#       headers:
+#         X-Org: my-team
+#
+# To extend timeouts for a slow endpoint:
+#   providers:
+#     - name: deepseek
+#       timeout: 90000
+#       connectTimeout: 30000
+#
+# Numbers below reflect publicly listed rates as of late 2025;
+# see doc/user-guide/providers.md for the rationale behind each
+# price and a per-brand recommendation.
+# ---------------------------------------------------------------------------
+
+providers:
+  - name: minmax
+    type: openai-compat
+    baseUrl: https://api.minimaxi.com/v1
+    apiKeyEnv: MINIMAX_API_KEY
+    defaultModel: MiniMax-M3
+    models:
+      - id: MiniMax-M3
+        context: 1000000
+        maxOutput: 512000
+        inputPer1k: 0.001
+        outputPer1k: 0.008
+        default: true
+      - id: MiniMax-Text-01
+        context: 1000000
+        maxOutput: 512000
+        inputPer1k: 0.001
+        outputPer1k: 0.008
+      - id: MiniMax-M1
+        context: 1000000
+        maxOutput: 512000
+        inputPer1k: 0.001
+        outputPer1k: 0.008
+
+  - name: glm
+    type: openai-compat
+    baseUrl: https://open.bigmodel.cn/api/paas/v4
+    apiKeyEnv: GLM_API_KEY
+    defaultModel: glm-4-flash
+    models:
+      - id: glm-4-flash
+        context: 1000000
+        maxOutput: 1000000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: glm-4-air
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0001
+        outputPer1k: 0.0001
+      - id: glm-4.5
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0006
+        outputPer1k: 0.002
+        default: true
+      - id: glm-4.5-air
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0002
+        outputPer1k: 0.0006
+      - id: glm-4.5-flash
+        context: 1000000
+        maxOutput: 1000000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: glm-z1-air
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: glm-4-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0007
+        outputPer1k: 0.0007
+
+  - name: qwen
+    type: openai-compat
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKeyEnv: DASHSCOPE_API_KEY
+    defaultModel: qwen-turbo
+    models:
+      - id: qwen-turbo
+        context: 1000000
+        maxOutput: 1000000
+        inputPer1k: 0.0003
+        outputPer1k: 0.0006
+      - id: qwen3-max
+        context: 256000
+        maxOutput: 256000
+        inputPer1k: 0.002
+        outputPer1k: 0.006
+      - id: qwen3-coder-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.001
+        outputPer1k: 0.005
+      - id: qwen3-vl-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.001
+        outputPer1k: 0.004
+      - id: qwen-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0008
+        outputPer1k: 0.002
+      - id: qwen-max
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0002
+        outputPer1k: 0.0006
+      - id: qwen-coder-plus
+        context: 128000
+        maxOutput: 128000
+        inputPer1k: 0.0008
+        outputPer1k: 0.002
+
+  - name: deepseek
+    type: openai-compat
+    baseUrl: https://api.deepseek.com
+    apiKeyEnv: DEEPSEEK_API_KEY
+    defaultModel: deepseek-chat
+    models:
+      - id: deepseek-chat
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00027
+        outputPer1k: 0.0011
+        default: true
+      - id: deepseek-v3
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00027
+        outputPer1k: 0.0011
+      - id: deepseek-v3.1
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00027
+        outputPer1k: 0.0011
+      - id: deepseek-reasoner
+        context: 64000
+        maxOutput: 64000
+        inputPer1k: 0.00055
+        outputPer1k: 0.00219
+
+  - name: anthropic
+    type: openai-compat
+    baseUrl: https://api.anthropic.com/v1
+    apiKeyEnv: ANTHROPIC_API_KEY
+    defaultModel: claude-sonnet-4-5
+    models:
+      - id: claude-sonnet-4-5
+        context: 200000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+        default: true
+      - id: claude-opus-4-1
+        context: 200000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: claude-haiku-4-5
+        context: 200000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+
+  - name: openai
+    type: openai-compat
+    baseUrl: https://api.openai.com/v1
+    apiKeyEnv: OPENAI_API_KEY
+    defaultModel: gpt-4o
+    models:
+      - id: gpt-4o
+        context: 128000
+        maxOutput: 16384
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+        default: true
+      - id: gpt-4o-mini
+        context: 128000
+        maxOutput: 16384
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: o1
+        context: 200000
+        maxOutput: 100000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+      - id: o3-mini
+        context: 200000
+        maxOutput: 100000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+
+  - name: gemini
+    type: openai-compat
+    baseUrl: https://generativelanguage.googleapis.com/v1beta/openai
+    apiKeyEnv: GEMINI_API_KEY
+    defaultModel: gemini-2.5-pro
+    models:
+      - id: gemini-2.5-pro
+        context: 1000000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
+        default: true
+      - id: gemini-2.5-flash
+        context: 1000000
+        maxOutput: 64000
+        inputPer1k: 0.0
+        outputPer1k: 0.0

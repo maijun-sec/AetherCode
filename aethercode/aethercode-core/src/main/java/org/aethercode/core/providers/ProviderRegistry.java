@@ -21,20 +21,39 @@ import java.util.Optional;
  * in-memory index of every
  * {@link ProviderSpec} AetherCode can talk to.
  *
- * <p>Loaded from {@code <userHome>/.aethercode/providers.yaml}
- * (or any explicit path passed to the constructor).
- * When the file is missing, the registry falls back
- * to a sensible default set: {@code minmax}
- * (the original target), plus {@code glm}, {@code qwen},
- * {@code deepseek} — these are the Chinese brands the
- * user has on their shortlist. Foreign brands
- * ({@code anthropic}, {@code openai}, {@code gemini})
- * are listed but documented as
- * "unverified — bring your own tests".
+ * <p>R343 — config architecture is two-tier:
  *
- * <p>The registry is the source of truth for the
- * desktop's Settings provider picker; the daemon
- * exposes the list via the {@code listProviders} RPC.
+ * <ol>
+ *   <li><b>Global</b>: {@code <install-dir>/providers.yaml}.
+ *       This is the canonical model catalog (operator-owned).
+ *       Add new providers, change prices, retire old models —
+ *       IT controls the master catalogue. Loaded once at
+ *       daemon boot.</li>
+ *   <li><b>Per-project</b>: {@code <cwd>/.aethercode/providers.yaml}.
+ *       Developers can override individual provider fields
+ *       (enabled flag, headers, timeouts, inline apiKey) and
+ *       pick a project-scoped default provider. Per-project
+ *       yamls CANNOT add new provider names or new model ids —
+ *       unknown ids are dropped with a startup warning. This
+ *       keeps the model surface area under operator control
+ *       (no surprise "the dev added an unsanctioned model"
+ *       situation).</li>
+ * </ol>
+ *
+ * <p>The {@link #loadCascade(Path, Path)} helper resolves the
+ * two files, merges them with the validator, and falls back
+ * to the bundled classpath yaml → {@link #bundledDefaults()}
+ * when both files are missing. Tests use {@link #parse(String)}
+ * for inline YAML fixtures.
+ *
+ * <p>The legacy single-file path
+ * {@code <userHome>/.aethercode/providers.yaml} is still
+ * recognised by {@link #loadFrom(Path)} — kept for backward
+ * compat with pre-R343 user installations.
+ *
+ * <p>The registry is the source of truth for the desktop's
+ * Settings provider picker; the daemon exposes the list via
+ * the {@code listProviders} RPC.
  *
  * <p>For tests, construct an instance directly with
  * {@link #ProviderRegistry(List)} (in-memory).
@@ -61,7 +80,12 @@ public final class ProviderRegistry {
      *  defaults (the four Chinese brands the user
      *  signed off on, plus the foreign brands as
      *  "untested"). Malformed YAML → bundled yaml
-     *  (a defensive net — never an empty list). */
+     *  (a defensive net — never an empty list).
+     *
+     *  <p>R343: this single-file path is retained for
+     *  backward compat with pre-R343 deployments that
+     *  shipped a flat {@code <userHome>/.aethercode/providers.yaml}.
+     *  New code should prefer {@link #loadCascade(Path, Path)}. */
     public static ProviderRegistry loadFrom(Path yamlFile) {
         if (yamlFile == null || !Files.exists(yamlFile)) {
             LOG.info("providers.yaml not found at {} — using bundled YAML", yamlFile);
@@ -75,6 +99,403 @@ public final class ProviderRegistry {
                     yamlFile, e.getMessage());
             return loadBundled();
         }
+    }
+
+    /**
+     * R343: canonical config loader. Resolves a two-tier
+     * provider catalogue:
+     *
+     * <ol>
+     *   <li>{@code <installDir>/providers.yaml} — operator-owned
+     *       catalogue. When the file is missing, falls back
+     *       to {@link #loadBundled()} (the bundled
+     *       classpath yaml).</li>
+     *   <li>{@code <cwd>/.aethercode/providers.yaml} — per-project
+     *       overrides. Optional; missing file is OK and means
+     *       "use the global catalogue unchanged".</li>
+     * </ol>
+     *
+     * <p>The per-project file is validated against the global:
+     * any provider name or model id not present in the global
+     * (or bundled) catalogue is dropped with a startup warning.
+     * This prevents developers from quietly adding new models
+     * to a project — the model surface area stays under
+     * operator control.
+     *
+     * <p>If both files are missing AND the bundled resource
+     * is unavailable, falls back to {@link #bundledDefaults()}
+     * (the Java legacy path). The legacy list always contains
+     * at least minmax so the daemon never starts empty.
+     *
+     * @param installDir  the install path (typically the
+     *     daemon jar's parent directory). May be {@code null}
+     *     or non-existent in dev/test contexts — the loader
+     *     treats that as "skip the global file".
+     * @param cwd  the working directory (per-project file
+     *     lives at {@code <cwd>/.aethercode/providers.yaml}).
+     *     May be {@code null} in tests; missing file is OK.
+     * @return the merged registry. Always non-null; never empty
+     *     (the bundledDefaults() fallback guarantees at least
+     *     one provider).
+     */
+    public static ProviderRegistry loadCascade(Path installDir, Path cwd) {
+        // Step 1 — global. installDir/providers.yaml OR bundled.
+        ProviderRegistry global;
+        if (installDir != null) {
+            Path globalFile = installDir.resolve("providers.yaml");
+            if (Files.exists(globalFile)) {
+                try {
+                    String raw = Files.readString(globalFile);
+                    global = parse(raw);
+                    LOG.info("R343: loaded global providers.yaml from {} ({} providers)",
+                            globalFile, global.byName.size());
+                } catch (IOException e) {
+                    LOG.warn("R343: failed to read global providers.yaml at {}: {} — falling back to bundled",
+                            globalFile, e.getMessage());
+                    global = loadBundled();
+                }
+            } else {
+                LOG.info("R343: no global providers.yaml at {} — using bundled YAML", globalFile);
+                global = loadBundled();
+            }
+        } else {
+            // dev / test context (no install dir). Use bundled
+            // yaml directly so the registry isn't empty.
+            global = loadBundled();
+        }
+        // If loadBundled() couldn't find a resource AND
+        // bundledDefaults() returned empty (shouldn't happen —
+        // bundledDefaults always has at least minmax), fall
+        // back to bundledDefaults() once more so the daemon
+        // never boots with an empty provider list.
+        if (global.byName.isEmpty()) {
+            LOG.warn("R343: global catalogue is empty after loadBundled() — falling back to Java bundledDefaults()");
+            global = new ProviderRegistry(bundledDefaults());
+        }
+
+        // Step 2 — per-project. cwd/.aethercode/providers.yaml.
+        // Missing file → no-op (project keeps the global).
+        if (cwd == null) {
+            return global;
+        }
+        Path cwdFile = cwd.resolve(".aethercode").resolve("providers.yaml");
+        if (!Files.exists(cwdFile)) {
+            // Optional file. Many projects won't have one.
+            LOG.debug("R343: no per-project providers.yaml at {} — using global catalogue unchanged", cwdFile);
+            return global;
+        }
+
+        // Step 3 — parse cwd yaml (without model-id enforcement
+        // so the validator can read every field), then merge
+        // onto global with the unknown-id filter.
+        String cwdYamlRaw;
+        try {
+            cwdYamlRaw = Files.readString(cwdFile);
+        } catch (IOException e) {
+            LOG.warn("R343: failed to read per-project providers.yaml at {}: {} — using global catalogue unchanged",
+                    cwdFile, e.getMessage());
+            return global;
+        }
+        return mergeCwd(global, cwdYamlRaw, cwdFile);
+    }
+
+    /**
+     * R343: merge a per-project yaml on top of a global
+     * registry, dropping unknown provider names and unknown
+     * model ids. Each unknown entry logs a warning at startup
+     * so the developer / operator sees exactly what was
+     * filtered out. The merge keeps the global provider's
+     * full model list intact; cwd entries can only edit
+     * existing model fields (price, maxOutput, headers, etc.).
+     *
+     * <p>The cwd raw YAML is parsed via
+     * {@link #parseProviderYamlList(String)} so partial
+     * entries (e.g. {@code defaultModel: foo} with no
+     * {@code baseUrl} / {@code models: []}) don't trip
+     * ProviderSpec's required-field checks — the merge
+     * logic reads every field directly off the
+     * {@link ProviderYaml} entries.
+     *
+     * <p>For tests use the {@link #mergeCwdFromYamls(ProviderRegistry, java.util.List, java.nio.file.Path)}
+     * overload with pre-built {@link ProviderYaml} lists. For
+     * the normal file-based flow use
+     * {@link #loadCascade(Path, Path)}.
+     *
+     * @param global the canonical catalogue (operator-owned).
+     *     Caller is responsible for ensuring this is non-null
+     *     and non-empty; {@link #loadCascade} guarantees this.
+     * @param cwdYamlRaw the raw per-project YAML text. May
+     *     be {@code null} or malformed — the merge is a
+     *     no-op in those cases.
+     * @param cwdSourceForLogging the path the YAML was read
+     *     from. Used only for warning messages so the
+     *     developer / operator can find the offending file.
+     * @return a new ProviderRegistry with the merge applied.
+     *     Never null; never empty (the global catalog is
+     *     guaranteed non-empty by {@link #loadCascade}).
+     */
+    public static ProviderRegistry mergeCwd(ProviderRegistry global,
+                                            String cwdYamlRaw,
+                                            Path cwdSourceForLogging) {
+        if (global == null || global.byName.isEmpty()) {
+            return new ProviderRegistry(List.of());
+        }
+        if (cwdYamlRaw == null || cwdYamlRaw.isBlank()) {
+            return global;
+        }
+        List<ProviderYaml> cwdYamls = parseProviderYamlList(cwdYamlRaw);
+        if (cwdYamls.isEmpty()) {
+            return global;
+        }
+        return mergeCwdFromYamls(global, cwdYamls, cwdSourceForLogging);
+    }
+
+    /**
+     * R343: in-memory merge helper for tests + the file-based
+     * loader. Takes pre-parsed {@link ProviderYaml} entries
+     * and merges them onto {@code global}. See
+     * {@link #mergeCwd(ProviderRegistry, String, java.nio.file.Path)}
+     * for the field-by-field rules.
+     */
+    public static ProviderRegistry mergeCwdFromYamls(ProviderRegistry global,
+                                                    List<ProviderYaml> cwdYamls,
+                                                    Path cwdSourceForLogging) {
+        if (global == null || global.byName.isEmpty()) {
+            return new ProviderRegistry(List.of());
+        }
+        if (cwdYamls == null || cwdYamls.isEmpty()) {
+            return global;
+        }
+        // Build the merged list. Start from the global specs
+        // (full model list intact), then for each cwd entry:
+        //   - if the provider name is unknown to global → log + skip
+        //   - if the provider name is known → apply field overrides,
+        //     and for each model id in cwd, only keep it if it
+        //     exists in the global model list; drop + warn otherwise.
+        List<ProviderSpec> merged = new ArrayList<>(global.byName.values());
+        // Map name → index in `merged` so we can mutate in place.
+        Map<String, Integer> indexByName = new LinkedHashMap<>();
+        for (int i = 0; i < merged.size(); i++) {
+            indexByName.put(merged.get(i).name(), i);
+        }
+
+        for (ProviderYaml cwd : cwdYamls) {
+            String cwdName = cwd.name;
+            Integer idx = cwdName == null ? null : indexByName.get(cwdName);
+            if (idx == null) {
+                LOG.warn("R343: per-project providers.yaml at {} declared unknown provider '{}' — dropped. " +
+                        "Add it to the global catalogue (operator-owned) before referencing from a project.",
+                        cwdSourceForLogging, cwdName);
+                continue;
+            }
+            ProviderSpec globalSpec = merged.get(idx);
+            ProviderSpec effective = applyFieldOverrides(globalSpec, cwd, cwdSourceForLogging);
+            merged.set(idx, effective);
+        }
+        return new ProviderRegistry(merged);
+    }
+
+    /**
+     * R343: apply cwd field overrides onto a global provider.
+     * cwd fields replace global fields when non-null; null
+     * cwd fields fall through to global. The cwd yaml is
+     * intentionally partial — baseUrl, models, name, etc.
+     * are NOT cwd's to override (those are operator-owned).
+     */
+    private static ProviderSpec applyFieldOverrides(ProviderSpec globalSpec,
+                                                   ProviderYaml cwd,
+                                                   Path cwdSourceForLogging) {
+        // type / apiKeyEnv / defaultModel / apiKey / headers /
+        // timeout / connectTimeout are normal overrides. baseUrl,
+        // name, and models are operator-owned — cwd can't
+        // change them.
+        String type = cwd.type != null ? cwd.type : globalSpec.type();
+        String apiKeyEnv = cwd.apiKeyEnv != null ? cwd.apiKeyEnv : globalSpec.apiKeyEnv();
+        // defaultModel: cwd wins, but only when the requested
+        // id is in the global model list. A typo'd id (or a
+        // model id the operator removed in a later global
+        // release) falls back to the global default rather
+        // than crashing the daemon with "defaultModel not
+        // in models list".
+        String defaultModel = globalSpec.defaultModel();
+        if (cwd.defaultModel != null && !cwd.defaultModel.isBlank()) {
+            boolean known = false;
+            for (org.aethercode.core.providers.ModelSpec m : globalSpec.models()) {
+                if (cwd.defaultModel.equals(m.id())) {
+                    known = true;
+                    break;
+                }
+            }
+            if (known) {
+                defaultModel = cwd.defaultModel;
+            } else {
+                LOG.warn("R343: per-project providers.yaml at {} declared unknown defaultModel '{}' (provider '{}') — falling back to global default '{}'",
+                        cwdSourceForLogging, cwd.defaultModel, cwd.name, defaultModel);
+            }
+        }
+        String apiKey = cwd.apiKey != null ? cwd.apiKey : globalSpec.apiKey();
+
+        // enabled: tri-state semantics. cwd null → fall through
+        // to global. cwd non-null → use cwd value (Boolean.TRUE
+        // equals wrapper null is false; cwd.enabled could be
+        // missing from the yaml but still non-null if Jackson
+        // sees the literal `enabled: false`).
+        boolean enabled = cwd.enabled != null ? (cwd.enabled == null || cwd.enabled) : globalSpec.enabled();
+
+        Map<String, String> headers = (cwd.headers != null && !cwd.headers.isEmpty())
+                ? cwd.headers
+                : globalSpec.customHeaders();
+        Integer timeout = cwd.timeout != null ? cwd.timeout : globalSpec.timeoutMs();
+        Integer connectTimeout = cwd.connectTimeout != null
+                ? cwd.connectTimeout
+                : globalSpec.connectTimeoutMs();
+
+        // Models: keep the GLOBAL model list (canonical). If
+        // cwd declared any model ids, log warnings for any
+        // that aren't in the global list — a typo'd id in
+        // cwd is almost certainly a bug.
+        if (cwd.models != null && !cwd.models.isEmpty()) {
+            java.util.Set<String> globalIds = new java.util.HashSet<>();
+            for (org.aethercode.core.providers.ModelSpec m : globalSpec.models()) {
+                globalIds.add(m.id());
+            }
+            for (ModelYaml cwdM : cwd.models) {
+                if (cwdM.id != null && !globalIds.contains(cwdM.id)) {
+                    LOG.warn("R343: per-project providers.yaml at {} declared unknown model id '{}' " +
+                                    "(provider '{}') — dropped. Models must be defined in the global catalogue.",
+                            cwdSourceForLogging, cwdM.id, cwd.name);
+                }
+            }
+        }
+
+        // Compact + Variants: cwd wins when non-null (rare for
+        // a project to override these — most projects use the
+        // global defaults).
+        org.aethercode.core.providers.CompactSpec compact;
+        if (cwd.compact != null) {
+            compact = cwd.compact.toSpec();
+        } else {
+            compact = globalSpec.compact();
+        }
+        List<org.aethercode.core.providers.Variant> variants;
+        if (cwd.variants != null) {
+            variants = VariantYaml.toVariantList(cwd.variants);
+        } else {
+            variants = globalSpec.variants();
+        }
+
+        // baseUrl + name + models are NOT cwd-overridable —
+        // they're operator-owned. The merged record reuses
+        // the global values verbatim.
+        return new org.aethercode.core.providers.ProviderSpec(
+                globalSpec.name(),                  // name stays global
+                type,
+                globalSpec.baseUrl(),               // baseUrl stays global
+                apiKeyEnv,
+                defaultModel,
+                globalSpec.models(),                // models stay global
+                compact,
+                variants,
+                enabled,
+                headers,
+                timeout,
+                connectTimeout,
+                apiKey);
+    }
+
+    /**
+     * Resolve the install directory from a Class reference.
+     * Returns the parent of the directory holding the jar
+     * that defines {@code ref}'s protection domain. Falls
+     * back to {@code null} when the jar location can't be
+     * determined (e.g. classes dir in dev / fat-jar).
+     *
+     * <p>Used by {@code DaemonRunner} / {@code Main} to find
+     * the global {@code providers.yaml} that ships next to
+     * the daemon jar. On a packaged install (MSI / NSIS) the
+     * installer copies a {@code providers.yaml.sample} into
+     * the install dir; the operator copies / renames it to
+     * {@code providers.yaml} once they've customised it.
+     */
+    public static Path resolveInstallDir(Class<?> ref) {
+        if (ref == null) return null;
+        try {
+            java.security.ProtectionDomain pd = ref.getProtectionDomain();
+            if (pd != null && pd.getCodeSource() != null && pd.getCodeSource().getLocation() != null) {
+                java.net.URL loc = pd.getCodeSource().getLocation();
+                // For "file:/C:/path/to/jar.jar" we want C:/path/to
+                // For "file:/C:/path/to/classes/" we want C:/path/to/classes
+                if ("file".equalsIgnoreCase(loc.getProtocol())) {
+                    try {
+                        Path p = java.nio.file.Paths.get(loc.toURI());
+                        if (Files.isDirectory(p)) return p;
+                        return p.getParent();
+                    } catch (java.net.URISyntaxException e) {
+                        LOG.debug("R343: failed to convert jar location to path: {}", e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.debug("R343: could not resolve install dir from class: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * R343: first-install bootstrap. If {@code <installDir>/providers.yaml}
+     * is missing, copy the bundled
+     * {@code /providers.yaml.sample} resource into place so the
+     * daemon starts with a real (commented) file the operator
+     * can edit instead of an empty dir. Subsequent daemon
+     * starts leave the existing file alone — the sample
+     * bootstrap is a one-shot.
+     *
+     * <p>The MSI / NSIS installers do the same write at install
+     * time; this helper covers the dev / portable-jar path
+     * (e.g. {@code java -jar aethercode.jar} from a downloaded
+     * release) where there's no separate installer step.
+     *
+     * <p>Returns the path to the live {@code providers.yaml}
+     * (which is the installDir path regardless of whether
+     * the bootstrap ran — so callers can pass the return
+     * value straight into {@link #loadFrom(Path)} /
+     * {@link #loadCascade(Path, Path)}).
+     *
+     * @param installDir the install directory the daemon
+     *     lives in. {@code null} or non-existent is OK —
+     *     the helper just no-ops.
+     * @return the {@code providers.yaml} path the cascade
+     *     should read. Always non-null (caller can rely
+     *     on the path even when bootstrap didn't run).
+     */
+    public static Path ensureSampleInstalled(Path installDir) {
+        if (installDir == null) {
+            return null;
+        }
+        Path live = installDir.resolve("providers.yaml");
+        if (Files.exists(live)) {
+            return live;
+        }
+        if (!Files.isDirectory(installDir)) {
+            // installDir doesn't exist or isn't a dir —
+            // can't bootstrap. Caller falls back to bundled
+            // yaml automatically.
+            return live;
+        }
+        try (java.io.InputStream in = ProviderRegistry.class
+                .getResourceAsStream("/providers.yaml.sample")) {
+            if (in == null) {
+                LOG.warn("R343: providers.yaml.sample not on classpath — skipping first-install bootstrap");
+                return live;
+            }
+            byte[] body = in.readAllBytes();
+            java.nio.file.Files.write(live, body);
+            LOG.info("R343: bootstrapped {} from bundled providers.yaml.sample ({} bytes)",
+                    live, body.length);
+        } catch (java.io.IOException e) {
+            LOG.warn("R343: failed to bootstrap providers.yaml at {}: {}", live, e.getMessage());
+        }
+        return live;
     }
 
     /** R341: load the bundled {@code aethercode-providers.yaml}
@@ -117,8 +538,8 @@ public final class ProviderRegistry {
     }
 
     /** Parse from a raw YAML string. Public for
-     *  tests; the file-based loadFrom is the
-     *  normal path. */
+     *  tests; the file-based loadFrom / loadCascade
+     *  is the normal path. */
     public static ProviderRegistry parse(String yaml) {
         if (yaml == null || yaml.isBlank()) {
             return new ProviderRegistry(List.of());
@@ -136,6 +557,42 @@ public final class ProviderRegistry {
         } catch (Exception e) {
             LOG.warn("failed to parse providers.yaml: {}", e.getMessage());
             return new ProviderRegistry(List.of());
+        }
+    }
+
+    /**
+     * R343: parse a YAML string into raw {@link ProviderYaml}
+     * entries WITHOUT calling {@code toSpec()} (which would
+     * throw on partial entries — the cwd file is supposed
+     * to be partial). Used by {@link #mergeCwd(ProviderRegistry,
+     * String, java.nio.file.Path)} so the merge logic can
+     * read every field without each cwd entry needing to
+     * satisfy ProviderSpec's "baseUrl is required" /
+     * "models must be non-empty" validations.
+     *
+     * <p>Returned entries may have null {@code baseUrl},
+     * empty {@code models}, etc. — the merge logic treats
+     * null fields as "fall through to global" and unknown
+     * model ids are filtered.
+     *
+     * <p>Returns an empty list for null/blank yaml or on
+     * parse failure (logged as a warning so the operator
+     * sees the syntax error).
+     */
+    public static List<ProviderYaml> parseProviderYamlList(String yaml) {
+        if (yaml == null || yaml.isBlank()) {
+            return List.of();
+        }
+        try {
+            ObjectMapper om = new ObjectMapper(new YAMLFactory());
+            YamlShape shape = om.readValue(yaml, YamlShape.class);
+            if (shape == null || shape.providers == null) {
+                return List.of();
+            }
+            return List.copyOf(shape.providers);
+        } catch (Exception e) {
+            LOG.warn("R343: failed to parse cwd providers.yaml: {}", e.getMessage());
+            return List.of();
         }
     }
 
@@ -183,7 +640,7 @@ public final class ProviderRegistry {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    static class ProviderYaml {
+    public static class ProviderYaml {
         public String name;
         public String type;
         public String baseUrl;

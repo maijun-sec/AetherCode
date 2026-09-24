@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -557,4 +558,427 @@ class ProviderRegistryTest {
             assertEquals(System.getenv("PATH"), path);
         }
     }
-}
+
+    // ---- R343: two-tier config cascade ----
+
+    /**
+     * R343: a global yaml present in {@code installDir} is loaded
+     * as the canonical catalogue. Per-project cwd override
+     * absent → registry equals the global (no merge needed).
+     */
+    @Test
+    void loadCascade_globalOnly(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, tmp.resolve("nowhere"));
+        assertEquals(1, reg.list().size());
+        assertEquals("alpha-1", reg.get("alpha").orElseThrow().defaultModel());
+    }
+
+    /**
+     * R343: cwd per-project yaml merges field-level overrides
+     * onto global. The cwd can flip enabled=false or change
+     * defaultModel; it CANNOT add a new provider or model id.
+     */
+    @Test
+    void loadCascade_cwdOverridesExistingFields(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    enabled: true
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                      - id: alpha-2
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd.resolve(".aethercode"));
+        java.nio.file.Files.writeString(cwd.resolve(".aethercode/providers.yaml"), """
+                providers:
+                  - name: alpha
+                    enabled: false
+                    defaultModel: alpha-2
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        ProviderSpec alpha = reg.get("alpha").orElseThrow();
+        // cwd wins on defaultModel
+        assertEquals("alpha-2", alpha.defaultModel());
+        // cwd wins on enabled
+        assertEquals(false, alpha.enabled());
+        // Global model list is preserved (cwd didn't add/remove models)
+        assertEquals(2, alpha.models().size());
+    }
+
+    /**
+     * R343: per-project yaml CANNOT introduce a brand-new provider
+     * name. Unknown ids are dropped with a startup warning so the
+     * operator sees what was filtered. The model surface area
+     * stays under operator control.
+     */
+    @Test
+    void loadCascade_cwdUnknownProviderDropped(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd.resolve(".aethercode"));
+        java.nio.file.Files.writeString(cwd.resolve(".aethercode/providers.yaml"), """
+                providers:
+                  - name: rogue
+                    type: openai-compat
+                    baseUrl: https://rogue.example/v1
+                    apiKeyEnv: ROGUE_API_KEY
+                    defaultModel: rogue-1
+                    models:
+                      - id: rogue-1
+                        inputPer1k: 0
+                        outputPer1k: 0
+                        context: 128000
+                        default: true
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        // rogue dropped; alpha kept.
+        assertEquals(1, reg.list().size());
+        assertTrue(reg.get("alpha").isPresent());
+        assertTrue(reg.get("rogue").isEmpty());
+    }
+
+    /**
+     * R343: per-project yaml CANNOT add a new model id under an
+     * existing provider. Unknown model ids are dropped + logged;
+     * the global's model list stays authoritative.
+     */
+    @Test
+    void loadCascade_cwdUnknownModelIdDropped(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd.resolve(".aethercode"));
+        java.nio.file.Files.writeString(cwd.resolve(".aethercode/providers.yaml"), """
+                providers:
+                  - name: alpha
+                    models:
+                      - id: alpha-rogue
+                        inputPer1k: 0
+                        outputPer1k: 0
+                        context: 128000
+                        default: true
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        ProviderSpec alpha = reg.get("alpha").orElseThrow();
+        // cwd's model id was NOT merged — global's list is unchanged.
+        assertEquals(1, alpha.models().size());
+        assertEquals("alpha-1", alpha.models().get(0).id());
+    }
+
+    /**
+     * R343: when the install-dir global yaml is missing, the
+     * bundled classpath yaml takes over. The cascade never
+     * returns an empty registry — even in dev/test contexts
+     * without an install dir.
+     */
+    @Test
+    void loadCascade_missingGlobalUsesBundled(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) {
+        // installDir doesn't even exist — null-ish behavior.
+        ProviderRegistry reg = ProviderRegistry.loadCascade(null, null);
+        // bundled resource OR bundledDefaults() — must be non-empty.
+        assertTrue(!reg.list().isEmpty(), "cascade must fall back to bundled/defaults when nothing else is available");
+        assertTrue(reg.get("minmax").isPresent(), "minmax is the canonical bundled default");
+    }
+
+    /**
+     * R343: cwd missing its providers.yaml is a no-op, not an
+     * error. The cascade returns the global catalogue unchanged.
+     */
+    @Test
+    void loadCascade_cwdMissingIsNoop(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd);
+        // no .aethercode/providers.yaml file
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        assertEquals(1, reg.list().size());
+        assertEquals("alpha-1", reg.get("alpha").orElseThrow().defaultModel());
+    }
+
+    /**
+     * R343: inline {@code apiKey} on the cwd yaml passes through
+     * to the merged registry. The 4-step api-key chain
+     * (yaml inline → apiKeyEnv → derived → null) reads the
+     * merged record, so a per-project secret override works.
+     */
+    @Test
+    void loadCascade_cwdInlineApiKeyPassesThrough(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd.resolve(".aethercode"));
+        java.nio.file.Files.writeString(cwd.resolve(".aethercode/providers.yaml"), """
+                providers:
+                  - name: alpha
+                    apiKey: sk-cwd-secret
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        assertEquals("sk-cwd-secret", reg.get("alpha").orElseThrow().apiKey());
+    }
+
+    /**
+     * R343: header / timeout overrides in cwd apply; missing
+     * cwd fields fall through to global.
+     */
+    @Test
+    void loadCascade_cwdOverridesHeadersAndTimeouts(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    timeout: 60000
+                    headers:
+                      X-Global-Org: global-org
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd.resolve(".aethercode"));
+        java.nio.file.Files.writeString(cwd.resolve(".aethercode/providers.yaml"), """
+                providers:
+                  - name: alpha
+                    timeout: 120000
+                    headers:
+                      X-Project: project-value
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        ProviderSpec alpha = reg.get("alpha").orElseThrow();
+        // cwd wins on timeout
+        assertEquals(120000, alpha.timeoutMs());
+        // cwd wins on headers (full replace, not merge)
+        assertEquals("project-value", alpha.customHeaders().get("X-Project"));
+        assertTrue(alpha.customHeaders().get("X-Global-Org") == null,
+                "cwd headers are a full replacement, not a deep merge");
+    }
+
+    /**
+     * R343: backward-compat — loadFrom(userHome yaml) still works.
+     * Pre-R343 deployments that shipped a flat user-level
+     * providers.yaml continue to load.
+     */
+    @Test
+    void loadFrom_legacySingleFilePath(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path userYaml = tmp.resolve("providers.yaml");
+        java.nio.file.Files.writeString(userYaml, """
+                providers:
+                  - name: legacy
+                    type: openai-compat
+                    baseUrl: https://legacy.example/v1
+                    apiKeyEnv: LEGACY_API_KEY
+                    defaultModel: legacy-1
+                    models:
+                      - id: legacy-1
+                        inputPer1k: 0
+                        outputPer1k: 0
+                        context: 128000
+                        default: true
+                """);
+        ProviderRegistry reg = ProviderRegistry.loadFrom(userYaml);
+        assertEquals(1, reg.list().size());
+        assertEquals("legacy-1", reg.get("legacy").orElseThrow().defaultModel());
+    }
+
+    /**
+     * R343: malformed cwd yaml doesn't break the daemon. The
+     * cascade logs a warning and returns the global catalogue
+     * unchanged.
+     */
+    @Test
+    void loadCascade_malformedCwdFallsBackToGlobal(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Files.writeString(installDir.resolve("providers.yaml"), """
+                providers:
+                  - name: alpha
+                    type: openai-compat
+                    baseUrl: https://alpha.example/v1
+                    apiKeyEnv: ALPHA_API_KEY
+                    defaultModel: alpha-1
+                    models:
+                      - id: alpha-1
+                        inputPer1k: 0.001
+                        outputPer1k: 0.002
+                        context: 128000
+                        default: true
+                """);
+        java.nio.file.Path cwd = tmp.resolve("project");
+        java.nio.file.Files.createDirectories(cwd.resolve(".aethercode"));
+        // Garbage yaml — should be tolerated, not crash.
+        java.nio.file.Files.writeString(cwd.resolve(".aethercode/providers.yaml"), ":\n  invalid: : yaml :::");
+        ProviderRegistry reg = ProviderRegistry.loadCascade(installDir, cwd);
+        // Global catalog is preserved.
+        assertEquals(1, reg.list().size());
+        assertEquals("alpha", reg.list().get(0).name());
+    }
+
+    /**
+     * R343.6b regression: ensureSampleInstalled() copies the
+     * bundled /providers.yaml.sample resource into the install
+     * dir on first boot. The sample MUST contain real provider
+     * entries (not just schema comments) — Jackson YAML parses
+     * comments-only files as empty, which previously sent the
+     * cascade into the bundledDefaults() Java fallback. The
+     * operator then saw a working daemon but with no editable
+     * file to customize, defeating the whole point of the
+     * install-dir / cwd split.
+     *
+     * <p>This test asserts the sample resource on the classpath
+     * carries at least 7 providers (the R340 catalogue) and
+     * that loading it via parseProviderYamlList() doesn't throw
+     * the "No content to map due to end-of-input" error.
+     */
+    @Test
+    void ensureSampleInstalled_sampleResourceIsNonEmptyWithRealProviders(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        // 1. Read the bundled sample directly from the classpath.
+        try (java.io.InputStream in = ProviderRegistry.class
+                .getResourceAsStream("/providers.yaml.sample")) {
+            assertNotNull(in, "bundled /providers.yaml.sample must exist on the classpath");
+            String raw = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            // 2. Parse via the cwd-style raw parser (same path
+            //    the merge logic uses; tolerates partial fields).
+            java.util.List<org.aethercode.core.providers.ProviderRegistry.ProviderYaml> entries =
+                    ProviderRegistry.parseProviderYamlList(raw);
+            // 3. The sample MUST declare real provider entries,
+            //    not just comments. If this assertion fires,
+            //    somebody rewrote the sample as a pure
+            //    comment-only file and the cascade silently
+            //    falls back to bundledDefaults() — the operator
+            //    gets a working daemon with no editable file.
+            assertFalse(entries.isEmpty(),
+                    "/providers.yaml.sample must contain real provider entries (not just comments) "
+                            + "so ensureSampleInstalled() produces a usable editable file. "
+                            + "Empty entries cause Jackson YAML's 'No content to map' error and "
+                            + "trigger the bundledDefaults() fallback.");
+            // 4. Pin at least the 7 brand names from the R340
+            //    catalogue so a future housekeeping pass can't
+            //    quietly drop one and break operator
+            //    expectations.
+            java.util.Set<String> names = entries.stream()
+                    .map(e -> e.name)
+                    .collect(java.util.stream.Collectors.toSet());
+            for (String brand : new String[]{
+                    "minmax", "glm", "qwen", "deepseek",
+                    "anthropic", "openai", "gemini"}) {
+                assertTrue(names.contains(brand),
+                        "sample must declare provider '" + brand
+                                + "' (the R340 catalogue baseline). Actual: " + names);
+            }
+        }
+        // 5. End-to-end: bootstrap a fresh installDir and
+        //    loadCascade() must NOT emit the "global catalogue
+        //    is empty after loadBundled()" warning. We verify
+        //    by asserting the registry is non-empty AND the
+        //    count matches the sample's catalogue (proving
+        //    the sample, not bundledDefaults(), was the source).
+        java.nio.file.Path installDir = tmp.resolve("install");
+        java.nio.file.Files.createDirectories(installDir);
+        java.nio.file.Path bootstrapped = ProviderRegistry.ensureSampleInstalled(installDir);
+        assertNotNull(bootstrapped, "ensureSampleInstalled must return the live providers.yaml path");
+        assertTrue(java.nio.file.Files.exists(bootstrapped),
+                "ensureSampleInstalled must create providers.yaml on first boot");
+        // loadCascade on a fresh installDir (no cwd override)
+        // must yield at least 7 providers from the sample.
+        ProviderRegistry cascade = ProviderRegistry.loadCascade(installDir, null);
+        assertTrue(cascade.list().size() >= 7,
+                "fresh installDir cascade must yield >= 7 providers from the sample, got "
+                        + cascade.list().size());
+    }
+}  // class ProviderRegistryTest

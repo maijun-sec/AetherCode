@@ -416,22 +416,22 @@ final class DaemonRunner {
             LOG.warn("R266d: memory store install failed on http path: {}",
                     memEx.getMessage());
         }
-        // wire the provider registry from
-        // ~/.aethercode/providers.yaml so the renderer's
-        // Settings panel can list providers + switch
-        // models on the fly. The CLI loaded the spec
-        // into the engine's Builder; we read the
-        // engine's current mainLoopModel to seed the
-        // "currently using" hint. The registry itself
-        // is loaded here (the daemon process is the
-        // authoritative one — the renderer is a
-        // client).
+        // R343: wire the provider registry via the two-tier
+        // cascade (install-dir/providers.yaml + cwd/.aethercode/
+        // providers.yaml) instead of the pre-R343 flat
+        // user-home file. The CLI may have set an explicit
+        // provider on the engine; we re-resolve here so the
+        // renderer's listProviders RPC sees the cascade rather
+        // than a stale single-file view. The setCurrentProvider
+        // hint below seeds from the engine's mainLoopModel so
+        // a fresh daemon boot picks up the right row. The cwd
+        // is the JVM's working directory (the desktop launches
+        // the daemon with cwd=install-dir typically — the
+        // per-project override is read from there).
         try {
-            java.nio.file.Path providersFile = java.nio.file.Path.of(
-                    System.getProperty("user.home"),
-                    ".aethercode", "providers.yaml");
+            java.nio.file.Path cwd = java.nio.file.Path.of("").toAbsolutePath();
             org.aethercode.core.providers.ProviderRegistry registry =
-                    org.aethercode.core.providers.ProviderRegistry.loadFrom(providersFile);
+                    resolveProviderRegistryForDaemon(cwd);
             http.methods().setProviderRegistry(registry);
             http.methods().setCurrentProvider(
                     // We don't have a direct handle on
@@ -1154,5 +1154,50 @@ final class DaemonRunner {
                     org.aethercode.core.registry.RegistryReloadService.ReloadKind.MCP);
         }
         return svc;
+    }
+
+    /**
+     * R343: resolve the {@link org.aethercode.core.providers.ProviderRegistry}
+     * for the daemon process. Mirrors {@link Main#resolveProvidersRegistry}
+     * but lives in the daemon (no CLI flag dependency — the
+     * daemon is started by the desktop, not by picocli).
+     *
+     * <p>Resolution order:
+     * <ol>
+     *   <li>{@code AETHERCODE_PROVIDERS_YAML} env var → single file
+     *       (escape hatch for ops / CI)</li>
+     *   <li>install-dir + cwd cascade (R343 default)</li>
+     *   <li>bundled classpath yaml + bundledDefaults() fallback</li>
+     * </ol>
+     */
+    static org.aethercode.core.providers.ProviderRegistry
+            resolveProviderRegistryForDaemon(java.nio.file.Path cwd) {
+        String env = System.getenv("AETHERCODE_PROVIDERS_YAML");
+        if (env != null && !env.isBlank()) {
+            java.nio.file.Path explicit = java.nio.file.Path.of(env);
+            LOG.info("R343: daemon loading explicit providers.yaml from {}", explicit);
+            return org.aethercode.core.providers.ProviderRegistry.loadFrom(explicit);
+        }
+        // Default: cascade. Install dir is the daemon jar's
+        // parent (resolved via the class's protection domain).
+        // In dev / test contexts where the class lives under
+        // target/classes/, this returns the classes dir; the
+        // cascade still works because loadBundled() falls
+        // back to bundledDefaults() when no providers.yaml
+        // is present.
+        java.nio.file.Path installDir =
+                org.aethercode.core.providers.ProviderRegistry
+                        .resolveInstallDir(DaemonRunner.class);
+        // R343: first-install bootstrap. If the install dir
+        // doesn't have a providers.yaml yet (portable-jar
+        // launches, dev runs), copy the bundled sample into
+        // place so the operator has a real file to edit. The
+        // MSI / NSIS installers do the same write at install
+        // time; this covers dev + portable scenarios. After
+        // the first boot the helper is a no-op.
+        org.aethercode.core.providers.ProviderRegistry
+                .ensureSampleInstalled(installDir);
+        return org.aethercode.core.providers.ProviderRegistry
+                .loadCascade(installDir, cwd);
     }
 }

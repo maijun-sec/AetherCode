@@ -1,27 +1,43 @@
 # Providers — supported LLM brands and how to wire them
 
-> Last verified: R341 (2026-09-24).
+> Last verified: R343 (2026-09-24).
 >
-> R341 changes:
-> - the bundled catalogue is now a YAML resource
+> R343 changes:
+> - **Two-tier config architecture**:
+>   `<install-dir>/providers.yaml` (global, operator-owned)
+>   + `<cwd>/.aethercode/providers.yaml` (per-project). The
+>   pre-R343 flat `<userHome>/.aethercode/providers.yaml`
+>   is still recognised for backward compat but is no
+>   longer the default.
+> - **Per-project files CANNOT add new provider names or
+>   new model ids** — unknown ids are dropped with a startup
+>   warning. Operators own the model catalogue; developers
+>   pick from it. This prevents the "developer quietly
+>   added an unsanctioned model" footgun.
+> - **CLI flag + env var escape hatch**:
+>   `--providers-yaml=<path>` (or
+>   `AETHERCODE_PROVIDERS_YAML=<path>`) bypasses the cascade
+>   entirely for ops / CI scripts.
+> - **First-install bootstrap**: when `<install-dir>/providers.yaml`
+>   is missing, the daemon copies the bundled
+>   `providers.yaml.sample` (annotated template) into place
+>   once. MSI / NSIS installers do the same write at install
+>   time, so a fresh install has a real file to edit instead
+>   of an empty directory.
+> - the daemon now resolves the install dir from its own
+>   jar's protection domain (or `--install-dir` CLI flag
+>   for dev / portable-jar contexts).
+>
+> R341 changes (still active):
+> - the bundled catalogue is a YAML resource
 >   (`aethercode-core/src/main/resources/aethercode-providers.yaml`)
 >   rather than hardcoded Java; `bundledDefaults()` is the
 >   last-resort fallback only.
 > - the daemon reads env vars across **Process → User →
->   Machine** scopes via `RegistryHelper.readEnv(name)`
->   (previously just `System.getenv()` — Machine-level
->   `HKLM\...\Session Manager\Environment` entries were
->   invisible to the spawned daemon, which made
->   `DEEPSEEK_API_KEY` "missing" for users who set it via
->   `setx /m`).
+>   Machine** scopes via `RegistryHelper.readEnv(name)`.
 > - new provider spec fields: `apiKey` (inline override),
 >   `enabled` (hide from picker), `headers`, `timeout`,
 >   `connectTimeout`.
-> - the Settings panel switched to a 2-level picker
->   (`ProviderModelPicker`) with provider chips + a
->   case-insensitive model filter input — 30+ models in a
->   single dropdown was the user complaint that triggered
->   the round.
 
 AetherCode treats every provider as an **OpenAI-compatible** HTTP
 endpoint. Differentiation lives in `baseUrl` + `apiKeyEnv` per
@@ -270,3 +286,194 @@ read when `<userHome>/.aethercode/providers.yaml` exists.
 A future round should harmonise the two schemas into a single
 source of truth; for now, see
 `bundledDefaults()` for the actual R340+ list.
+
+---
+
+## R343 — Two-tier config architecture
+
+AetherCode reads providers via a **cascade**, not a single
+file. The cascade keeps the model surface area under operator
+control while letting developers tweak project-scoped behaviour
+without modifying the global catalogue.
+
+### Cascade order
+
+| # | Source | Owner | Purpose |
+|---|--------|-------|---------|
+| 1 | `--providers-yaml` CLI flag (or `AETHERCODE_PROVIDERS_YAML` env var) | ops / CI | single-file override; skips the cascade |
+| 2 | `<install-dir>/providers.yaml` | IT (operator) | canonical model catalogue; new providers, pricing, model ids |
+| 3 | `<cwd>/.aethercode/providers.yaml` | developer | per-project overrides (enabled, defaultModel, headers, timeouts, inline apiKey) |
+| 4 | bundled classpath yaml (`aethercode-core/src/main/resources/aethercode-providers.yaml`) | daemon vendor | fallback when (2) is missing |
+| 5 | `bundledDefaults()` Java fallback | daemon | last-resort; minmax only |
+
+`<install-dir>` is the daemon jar's parent directory
+(`ProvidersYaml.resolveInstallDir(DaemonRunner.class)`). On a
+packaged install that's the directory containing
+`aethercode.jar`; in dev it's the `target/classes/` dir.
+
+`<cwd>` is the JVM's working directory at daemon startup
+(Path.of("").toAbsolutePath()). The desktop launches the
+daemon with cwd=install-dir typically — the per-project
+override is then `<install-dir>/.aethercode/providers.yaml`
+when the user runs the desktop from the install path. If the
+user wants per-project overrides for a code checkout, they
+launch the daemon from that checkout (or set
+`AETHERCODE_HOME` / `--cwd`).
+
+### What the per-project file CAN do
+
+- flip `enabled: false` on a provider (project says "no
+  anthropic for this repo")
+- pick `defaultModel: <id>` (project defaults to a specific
+  model from the global catalogue)
+- set custom HTTP `headers:` for a provider
+- tweak `timeout:` / `connectTimeout:` per-provider
+- provide an inline `apiKey:` override (project-specific
+  secret — doesn't pollute the global file)
+- `headers:` is a full replace, not a deep merge — if the
+  cwd sets `X-Project: foo`, the global `X-Global-Org` is
+  dropped. Add the inherited headers explicitly when
+  overriding.
+
+### What the per-project file CANNOT do
+
+- **add new provider names** — if `cwd/providers.yaml`
+  declares a provider that doesn't exist in the global
+  catalogue, the daemon logs a warning and drops the
+  entry. `rogue` provider → 1 warning at startup, the
+  registry stays at the global count.
+- **add new model ids** — same rule. A typo'd model id
+  (`alpha-2` instead of `alpha2`) logs a warning; the
+  global's model list is the source of truth.
+- override `baseUrl` — operator-owned.
+- override the `models:` list — operator-owned.
+- override `name` — operator-owned.
+
+### What if the per-project file declares an unknown `defaultModel`?
+
+The merge falls back to the global's `defaultModel` and logs
+a warning. The daemon doesn't crash — a developer typo in
+their cwd file shouldn't take down the production daemon.
+
+### Override via CLI flag / env var
+
+For ops scripts ("run this CI test against a custom
+catalogue") or for testing new catalogues, both:
+
+- `--providers-yaml=/path/to/file.yaml` CLI flag
+- `AETHERCODE_PROVIDERS_YAML=/path/to/file.yaml` env var
+
+bypass the cascade. The CLI flag wins when both are set.
+The file at the path is loaded directly — no validation
+against the global catalogue (you're explicitly overriding
+the operator).
+
+### First-install bootstrap
+
+When the daemon starts and `<install-dir>/providers.yaml`
+doesn't exist, the bundled `providers.yaml.sample`
+(annotated template) is copied into place ONCE. After the
+first boot the helper is a no-op — operator edits are
+preserved. The MSI / NSIS installers do the same write at
+install time; the runtime helper covers dev / portable-jar
+launches (`java -jar aethercode.jar`) where there's no
+separate installer step.
+
+### Editing the global catalogue
+
+`<install-dir>/providers.yaml` is the canonical source. Common
+edits:
+
+**Disable a bundled provider for every project on this machine:**
+
+```yaml
+providers:
+  - name: anthropic
+    enabled: false
+```
+
+**Override pricing (e.g. an enterprise rate):**
+
+```yaml
+providers:
+  - name: minmax
+    type: openai-compat
+    baseUrl: https://api.minimaxi.com/v1
+    apiKeyEnv: MINIMAX_API_KEY
+    defaultModel: MiniMax-M3
+    timeout: 120000        # 2 minutes (was 60s default)
+    headers:
+      X-Org: my-team
+    models:
+      - id: MiniMax-M3
+        inputPer1k: 0.0009  # 10% enterprise discount
+        outputPer1k: 0.0072
+        context: 1000000
+        maxOutput: 512000
+        default: true
+```
+
+**Add a NEW provider** (e.g. an internal self-hosted LLM):
+
+```yaml
+providers:
+  - name: my-internal
+    type: openai-compat
+    baseUrl: https://llm.internal.example/v1
+    apiKeyEnv: INTERNAL_LLM_API_KEY
+    defaultModel: internal-1
+    enabled: true
+    models:
+      - id: internal-1
+        inputPer1k: 0.0001
+        outputPer1k: 0.0002
+        context: 32000
+        default: true
+```
+
+After saving, restart the daemon (the cascade re-reads each
+start). The chip row picks up the new brand immediately.
+
+### Per-project file: minimal example
+
+```yaml
+providers:
+  # this project uses glm-4.5 by default
+  - name: glm
+    defaultModel: glm-4.5
+
+  # this project doesn't allow anthropic
+  - name: anthropic
+    enabled: false
+
+  # custom headers for the project's deepseek account
+  - name: deepseek
+    headers:
+      X-Org: my-team
+```
+
+### Where to put files in dev
+
+Dev launcher (`mvn exec` or `Main` from IDE):
+
+- global: copy `aethercode-core/src/main/resources/aethercode-providers.yaml`
+  to `target/classes/providers.yaml` and edit in place (gets
+  picked up by `loadFrom`).
+- per-project: write a `<cwd>/.aethercode/providers.yaml`
+  in your IDE's working dir.
+
+### Where to put files in production
+
+- global: `<install-dir>/providers.yaml` (operator-edited;
+  survives `aietechs upgrade` because the install script
+  never overwrites it).
+- per-project: `<cwd>/.aethercode/providers.yaml` (project
+  repo — committed alongside the code that depends on
+  the override).
+
+### Where to put files in CI
+
+Set `AETHERCODE_PROVIDERS_YAML=/path/to/ci-catalogue.yaml`
+in the runner's environment. The cascade short-circuits
+and the daemon reads only the CI catalogue — no operator
+edits needed, no per-project file either.
