@@ -300,6 +300,13 @@ function MainLayout(p: MainLayoutProps) {
             <MessageList />
           </ErrorBoundary>
         )}
+        {/* The tool authorization prompt sits between the
+            message list and the SDD chip strip — the user's
+            tool-permission decision is the most time-sensitive
+            action so it gets the highest visual slot. Per
+            R339 the order is now:
+            chat list → permission banner → SDD chip strip → input. */}
+        <PermissionPromptBanner />
         {/* R315: SddPhaseBar reintroduced. The actual SDD run is
             driven by the Mavis agent in chat (see
             agents/mavis/skills/sdd). The bar is purely a UI
@@ -309,8 +316,6 @@ function MainLayout(p: MainLayoutProps) {
             messages (the agent interprets them as phase
             advance / re-run / skip). */}
         <SddPhaseBar />
-        {/* The tool authorization prompt sits between the message list and the input so the input remains the bottom-most actionable element on the page. */}
-        <PermissionPromptBanner />
         <MessageInput />
       </main>
       {/* The right-side Telemetry panel mounts on demand; when closed, the DOM is released too. */}

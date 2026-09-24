@@ -29,15 +29,17 @@
 /* a thin, single-row config strip above the input box.
  * Reduced visual weight from the previous "wide toolbar" look.
  * The user can still see every option; the strip just takes less
- * vertical space so the input box itself is the dominant shape. */
+ * vertical space so the input box itself is the dominant shape.
+ * R339: removed `max-width: 920px` + `margin: 0 auto` so the bar
+ * fills the same width as the .message-input-container's
+ * content area (left/right 24px padding inherited from the
+ * container). Visually matches .sdd-phase-bar (16px margin) and
+ * .perm-banner (24px margin) on the same column. */
 .input-config-bar {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  max-width: 920px;
-  margin-left: auto;
-  margin-right: auto;
   position: relative;
   /* the previous `flex-wrap: wrap` pushed the cwd
    * group onto a second row at common window widths
@@ -48,10 +50,30 @@
    * (overflow-x: auto lets the user scroll horizontally
    * on tiny windows instead of breaking the layout) and
    * trim the cwd group's max-width so it doesn't dominate
-   * the strip. */
+   * the strip.
+   * R339 follow-up: bumped cwd max-width 220px → 280px and
+   * set flex-shrink: 0 on the left-side items (思考, SDD,
+   * quality, model, perm, tools, workflow) so on narrow
+   * windows only the cwd pill scrolls, not the user's
+   * primary toggles. "思考" and "SDD" never wrap because
+   * they're set to flex-shrink: 0 with explicit widths. */
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+
+/* R339: the user's primary toggles (思考 / SDD / quality /
+ * model / perm / tools / workflow) must stay on one row —
+ * they're high-frequency affordances. flex-shrink: 0 keeps
+ * them at their natural width; only the cwd pill (the last
+ * item, with `margin-left: auto`) is allowed to shrink. */
+.input-config-bar > .config-toggle,
+.input-config-bar > .quality-dropdown,
+.input-config-bar > .model-select,
+.input-config-bar > .perm-select,
+.input-config-bar > .tools-button,
+.input-config-bar > .workflow-button {
+  flex-shrink: 0;
 }
 
 /* one-time model mismatch banner. Renders
@@ -73,8 +95,10 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 0 auto 10px;
-  max-width: 920px;
+  margin: 0 0 10px;
+  /* R339: dropped max-width: 920px so the banner spans the
+   * same width as the input wrap below it (parent
+   * .message-input-container's content area). */
   padding: 12px 16px;
   border-radius: 8px;
   background: var(--chat-warning-soft);
@@ -253,8 +277,15 @@
    * window widths; the user reported the cwd dropped to
    * a second line. 220px lets "D:\tmp\abc_2" (12 chars)
    * fit comfortably and "D:\work\longer-project-name"
-   * (32 chars) ellipsises cleanly. */
-  max-width: 220px;
+   * (32 chars) ellipsises cleanly.
+   * R339: bumped 220px → 280px. The primary-left-side
+   * toggles (思考 / SDD / model / perm / tools / workflow)
+   * now have flex-shrink: 0 so they stay at their natural
+   * width; only the cwd pill is allowed to shrink. The
+   * wider 280px cap accommodates paths like
+   * "D:\work\workspace\idea\..." that frequently appear
+   * in this user's session. */
+  max-width: 280px;
   min-width: 0;
   flex: 0 1 auto;
   background: var(--chat-surface);
@@ -401,11 +432,14 @@
 }
 
 /* the input wrap. Position-relative parent for the
- * absolutely-positioned corner send button. */
+ * absolutely-positioned corner send button.
+ * R339: removed `max-width: 920px; margin: 0 auto;` so the
+ * input fills the same width as the .message-input-container's
+ * content area (left/right 24px padding inherited from the
+ * container). Visually matches .sdd-phase-bar (16px margin)
+ * and .perm-banner (24px margin) on the same column. */
 .message-input-wrap {
   position: relative;
-  max-width: 920px;
-  margin: 0 auto;
 }
 
 /* the input box itself. Big rounded card, light surface,
@@ -497,15 +531,16 @@
 }
 
 /* the hint row below the input. Smaller, dimmer, sits
- * inside the same 920px column. */
+ * inside the same column as the input.
+ * R339: dropped max-width: 920px so it spans the same
+ * width as the input above. */
 .input-hint {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 11px;
   color: var(--chat-text-muted);
-  max-width: 920px;
-  margin: 8px auto 0;
+  margin: 8px 0 0;
   opacity: 0.85;
 }
 .input-hint kbd {
