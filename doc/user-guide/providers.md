@@ -1,19 +1,44 @@
 # Providers — supported LLM brands and how to wire them
 
-> Last verified: R340 (2026-09-24).
+> Last verified: R341 (2026-09-24).
+>
+> R341 changes:
+> - the bundled catalogue is now a YAML resource
+>   (`aethercode-core/src/main/resources/aethercode-providers.yaml`)
+>   rather than hardcoded Java; `bundledDefaults()` is the
+>   last-resort fallback only.
+> - the daemon reads env vars across **Process → User →
+>   Machine** scopes via `RegistryHelper.readEnv(name)`
+>   (previously just `System.getenv()` — Machine-level
+>   `HKLM\...\Session Manager\Environment` entries were
+>   invisible to the spawned daemon, which made
+>   `DEEPSEEK_API_KEY` "missing" for users who set it via
+>   `setx /m`).
+> - new provider spec fields: `apiKey` (inline override),
+>   `enabled` (hide from picker), `headers`, `timeout`,
+>   `connectTimeout`.
+> - the Settings panel switched to a 2-level picker
+>   (`ProviderModelPicker`) with provider chips + a
+>   case-insensitive model filter input — 30+ models in a
+>   single dropdown was the user complaint that triggered
+>   the round.
 
 AetherCode treats every provider as an **OpenAI-compatible** HTTP
 endpoint. Differentiation lives in `baseUrl` + `apiKeyEnv` per
-provider, not in the chat-client code — see
-`ProviderRegistry.bundledDefaults()` for the canonical
-catalogue and `aethercode-core/src/main/java/org/aethercode/core/providers/`
-for the schema.
+provider, not in the chat-client code. The schema is the
+`ProviderSpec` record in
+`aethercode-core/src/main/java/org/aethercode/core/providers/`.
 
 The Settings → Provider picker reads this catalogue via the
 `listProviders` JSON-RPC; the Settings panel is filtered by
 "is `apiKeyEnv` non-blank in the daemon's env?" so users only
 see brands they can actually call (toggle "Show all providers"
-to see everything).
+to see everything). R341 calls `RegistryHelper.readEnv()` which
+walks **Process → User → Machine** scope so a key set with
+`setx /m` (Machine scope) is visible to the daemon too —
+previously it wasn't, and the Settings panel reported
+`(no API key)` for users who'd correctly configured their
+account.
 
 ---
 
@@ -73,11 +98,14 @@ providers" off to filter the view).
 
 ## Switch provider / model
 
-Open **Settings → Model** (the section that lists "Provider
-(current)"). Pick a provider in the first dropdown; the second
-dropdown reloads with that provider's models. Pick a model and
-click **Save**. The daemon rebuilds the chat client; the next
-query uses the new endpoint.
+Open **Settings → Model**. The new R341 picker shows a row of
+provider chips (current provider has a filled dot, others an
+outline dot). Click a chip to switch the model list to that
+brand; type in the filter input to narrow the model list (case-
+insensitive substring match). Click a model row to set it as the
+pending pick; the **Save** button commits the change (the
+daemon rebuilds the chat client and the next query uses the
+new endpoint).
 
 For one-off switches without going through Settings, send the
 JSON-RPC manually:
@@ -145,23 +173,36 @@ shipped inside the jar) is for the renderer-side
 ModelCard / ModelPicker and is not the live list the daemon
 uses for `listProviders`.
 
-Example user-side `providers.yaml`:
+**R341 schema** (`aethercode-core/src/main/resources/aethercode-providers.yaml`):
 
 ```yaml
 providers:
   - name: glm
-    type: openai-compat
-    baseUrl: https://open.bigmodel.cn/api/paas/v4
-    apiKeyEnv: GLM_API_KEY
-    defaultModel: glm-4-flash
+    type: openai-compat            # optional, default openai-compat
+    baseUrl: https://...           # required
+    apiKeyEnv: GLM_API_KEY        # env var name to resolve the key from
+    # apiKey: sk-xxx               # R341: optional inline override (NOT recommended)
+    # enabled: true                # R341: default true; false hides from picker
+    # headers:                     # R341: extra HTTP headers per request
+    #   X-Trace-Id: aethercode
+    # timeout: 60000               # R341: Spring AI timeout (ms), null = default
+    # connectTimeout: 10000        # R341: TCP connect timeout (ms)
+    defaultModel: glm-4-flash      # optional
     models:
       - id: glm-4-flash
-        inputPer1k: 0.0
-        outputPer1k: 0.0
         context: 1000000
         maxOutput: 1000000
+        inputPer1k: 0.0
+        outputPer1k: 0.0
         default: true
 ```
+
+API key resolution chain (R341):
+
+1. `apiKey` field (if set)
+2. `apiKeyEnv` + `RegistryHelper.readEnv()` — Process → User → Machine scope
+3. Derived `<UPPER_NAME>_API_KEY` (e.g. `GLM_API_KEY`) via the same 3-scope lookup
+4. Nothing → `hasApiKey: false`, picker hides the brand
 
 The daemon will log `[R81] jar: …` on startup showing which jar
 it picked; the next `listProviders` RPC will return the
@@ -176,11 +217,21 @@ desktop's process env — there's no way to inject env into a
 running daemon).
 
 **GLM / Qwen / DeepSeek works locally but the Settings panel
-shows them as `(no API key)`.** Same root cause — the desktop
-process didn't have the env var. Use `Get-Process | Where
-{$_.ProcessName -eq 'aethercode-desktop'} | Select Id, StartTime`
-to see when the desktop started; if it was before you exported
-the var, restart it.
+shows them as `(no API key)` even though the env var is set.**
+R341: `RegistryHelper.readEnv()` walks Process → User → Machine
+scope — most cases resolve correctly. If you set the var
+via `setx /m` (Machine scope) **before** logging into Windows,
+it should now be visible. If you set it via `setx` (User scope)
+the existing PowerShell session won't see it; restart the
+desktop. If neither scope shows the var, check
+`[Environment]::GetEnvironmentVariable('VAR_NAME', 'Machine')`
+to confirm it's actually persisted (Windows sometimes
+truncates Machine-scope env values > 1024 chars).
+
+**Use `Get-Process | Where {$_.ProcessName -eq
+'aethercode-desktop'} | Select Id, StartTime`** to see when
+the desktop started; if it was before you exported the var,
+restart it.
 
 **Switched provider but the next query still uses the old
 model.** Make sure you clicked **Save** in Settings — the
