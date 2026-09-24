@@ -372,37 +372,76 @@ public final class ProviderRegistry {
                         new ModelSpec("MiniMax-Text-01",  0.001, 0.008, 1_000_000, 512_000, false),
                         new ModelSpec("MiniMax-M1",       0.001, 0.008, 1_000_000, 512_000, false)
                 )));
-        // glm (智谱)
+        // glm (智谱) — R340: refreshed model list to
+        // current generation. glm-4-flash is the cheapest
+        // tier (free in some promos; public price ¥0.1/M
+        // input + ¥0.1/M output as of late 2025). glm-4.5
+        // is the late-2025 flagship; glm-4.5-air and
+        // glm-4.5-flash round out the family. We keep the
+        // legacy glm-4-plus / glm-4-air entries so anyone
+        // on the older tier still finds their model.
         out.add(new ProviderSpec(
                 "glm", "openai-compat",
                 "https://open.bigmodel.cn/api/paas/v4",
                 "GLM_API_KEY",
-                "glm-4-plus",
+                "glm-4-flash",
                 List.of(
-                        new ModelSpec("glm-4-plus",  0.0007, 0.0007, 128_000, 128_000, true),
-                        new ModelSpec("glm-4-air",  0.0001, 0.0001, 128_000, 128_000, false),
-                        new ModelSpec("glm-4-flash", 0.0001, 0.0001, 128_000, 128_000, false)
+                        // Free tier / cheapest
+                        new ModelSpec("glm-4-flash",   0.0,    0.0,    1_000_000, 1_000_000, false),
+                        new ModelSpec("glm-4-air",     0.0001, 0.0001,   128_000, 128_000, false),
+                        // R340: late-2025 GLM 4.5 family
+                        new ModelSpec("glm-4.5",       0.0006, 0.002,    128_000, 128_000, true),
+                        new ModelSpec("glm-4.5-air",   0.0002, 0.0006,  128_000, 128_000, false),
+                        new ModelSpec("glm-4.5-flash", 0.0,    0.0,    1_000_000, 1_000_000, false),
+                        // R340: GLM Z1 reasoning model (free
+                        // tier: glm-z1-air)
+                        new ModelSpec("glm-z1-air",    0.0,    0.0,    128_000, 128_000, false),
+                        // Legacy entries — kept for users
+                        // who already deployed a project on
+                        // glm-4-plus / glm-4.6 etc.
+                        new ModelSpec("glm-4-plus",    0.0007, 0.0007,  128_000, 128_000, false)
                 )));
-        // qwen (通义千问, DashScope OpenAI-compat)
+        // qwen (通义千问, DashScope OpenAI-compat) — R340:
+        // refreshed to include qwen3 family (Aug 2025
+        // release) and qwen-coder-plus. qwen-turbo is the
+        // cheapest tier (¥0.0003/M input); qwen3-max is
+        // the late-2025 flagship reasoning model.
         out.add(new ProviderSpec(
                 "qwen", "openai-compat",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 "DASHSCOPE_API_KEY",
-                "qwen-plus",
+                "qwen-turbo",
                 List.of(
-                        new ModelSpec("qwen-plus",      0.0008, 0.002, 128_000, 128_000, true),
-                        new ModelSpec("qwen-turbo",     0.0003, 0.0006, 1_000_000, 1_000_000, false),
+                        // Cheapest (free in some promos)
+                        new ModelSpec("qwen-turbo",     0.0003, 0.0006,  1_000_000, 1_000_000, false),
+                        // R340: qwen3 family
+                        new ModelSpec("qwen3-max",      0.002,  0.006,   256_000, 256_000, false),
+                        new ModelSpec("qwen3-coder-plus", 0.001, 0.005,   128_000, 128_000, false),
+                        new ModelSpec("qwen3-vl-plus", 0.001,  0.004,   128_000, 128_000, false),
+                        // Legacy
+                        new ModelSpec("qwen-plus",      0.0008, 0.002,   128_000, 128_000, false),
                         new ModelSpec("qwen-max",       0.0002, 0.0006, 128_000, 128_000, false),
                         new ModelSpec("qwen-coder-plus", 0.0008, 0.002, 128_000, 128_000, false)
                 )));
-        // deepseek
+        // deepseek — R340: refreshed to include V3.1 and V3
+        // series (Aug/Sep 2025). deepseek-chat and V3 share
+        // the same endpoint; reasoner (R1) is separate. The
+        // V3.x family supports tool calls + 64K context.
+        // deepseek-chat itself is the cheapest (cache miss
+        // ¥0.27/M input as of late 2025).
         out.add(new ProviderSpec(
                 "deepseek", "openai-compat",
                 "https://api.deepseek.com",
                 "DEEPSEEK_API_KEY",
                 "deepseek-chat",
                 List.of(
+                        // Cheap / general chat
                         new ModelSpec("deepseek-chat",     0.00027, 0.0011, 64_000, 64_000, true),
+                        // R340: V3.x series — same price as
+                        // chat, supports tool calls + JSON mode.
+                        new ModelSpec("deepseek-v3",       0.00027, 0.0011, 64_000, 64_000, false),
+                        new ModelSpec("deepseek-v3.1",     0.00027, 0.0011, 64_000, 64_000, false),
+                        // Reasoning
                         new ModelSpec("deepseek-reasoner", 0.00055, 0.00219, 64_000, 64_000, false)
                 )));
         // Foreign brands — listed, untested.

@@ -116,6 +116,50 @@ class ProviderRegistryTest {
     }
 
     @Test
+    void bundledDefaults_R340_carriesLatestFreeAndReasoningModels() {
+        // R340: refreshed the Chinese brand catalogue to
+        // late-2025 / early-2026 models. Source-pin each
+        // model id we deliberately added so a future
+        // housekeeping pass can't quietly delete a
+        // model the user is actively using.
+        //
+        // GLM 4.5 family — flagship refresh from
+        // 智谱, late-2025. glm-4-flash + glm-4.5-flash
+        // are the cheapest tier (often free in promos).
+        // glm-z1-air is the free reasoning tier.
+        assertHasModel("glm", "glm-4-flash");
+        assertHasModel("glm", "glm-4.5");
+        assertHasModel("glm", "glm-4.5-air");
+        assertHasModel("glm", "glm-4.5-flash");
+        assertHasModel("glm", "glm-z1-air");
+        // Qwen3 family — 阿里 Aug-2025 refresh.
+        // qwen-turbo remains the cheapest. qwen3-max /
+        // qwen3-coder-plus / qwen3-vl-plus round it out.
+        assertHasModel("qwen", "qwen-turbo");
+        assertHasModel("qwen", "qwen3-max");
+        assertHasModel("qwen", "qwen3-coder-plus");
+        assertHasModel("qwen", "qwen3-vl-plus");
+        // DeepSeek V3.x family — Aug/Sep-2025 refresh.
+        // V3.1 supersedes V3 supersedes the original
+        // chat; all share the same cheap /M-token tier.
+        assertHasModel("deepseek", "deepseek-v3");
+        assertHasModel("deepseek", "deepseek-v3.1");
+    }
+
+    private static void assertHasModel(String providerName, String modelId) {
+        ProviderSpec p = ProviderRegistry.bundledDefaults().stream()
+                .filter(s -> providerName.equals(s.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "bundled defaults must contain provider " + providerName));
+        assertTrue(p.models().stream().anyMatch((m) -> modelId.equals(m.id())),
+                "provider " + providerName + " must carry model " + modelId
+                        + " (R340 default); aborting to keep the late-2025 Chinese "
+                        + "model list intact for users on glm-4-flash / qwen3-max / "
+                        + "deepseek-v3.1");
+    }
+
+    @Test
     void providerSpec_rejectsUnknownDefaultModel() {
         // The validation runs in the canonical
         // constructor; a provider that points at a

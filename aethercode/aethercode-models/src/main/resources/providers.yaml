@@ -8,6 +8,34 @@
 # column is the prompt-cache rate (10x cheaper on Anthropic, 50% on
 # OpenAI). The local ollama models are free ($0/M) because the
 # compute is on the user's box.
+#
+# IMPORTANT — yaml schema note: this file is consumed by TWO
+# readers with DIFFERENT schemas:
+#   1. ProviderRegistry (aethercode-core) — used by the
+#      daemon's listProviders RPC + Settings panel. Maps
+#      providers[].name → models[].name + capabilities +
+#      pricing.{input,output,cached}PerMTokensUsd +
+#      contextWindow/maxOutput.
+#   2. ModelRegistryLoader (aethercode-models) — used by
+#      the renderer's ModelCard / ModelPicker for richer
+#      model metadata. Also reads the same shape.
+# We keep the legacy shape here (name, contextWindow,
+# maxOutput, capabilities, pricing.PerMTokensUsd) so both
+# readers parse the same file. The R340 daemon-side
+# refresh (adding glm-4-flash, qwen3-coder-plus, deepseek-v3,
+# etc.) is in ProviderRegistry.bundledDefaults() — that
+# path wins when <userHome>/.aethercode/providers.yaml is
+# absent (the user's normal case), so the daemon's
+# listProviders RPC returns the fresh catalogue even
+# though this resource file is frozen for now.
+#
+# A future round should harmonise the two schemas and
+# merge this resource with bundledDefaults (single source
+# of truth). For now, see ProviderRegistry.bundledDefaults()
+# for the live R340+ provider list — glm 4-flash, glm 4.5
+# family, glm-z1-air, qwen3-max/coder-plus/vl-plus,
+# deepseek-v3 / v3.1, etc.
+
 providers:
   - name: anthropic
     models:
