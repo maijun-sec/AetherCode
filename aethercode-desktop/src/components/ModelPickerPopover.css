@@ -89,13 +89,20 @@
   transform: rotate(180deg);
 }
 
-/* popover overlay. anchored to the trigger; the dir class
- * flips the bottom vs top anchor. Width is generous enough
- * for the chip row + model list rows. */
+/* popover overlay. Rendered via React portal at
+ * document.body so it escapes the .input-config-bar's
+ * overflow-x: auto clip — the legacy <select> dropdown
+ * didn't need this trick because it used the browser's
+ * native dropdown layer, but our custom popover would
+ * otherwise be invisible when the trigger sits inside the
+ * scrolling config bar. Positioning (left/top/bottom)
+ * is computed in JS from the trigger's getBoundingClientRect
+ * (see ModelPickerPopover.tsx), so this class only sets
+ * the chrome (z-index, background, border, shadow, size).
+ */
 .r342-model-picker-popover {
-  position: absolute;
-  left: 0;
-  z-index: 50;
+  position: fixed;
+  z-index: 9999;
   min-width: 380px;
   max-width: 520px;
   max-height: 60vh;
@@ -108,11 +115,15 @@
 }
 
 .r342-model-picker-popover-up {
-  bottom: calc(100% + 6px);
+  /* the bottom is set via inline style; this class is a
+   * hook for future styling tweaks (e.g. add a small
+   * caret pointing down at the trigger). */
 }
 
 .r342-model-picker-popover-down {
-  top: calc(100% + 6px);
+  /* the top is set via inline style; this class is a
+   * hook for future styling tweaks (e.g. add a small
+   * caret pointing up at the trigger). */
 }
 
 /* when the picker is inside the popover, give it a

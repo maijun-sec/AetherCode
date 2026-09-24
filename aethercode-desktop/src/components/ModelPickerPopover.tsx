@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ProviderModelPicker,
   type ProviderInfo,
@@ -92,25 +93,35 @@ export function ModelPickerPopover(props: ModelPickerPopoverProps) {
   // open state for the popover. closed by default — the
   // trigger button is the constant in the input bar.
   const [open, setOpen] = useState(false);
-  // anchor refs for the click-outside detector.
+  // anchor refs for the click-outside detector. The trigger
+  // lives inside .r342-model-picker (rootRef); the popover
+  // is rendered via createPortal at document.body so we
+  // need a separate popoverRef to keep it inside the
+  // "click is mine" zone — otherwise clicking a chip in
+  // the popover would trip the click-outside detector and
+  // close the popover mid-interaction.
   const rootRef = useRef<HTMLDivElement | null>(null);
-  // tracks whether the provider list has changed since
-  // the popover last opened; when it has, the user has
-  // hit "Show all" / refreshed providers while the
-  // popover was already open, so we leave it open. The
-  // check runs in a useEffect so the chip row re-renders
-  // without us having to close + reopen.
-  // placement — computed when the popover opens; uses
-  // the trigger's getBoundingClientRect to decide whether
-  // to grow upward (default when near the bottom of the
-  // viewport).
-  const [placementDir, setPlacementDir] = useState<'up' | 'down'>('up');
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  // Popover position + placement direction. Computed from
+  // the trigger's bounding rect at open time and on
+  // scroll/resize while open. The popover is rendered
+  // through createPortal at document.body level (NOT as a
+  // child of the input config bar) because .input-config-bar
+  // has `overflow-x: auto` and clips absolutely-positioned
+  // descendants — the popover would be invisible.
+  const [pos, setPos] = useState<{ left: number; top: number; placement: 'up' | 'down' } | null>(null);
   useEffect(() => {
     if (!open) return;
     const onDocMouseDown = (e: MouseEvent) => {
       const root = rootRef.current;
-      if (!root) return;
-      if (e.target instanceof Node && root.contains(e.target)) return;
+      const popover = popoverRef.current;
+      // A click inside either the trigger or the portaled
+      // popover is "ours" — don't close. Anything else is
+      // outside and should close.
+      if (e.target instanceof Node) {
+        if (root && root.contains(e.target)) return;
+        if (popover && popover.contains(e.target)) return;
+      }
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -124,7 +135,9 @@ export function ModelPickerPopover(props: ModelPickerPopoverProps) {
     };
   }, [open]);
   // when the trigger flips open, recompute placement so
-  // the popover doesn't clip the viewport.
+  // the popover doesn't clip the viewport. The popover is
+  // rendered via createPortal at document.body so the
+  // absolute coordinates are page-relative.
   const onTriggerClick = () => {
     if (disabled) return;
     setOpen((prev) => {
@@ -133,15 +146,54 @@ export function ModelPickerPopover(props: ModelPickerPopoverProps) {
         const rect = rootRef.current.getBoundingClientRect();
         const viewportH = window.innerHeight || document.documentElement.clientHeight;
         const spaceBelow = viewportH - rect.bottom;
-        // we don't know the popover height up-front, but
-        // the picker is ~360px tall with 7 providers; if
-        // there's less than 380px below the trigger, grow
-        // upward so the popover doesn't get clipped.
-        setPlacementDir(spaceBelow < 380 ? 'up' : 'down');
+        // Picker is ~360px tall with 7 providers; if there's
+        // less than 380px below the trigger, grow upward so
+        // the popover doesn't get clipped by the viewport
+        // edge. Otherwise grow downward (the trigger sits in
+        // the lower config bar of the chat column).
+        const placement: 'up' | 'down' = spaceBelow < 380 ? 'up' : 'down';
+        // left edge: align with trigger's left, but never
+        // overflow the right edge of the viewport (the
+        // popover can be up to 520px wide).
+        const popWidth = 520;
+        const margin = 8;
+        let left = rect.left;
+        const maxLeft = window.innerWidth - popWidth - margin;
+        if (left > maxLeft) left = Math.max(margin, maxLeft);
+        // top / bottom: page-relative for createPortal.
+        const top = placement === 'down'
+          ? rect.bottom + 6
+          : rect.top - 6; // anchor the popover's bottom at top - 6
+        setPos({ left, top, placement });
       }
       return next;
     });
   };
+  // Reposition on scroll / resize while open so the
+  // popover stays glued to the trigger button.
+  useEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      if (!rootRef.current) return;
+      const rect = rootRef.current.getBoundingClientRect();
+      const viewportH = window.innerHeight || document.documentElement.clientHeight;
+      const spaceBelow = viewportH - rect.bottom;
+      const placement: 'up' | 'down' = spaceBelow < 380 ? 'up' : 'down';
+      const popWidth = 520;
+      const margin = 8;
+      let left = rect.left;
+      const maxLeft = window.innerWidth - popWidth - margin;
+      if (left > maxLeft) left = Math.max(margin, maxLeft);
+      const top = placement === 'down' ? rect.bottom + 6 : rect.top - 6;
+      setPos({ left, top, placement });
+    };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open]);
   // resolve the label parts. Falls back to the first
   // visible provider's default model when the daemon
   // reports a model the local cache doesn't know about
@@ -179,24 +231,36 @@ export function ModelPickerPopover(props: ModelPickerPopoverProps) {
         </span>
         <span className="r342-model-picker-trigger-caret" aria-hidden="true">▾</span>
       </button>
-      {open ? (
-        <div
-          className={[
-            'r342-model-picker-popover',
-            placementDir === 'up' ? 'r342-model-picker-popover-up' : 'r342-model-picker-popover-down',
-          ].filter(Boolean).join(' ')}
-          role="dialog"
-          aria-label="Pick a model"
-          data-testid="r342-model-picker-popover"
-        >
-          <ProviderModelPicker
-            providers={providers}
-            currentProvider={currentProvider}
-            currentModel={currentModel}
-            onSwitch={onPick}
-          />
-        </div>
-      ) : null}
+      {open && pos && typeof document !== 'undefined'
+        ? createPortal(
+          <div
+            ref={popoverRef}
+            className={[
+              'r342-model-picker-popover',
+              pos.placement === 'up' ? 'r342-model-picker-popover-up' : 'r342-model-picker-popover-down',
+            ].filter(Boolean).join(' ')}
+            style={{
+              position: 'fixed',
+              left: pos.left,
+              top: pos.placement === 'down' ? pos.top : undefined,
+              bottom: pos.placement === 'up'
+                ? `calc(100vh - ${pos.top}px)`
+                : undefined,
+            }}
+            role="dialog"
+            aria-label="Pick a model"
+            data-testid="r342-model-picker-popover"
+          >
+            <ProviderModelPicker
+              providers={providers}
+              currentProvider={currentProvider}
+              currentModel={currentModel}
+              onSwitch={onPick}
+            />
+          </div>,
+          document.body
+        )
+        : null}
     </div>
   );
 }
