@@ -10,7 +10,17 @@ import type { ProviderInfo } from '../lib/methods';
 // know about `/workflow create` to see something
 // selectable. See workflowExamples.ts for the YAMLs.
 import { WORKFLOW_EXAMPLES, importExampleWorkflows } from './workflowExamples';
-import { computeModelDropdownValue } from './modelDropdownValue';
+// R342: the model picker in the input config bar used to be a flat
+// HTML <select> with every model across every provider squashed into
+// one list. The user reported "现在 model 还是没办法筛选啊，只有一个
+// MiniMax-M3" — a closed <select> only shows the currently-selected
+// option, and there's no way to filter when the catalog grows past a
+// handful of entries. ModelPickerPopover wraps the R341 2-level picker
+// (chip row + debounced filter) in a compact trigger + popover so the
+// input bar stays one-line while the user gets a full searchable
+// picker when they click the trigger.
+import { ModelPickerPopover } from './ModelPickerPopover';
+import './ModelPickerPopover.css';
 import './MessageInput.css';
 
 // R295: per-quality tooltip text. Mirrors the
@@ -107,7 +117,6 @@ export function MessageInput() {
     isConnected,
     model,
     permissionMode,
-    setModel,
     setPermissionMode,
     tools,
     enabledTools,
@@ -214,66 +223,28 @@ export function MessageInput() {
   // RPC returns every model across every provider
   // (minmax / anthropic / openai / glm / qwen / deepseek
   // / gemini + any custom providers.yaml entries). The
-  // dropdown below uses this list — no more hard-coded
+  // popover below uses this list — no more hard-coded
   // 3-model subset.
   useEffect(() => {
     if (isConnected) void refreshProviders();
   }, [isConnected, refreshProviders]);
 
-  // flatten the provider list into a (provider,
-  // model) pair list, with the current provider's models
-  // first. The dropdown shows `provider/model` so the
-  // user can see which model belongs to which provider.
-  //
-  // R282: filter out providers the user hasn't
-  // configured (no API key in the daemon's process
-  // environment). The user reported "你配置的很多模型
-  // 都是我没办法用的" — the dropdown showed every
-  // model in the registry, including anthropic /
-  // openai whose env vars aren't set. The hasApiKey
-  // flag from listProviders solves that — providers
-  // the user can't call simply don't appear.
-  const modelEntries = useMemo(() => {
-    const list: { id: string; label: string; provider: string }[] = [];
-    const providers = (availableProviders ?? []) as ProviderInfo[];
-    for (const p of providers) {
-      // hasApiKey is computed by the daemon at list
-      // time (it reads System.getenv each call).
-      // Undefined (older daemon) is treated as "show
-      // it" for backward compat — fresh daemons
-      // always set the field.
-      if (p.hasApiKey === false) continue;
-      for (const m of p.models ?? []) {
-        list.push({
-          id: `${p.name}/${m.id}`,
-          label: `${p.name} / ${m.id}`,
-          provider: p.name,
-        });
-      }
-    }
-    // Sort: current provider first, then alphabetical.
-    list.sort((a, b) => {
-      if (a.provider === currentProvider && b.provider !== currentProvider) return -1;
-      if (b.provider === currentProvider && a.provider !== currentProvider) return 1;
-      return a.label.localeCompare(b.label);
+  // R342: filter out providers the user can't actually call.
+  // The legacy R282 dropdown hid providers whose env var was
+  // unset; the new popover does the same — we hand a
+  // hasApiKey-stripped list to ModelPickerPopover (its internal
+  // ProviderModelPicker also filters, but pre-filtering here
+  // keeps the chip row count consistent with what the trigger
+  // label shows). providers explicitly toggled off
+  // (enabled=false) are always hidden.
+  const visibleProviders = useMemo(() => {
+    const list = (availableProviders ?? []) as ProviderInfo[];
+    return list.filter((p) => {
+      if (p.enabled === false) return false;
+      if (p.hasApiKey === false) return false;
+      return true;
     });
-    return list;
-  }, [availableProviders, currentProvider]);
-
-  // compute the dropdown's `value` so it
-  // matches the option id (which is
-  // `${providerName}/${modelId}`). Pre-fix the
-  // dropdown used `value={model ?? ''}` but the
-  // options had provider-prefixed ids, so the
-  // value never matched an option and the
-  // browser fell back to the first option in
-  // the list — making it look like the user's
-  // "default" model was whatever happened to
-  // sort first (e.g. M1), not what the daemon
-  // actually had (M3). See
-  // ./modelDropdownValue.ts for the pure
-  // helper + test surface.
-  const dropdownValue = computeModelDropdownValue(model, modelEntries);
+  }, [availableProviders]);
 
   useEffect(() => {
     if (isConnected) ref.current?.focus();
@@ -876,44 +847,32 @@ export function MessageInput() {
         </div>
         <div className="config-group">
           <label className="config-label">Model</label>
-          <select
-            className="config-select"
-            // use the computed value that
-            // matches an option id, not the bare
-            // model. See the dropdownValue useMemo
-            // above for the rationale.
-            value={dropdownValue}
-            onChange={async (e) => {
-              // when the user picks a model, the value
-              // is "provider/modelId" (e.g. "anthropic/claude-sonnet-4-5").
-              // We split, switch provider if needed, then set
-              // the model id. The daemon's setModel RPC only
-              // accepts the bare model id; the provider switch
-              // is a separate RPC (switchProvider).
-              const v = e.target.value;
-              const slash = v.indexOf('/');
-              if (slash < 0) {
-                await setModel(v);
-                return;
-              }
-              const newProvider = v.slice(0, slash);
-              const newModel = v.slice(slash + 1);
-              if (newProvider && newProvider !== currentProvider) {
-                await useStore.getState().switchProvider(newProvider, newModel);
-              } else {
-                await setModel(newModel);
-              }
-            }}
+          {/* R342: replaced the legacy R282 <select> dropdown with
+              a compact popover trigger that opens the full R341
+              2-level picker (chip row + debounced filter + model
+              list). The user reported "现在 model 还是没办法筛选
+              啊，只有一个 MiniMax-M3" — a closed <select> only
+              shows the currently-selected option, so a user
+              scanning the input bar sees a single model and
+              nothing else. The popover expands on click and
+              collapses on selection. Switching providers inside
+              the popover is purely UI (chip selection); only
+              selecting a model fires the store.switchProvider
+              RPC. */}
+          <ModelPickerPopover
+            providers={visibleProviders}
+            currentProvider={currentProvider}
+            currentModel={model}
             disabled={isStreaming || !isConnected}
-          >
-            {modelEntries.length === 0 ? (
-              <option value={model ?? ''}>{model ?? '—'}</option>
-            ) : (
-              modelEntries.map((e) => (
-                <option key={e.id} value={e.id}>{e.label}</option>
-              ))
-            )}
-          </select>
+            onSwitch={async (newProvider, newModel) => {
+              // Route through the store action so the daemon
+              // RPC + the canonical store fields stay in sync.
+              // switchProvider falls back to defaultModel when
+              // newModel is null, so it works for both
+              // same-provider and cross-provider cases.
+              await useStore.getState().switchProvider(newProvider, newModel);
+            }}
+          />
         </div>
         <div className="config-group">
           <label className="config-label">Perm</label>

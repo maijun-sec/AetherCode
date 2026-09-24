@@ -1,0 +1,123 @@
+/* R342 — compact model picker popover styles.
+ *
+ * Visual constraints:
+ *   - trigger button fits one line in .input-config-bar
+ *     (sibling to .config-group-sdd-quality, perm, cwd, etc.)
+ *   - popover overlays the chat column with the full R341
+ *     chip row + filter + model list
+ *   - popover grows upward by default (the chat input
+ *     sits at the bottom of the column); a useEffect
+ *     flips it to downward when the trigger is near
+ *     the top of the viewport
+ *   - popover doesn't visually compete with the trigger
+ *     (subtle shadow + 1px border)
+ *   - the trigger caret flips too, so the user sees the
+ *     open/closed state at a glance
+ */
+
+.r342-model-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.r342-model-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--chat-border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  background: var(--chat-bg-elevated, transparent);
+  color: var(--chat-text, inherit);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.r342-model-picker-trigger:hover:not(:disabled) {
+  border-color: var(--chat-accent, rgba(80, 120, 220, 0.55));
+  background: var(--chat-bg-hover, rgba(127, 127, 127, 0.05));
+}
+
+.r342-model-picker-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.r342-model-picker-open .r342-model-picker-trigger {
+  border-color: var(--chat-accent, rgba(80, 120, 220, 0.85));
+}
+
+.r342-model-picker-trigger-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.r342-model-picker-trigger-provider {
+  font-weight: 600;
+  color: var(--chat-accent, rgba(80, 120, 220, 1));
+  flex-shrink: 0;
+}
+
+.r342-model-picker-trigger-sep {
+  color: var(--chat-text-muted, rgba(127, 127, 127, 0.7));
+  flex-shrink: 0;
+}
+
+.r342-model-picker-trigger-model {
+  color: var(--chat-text, inherit);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.r342-model-picker-trigger-caret {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--chat-text-muted, rgba(127, 127, 127, 0.7));
+  transition: transform 120ms ease;
+}
+
+.r342-model-picker-open .r342-model-picker-trigger-caret {
+  transform: rotate(180deg);
+}
+
+/* popover overlay. anchored to the trigger; the dir class
+ * flips the bottom vs top anchor. Width is generous enough
+ * for the chip row + model list rows. */
+.r342-model-picker-popover {
+  position: absolute;
+  left: 0;
+  z-index: 50;
+  min-width: 380px;
+  max-width: 520px;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--chat-bg, #1e1e22);
+  border: 1px solid var(--chat-border, rgba(127, 127, 127, 0.4));
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 12px;
+}
+
+.r342-model-picker-popover-up {
+  bottom: calc(100% + 6px);
+}
+
+.r342-model-picker-popover-down {
+  top: calc(100% + 6px);
+}
+
+/* when the picker is inside the popover, give it a
+ * slight backdrop so the chip row's borders don't
+ * visually merge with the popover's border. */
+.r342-model-picker-popover .r341-picker {
+  gap: 10px;
+}

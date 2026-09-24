@@ -339,6 +339,24 @@ export interface ProviderInfo {
    *  Settings / dropdown so the user doesn't see a
    *  bunch of models they can't call. */
   hasApiKey?: boolean;
+  /** R341: false when a {@code providers.yaml} entry
+   *  (or bundled default) explicitly toggled the
+   *  provider off. The renderer hides disabled rows
+   *  entirely — they shouldn't appear in the picker,
+   *  even with "Show all" enabled. Daemon builds
+   *  pre-R341 don't send the flag; default to true
+   *  on the wire (the daemon's Boolean.TRUE.equals
+   *  fallback in ProviderRegistry). */
+  enabled?: boolean;
+  /** R341: non-secret custom HTTP headers the
+   *  Spring AI client attaches to outbound requests
+   *  (e.g. anthropic-version, openai-organization).
+   *  Excluded from the RPC response when empty. */
+  headers?: Record<string, string>;
+  /** R341: Spring AI request timeout override (ms). */
+  timeout?: number;
+  /** R341: Spring AI connect timeout override (ms). */
+  connectTimeout?: number;
   models: {
     id: string;
     inputPer1k: number;

@@ -21,10 +21,21 @@ import {
   scanLatestSddPhaseInMessages,
   SDD_PHASE_TITLE_TO_ID,
   SDD_PHASE_DONE_RE,
+  // R322 was the round that introduced the skip regex;
+  // the debug test deliberately only exercises the
+  // "done" path so SDD_PHASE_SKIP_RE isn't matched here.
+  // We still import it (and consume it via `void` below)
+  // to pin the export — a future refactor that drops the
+  // symbol from the store would fail tsc here rather
+  // than silently regress the live scanner.
+  SDD_PHASE_SKIP_RE,
 } from '../index';
 
 const ML = join(process.cwd(), 'src', 'components', 'MessageList.tsx');
 const ml = readFileSync(ML, 'utf8');
+
+// pinned reference — see import block above.
+void SDD_PHASE_SKIP_RE;
 
 describe('R322 scan debug (R330 shared helper)', () => {
   it('scan regex matches the R322 pause message format', () => {
