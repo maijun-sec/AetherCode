@@ -2407,16 +2407,36 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         }
         String newId = org.aethercode.core.transcript.SessionStore.newSessionId();
         Transcript empty = sessionStore.loadOrCreate(newId);
-        // prior round 1: persist the per-session cwd in a
-        // sidecar file. The engine's main load path
-        // (loadSession) reads the sidecar and uses
-        // the cwd to build the engine's AppState.
-        if (cwd != null && !cwd.isBlank()) {
+        // R361: persist the per-session cwd in BOTH the
+        // legacy sidecar file (for backwards compat with older
+        // daemons that read the sidecar) AND the SQLite
+        // metadata index (the new authoritative source for
+        // listSessions + ProjectGroupList). The dual-write
+        // keeps a mixed-version fleet (R361 + R199-era
+        // daemons) compatible during a phased rollout.
+        String normalisedCwd = (cwd != null && !cwd.isBlank()) ? cwd : null;
+        if (normalisedCwd != null) {
             java.nio.file.Path p = empty.file();
             if (p != null) {
                 java.nio.file.Path cwdSidecar = p.getParent().resolve(newId + ".cwd");
-                java.nio.file.Files.writeString(cwdSidecar, cwd);
+                java.nio.file.Files.writeString(cwdSidecar, normalisedCwd);
             }
+        }
+        // R361: also upsert into SQLite so listSessions
+        // (which reads SQLite, not the directory scan) sees
+        // the new session immediately. Without this upsert,
+        // the row only appears after the first message
+        // lands and triggers the touch() path. The user
+        // reported "clicked + New Session, the LeftPanel
+        // doesn't show the new entry" — that was the gap.
+        try {
+            sessionStore.touch(newId, normalisedCwd, null, null, null, null, 0);
+        } catch (java.io.IOException touchEx) {
+            // touch() failure is non-fatal — the legacy
+            // JSONL + sidecar path still works for older
+            // readers. We log loudly so a broken DB
+            // surfaces in the diagnostic log.
+            LOG.warn("createSession({}): SessionStore.touch failed: {}", newId, touchEx.getMessage());
         }
         // materialise the empty file on disk so
         // listSessions surfaces the new session immediately.
@@ -2538,6 +2558,36 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         java.nio.file.Path prev = appState.cwd();
         appState.cwd(normalised);
         LOG.info("setCwd: {} -> {}", prev, normalised);
+        // R361 Phase 2: keep the SQLite metadata's `cwd`
+        // column in sync when the daemon's bindSessionCwd /
+        // switchProject RPC re-binds a session to a new
+        // project. The append-listener path (attachSessionStore
+        // → onMessageAppend) only fires on the first user
+        // message; before that, the per-session cwd would be
+        // absent from the SQLite index even though the engine
+        // has already been bound to the new project. Without
+        // this touch, listByCwd() would silently mis-attribute
+        // the session to the OLD cwd until the first message
+        // arrived. byteDelta=0 here — this is a metadata-only
+        // refresh, not a stats update.
+        if (sessionStore != null) {
+            try {
+                String sid = appState.sessionId();
+                if (sid != null) {
+                    sessionStore.touch(sid, normalised.toString(),
+                            null, null, null, null, 0);
+                }
+            } catch (java.io.IOException touchEx) {
+                // non-fatal — the in-memory cwd is the
+                // authoritative state for the engine's
+                // own query path; SQLite is just the index
+                // for listSessions / ProjectGroup. Log at
+                // debug so a broken DB doesn't drown the
+                // daemon log.
+                LOG.debug("setCwd({}): SessionStore.touch failed: {}",
+                        normalised, touchEx.getMessage());
+            }
+        }
         return prev;
     }
 
@@ -2602,6 +2652,29 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                         LOG.warn("failed to persist message to session file {}: {}",
                                 cur.file(), e.getMessage());
                     }
+                    // R361 Phase 2: keep the SQLite metadata
+                    // in sync with the JSONL byte count so
+                    // listSessions's size_bytes column is
+                    // accurate (the renderer uses it for the
+                    // "n msg" label via the sizeBytes / 800
+                    // proxy). We delegate the per-message
+                    // work to SessionStore.bumpStats via
+                    // touch() so a single round-trip handles
+                    // both metadata + stats. The cost is
+                    // ~1ms per message (a SQLite update on
+                    // an indexed PK) — fine for a chat-rate
+                    // workload, far below the model latency.
+                    try {
+                        String sid = appState.sessionId();
+                        if (sid != null) {
+                            sessionStore.touch(sid, appState.cwd() != null
+                                    ? appState.cwd().toString() : null,
+                                    null, null, null, null,
+                                    approximateJsonlBytes(msg));
+                        }
+                    } catch (java.io.IOException bumpEx) {
+                        LOG.debug("SessionStore.touch (append) failed: {}", bumpEx.getMessage());
+                    }
                 }
                 var push = transcriptPush;
                 if (push != null) {
@@ -2648,6 +2721,58 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     }
 
     /** mirror of {@code Transcript.serialize} — write a
+     *  single message as a JSONL line. Kept local to avoid
+     *  exposing Transcript's private serializer. */
+    private static String serializeMessageForFile(Message m) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper m_ = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                    .findAndRegisterModules();
+            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("id", m.id());
+            out.put("role", m.role().name().toLowerCase());
+            out.put("content", m.content());
+            out.put("timestamp", m.timestamp().toString());
+            out.put("metadata", m.metadata());
+            return m_.writeValueAsString(out);
+        } catch (Exception e) {
+            throw new RuntimeException("failed to serialize message: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * R361 Phase 2: estimate the on-disk byte cost of
+     * appending {@code m} to the current session's
+     * {@code <id>.jsonl}. We use the same ObjectMapper
+     * shape that {@code Transcript.append} writes so the
+     * {@code size_bytes} column in {@code sessions.db}
+     * tracks the actual file size (modulo a 1-byte
+     * newline that Transcript always appends). This is
+     * called from the {@code onMessageAppend} listener
+     * after {@link Transcript#append} returns, so the
+     * cost is bounded — the engine has already paid for
+     * the serialization once for the file write; we
+     * re-use that result via {@link #serializeMessageForFile}
+     * only when the listener is the one paying.
+     *
+     * <p>For an empty content block (a pure system
+     * marker), the result is ~80 bytes — close enough to
+     * the actual file delta that the renderer's
+     * "n msg" badge stays meaningful.
+     */
+    private static long approximateJsonlBytes(Message m) {
+        // reuse serializeMessageForFile's output length
+        // + 1 byte for the trailing newline (Transcript
+        // appends "\n" verbatim — see Transcript.java:67).
+        // This is the cheapest approximation that's
+        // still byte-accurate vs the real file size.
+        try {
+            return serializeMessageForFile(m).length() + 1L;
+        } catch (Exception e) {
+            return 80L; // sane fallback for the system-marker path
+        }
+    }
+
     /**
      * merge any project- or user-scope rules persisted on
      * disk into the in-memory allow list. We load from two
@@ -2698,26 +2823,6 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             }
         }
         perms.allow = appended;
-    }
-
-    /**
-     *  single message as a JSONL line. Kept local to avoid
-     *  exposing Transcript's private serializer. */
-    private static String serializeMessageForFile(Message m) {
-        try {
-            com.fasterxml.jackson.databind.ObjectMapper m_ = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
-                    .findAndRegisterModules();
-            java.util.LinkedHashMap<String, Object> out = new java.util.LinkedHashMap<>();
-            out.put("id", m.id());
-            out.put("role", m.role().name().toLowerCase());
-            out.put("content", m.content());
-            out.put("timestamp", m.timestamp().toString());
-            out.put("metadata", m.metadata());
-            return m_.writeValueAsString(out);
-        } catch (Exception e) {
-            throw new RuntimeException("failed to serialize message: " + e.getMessage(), e);
-        }
     }
 
     @Override public String sessionId() { return appState.sessionId(); }

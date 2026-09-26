@@ -35,6 +35,17 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
+        <!--
+          R361 Phase 2: SessionStore 元数据走 SQLite 单文件
+          (~/.aethercode/sessions.db)。原始 transcript 仍然
+          用 JSONL 物理文件（<id>.jsonl / <id>.compacted.jsonl）。
+          SQLite 只存元数据 + 双存储路径指针，不存消息内容 —
+          流式 JSONL append 比 BLOB 写入快一个数量级。
+        -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

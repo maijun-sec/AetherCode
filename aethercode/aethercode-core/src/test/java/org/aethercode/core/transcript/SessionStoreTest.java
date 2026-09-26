@@ -37,11 +37,15 @@ class SessionStoreTest {
     void listReturnsSessionsNewestFirst(@TempDir Path tmp) throws Exception {
         SessionStore store = new SessionStore(tmp);
         // simulate two sessions with a slight mtime gap
-        Transcript a = store.loadOrCreate(SessionStore.newSessionId());
+        String aId = SessionStore.newSessionId();
+        Transcript a = store.loadOrCreate(aId);
         a.append(makeMsg("first"));
+        store.touch(aId, null, null, null, null, null, 0);
         Thread.sleep(20);
-        Transcript b = store.loadOrCreate(SessionStore.newSessionId());
+        String bId = SessionStore.newSessionId();
+        Transcript b = store.loadOrCreate(bId);
         b.append(makeMsg("second"));
+        store.touch(bId, null, null, null, null, null, 0);
 
         List<SessionStore.SessionInfo> all = store.list();
         assertThat(all).hasSize(2);
@@ -66,9 +70,11 @@ class SessionStoreTest {
         Transcript a = store.loadOrCreate("s-a");
         a.append(makeMsg("hello world"));
         a.append(makeMsg("the quick brown fox"));
+        store.touch("s-a", null, null, null, null, null, 0);
         Transcript b = store.loadOrCreate("s-b");
         b.append(makeMsg("another session"));
         b.append(makeMsg("with the word hello in it"));
+        store.touch("s-b", null, null, null, null, null, 0);
 
         List<SessionStore.SearchHit> hits = store.search("hello", 10, 1_000_000L);
         // 2 hits total — one in s-a, one in s-b. The session header
@@ -83,6 +89,7 @@ class SessionStoreTest {
         SessionStore store = new SessionStore(tmp);
         Transcript a = store.loadOrCreate("s-a");
         a.append(makeMsg("MixedCase Query"));
+        store.touch("s-a", null, null, null, null, null, 0);
 
         assertThat(store.search("mixedcase", 10, 1_000_000L)).hasSize(1);
         assertThat(store.search("MIXEDCASE", 10, 1_000_000L)).hasSize(1);
@@ -97,6 +104,7 @@ class SessionStoreTest {
         a.append(makeMsg("alpha"));
         a.append(makeMsg("alpha"));
         a.append(makeMsg("alpha"));
+        store.touch("s-a", null, null, null, null, null, 0);
 
         List<SessionStore.SearchHit> hits = store.search("alpha", 2, 1_000_000L);
         // Capped at 2 per session.
@@ -109,6 +117,7 @@ class SessionStoreTest {
         // 0-byte limit forces every non-empty file to be skipped.
         Transcript a = store.loadOrCreate("s-a");
         a.append(makeMsg("hello"));
+        store.touch("s-a", null, null, null, null, null, 0);
         List<SessionStore.SearchHit> hits = store.search("hello", 10, 0L);
         // Each skipped session yields a single "skipped" hit.
         assertThat(hits).hasSize(1);
