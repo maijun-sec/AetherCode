@@ -70,6 +70,7 @@ class AetherCodeMethodsR159Test {
                     "{\"id\":\"" + id + "\",\"role\":\"user\","
                             + "\"content\":[{\"type\":\"text\",\"text\":\"hello " + i + "\"}]}",
                     StandardCharsets.UTF_8);
+            store.touch(id, null, null, null, null, null, 0);
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of());
@@ -101,6 +102,7 @@ class AetherCodeMethodsR159Test {
                     "{\"id\":\"" + id + "\",\"role\":\"user\","
                             + "\"content\":[{\"type\":\"text\",\"text\":\"msg " + i + "\"}]}",
                     StandardCharsets.UTF_8);
+            store.touch(id, null, null, null, null, null, 0);
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of("limit", 3));
@@ -134,6 +136,7 @@ class AetherCodeMethodsR159Test {
                         + "{\"id\":\"a2\",\"role\":\"assistant\","
                         + "\"content\":[{\"type\":\"text\",\"text\":\"Looking at the code...\"}]}\n",
                 StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(
                 Map.of("withPreview", true));
@@ -158,6 +161,7 @@ class AetherCodeMethodsR159Test {
                 "{\"id\":\"" + id + "\",\"role\":\"user\","
                         + "\"content\":[{\"type\":\"text\",\"text\":\"" + big + "\"}]}",
                 StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(
                 Map.of("withPreview", true));
@@ -183,6 +187,7 @@ class AetherCodeMethodsR159Test {
                 "{\"id\":\"" + id + "\",\"role\":\"user\","
                         + "\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}",
                 StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
         // R266d (2026-09-13): the listSessions `withPreview`
         // default is now `true` (was `false` in R159) — the
         // desktop's LeftPanel refresh path doesn't pass the
@@ -212,6 +217,7 @@ class AetherCodeMethodsR159Test {
         AetherCodeMethods m = new AetherCodeMethods(engine, n -> {});
         String id = "empty-" + System.nanoTime();
         Files.createFile(store.dir().resolve(id + ".jsonl"));
+        store.touch(id, null, null, null, null, null, 0);
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(
                 Map.of("withPreview", true));

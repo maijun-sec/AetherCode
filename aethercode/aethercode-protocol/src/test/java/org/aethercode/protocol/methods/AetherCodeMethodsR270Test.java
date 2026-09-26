@@ -68,6 +68,7 @@ class AetherCodeMethodsR270Test {
                 "{\"id\":\"m4\",\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tu1\",\"content\":\"ok\"}]}",
                 "{\"id\":\"m5\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"已完成\"}]}"
         )), StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of("withPreview", true));
@@ -100,6 +101,7 @@ class AetherCodeMethodsR270Test {
                 "{\"id\":\"m2\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"bash\",\"input\":{\"command\":\"ls -la\",\"cwd\":\"/tmp\"}}]}",
                 "{\"id\":\"m3\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu2\",\"name\":\"file_read\",\"input\":{\"file_path\":\"/var/log/app.log\"}}]}"
         )), StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of("withPreview", true));
@@ -124,6 +126,7 @@ class AetherCodeMethodsR270Test {
         String id = "empty-session-" + System.nanoTime();
         Files.writeString(store.dir().resolve(id + ".jsonl"), "",
                 StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of("withPreview", true));
@@ -151,6 +154,7 @@ class AetherCodeMethodsR270Test {
                 "{\"id\":\"m2\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\""
                         + longText + "\"}]}"
         )), StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of("withPreview", true));
@@ -183,6 +187,7 @@ class AetherCodeMethodsR270Test {
         Files.writeString(store.dir().resolve(id + ".jsonl"),
                 "{\"id\":\"m1\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"bash\",\"input\":{\"command\":\"ls\"}}]}",
                 StandardCharsets.UTF_8);
+        store.touch(id, null, null, null, null, null, 0);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> r = (Map<String, Object>) m.listSessions(Map.of("withPreview", false));
