@@ -33,6 +33,15 @@ import { StepDetailModal } from './components/StepDetailModal';
 // driver / chip strip / phase button — see
 // doc/user-guide/SDD.md.
 import { SubagentToast } from './components/SubagentToast';
+// R359: transient notification stack. Replaces the
+// permanent "[Stream stale]" / "[Reconnect failed]" /
+// "[Delete session failed]" system-message pattern
+// flagged as P0 in the PM eval. The NotificationCenter
+// mounts at the App root (same lifecycle slot as
+// SubagentToast) and renders the `notifications` array
+// from the store as bottom-right toasts with × buttons
+// + optional action buttons.
+import { NotificationCenter } from './components/NotificationCenter';
 import { AppProvider, useApp } from './state/AppContext';
 import { QueryProvider, buildQueryClient } from './rpc/queryClient';
 import { RpcProvider } from './rpc/queries';
@@ -361,6 +370,12 @@ function MainLayout(p: MainLayoutProps) {
       <WorkflowEditorModal />
       <StepDetailModal />
       <SubagentToast />
+      {/* R359: transient notification stack. Sits next to
+        * SubagentToast in the App-root slot. Both render
+        * their own toasts in the bottom-right corner;
+        * NotificationCenter is z-index 1095 so SubagentToast
+        * (1100) stays on top when both fire in the same tick. */}
+      <NotificationCenter />
       {p.showSettings && <SettingsPanel onClose={() => p.setShowSettings(false)} />}
       {p.showTools && <ToolsPanel onClose={() => p.setShowTools(false)} />}
       {p.showRpcDiag && <RpcDiagnosticsPanel onClose={() => p.setShowRpcDiag(false)} />}

@@ -373,6 +373,49 @@ export const UI_PERMISSION_MODES: { value: UiPermissionMode; label: string; titl
   { value: 'bypass', label: '始终授权', title: '一路绿灯, 不再询问任何调用',           daemon: ['BYPASS_PERMISSIONS'] },
 ];
 
+// R359: transient notification stack. Replaces the
+// legacy "[Stream stale]" / "[Reconnect failed]" / etc.
+// system-message append-to-messages pattern. Each
+// notification has:
+//   - a `source` tag so the relevant code path can
+//     clear-by-source when the underlying condition
+//     resolves (e.g. next sendMessage clears
+//     `source === 'stream-stale'`)
+//   - a sticky flag (errors stick until user dismisses;
+//     info/warning auto-dismiss after 10s)
+//   - optional action buttons (Retry / Dismiss / etc.)
+//
+// The toast layer (<NotificationCenter />) renders the
+// stack in the bottom-right corner so transient
+// notifications stay separate from the conversation
+// history. This is the Phase 1 of the PM's A+C combo
+// (see D:\tmp\senior-pm-review\aethercode-stream-stale-banner-review-2026-09-26.md).
+export type NotificationLevel = 'info' | 'warning' | 'error';
+
+export interface NotificationAction {
+  /** Visible button label. */
+  label: string;
+  /** Fired when user clicks. Errors are swallowed (logged to console). */
+  onClick: () => void;
+  /** Visual variant. 'primary' is the bold call-to-action; default is secondary. */
+  variant?: 'primary' | 'secondary';
+}
+
+export interface Notification {
+  id: string;
+  level: NotificationLevel;
+  title: string;
+  /** Optional detail line. */
+  message?: string;
+  /** Source tag. Use `clearNotificationsBySource(source)` to dismiss. */
+  source: string;
+  createdAt: number;
+  /** Sticky = no auto-dismiss. Errors default to sticky; info/warning auto-dismiss in 10s. */
+  sticky?: boolean;
+  /** Optional action buttons rendered inline in the toast. */
+  actions?: NotificationAction[];
+}
+
 // R330: shared SDD phase pause-message scanner.
 //
 // Used by THREE call sites so a missing match is impossible to
@@ -2328,6 +2371,31 @@ interface AppState {
    *  dismiss path can race a fresh terminal event arriving
    *  in the same tick). */
   dismissSubagentTerminal: () => void;
+  // --- R359 transient notification stack -----------------
+  // Transient system-toast queue. Replaces the legacy
+  // `messages: [..., { role: 'system', content: '[X] ...', isError: true }]`
+  // pattern. The PM eval (D:\tmp\senior-pm-review\aethercode-stream-stale-banner-review-2026-09-26.md)
+  // flagged that pattern as P0 because the message sticks
+  // forever, has no × button, and visually conflates
+  // "transient health warning" with "task failure". These
+  // notifications render via <NotificationCenter /> in the
+  // bottom-right corner with explicit × + action buttons.
+  notifications: Notification[];
+  /** Push a transient notification. Returns its id. The
+   *  notification auto-dismisses after 10s for `info` /
+   *  `warning` levels (non-sticky). `error` is sticky by
+   *  default — the user must click × or the relevant
+   *  `clearNotificationsBySource(...)` must fire. Same
+   *  `(source, level)` dedups — pushing twice replaces. */
+  pushNotification: (n: Omit<Notification, 'id' | 'createdAt'>) => string;
+  /** Remove a single notification by id. No-op if not found. */
+  dismissNotification: (id: string) => void;
+  /** Bulk-dismiss every notification whose `source` matches.
+   *  Use this from code paths that resolve the underlying
+   *  condition (e.g. `sendMessage` clears `source ===
+   *  'stream-stale'` because the user just started a new
+   *  prompt, which supersedes the prior stale warning). */
+  clearNotificationsBySource: (source: string) => void;
 }
 
 function newId(prefix: string): string {
@@ -4054,6 +4122,13 @@ export const useStore = create<AppState>((set, get) => {
     // / StatusBar read the result without going through any
     // middleware.
     subagent: INITIAL_SUBAGENT,
+    // R359: transient notification stack. Empty by default;
+    // pushed to by `pushNotification(...)`. The <NotificationCenter />
+    // component subscribes and renders them as bottom-right
+    // toasts with × and action buttons. Unlike messages,
+    // these are NOT conversation history — they live outside
+    // the chat scrollback.
+    notifications: [],
     currentQuery: null,
     steps: [],
     currentStepId: null,
@@ -4655,6 +4730,14 @@ export const useStore = create<AppState>((set, get) => {
     sendMessage: async () => {
       const input = get().currentInput.trim();
       if (!input) return;
+
+      // R359: a fresh user prompt supersedes any
+      // stream-stale warning from the previous run. The
+      // old `messages.push` path kept the banner alive
+      // even after the user moved on; clearing by source
+      // here gives the natural "I'm sending again, so
+      // whatever was wrong before is moot" affordance.
+      get().clearNotificationsBySource('stream-stale');
       
       // R272 (2026-09-15): reset sub-task / step tracking before
       // firing off the new query. Without this, the OLD
@@ -4952,11 +5035,21 @@ export const useStore = create<AppState>((set, get) => {
       // daemon tears down.
       try { await rpc.cancel(); } catch {}
       set({ isStreaming: false, pendingFollowUp: null });
+      // R359: cancelling the run makes any
+      // stream-stale warning moot — drop it.
+      get().clearNotificationsBySource('stream-stale');
     },
 
     cancelPendingFollowUp: () => set({ pendingFollowUp: null }),
 
     switchSession: async (sessionId: string) => {
+      // R359: switching sessions drops any stream-stale
+      // warning from the old session — the new session
+      // has its own chat history and its own warning
+      // lifecycle. Keeping the old notification around
+      // would be the same UX bug R359 was filed for
+      // (banner sticks to a session that has moved on).
+      get().clearNotificationsBySource('stream-stale');
       // cancel any pending debounced draft write for the
       // OLD session (the one we're leaving) before we change
       // currentSessionId, then load the NEW session's draft
@@ -7623,6 +7716,60 @@ export const useStore = create<AppState>((set, get) => {
     dismissSubagentTerminal: () =>
       set((s) => ({ subagent: dismissSubagentTerminalPure(s.subagent) })),
 
+    // R359 transient notification actions. See the
+    // types above (NotificationLevel / NotificationAction /
+    // Notification) and the PM eval at
+    // D:\tmp\senior-pm-review\aethercode-stream-stale-banner-review-2026-09-26.md.
+    //
+    // pushNotification:
+    //   - mints a unique id
+    //   - dedups by (source, level): pushing twice replaces
+    //     (avoids stacking two identical stale-warning toast)
+    //   - schedules a setTimeout auto-dismiss for non-sticky
+    //     info/warning (10s default; sticky errors stay until
+    //     user dismisses or clearNotificationsBySource fires)
+    //   - returns the new id (useful for tests + for callers
+    //     that want to chain a follow-up dismiss)
+    pushNotification: (n) => {
+      const id = newId('notif');
+      const notif: Notification = { ...n, id, createdAt: Date.now() };
+      set((s) => {
+        // dedup: same (source, level) → replace, not stack.
+        // The user reported "the same red banner keeps
+        // re-appearing every watchdog tick" was a non-issue
+        // before this round (because messages was dedup'd
+        // by React key), but in the new toast world we want
+        // to be explicit about it.
+        const filtered = s.notifications.filter(
+          (existing) => !(existing.source === n.source && existing.level === n.level),
+        );
+        return { notifications: [...filtered, notif] };
+      });
+      // auto-dismiss for info / warning (10s). Errors are
+      // sticky by default — the user's mental model is
+      // "errors don't disappear on their own". Callers can
+      // opt-in to non-sticky errors via `sticky: false`.
+      if (n.level !== 'error' && !n.sticky) {
+        setTimeout(() => {
+          // The notification may have been dismissed /
+          // replaced already; dismissNotification is a
+          // no-op when id is gone.
+          useStore.getState().dismissNotification(id);
+        }, 10_000);
+      }
+      return id;
+    },
+
+    dismissNotification: (id) =>
+      set((s) => ({
+        notifications: s.notifications.filter((n) => n.id !== id),
+      })),
+
+    clearNotificationsBySource: (source) =>
+      set((s) => ({
+        notifications: s.notifications.filter((n) => n.source !== source),
+      })),
+
     // live TODO snapshot. The AgentTasksPanel component
     // subscribes to `todo_update` events and pushes the
     // latest list here. currentTodoId is derived (the first
@@ -7734,6 +7881,21 @@ function suggestSibling(cwd: string | null): string {
 //      prompt, which is the worst of both worlds (the user
 //      gets a red error AND loses the tool result they were
 //      about to approve).
+//
+// R359 redesign: push a transient notification instead of
+// appending a permanent system message. The PM eval
+// (D:\tmp\senior-pm-review\aethercode-stream-stale-banner-review-2026-09-26.md)
+// flagged this as P0 — the previous behavior:
+//   - stuck the banner in the chat forever (no × button)
+//   - visually conflated "transient health warning" with
+//     "task failure" (same red .message-system-error pill)
+//   - polluted the conversation history with non-conversation
+//     state
+// The new path uses the toast layer (<NotificationCenter />)
+// with an explicit × button + Dismiss action, and
+// `clearNotificationsBySource('stream-stale')` fires from
+// `sendMessage` / `switchSession` / `cancelQuery` so the
+// notification disappears as soon as the user moves on.
 if (typeof window !== 'undefined') {
   setInterval(() => {
     const s = useStore.getState();
@@ -7746,14 +7908,47 @@ if (typeof window !== 'undefined') {
     if (s.pendingPermissions && s.pendingPermissions.length > 0) return;
     if (Date.now() - s.lastChunkTs > STREAM_STALE_MS) {
       console.warn(`[store] stream stale: no chunk for ${STREAM_STALE_MS}ms, force-ending`);
-      useStore.setState((cur) => ({
-        isStreaming: false,
-        messages: [...cur.messages, {
-          id: newId('system'), role: 'system' as const,
-          content: `[Stream stale] Daemon stopped responding for ${STREAM_STALE_MS / 1000}s. Try sending again.`,
-          timestamp: Date.now(), isError: true,
-        }],
-      }));
+      // Force-end the stream (same behaviour as before).
+      // The notification is dispatched separately via
+      // `pushNotification`, which has its own dedup-by-source
+      // logic — pushing twice in a row replaces rather than
+      // stacks.
+      useStore.setState({ isStreaming: false });
+      s.pushNotification({
+        level: 'error',
+        title: 'Stream stale',
+        message: `Daemon stopped responding for ${STREAM_STALE_MS / 1000}s. Try sending again, or cancel the run.`,
+        source: 'stream-stale',
+        // sticky — the user must dismiss. Sending a new
+        // prompt / switching session / cancelling will also
+        // auto-clear via clearNotificationsBySource.
+        sticky: true,
+        actions: [
+          {
+            label: 'Cancel run',
+            onClick: () => {
+              // Best-effort cancel. If the daemon already
+              // tore down the run, this is a no-op.
+              void useStore.getState().cancelQuery().catch(() => {});
+            },
+            variant: 'primary',
+          },
+          {
+            label: 'Dismiss',
+            onClick: () => {
+              // dismissNotification needs the id; the
+              // action button doesn't carry it. Walk the
+              // store for the matching source/level.
+              const cur = useStore.getState();
+              const match = cur.notifications.find(
+                (n) => n.source === 'stream-stale' && n.level === 'error',
+              );
+              if (match) cur.dismissNotification(match.id);
+            },
+            variant: 'secondary',
+          },
+        ],
+      });
     }
   }, STREAM_CHECK_INTERVAL_MS);
 }

@@ -1,0 +1,168 @@
+/* NotificationCenter — R359 transient toast layer.
+ *
+ * The container anchors to the bottom-right above the
+ * StatusBar (44px + 88px gap = bottom: 132px). It stacks
+ * vertically with a 10px gap; the most-recent notification
+ * sits at the bottom (matches SubagentToast's "newest at
+ * bottom" affordance so the two toast layers look
+ * consistent).
+ *
+ * Each .notification renders as a horizontal card with a
+ * tone icon + title + optional detail + actions + × close
+ * button. Tone classes reuse the SubagentToast palette
+ * vocabulary so the desktop looks consistent across toast
+ * sources.
+ */
+
+.notification-center {
+  position: fixed;
+  right: 24px;
+  bottom: 132px; /* sit above the StatusBar (44px) + SubagentToast slot (~88px) */
+  z-index: 1095; /* under SubagentToast (1100) so they stack cleanly */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 460px;
+  width: max-content;
+  pointer-events: none; /* let the rest of the page receive clicks */
+}
+
+.notification {
+  pointer-events: auto; /* re-enable for the cards themselves */
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px 10px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
+  user-select: none;
+  min-width: 280px;
+  animation: notification-in 180ms ease-out;
+}
+
+@keyframes notification-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.notification-icon {
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.2;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  margin-top: 1px;
+}
+
+.notification-body {
+  flex: 1;
+  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notification-title {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.notification-message {
+  font-size: 11px;
+  opacity: 0.82;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.notification-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.notification-action {
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 100ms ease, border-color 100ms ease, opacity 100ms ease;
+}
+.notification-action:hover,
+.notification-action:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.40);
+  outline: none;
+}
+.notification-action-primary {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.36);
+}
+
+.notification-close {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 4px;
+  margin-top: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity 100ms ease, background 100ms ease, border-color 100ms ease;
+}
+.notification-close:hover,
+.notification-close:focus-visible {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.36);
+  outline: none;
+}
+
+/* Tone palette — mirrors SubagentToast so the desktop's
+ * two toast sources look consistent. */
+
+.notification-info {
+  background: rgba(95, 156, 191, 0.18);
+  color: #c8d9e8;
+  border: 1px solid rgba(95, 156, 191, 0.45);
+}
+.notification-info .notification-icon {
+  color: #5f9cbf;
+}
+
+.notification-warning {
+  background: rgba(217, 174, 73, 0.18);
+  color: #ecd9a8;
+  border: 1px solid rgba(217, 174, 73, 0.50);
+}
+.notification-warning .notification-icon {
+  color: #d9ae49;
+}
+
+.notification-error {
+  background: rgba(244, 135, 113, 0.18);
+  color: #f5cdc5;
+  border: 1px solid rgba(244, 135, 113, 0.55);
+}
+.notification-error .notification-icon {
+  color: var(--error);
+}
