@@ -629,13 +629,48 @@ export class AetherCodeRpc {
    * hasn't been written to disk. The desktop's lazy
    * create flow uses this to show a real session title
    * from the moment the user submits the prompt,
-   * instead of "New Session" / "Untitled session". */
+   * instead of "New Session" / "Untitled session".
+   *
+   * R361: this is the LEGACY single-engine path. For
+   * multi-session / multi-cwd work the renderer should
+   * call {@link #createEngine} instead — that RPC
+   * goes through SessionManager and is the foundation
+   * for "one daemon, N sessions". */
   createSession(opts?: { cwd?: string; worktree?: string; firstPrompt?: string }): Promise<{ ok: true; sessionId: string; cwd?: string; messageCount: number; note?: string }> {
     return this.call('createSession', {
       cwd: opts?.cwd ?? null,
       worktree: opts?.worktree ?? null,
       firstPrompt: opts?.firstPrompt ?? null,
     });
+  }
+  /** R361: create a fresh engine in the daemon's
+   *  SessionManager and bind it to a per-session cwd /
+   *  worktree / model. This is the multi-session API
+   *  that lets a single daemon host many engines, each
+   *  rooted at its own cwd. The desktop calls this
+   *  from `createNewSession` (no daemon swap, just
+   *  one RPC round-trip). The new engine is registered
+   *  but NOT auto-activated — the renderer follows up
+   *  with {@link #setActiveEngine} to make it the
+   *  active one.
+   *
+   *  Empty / null params return `{ok: false}` — the
+   *  daemon requires an explicit sessionId so we
+   *  don't mint empty placeholder sessions (R361 PM
+   *  note: avoid empty session rows). */
+  createEngine(opts: { sessionId: string; cwd?: string | null; worktree?: string | null; model?: string | null }): Promise<{ ok: boolean; sessionId?: string; created?: boolean; alreadyExists?: boolean; active?: boolean; error?: string }> {
+    return this.call('createEngine', {
+      sessionId: opts.sessionId,
+      cwd: opts.cwd ?? null,
+      worktree: opts.worktree ?? null,
+      model: opts.model ?? null,
+    });
+  }
+  /** R361: switch the daemon's active session. The
+   *  caller typically follows up with loadSession() to
+   *  hydrate the transcript. */
+  setActiveEngine(sessionId: string): Promise<{ ok: boolean; sessionId?: string; activeSessionId?: string; error?: string }> {
+    return this.call('setActiveEngine', { sessionId });
   }
   /** remove a session file from the store. The active
    *  session cannot be deleted (the daemon rejects with
@@ -1222,15 +1257,17 @@ export class AetherCodeRpc {
     });
   }
 
-  // CWD is not a daemon RPC — it's a Tauri command that controls the daemon
-  // process itself. Wrapped here for convenience.
-  // returns {cwd, sessionId, swapped}. `swapped` is true when a
-  // new daemon was spawned+promoted (multi-cwd case), false when the
-  // slot was just updated and ensure_daemon will spawn one rooted at
-  // the new cwd on the next call. `sessionId` is the new session id
-  // minted on the (possibly new) primary daemon.
-  setCwd(path: string): Promise<{ cwd: string; sessionId: string | null; swapped: boolean }> {
-    return invoke('set_cwd', { path });
+  // R361: CWD is no longer a daemon-swap operation.
+  // Rust supervisor forwards to daemon's bindSessionCwd
+  // (per-session cwd binding on the active engine).
+  // `swapped` is now always false (no daemon swap); it's
+  // kept in the return shape for backwards compat with
+  // any renderer code that branches on it. When the
+  // caller has no active session yet (first-launch
+  // project pick), pass `sessionId: null` and the
+  // supervisor just updates the persisted cwd slot.
+  setCwd(path: string, sessionId?: string | null): Promise<{ cwd: string; sessionId: string | null; swapped: boolean }> {
+    return invoke('set_cwd', { path, sessionId: sessionId ?? null });
   }
 
   getCwd(): Promise<string | null> {

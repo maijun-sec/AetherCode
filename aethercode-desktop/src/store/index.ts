@@ -2618,8 +2618,21 @@ export const useStore = create<AppState>((set, get) => {
   // `event.type` is one of: run_start / text_delta / tool_use_start
   // / tool_result / run_end / side_note. We dispatch on type to
   // drive the UI. Wire shape (AetherCodeMethods.eventToMap):
-  //   params = { runId, event: { type, ... } }
+  //   params = { runId, sessionId?, event: { type, ... } }
+  //
+  // sessionId is OPTIONAL and was added so the renderer can
+  // distinguish events from "the run I'm currently rendering"
+  // vs "the previous run the user left running on another
+  // session". Without this guard, when the user switches
+  // session / cwd while a run is still streaming, the previous
+  // run's text_delta / tool_use_start events get appended to
+  // the NEW session's chat scrollback — the user sees
+  // "new prompt's output sits on top of the old session's
+  // stuff". We use isOurSession so an empty sessionId
+  // (legacy single-engine daemons) still passes through.
   rpc.on('stream_event', (params: any) => {
+    const evSession = typeof params?.sessionId === 'string' ? params.sessionId : '';
+    if (!isOurSession(evSession, get().currentSessionId)) return;
     const ev = params?.event;
     if (!ev?.type) return;
     switch (ev.type) {
@@ -5089,9 +5102,28 @@ export const useStore = create<AppState>((set, get) => {
       // TaskSummary → messageCount). The async hydrate
       // refills the array when the daemon's transcript
       // arrives.
+      //
+      // Bug fix (2026-09-26): also reset the live-streaming
+      // state so the new session's first run starts with a
+      // clean slate. Pre-fix we only reset messages[] + the
+      // session-id; currentStepId / steps / subTasks /
+      // currentQuery kept their values from the OLD
+      // session. The new session's run_start handler then
+      // saw currentStepId still pointing at a done step
+      // from the OLD session, took the "else if
+      // (currentStepId)" branch (rather than opening a
+      // fresh one), and the new prompt's text_delta /
+      // tool_use_start events landed in the OLD step's
+      // toolEvents array — visually "the new prompt's
+      // output runs on top of the old prompt's tools".
       set({
         currentSessionId: sessionId,
         isStreaming: false,
+        currentStepId: null,
+        currentSubTaskId: null,
+        currentQuery: null,
+        steps: [],
+        subTasks: [],
         messages: [],
         currentInput: readDraft(sessionId),
         // R349 (PM P0-2): the budget bar is per-session.
@@ -5101,6 +5133,22 @@ export const useStore = create<AppState>((set, get) => {
         // session until the user changes it).
         cumulativeCostUsd: 0,
       });
+      // reset the module-scope step-boundary flag so the
+      // first text_delta of the new session takes the
+      // "open a fresh step" branch (rather than the
+      // accumulate-into-old-step branch the previous
+      // session's last event left behind).
+      prevEventWasText = true;
+      // R361: flip the daemon's active engine to the
+      // target session BEFORE loadSession. The
+      // multi-session daemon's resolveRpcTarget
+      // routes `getTranscript` / future `query` to the
+      // active engine by default, so without this the
+      // hydrateTranscript below would fetch the OLD
+      // active engine's transcript (the engine the
+      // user just left). Best-effort: older daemons
+      // without SessionManager ignore setActiveEngine.
+      try { await rpc.setActiveEngine(sessionId); } catch { /* legacy daemon — no-op */ }
       // ask the daemon to swap its in-memory
       // transcript to this session, then back-fill our
       // own `messages` array from the daemon. The
@@ -5249,11 +5297,29 @@ export const useStore = create<AppState>((set, get) => {
       // void here is fine — the caller doesn't await
       // setCurrentSessionId, and the async hydrate
       // updates `messages` when it lands.
+      //
+      // Bug fix (2026-09-26): same live-streaming reset as
+      // switchSession above — pre-fix we left currentStepId /
+      // steps / subTasks / currentQuery / isStreaming
+      // populated from the old session, which made the new
+      // session's run_start handler take the wrong branch and
+      // route the new run's events into the old step.
       set({
         currentSessionId: id,
+        isStreaming: false,
+        currentStepId: null,
+        currentSubTaskId: null,
+        currentQuery: null,
+        steps: [],
+        subTasks: [],
         messages: [],
         currentInput: readDraft(id),
       });
+      // see switchSession — reset the module-scope
+      // step-boundary flag so the first text_delta of
+      // the new session opens a fresh step rather than
+      // accumulating into a stale one.
+      prevEventWasText = true;
       if (id) {
         void get().hydrateTranscript(id);
       }
@@ -5331,33 +5397,103 @@ export const useStore = create<AppState>((set, get) => {
         if (inFlight.trim().length > 0) writeDraft(oldSid, inFlight);
         else clearDraft(oldSid);
       }
-      // ask the daemon to mint a real session id and
-      // create an empty transcript on disk. The local
-      // `crypto.randomUUID()` path (the prior round) is still the
-      // fallback when the daemon rejects the call (e.g. the
-      // engine was started without `--sessions-dir`, or the
-      // stdio daemon path doesn't have a SessionStore).
-      // after createSession, the daemon fires a
-      // transcript_event (action "sync", empty messages
-      // array) which our subscriber handles. We don't
-      // need a local mergeWithPersisted round-trip — the
-      // sessions list will catch up via refreshSessions
-      // in the next message.
+      // ask the daemon's SessionManager to create a
+      // fresh engine bound to the current cwd (R361).
+      // The desktop mints the sessionId locally (UUID)
+      // and passes it to the daemon — single round
+      // trip, no daemon swap, no pre_warm_daemon, no
+      // session-busy dance. The daemon's `SessionManager.
+      // getOrCreate(sessionId, spec)` materialises the
+      // engine lazily on the first query; if the user
+      // never sends anything the engine sits in the
+      // manager's handles map but no <id>.jsonl is
+      // written — that's the empty-session guard the
+      // user explicitly asked for.
       void (async () => {
-        let newId: string;
+        // mint the sessionId locally so we have a stable
+        // id regardless of which RPC path succeeds. The
+        // empty-session guard the user explicitly asked for
+        // (R361 PM note) lives on the daemon side: if no
+        // query ever lands, the SessionManager handle
+        // doesn't get persisted to <id>.jsonl until the
+        // first query succeeds (lazy-create).
+        let newId: string = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+          ? crypto.randomUUID()
+          : 's-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+        const cwd = get().cwd ?? null;
         try {
-          const r = await rpc.createSession();
-          newId = r.sessionId;
-        } catch {
-          newId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-            ? crypto.randomUUID()
-            : 's-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+          // build the per-session spec. cwd is null
+          // when the user hasn't picked a project yet —
+          // the engine inherits the daemon's default
+          // cwd in that case (SessionSpec.effectiveCwd
+          // falls back). model override is left null
+          // for now; future rounds can plumb a UI
+          // picker through here.
+          const r = await rpc.createEngine({
+            sessionId: newId,
+            cwd,
+            worktree: null,
+            model: null,
+          });
+          if (!r?.ok) {
+            console.warn('[R361] createEngine failed: ' + (r?.error ?? 'unknown'));
+            // fall back to the legacy single-engine
+            // path so the UX degrades gracefully when
+            // the daemon doesn't have a SessionManager
+            // wired (the stdio daemon path, or older
+            // jars in the field).
+            try {
+              const legacy = await rpc.createSession();
+              newId = legacy.sessionId;
+            } catch {
+              // keep the local UUID as a last resort so
+              // the UI doesn't hang — the engine isn't
+              // on the daemon, but the renderer can
+              // still surface the session row locally.
+            }
+          } else {
+            // engine created — make it the active
+            // session on the daemon so subsequent
+            // query() / getState() calls route to it
+            // by default (resolveRpcTarget fallback
+            // for legacy callers).
+            try { await rpc.setActiveEngine(newId); } catch { /* non-fatal */ }
+          }
+        } catch (e) {
+          console.warn('[R361] createEngine threw: ' + (e instanceof Error ? e.message : String(e)));
+          // keep the local UUID so the UI doesn't
+          // disappear. The user will see a "session
+          // unreachable" state on first query and can
+          // retry.
         }
-        // Now switch to the new id. loadSession is best-effort:
-        // a daemon-side error leaves us on the local id.
+        // Now switch to the new id. loadSession is
+        // best-effort: a daemon-side error leaves us
+        // on the local id. R361: this RPC no longer
+        // triggers a daemon swap (that was the R199
+        // dance we just deleted).
         try { await rpc.loadSession(newId); } catch { /* daemon stub or local id */ }
         set({
           currentSessionId: newId,
+          // Bug fix (2026-09-26): reset the live-streaming
+          // state alongside messages[]. Pre-fix the user
+          // could be mid-run on session1, hit "+ new
+          // session", and the OLD session1's stream events
+          // kept flowing into messages[] (now empty) — they
+          // got appended as the "new" session's text. Now
+          // we drop currentStepId / steps / subTasks /
+          // currentQuery / isStreaming too so the new
+          // session's run_start starts from a clean slate.
+          // The isOurSession guard in the stream_event
+          // handler is the belt-and-suspenders — even if
+          // some path leaves isStreaming=true, the
+          // sessionId filter will drop session1's events
+          // from this renderer.
+          isStreaming: false,
+          currentStepId: null,
+          currentSubTaskId: null,
+          currentQuery: null,
+          steps: [],
+          subTasks: [],
           messages: [],
           currentInput: '',
           sessions: [
@@ -5366,6 +5502,11 @@ export const useStore = create<AppState>((set, get) => {
           ],
           pendingNewSession: null,
         });
+        // see switchSession — reset the module-scope
+        // step-boundary flag so the new session's first
+        // text_delta opens a fresh step rather than
+        // accumulating into a stale one.
+        prevEventWasText = true;
       })();
     },
 
@@ -5429,7 +5570,49 @@ export const useStore = create<AppState>((set, get) => {
         });
         daemonSessions = sessions ?? [];
       } catch {}
-      set({ sessions: daemonSessions });
+      // Merge with the existing list rather than
+      // overwrite. Each daemon only knows about its
+      // own cwd-scoped SessionStore (see lib.rs:502
+      // — every daemon gets `--sessions-dir
+      // <cwd>/.aethercode/sessions`), so listSessions
+      // returns only the sessions rooted at the
+      // CURRENT daemon's cwd. Pre-fix we replaced the
+      // entire array, so any time the user swapped
+      // cwd the OLD cwd's sessions disappeared from
+      // the LeftPanel's ProjectGroup list. Merge:
+      //   - for ids the daemon returned: take the
+      //     daemon's authoritative copy (preview,
+      //     lastUsedAt, messageCount, cwd)
+      //   - for ids the daemon didn't return (the
+      //     old cwd's sessions, whose daemon is
+      //     dead): keep the local entry
+      //   - brand-new ids from the daemon: append
+      // Id-collision: trust the daemon when both
+      // sides have the same id (the local copy is
+      // stale because the dead daemon can't refresh
+      // it).
+      const local = get().sessions ?? [];
+      const byId = new Map<string, SessionInfo>();
+      for (const s of daemonSessions) {
+        if (s && s.id) byId.set(s.id, s);
+      }
+      const merged: SessionInfo[] = [];
+      for (const s of local) {
+        if (!s || !s.id) continue;
+        const fromDaemon = byId.get(s.id);
+        if (fromDaemon) {
+          merged.push(fromDaemon);
+          byId.delete(s.id);
+        } else {
+          // daemon (which is rooted at the new cwd)
+          // doesn't know about this id; preserve the
+          // local copy so the ProjectGroupList keeps
+          // showing it under its bound cwd.
+          merged.push(s);
+        }
+      }
+      for (const s of byId.values()) merged.push(s);
+      set({ sessions: merged });
     },
     refreshTasks: async () => { try { const { tasks } = await rpc.listTasks(); set({ tasks: tasks ?? [] }); } catch {} },
     // 3-layer memory refresh. Each scope pulls its
@@ -6835,190 +7018,58 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     setCwd: async (path: string) => {
-      // switching cwd now goes through the Rust
-      // `set_cwd` Tauri command, which does the full
-      // pre_warm_daemon → swap_to_pre_warm → createSession
-      // dance. Previously, this action called
-      // `rpc.createSession({ cwd: path })` directly on the
-      // WS — but the WS was bound to the current primary
-      // daemon, which had a fixed --sessions-dir of
-      // <oldCwd>/.aethercode/sessions. So the new
-      // transcript got written to the OLD cwd's sessions
-      // directory and the engine was still the OLD
-      // daemon's JVM (with its own cwd, model context,
-      // and file history). The user picked abc_2 but
-      // tool calls still ran against abc_1.
+      // R361: switching cwd no longer restarts the daemon.
+      // The Rust supervisor forwards to the daemon's
+      // bindSessionCwd({sessionId, cwd}) — a single RPC
+      // round-trip on the existing WS, no JVM swap, no
+      // WS reconnect, no race against in-flight streams.
       //
-      // R199 makes cwd switch = daemon switch: a fresh
-      // JVM is spawned rooted at the new cwd, promoted
-      // to primary, and a clean session is minted on it.
-      // The OLD session is preserved in the OLD daemon's
-      // session store, accessible via SessionPicker
-      // (Ctrl/Cmd+Shift+P) as long as the user re-opens
-      // the OLD cwd.
+      // The OLD setCwd (R199 + R302 + R204) did:
+      //   pre_warm_daemon(newCwd) → swap_to_pre_warm()
+      //   → createSession({cwd: newCwd})
+      // and the swap killed the old daemon mid-stream.
+      // That race is the source of bug 1+2 in R360
+      // ("new session's output sits on top of the old
+      // session's prompt"). The current sessionId stays
+      // active; only its cwd changes.
       //
-      // If the new path equals the current cwd, this is a
-      // no-op (we don't churn the session id for a click
-      // that ends up selecting the same folder).
+      // The OLD setCwd also did `sessions: []`,
+      // `messages: []`, `daemonInfo: null`, etc. — pre-R360
+      // it even dropped the entire sessions list, which
+      // is the source of bug 3 ("old cwd projects
+      // vanished from the rail"). All of those are now
+      // unnecessary because the daemon is the same
+      // process; we just refresh the affected caches.
+      //
+      // Same-cwd short-circuit preserved: don't churn
+      // any state for a click that selects the current
+      // folder.
       const curCwd = (get().cwd ?? '').replace(/[\\/]+$/, '');
       const newCwd = (path ?? '').replace(/[\\/]+$/, '');
       if (curCwd && curCwd.toLowerCase() === newCwd.toLowerCase()) {
-        // Same cwd — nothing to do. The pickCwd dialog
-        // dismissed; the user is already on the right
-        // folder.
         return;
       }
-      set({ cwdSwitchInProgress: true, cwdSwitchTarget: path, transitionPhase: 'killing-old' });
+      set({ cwdSwitchInProgress: true, cwdSwitchTarget: path });
       try {
-        // 1. Hand off to Rust. The Rust side spawns a
-        //    fresh daemon for the new cwd, swaps it to
-        //    primary, and mints a session on it. The
-        //    returned sessionId is the new active session.
-        //    The WS is re-opened by the swap, so any
-        //    post-swap rpc_call (refreshSessions, etc.)
-        //    goes to the new daemon.
-        const r = await rpc.setCwd(path);
-        const newId = r.sessionId;
-        // 2. Update local state. When `swapped` is true
-        //    the daemon is fresh and we re-init the WS
-        //    listeners. When false, the slot was just
-        //    updated and ensure_daemon will spawn one
-        //    rooted at the new cwd on the next call.
-        if (r.swapped) {
-          set({
-            currentSessionId: newId,
-            cwd: r.cwd || path,
-            messages: [],
-            currentInput: '',
-            transitionPhase: 'health-check',
-            // clear OLD sessions when swapping
-            // daemons. Previously the code did
-            //   sessions: [...get().sessions, newId]
-            // — appending the new session to the OLD
-            // daemon's list. The OLD daemon was killed
-            // by swap_to_pre_warm, so those sessions
-            // are unreachable (they live in the OLD
-            // cwd's sessions.db). The user reported
-            // "selecting abc_4 became the abc_3 operation again" — they were
-            // seeing the OLD daemon's stale sessions
-            // mixed in with the new one. Clear them
-            // here; refreshSessions() below will
-            // repopulate from the new daemon.
-            sessions: [
-              { id: newId!, name: undefined, lastUsedAt: Date.now(), messageCount: 0, cwd: r.cwd || path },
-            ],
-            // clear cached metadata tied to the
-            // OLD daemon. The user said cwd-switch was
-            // sometimes operating on the OLD cwd's
-            // state — these caches were the smoking gun.
-            memory: { user: { entries: [], count: 0 }, project: { entries: [], count: 0, cwd: null }, session: { entries: [], count: 0, sessionId: null } },
-            memoryStats: null,
-            lastMemoryRefreshMs: 0,
-            // also drop stale project/session/task
-            // lists so the panels don't show OLD cwd's
-            // tasks or projects for a moment.
-            tasks: [],
-            projects: [],
-            lastSessionSummary: null,
-            daemonInfo: null,
-            // after swap, the WS is a fresh one.
-            // We need the renderer to re-establish its
-            // listeners and refetch metadata. Setting
-            // daemonInfo=null triggers the WS re-init
-            // path in initialize().
-          });
-          // R302 fix: refill daemonInfo from the freshly-promoted
-          
-          // across R292-R301. `get_daemon_info` returns the
-          // `state.daemon` mutex clone, which swap_to_pre_warm
-          // populates at lib.rs:599.
-          try {
-            const fresh = await invoke<DaemonInfo | null>('get_daemon_info');
-            if (fresh) {
-              set({ daemonInfo: fresh });
-              // R302 diagnostic: surface the refill into the
-              // same log so user can verify the swap populated
-              // a non-empty jarPath. Previously the chip strip
-              // would render `MockSsdDriver (jarPath='', cwd='')`
-              // and the run would silently fall back.
-              try {
-                const line = `[R302-setCwd] daemonInfo refilled port=${fresh.port} jarPath=${JSON.stringify(fresh.jarPath)} cwd=${JSON.stringify(fresh.cwd)} spawned=${fresh.spawned} @ ${new Date().toISOString()}\n`;
-                try { console.log(line.trim()); } catch {}
-                try {
-                  const tdir = await (await import('@tauri-apps/api/path')).tempDir();
-                  const logPath = tdir ? `${tdir}\\aethercode-desktop-daemon-info.log` : 'aethercode-desktop-daemon-info.log';
-                  await invoke('append_text_file', { path: logPath, contents: line }).catch(() => {});
-                } catch {}
-              } catch {}
-            }
-          } catch (e) {
-            try {
-              console.warn('[R302-setCwd] get_daemon_info after swap failed:', e);
-            } catch {}
-          }
-        } else {
-          // No swap happened (no daemon was up yet).
-          // Just update the cwd slot; ensure_daemon
-          // picks it up on the next initialize().
-          set({
-            cwd: r.cwd || path,
-            // also drop cached daemon state in the
-            // no-swap path. previously the cached sessions
-            // / tasks / memory lingered across "switch
-            // cwd before daemon is up" — same root cause
-            // as the swap case.
-            sessions: [],
-            memory: { user: { entries: [], count: 0 }, project: { entries: [], count: 0, cwd: null }, session: { entries: [], count: 0, sessionId: null } },
-            memoryStats: null,
-            lastMemoryRefreshMs: 0,
-            tasks: [],
-            projects: [],
-            transitionPhase: 'spawning-jvm',
-          });
-          // Trigger ensure_daemon so the next call
-          // spawns a fresh daemon rooted at the new cwd.
-          void get().initialize().catch(() => {});
-          return;
-        }
-        // 3. Light refresh: re-fetch sessions / tools /
-        //    providers / memory so the picker reflects
-        //    the new per-cwd metadata. The WS was re-opened
-        //    during the swap.
+        const sid = get().currentSessionId ?? null;
+        // 1. Forward to Rust → daemon bindSessionCwd.
+        //    The supervisor's set_cwd is now a thin
+        //    wrapper around this single RPC.
+        const r = await rpc.setCwd(path, sid);
+        // 2. Update local cwd + daemon-cached cwd.
+        //    sessions / messages / currentSessionId are
+        //    intentionally preserved — same daemon, same
+        //    session, only the cwd field changes.
+        set({ cwd: r.cwd || path });
+        // 3. Light refresh: sessions / providers
+        //    need to refresh so the new cwd shows the
+        //    right per-cwd entries. memory PROJECT scope
+        //    re-pulls the new cwd's project memory.
+        // tools refresh is unnecessary (the engine's
+        // tool pool is global), so we skip it.
         void get().refreshSessions().catch(() => {});
-        void get().refreshTools().catch(() => {});
         void get().refreshProviders().catch(() => {});
-        // refresh all 3 memory scopes. legacy
-        // only PROJECT was refreshed (via NOTIFY_CWD_CHANGED
-        // event in line 2617). USER and SESSION caches
-        // were left untouched, so switching cwd from
-        // abc_3 to abc_4 left the abc_3 user memory
-        // visible until the next event fired. The user
-        // explicitly said "user-level memory records the user's preferences,
-        // project-level memory records project info, memory and session
-        // must not be mixed up" — we now refresh all three on
-        // every cwd switch.
-        void get().refreshMemory('USER').catch(() => {});
         void get().refreshMemory('PROJECT').catch(() => {});
-        void get().refreshMemory('SESSION').catch(() => {});
-        // 4. re-apply the user's persisted
-        //    permission-mode preference. A new daemon
-        //    boots with the engine's DEFAULT mode (the
-        //    daemon doesn't remember the OLD daemon's
-        //    user-set mode), so without this re-apply
-        //    the renderer would briefly show
-        //    Ask first (the new daemon's default), then
-        //    on the next refreshEngineState the dropdown
-        //    would land on whatever the daemon reported.
-        // The user explicitly picked always run and the
-        // new daemon shouldn't silently flip them back
-        // to the default.
-        const prefsForPerm = readEnginePrefs();
-        if (prefsForPerm.permissionMode && prefsForPerm.permissionMode !== get().permissionMode) {
-          void get().setPermissionMode(prefsForPerm.permissionMode).catch(() => {});
-        }
-        // R204: re-apply the user's persisted permission mode after the daemon swap
-        // 5. Pre-warm a sibling for the next switch.
-        void get().preWarmCwd(suggestSibling(path)).catch(() => {});
       } catch (e: any) {
         console.error('setCwd failed', e);
         set((s) => ({
@@ -7029,7 +7080,7 @@ export const useStore = create<AppState>((set, get) => {
           }],
         }));
       } finally {
-        set({ cwdSwitchInProgress: false, cwdSwitchTarget: null, transitionPhase: 'idle' });
+        set({ cwdSwitchInProgress: false, cwdSwitchTarget: null });
       }
     },
 
