@@ -102,7 +102,8 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
         try {
             notifySideNote(newRunId, "todo-continuation-start",
                     "auto-continuing with " + incompleteTodos.size()
-                            + " remaining todo(s) (parent run " + runId + ")");
+                            + " remaining todo(s) (parent run " + runId + ")",
+                    sessionId);
         } catch (Exception ignored) {}
 
         // Drain the new run on a fresh thread so the hook's
@@ -152,7 +153,7 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                         }
                         openToolSpans.clear();
                     }
-                    notifyStreamEvent(newRunId, ev);
+                    notifyStreamEvent(newRunId, ev, sessionId);
                 }
                 // Fire SESSION_IDLE so any future boulder hooks see
                 // this continuation as a normal idle session and
@@ -231,10 +232,17 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    private void notifyStreamEvent(String runId, StreamEvent ev) {
+    private void notifyStreamEvent(String runId, StreamEvent ev, String sessionId) {
         try {
             Map<String, Object> evWrap = new LinkedHashMap<>();
             evWrap.put("runId", runId);
+            // tag with sessionId so the desktop drops the
+            // stream event if the user already moved on
+            // (same fix as the main query loop in
+            // AetherCodeMethods.query()). Null-safe for
+            // legacy single-engine daemons — the desktop's
+            // isOurSession helper treats empty as "all".
+            if (sessionId != null) evWrap.put("sessionId", sessionId);
             evWrap.put("event", AetherCodeMethods.eventToMapPublic(ev));
             methods.notifyCustom(AetherCodeMethods.NOTIFY_STREAM_EVENT, evWrap);
         } catch (Exception notifyEx) {
@@ -242,10 +250,12 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
         }
     }
 
-    private void notifySideNote(String runId, String kind, String message) {
+    private void notifySideNote(String runId, String kind, String message, String sessionId) {
         try {
             Map<String, Object> evWrap = new LinkedHashMap<>();
             evWrap.put("runId", runId);
+            // same sessionId tag as notifyStreamEvent above.
+            if (sessionId != null) evWrap.put("sessionId", sessionId);
             Map<String, Object> sideNote = new LinkedHashMap<>();
             sideNote.put("type", "side_note");
             sideNote.put("kind", kind);

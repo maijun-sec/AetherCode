@@ -2519,16 +2519,33 @@ public class AetherCodeMethods {
             r.put("error", "session manager not configured");
             return r;
         }
+        // parse sessionId + the per-session spec (cwd /
+        // worktree / model). R361: the desktop now creates
+        // a fresh engine bound to a chosen cwd in one
+        // RPC round-trip (no daemon swap). The legacy
+        // single-arg form (`createEngine("uuid")`) is
+        // kept for back-compat with older CLI tests.
         String id = null;
+        String cwd = null;
+        String worktree = null;
+        String model = null;
         if (params instanceof Map<?, ?> mp) {
             Object v = mp.get("sessionId");
             if (v != null) id = v.toString();
+            if (mp.get("cwd") instanceof String s && !s.isBlank()) cwd = s;
+            if (mp.get("worktree") instanceof String s && !s.isBlank()) worktree = s;
+            if (mp.get("model") instanceof String s && !s.isBlank()) model = s;
         } else if (params instanceof String s) {
             id = s;
         }
         if (id == null || id.isBlank()) {
             r.put("ok", false);
             r.put("error", "missing required field 'sessionId'");
+            return r;
+        }
+        if (cwd != null && worktree != null) {
+            r.put("ok", false);
+            r.put("error", "cwd and worktree are mutually exclusive");
             return r;
         }
         org.aethercode.sdk.SessionManager.EngineHandle existing = m.get(id);
@@ -2541,7 +2558,21 @@ public class AetherCodeMethods {
             return r;
         }
         try {
-            org.aethercode.sdk.SessionManager.EngineHandle h = m.create(id);
+            org.aethercode.sdk.SessionManager.EngineHandle h;
+            if (cwd != null || worktree != null || model != null) {
+                // R361: route through SessionSpec so the
+                // factory can build the new engine rooted
+                // at the per-session cwd. pre-R361 the
+                // desktop had to do `setCwd → swap_daemon
+                // → createSession` to achieve the same
+                // shape; this single RPC replaces all of
+                // it.
+                org.aethercode.sdk.SessionSpec spec =
+                    new org.aethercode.sdk.SessionSpec(id, cwd, worktree, model);
+                h = m.create(spec);
+            } else {
+                h = m.create(id);
+            }
             r.put("ok", true);
             r.put("sessionId", id);
             r.put("created", h != null);
@@ -3359,6 +3390,19 @@ public class AetherCodeMethods {
                     }
                     Map<String, Object> evWrap = new LinkedHashMap<>();
                     evWrap.put("runId", runId);
+                    // tag the stream event with the session id so the
+                    // desktop's stream_event handler can drop events
+                    // from a previous session (the user just switched
+                    // cwd / opened a new session while the previous run
+                    // was still streaming — pre-fix the desktop would
+                    // append the old run's text_delta / tool_use_start
+                    // events into the new session's chat scrollback,
+                    // producing the "new session's output sits on top of
+                    // the old session" bug). Null-safe: when no session
+                    // is bound (single-engine legacy), the field is
+                    // omitted and the desktop's isOurSession helper
+                    // treats empty as "all sessions" (back-compat).
+                    if (_targetSid != null) evWrap.put("sessionId", _targetSid);
                     evWrap.put("event", eventToMap(ev));
                     notifier.accept(new JsonRpcNotification(
                             org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
@@ -3429,6 +3473,11 @@ public class AetherCodeMethods {
                 // `error` field the renderer can surface.
                 Map<String, Object> endWrap = new LinkedHashMap<>();
                 endWrap.put("runId", runId);
+                // tag with sessionId so the desktop drops this
+                // synthetic run_end if the user already moved on
+                // (same reasoning as the main stream_event loop
+                // above). Null-safe for legacy single-engine.
+                if (_targetSid != null) endWrap.put("sessionId", _targetSid);
                 Map<String, Object> endEvent = new LinkedHashMap<>();
                 endEvent.put("type", "run_end");
                 endEvent.put("stopReason", th.getMessage() != null && !th.getMessage().isBlank()
@@ -3984,6 +4033,14 @@ public class AetherCodeMethods {
             payload.put("type", "side_note");
             payload.put("event", eventToMap(ev));
             payload.put("runId", runId);
+            // tag with sessionId so the desktop drops the
+            // stream event if the user already moved on.
+            // currentEngine() may be null during early init
+            // — guard with a try and fall back to omitting.
+            try {
+                String _wfSid = currentEngine() != null ? currentEngine().appState().sessionId() : null;
+                if (_wfSid != null) payload.put("sessionId", _wfSid);
+            } catch (Exception ignored) {}
             try {
                 notifier.accept(new JsonRpcNotification(
                         org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
