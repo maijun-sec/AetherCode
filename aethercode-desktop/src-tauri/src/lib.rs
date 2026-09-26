@@ -620,8 +620,12 @@ async fn set_cwd(
         }
     };
 
-    // 1. Forward to the daemon's bindSessionCwd. The
-    //    daemon's SessionManager routes to the engine
+    // 1. Forward to the daemon's switchProject handler.
+    //    The TS lib/methods.ts AetherCodeRpc.bindSessionCwd
+    //    also routes via method name "switchProject"
+    //    (the daemon's registered handler; see
+    //    AetherCodeMethods.java:switchProject at line 2003).
+    //    The daemon's SessionManager routes to the engine
     //    bound to that sessionId and sets its cwd —
     //    no JVM restart, no WS reconnect. The current
     //    sessionId is the active session; if the user
@@ -630,7 +634,7 @@ async fn set_cwd(
     //    new cwd first (which daemon's lazy-create
     //    handles atomically).
     let bind_result = rpc_call(
-        "bindSessionCwd".to_string(),
+        "switchProject".to_string(),
         serde_json::json!({
             "sessionId": sid,
             "cwd": new_cwd.to_string_lossy().to_string(),
@@ -639,8 +643,8 @@ async fn set_cwd(
     )
     .await;
     if let Err(e) = bind_result {
-        eprintln!("[R361] bindSessionCwd failed: {}", e);
-        return Err(format!("bindSessionCwd failed: {}", e));
+        eprintln!("[R361] switchProject failed: {}", e);
+        return Err(format!("switchProject failed: {}", e));
     }
     Ok(serde_json::json!({
         "cwd": new_cwd.to_string_lossy().to_string(),

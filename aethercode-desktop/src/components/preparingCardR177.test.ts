@@ -290,13 +290,21 @@ describe('对应历史 round: setCwd on a different path is a per-session cwd re
     expect(methodsSrc).toMatch(/setActiveEngine\(sessionId:\s*string\)/);
   });
 
-  it('lib.rs set_cwd is a thin wrapper that forwards to bindSessionCwd (R361: no swap)', () => {
+  it('lib.rs set_cwd is a thin wrapper that forwards to switchProject (R361: no swap)', () => {
     // R361 dropped the swap dance. The Tauri set_cwd
     // command now reads `session_id` and forwards
-    // straight to the daemon's bindSessionCwd RPC on
+    // straight to the daemon's switchProject RPC on
     // the existing WS — no JVM restart. We pin the
     // forwarding RPC name so a regression that calls
     // the legacy createSession brings back the bug.
+    //
+    // Note: the TS-side AetherCodeRpc.bindSessionCwd
+    // (aethercode-desktop/src/lib/methods.ts) ALSO
+    // routes via method name "switchProject" (the
+    // daemon's registered handler). The two layers
+    // share the same wire name so a typo on either
+    // side surfaces as METHOD_NOT_FOUND on the
+    // daemon — pin both via this regex.
     //
     // Walk balanced braces from `async fn set_cwd(` to
     // its closing `}` so we capture the function body
@@ -316,12 +324,16 @@ describe('对应历史 round: setCwd on a different path is a per-session cwd re
       }
     }
     const setCwdBlock = libRsSrc.slice(sigIdx, bodyEnd);
-    expect(setCwdBlock).toMatch(/bindSessionCwd/);
-    // the swap dance is gone from the set_cwd function
-    // body. pre_warm_daemon / swap_to_pre_warm are still
-    // exported as Tauri commands (Phase 3 cleanup can
-    // remove them) but the set_cwd path itself must
-    // not call them.
+    // The Rust supervisor must route to the daemon's
+    // registered handler. As of R361 the daemon
+    // doesn't expose a `bindSessionCwd` method —
+    // `switchProject` is the canonical name.
+    expect(setCwdBlock).toMatch(/"switchProject"/);
+    // The swap dance is gone from the set_cwd function
+    // body. pre_warm_daemon / swap_to_pre_warm are
+    // already deleted (R361 Phase 4) but keep the
+    // negative pin so a regression that re-introduces
+    // them trips this test.
     expect(setCwdBlock).not.toMatch(/pre_warm_daemon\(/);
     expect(setCwdBlock).not.toMatch(/swap_to_pre_warm\(/);
   });
@@ -532,18 +544,22 @@ describe('R201: 5 fixes from one user feedback round (second batch)', () => {
   const appSrc = read('src/App.tsx');
   void libRsSrc; // referenced below via substring
 
-  it('#1 R361: set_cwd no longer swaps the daemon — single RPC bindSessionCwd', () => {
+  it('#1 R361: set_cwd no longer swaps the daemon — single RPC switchProject', () => {
     // R361 replaced the R199 + R302 + R204 swap dance
     // (set_cwd_daemon → pre_warm_daemon + swap_to_pre_warm
     // + createSession) with a single RPC round-trip:
-    // set_cwd → bindSessionCwd({sessionId, cwd}). The
-    // swap dance was the root cause of R360 bug 1+2
-    // ("new session's output lands on the old session's
-    // prompt") because the swap killed the daemon
-    // mid-stream. The fix is structural — no swap means
-    // no spurious-disconnect guard, no ScopingGuard, no
-    // pre-warm slot.
-    expect(libRsSrc).toMatch(/bindSessionCwd/);
+    // set_cwd → switchProject({sessionId, cwd}) on the
+    // existing WS. The swap dance was the root cause of
+    // R360 bug 1+2 ("new session's output lands on the
+    // old session's prompt") because the swap killed the
+    // daemon mid-stream. The fix is structural — no swap
+    // means no spurious-disconnect guard, no
+    // ScopingGuard, no pre-warm slot.
+    //
+    // Note: the TS-side AetherCodeRpc.bindSessionCwd
+    // ALSO routes via "switchProject" — both layers must
+    // agree on the daemon-side registered handler name.
+    expect(libRsSrc).toMatch(/"switchProject"/);
     // Swap dance is fully retired from set_cwd.
     expect(libRsSrc).not.toMatch(/set_cwd_daemon/);
     expect(libRsSrc).not.toMatch(/pre_warm_daemon\(/);
