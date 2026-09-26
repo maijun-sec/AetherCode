@@ -153,6 +153,61 @@ async function runHeadless(
       javaBinary: javaBin,
       jvmArgs,
       onNotification: (method, params) => {
+        if (method === "permission_request") {
+          // R344: handle permission asks in --print mode.
+          // The previous version ignored them entirely, so
+          // daemon-side deny-on-timeout silently killed every
+          // file_write / bash `echo > file` call mid-run. Print
+          // the ask and read a single keystroke from stdin
+          // (TTY only; in piped mode we auto-deny — headless
+          // callers should set --permission-mode=ACCEPT_TASK or
+          // BYPASS_PERMISSIONS to avoid this).
+          const p = (params ?? {}) as Record<string, unknown>;
+          const tool = String(p.tool ?? "(unknown)");
+          const input = (p.input as Record<string, unknown>) ?? {};
+          const reason = String(p.reason ?? "");
+          const risk = String(p.riskLevel ?? "medium").toUpperCase();
+          const requestId = String(p.requestId ?? "");
+          const color = risk === "CRITICAL" ? C.red
+                      : risk === "HIGH"     ? C.yellowBright
+                                            : C.yellow;
+          process.stderr.write(
+            `\n⚠ PERMISSION REQUIRED [${risk}] — tool: ${tool}\n` +
+            `  input: ${JSON.stringify(input)}\n` +
+            `  reason: ${reason}\n` +
+            `  [A]llow  [Y]always  [D]eny  [N]never\n`,
+          );
+          if (!process.stdin.isTTY) {
+            // piped / CI: refuse to run unverified writes. The
+            // caller should know about this — surface a clear
+            // log line and deny so the model gets a useful error.
+            process.stderr.write(
+              `  (stdin is not a TTY; defaulting to deny. Re-run with\n` +
+              `   --permission-mode=ACCEPT_TASK or BYPASS_PERMISSIONS,\n` +
+              `   or pipe from a TTY-aware driver.)\n`,
+            );
+            void client.request("permissionResponse", {
+              requestId, decision: "deny",
+              reason: "headless --print mode: stdin not a TTY, defaulting to deny",
+            }).catch((e: Error) => {
+              process.stderr.write(`  permission reply failed: ${e.message}\n`);
+            });
+            return;
+          }
+          void (async () => {
+            const decision = await readOneCharHeadless();
+            try {
+              await client.request("permissionResponse", {
+                requestId,
+                decision,
+                reason: `headless --print: user picked ${decision}`,
+              });
+            } catch (e) {
+              process.stderr.write(`permission reply failed: ${(e as Error).message}\n`);
+            }
+          })();
+          return;
+        }
         if (method !== "stream_event") return;
         const p = (params ?? {}) as { event?: Record<string, unknown> };
         const ev = p.event ?? {};
@@ -194,6 +249,69 @@ async function runHeadless(
     })();
   });
 }
+
+/**
+ * Read a single keystroke from stdin to decide a permission
+ * ask in headless `--print` mode. Mirrors the line-mode
+ * `readOneChar` from line.ts but without the 1-second timeout
+ * — in --print mode the daemon's 5-minute timeout is the
+ * authoritative ceiling, so we wait until the user actually
+ * presses something (or the daemon disconnects).
+ *
+ * Returns one of: "allow" | "always_allow" | "deny" | "always_deny".
+ */
+async function readOneCharHeadless(): Promise<string> {
+  if (!process.stdin.isTTY) return "deny";
+  return new Promise<string>((resolve) => {
+    const onData = (chunk: Buffer | string) => {
+      process.stdin.removeListener("data", onData);
+      process.stdin.removeListener("keypress", onKeypress as never);
+      try {
+        if (typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void }).setRawMode === "function") {
+          (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(false);
+        }
+      } catch { /* ignore */ }
+      const c = String(chunk).charAt(0).toLowerCase();
+      resolve(
+        c === "a" ? "allow" :
+        c === "y" ? "always_allow" :
+        c === "d" ? "deny" :
+        c === "n" ? "always_deny" :
+                    "deny",
+      );
+    };
+    const onKeypress = (_s: string, k: { name?: string }) => {
+      process.stdin.removeListener("data", onData);
+      process.stdin.removeListener("keypress", onKeypress as never);
+      try {
+        if (typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void }).setRawMode === "function") {
+          (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(false);
+        }
+      } catch { /* ignore */ }
+      const n = k.name ?? "";
+      resolve(n === "a" ? "allow"
+            : n === "y" ? "always_allow"
+            : n === "d" ? "deny"
+                        : "always_deny");
+    };
+    process.stdin.on("data", onData);
+    process.stdin.on("keypress", onKeypress as never);
+    try {
+      if (typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void }).setRawMode === "function") {
+        (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(true);
+      }
+    } catch { /* ignore */ }
+  });
+}
+
+/** Minimal ANSI colour helpers used by --print prompts. */
+const C = {
+  red:         "\x1b[31m",
+  yellow:      "\x1b[33m",
+  yellowBright:"\x1b[93m",
+  dim:         "\x1b[2m",
+  reset:       "\x1b[0m",
+} as const;
 
 async function main(): Promise<number> {
   const { values, positionals } = parseCli(process.argv.slice(2));
@@ -245,8 +363,22 @@ async function main(): Promise<number> {
       return false;
     }
   })();
-  const useLine  = wantLine || (!wantTui && (!haveTty || !inkSupportsRaw));
-  if (!useLine && !inkSupportsRaw && process.stderr.isTTY) {
+  // R344: Ink mode requires raw mode to work. If the probe
+  // returned false (PowerShell 5.1 + conhost claims isTTY=true
+  // but throws on setRawMode(true); old ConPTY; SSH with
+  // raw-mode-disabled transport) we fall back to line mode
+  // even when the user passed --tui, because forcing Ink
+  // produces a frozen UI (useInput throws, TUI renders but
+  // can't accept keystrokes).
+  const useLine  = wantLine || !haveTty || !inkSupportsRaw;
+  if (wantTui && !inkSupportsRaw && process.stderr.isTTY) {
+    process.stderr.write(
+      "note: --tui was requested but Ink raw mode is not supported in this terminal.\n" +
+      "      falling back to line mode (--line). The full-screen UI requires a\n" +
+      "      ConPTY-capable host (Windows Terminal, PowerShell 7 + Windows Terminal,\n" +
+      "      or any modern SSH / tmux host with raw-mode support).\n"
+    );
+  } else if (!useLine && !inkSupportsRaw && process.stderr.isTTY) {
     process.stderr.write(
       "note: Ink raw mode is not supported in this terminal — falling back to line mode.\n" +
       "      pass --tui to force the full-screen UI (may fail on this host),\n" +

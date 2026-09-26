@@ -77,10 +77,12 @@ export const PermissionModal: React.FC<Props> = ({ ask }) => {
       </Text>
       <Text> </Text>
       <Text>Choose an option:</Text>
-      <Text>  <Text color={t.ok} bold>[A]</Text> allow this call once</Text>
-      <Text>  <Text color={t.ok} bold>[Y]</Text> allow and remember (always for this tool+input)</Text>
-      <Text>  <Text color={t.err} bold>[D]</Text> deny this call once</Text>
-      <Text>  <Text color={t.err} bold>[N]</Text> deny and remember</Text>
+      {/* R344: numbered selector (1/2/3/4) with letter aliases (A/Y/D/N).
+       *  Numbered selector matches Claude Code's modal style. */}
+      <Text>  <Text color={t.ok} bold>1 [A]</Text> allow this call once</Text>
+      <Text>  <Text color={t.ok} bold>2 [Y]</Text> allow and remember (always for this tool+input)</Text>
+      <Text>  <Text color={t.err} bold>3 [D]</Text> deny this call once</Text>
+      <Text>  <Text color={t.err} bold>4 [N]</Text> deny and remember</Text>
     </Box>
   );
 };

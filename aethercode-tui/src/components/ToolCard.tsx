@@ -135,25 +135,20 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
   const duration = computeDuration(turn);
 
   // 1-line collapsed form: status + category + name + args + duration.
+  // R344: thinner border (single instead of round) and tighter
+  // padding so multiple tool cards stack visually like log lines.
   if (collapsed) {
-    // when a tool has been "running" for >30s, the old
-    // single-line `<duration>…` form was identical to a 1s-running
-    // tool — the user couldn't tell whether the daemon was making
-    // progress or stuck. We now add a small "still running" hint
-    // past the threshold so the visual weight makes the wait
-    // obvious. Past 90s we also tint the duration amber so a
-    // truly-stuck tool stands out in the scrollback.
     const longRunning = status === "running" && longRunningMs(turn) > 30_000;
     const veryLong = status === "running" && longRunningMs(turn) > 90_000;
     return (
       <Box
-        borderStyle="round"
+        borderStyle="single"
         borderColor={veryLong ? t.warn : t.dim}
         flexDirection="column"
-        paddingX={1}
+        paddingX={0}
         marginY={0}
       >
-        <Box flexDirection="row" justifyContent="space-between">
+        <Box flexDirection="row" paddingX={1} justifyContent="space-between">
           <Text>
             <Text color={catColor}>{catIcon} </Text>
             <Text dimColor>{turn.toolName ?? "tool"}</Text>
@@ -167,7 +162,6 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
             )}
             <Text color={veryLong ? t.warn : undefined}>{status === "running" ? `${duration}…` : `${duration} ${status}`}</Text>
             {longRunning ? <Text dimColor>  ·  still running</Text> : null}
-            {"  ·  Tab to expand"}
           </Text>
         </Box>
       </Box>
@@ -179,13 +173,13 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
   if (!turn.toolExpanded) {
     return (
       <Box
-        borderStyle="round"
+        borderStyle="single"
         borderColor={borderColor}
         flexDirection="column"
-        paddingX={1}
+        paddingX={0}
         marginY={0}
       >
-        <Box flexDirection="row" justifyContent="space-between">
+        <Box flexDirection="row" paddingX={1} justifyContent="space-between">
           <Text>
             {status === "running" ? (
               <Text color={catColor}><Spinner type={CATEGORY_SPINNER[cat]} /> </Text>
@@ -198,11 +192,11 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
           </Text>
           <Text dimColor>
             {duration}
-            {"  ·  d: details  ·  Tab: collapse"}
+            {"  ·  Tab: collapse  ·  d: details"}
           </Text>
         </Box>
         {showResult && turn.toolResult ? (
-          <Box marginTop={0}>
+          <Box marginTop={0} paddingX={1}>
             <Text dimColor>{truncate(turn.toolResult, 400)}</Text>
           </Box>
         ) : null}
@@ -214,13 +208,13 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
   // in monospace blocks. Press 'd' again to collapse details.
   return (
     <Box
-      borderStyle="round"
+      borderStyle="single"
       borderColor={borderColor}
       flexDirection="column"
-      paddingX={1}
+      paddingX={0}
       marginY={0}
     >
-      <Box flexDirection="row" justifyContent="space-between">
+      <Box flexDirection="row" paddingX={1} justifyContent="space-between">
         <Text>
           {status === "running" ? (
             <Text color={catColor}><Spinner type={CATEGORY_SPINNER[cat]} /> </Text>
@@ -232,7 +226,7 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
         </Text>
         <Text dimColor>
           {duration}
-          {"  ·  d: collapse  ·  Tab: collapse"}
+          {"  ·  Tab: collapse  ·  d: collapse"}
         </Text>
       </Box>
       <Box flexDirection="column" marginTop={1} marginLeft={2}>
@@ -240,14 +234,6 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
         <Text color={t.code}>{formatFullArgs(turn.toolArgs)}</Text>
       </Box>
       {showResult && turn.toolResult ? (
-        // render the tool result as Markdown so fenced
-        // code blocks, headings, lists and other formatting
-        // are visible. The Markdown component falls back to
-        // plain text for non-Markdown content, so this is safe
-        // for short outputs like "ok" or file_write success
-        // summaries. For long code outputs the Markdown
-        // component detects ``` fences and renders them in a
-        // dedicated monospace block.
         <Box flexDirection="column" marginTop={1} marginLeft={2}>
           <Text dimColor>{icon.detail} result:</Text>
           <Box marginTop={0} marginLeft={1}>

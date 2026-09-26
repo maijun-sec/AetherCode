@@ -1,63 +1,172 @@
 /**
- * welcome banner.
- * a richer first-impression screen with shortcuts, model
- *      info, session id, cwd, and a one-glance "what to do".
- *      Still only shown when the scrollback is empty (so it
- *      disappears once the user submits the first prompt).
+ * welcome banner — R344 redesign.
  *
- * compacted — the previous version ate half the terminal
- * with shortcut rows. We now show a single dense header line
- * (model · mode · cwd) plus a one-line tip. The user can press
- * Ctrl-? for the full shortcut list, which is the appropriate
- * place for it. The compact welcome keeps the conversation
- * scrollback in view from the very first interaction.
+ * Claude Code-inspired first impression: a bold ASCII wordmark, a
+ * dense single-row "context strip" (provider · model · mode · session
+ * · cwd · time), a shortcuts grid (R343), and one "tip of the day".
  *
- * T-443: `WelcomeBanner` is the rich variant (model, cwd, mcp
- * tools, etc.) — the new banner is shown on `tutorialOpen` and
- * as the first-launch splash. The compact `Welcome` component
- * is what sits at the top of an empty scrollback; the user
- * sees the SHORTCUTS section so the new ones (Tab to accept
- * autocomplete, Ctrl-B for sidebar, Ctrl-F for search) are
- * discoverable.
+ * Visual rules:
+ *  - the wordmark is the only bold art in the TUI; everything else
+ *    is single-line and dim
+ *  - pills (provider / model / mode / conn) use a 1-row badge with
+ *    an icon + label + optional accent color
+ *  - the shortcut grid is dense (2-column flex) so it doesn't eat
+ *    the scrollback area
+ *  - tips rotate based on context (subagent availability, memory
+ *    bank status, daemon mode)
+ *
+ * Layout:
+ *
+ *  ╭─────────────────────────────────────────────────────╮
+ *  │  ⌬  AETHERCODE  v0.2.71  ·  Type a prompt to start  │
+ *  │                                                      │
+ *  │  ⌬ model: MiniMax-M3   ⚙ mode: DEFAULT             │
+ *  │  ⌃ provider: MiniMax   # session: dcffbb65          │
+ *  │  ⏱  uptime: 2m 14s    ↳ cwd: ~/work/proj            │
+ *  │                                                      │
+ *  │  shortcuts:  Tab accept   Ctrl-B sidebar            │
+ *  │              / commands  @ files                    │
+ *  │              Ctrl-? help  Ctrl-L logs               │
+ *  │                                                      │
+ *  │  ⚡ Tip: /demo runs a pre-canned conversation so you │
+ *  │  can see the TUI's full visual range in one shot.    │
+ *  ╰─────────────────────────────────────────────────────╯
  */
 
 import React from "react";
 import { Box, Text } from "ink";
-import { t, wordmark, icon } from "../theme.js";
+import { t, icon, wordmark, banner } from "../theme.js";
 
 interface Props {
   model: string;
   cwd: string;
   sessionId: string;
-  /** also show the current permission mode (typically
-   *  ACCEPT_TASK on first connect). The user asked "no
-   *  mid-task stops" — the welcome screen confirms it. */
+  /** current permission mode (e.g. DEFAULT, ACCEPT_TASK). */
   mode?: string;
-  /** R245.5: one-line bank status (e.g. "bank: 12 units,
-   *  3 kinds, 8 ok / 1 notOk") or "bank: down" if the
-   *  daemon isn't reachable. Rendered as a dim hint so
-   *  the user sees the bank is wired up without scrolling.
-   *  `undefined` means the status fetch is still in flight
-   *  (we don't render anything yet, so the welcome doesn't
-   *  flash an empty line). */
+  /** provider name (e.g. minmax, openai). optional; older
+   *  daemons don't report it. */
+  provider?: string;
+  /** daemon uptime in milliseconds; rendered as 1m 14s etc. */
+  uptimeMs?: number;
+  /** token counters for the welcome card. `null` until the first
+   *  turn finishes. rendered as `—`. */
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+  /** R245.5: one-line bank status (e.g. "12 units, 8 ok / 1 notOk")
+   *  or "down". `undefined` = fetch in flight. */
   bankStatus?: string;
+  /** subagents supported by the daemon. */
+  subagentsAvailable?: boolean;
 }
 
-/** a compact list of the shortcuts the user can use
- *  from the TUI. Renders inside the welcome panel; the
- *  full list lives in {@code HelpOverlay} (Ctrl-?). */
-const SHORTCUTS: ReadonlyArray<{ key: string; label: string; desc: string }> = [
-  { key: "Tab",     label: "accept",     desc: "Tab to accept the autocomplete suggestion" },
-  { key: "Ctrl-B",  label: "sidebar",    desc: "toggle the left sidebar" },
-  { key: "Ctrl-F",  label: "search",     desc: "open the in-scrollback search bar" },
-  { key: "Ctrl-?",  label: "help",       desc: "open the full shortcut overlay" },
-  { key: "Ctrl-S",  label: "subagents",  desc: "open the background subagent panel" },
-  { key: "Ctrl-L",  label: "logs",       desc: "open the daemon log viewer" },
-  { key: "/",       label: "commands",   desc: "open the slash command palette" },
-  { key: "@",       label: "files",      desc: "fuzzy-complete a file path into the input" },
+/** static shortcut catalog. The order is deliberate: surface the
+ *  ones a new user needs in the first 30 seconds (Tab accept, / ,
+ *  @) before the power-user ones (Ctrl-B sidebar, Ctrl-? help). */
+const SHORTCUTS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: "Tab",     label: "accept autocomplete" },
+  { key: "Enter",   label: "send prompt" },
+  { key: "↑ / ↓",   label: "input history" },
+  { key: "/",       label: "slash commands" },
+  { key: "@",       label: "@-mention files" },
+  { key: "Ctrl-B",  label: "toggle sidebar" },
+  { key: "Ctrl-D",  label: "toggle right panel" },
+  { key: "Ctrl-F",  label: "search scrollback" },
+  { key: "Ctrl-L",  label: "log viewer" },
+  { key: "Ctrl-S",  label: "subagent panel" },
+  { key: "Ctrl-T",  label: "theme picker" },
+  { key: "Ctrl-?",  label: "full help" },
 ];
 
-export const Welcome: React.FC<Props> = ({ model, cwd, sessionId, mode, bankStatus }) => {
+/** context-sensitive tips. The first matching one wins; the
+ *  fallback "no-tip" hint is shown when none match. Tips are
+ *  short so the welcome doesn't eat vertical space. */
+const TIPS: ReadonlyArray<{ when: (p: Props) => boolean; text: string }> = [
+  {
+    when: (p) => p.subagentsAvailable === true,
+    text: "subagents can run in the background — press Ctrl-S to see live jobs, or /spawn <intent> to launch one inline.",
+  },
+  {
+    when: (p) => (p.bankStatus ?? "").startsWith("down"),
+    text: "memory bank is unreachable — /memory show --project to inspect the local cache; daemon should self-recover in a few seconds.",
+  },
+  {
+    when: (p) => (p.bankStatus ?? "").includes("0 units"),
+    text: "memory bank is empty — every successful tool call seeds a unit automatically; /bank-stats shows the live count.",
+  },
+  {
+    when: (p) => p.mode?.toUpperCase() === "BYPASS_PERMISSIONS",
+    text: "you're in BYPASS mode — every tool call runs without confirmation. /mode DEFAULT to require explicit consent.",
+  },
+  {
+    when: (p) => p.mode?.toUpperCase() === "PLAN",
+    text: "you're in PLAN mode — the model proposes tool calls but doesn't run them until you accept. type a prompt or /plan to proceed.",
+  },
+  {
+    // fallback
+    when: () => true,
+    text: "/demo runs a pre-canned conversation so you can see the TUI's full visual range in one shot.",
+  },
+];
+
+/** render an icon + label pill. Used in the context strip. */
+const Pill: React.FC<{ glyph: string; label: string; color?: string; dim?: boolean }> = ({
+  glyph, label, color, dim,
+}) => (
+  <Text>
+    <Text color={color ?? t.accent}>{glyph} </Text>
+    <Text dimColor={dim}>{label}</Text>
+  </Text>
+);
+
+/** small connector between pills (a dim `·`). */
+const Sep: React.FC = () => <Text dimColor>  ·  </Text>;
+
+/** format a milliseconds duration as `1m 23s` or `12s`. */
+function formatUptime(ms: number | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return `${m}m ${rs.toString().padStart(2, "0")}s`;
+}
+
+/** format tokens with k/M suffix. */
+function fmtTok(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n < 1000) return String(Math.round(n));
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+/** format cost. */
+function fmtCost(usd: number | null | undefined): string {
+  if (usd == null || !Number.isFinite(usd)) return "—";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+
+export const Welcome: React.FC<Props> = ({
+  model, cwd, sessionId, mode, provider, uptimeMs,
+  inputTokens, outputTokens, costUsd, bankStatus, subagentsAvailable,
+}) => {
+  const tip = (TIPS.find((t) => t.when({
+    model, cwd, sessionId, mode, provider, uptimeMs,
+    inputTokens, outputTokens, costUsd, bankStatus, subagentsAvailable,
+  })) ?? TIPS[TIPS.length - 1]).text;
+
+  // session short form: first 8 chars of the id. Falls back to
+  // em-dash when the daemon hasn't reported a session yet.
+  const shortSession = !sessionId || sessionId === "—" ? "—" : sessionId.slice(0, 8);
+  // cwd short form: last 2 segments, capped to 28 chars.
+  const shortCwd = (() => {
+    const parts = cwd.split(/[\\/]/);
+    if (parts.length <= 2) return cwd;
+    const tail = parts.slice(-2).join("/");
+    return tail.length > 28 ? `.../${tail.slice(-26)}` : `.../${tail}`;
+  })();
+
   return (
     <Box
       flexDirection="column"
@@ -66,63 +175,86 @@ export const Welcome: React.FC<Props> = ({ model, cwd, sessionId, mode, bankStat
       paddingX={2}
       paddingY={1}
     >
-      <Text>
-        <Text color={t.brand} bold>{wordmark}</Text>
-        <Text>  v0.2.1</Text>
-        <Text dimColor>  ·  type a prompt and press Enter</Text>
-      </Text>
-      <Box>
+      {/* wordmark row. The banner ASCII is shown when stdout is wide
+       *  enough (>= 100 cols); otherwise fall back to the bold
+       *  wordmark + version. The renderer's flex makes both work
+       *  in a constrained viewport. */}
+      {banner ? (
+        <Text color={t.brand}>{banner}</Text>
+      ) : (
         <Text>
-          <Text color={t.accent}>{icon.model} </Text>
-          <Text>{model}</Text>
+          <Text color={t.brand} bold>{icon.model} {wordmark}</Text>
+          <Text> v0.2.71</Text>
+          <Text dimColor>  ·  type a prompt and press Enter</Text>
         </Text>
-        <Text dimColor>  ·  </Text>
-        <Text>
-          <Text color={t.accent}>{icon.id} </Text>
-          <Text dimColor>{sessionId}</Text>
-        </Text>
-        <Text dimColor>  ·  </Text>
-        <Text>
-          <Text color={t.accent}>{icon.path} </Text>
-          <Text dimColor>{cwd}</Text>
-        </Text>
-        <Text dimColor>  ·  </Text>
-        <Text>
-          <Text color={t.accent}>{icon.mode} </Text>
-          <Text>{mode ?? "ACCEPT_TASK"}</Text>
-        </Text>
+      )}
+
+      {/* context strip — single dense row with all the live state.
+       *  Order: provider → model → mode → session → uptime → cwd.
+       *  Provider is optional (omitted when unknown). */}
+      <Box marginTop={1} flexWrap="wrap">
+        {provider ? (
+          <>
+            <Pill glyph={icon.provider} label={provider} color={t.brand} />
+            <Sep />
+          </>
+        ) : null}
+        <Pill glyph={icon.model} label={model} color={t.accent} />
+        <Sep />
+        <Pill glyph={icon.mode} label={mode ?? "DEFAULT"} />
+        <Sep />
+        <Pill glyph={icon.id} label={shortSession} dim />
+        <Sep />
+        <Pill glyph={icon.time} label={formatUptime(uptimeMs)} dim />
+        <Sep />
+        <Pill glyph={icon.path} label={shortCwd} dim />
       </Box>
-      <Text dimColor>
-        {icon.arrow} no mid-task stops (mode = ACCEPT_TASK) · / for commands · @ for files · Ctrl-? for shortcuts
-      </Text>
-      {/* R245.5: optional one-line bank snapshot. `undefined`
-          means the fetch is still in flight (no flash); the
-          host will pass a populated string once readBankStats
-          returns. Showing the snapshot on the welcome screen
-          is the cheapest way to surface the O-10 wiring
-          (R244.2 + R244.3 + R245.1) without the user having
-          to type /bank-stats themselves. */}
-      {bankStatus ? (
-        <Text dimColor>
-          {icon.dot} {bankStatus}
-        </Text>
+
+      {/* live counters — input / output tokens + cost. Compact,
+       *  one line. When counters are unknown (no run yet), show
+       *  the em-dash placeholder so the row stays balanced. */}
+      {(inputTokens != null || outputTokens != null || costUsd != null) ? (
+        <Box marginTop={0}>
+          <Pill glyph={icon.in}  label={`${fmtTok(inputTokens)} in`}  dim />
+          <Sep />
+          <Pill glyph={icon.out} label={`${fmtTok(outputTokens)} out`} dim />
+          <Sep />
+          <Pill glyph={icon.cost} label={fmtCost(costUsd)} dim />
+        </Box>
       ) : null}
-      {/* a one-glance SHORTCUTS grid so the user can
-          see the new ones (Tab accept, Ctrl-B sidebar, etc)
-          without opening the help overlay. The grid is
-          dense — 2 columns × N rows — and uses dim text
-          so it doesn't compete with the chat scrollback
-          for attention. */}
+
+      {/* bank status — only rendered when reported by the daemon
+       *  (R245.5). We don't gate on `undefined` differently because
+       *  the fetch is fast; an empty placeholder line would be
+       *  more distracting than helpful. */}
+      {bankStatus ? (
+        <Box marginTop={0}>
+          <Pill glyph={icon.bank} label={bankStatus} dim />
+        </Box>
+      ) : null}
+
+      {/* shortcut grid — 2 columns, dim. The user can scan the
+       *  catalog in 2 seconds without opening HelpOverlay. */}
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>shortcuts:</Text>
-        <Box flexWrap="wrap">
-          {SHORTCUTS.map((s) => (
-            <Box key={s.key} marginRight={2}>
-              <Text color={t.accent}>{s.key}</Text>
-              <Text dimColor>  {s.label}</Text>
+        <Box flexWrap="wrap" marginTop={0}>
+          {SHORTCUTS.map((s, i) => (
+            <Box key={s.key} marginRight={3} marginBottom={0}>
+              <Text color={t.accent}>{s.key.padEnd(7)}</Text>
+              <Text dimColor>{s.label}</Text>
             </Box>
           ))}
         </Box>
+      </Box>
+
+      {/* tip of the day — context-sensitive one-liner. Italicised
+       *  visually via dim + an icon prefix. The full prompt syntax
+       *  (e.g. /demo, /mode) stays in the foreground color so the
+       *  user can copy-paste it. */}
+      <Box marginTop={1}>
+        <Text color={t.warn}>{icon.warn} </Text>
+        <Text dimColor>tip: </Text>
+        <Text>{tip}</Text>
       </Box>
     </Box>
   );

@@ -58,6 +58,7 @@ export const SLASH_HELP = [
   "/update             T-430: show the update-available modal (if a new release is pending)",
   "/update-deps        T-430: confirm a dependency refresh",
   "/notifications      T-431: open the notification center (pending notices + warning toggles)",
+  "/demo               R344: walk through a canned conversation that exercises every visual surface (welcome banner, tool cards, permission modal, status changes, error path). No LLM round-trip — purely client-side.",
   "/continue           T-6-17 / Phase 6.3: resume the active long-running task (task/resume)",
   "/pause              T-6-17 / Phase 6.3: pause the active long-running task (task/pause)",
   "/stop               T-6-17 / Phase 6.3: kill the active long-running task (task/kill)",
@@ -211,6 +212,12 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "threads",     description: "open the thread selector" },
   { name: "update",      description: "show the update-available modal" },
   { name: "update-deps", description: "confirm a dependency refresh" },
+  // R344: /demo walks the user through a canned conversation
+  // that exercises every visual surface (welcome banner, tool
+  // cards, permission modal, status changes, error path). It's
+  // the fastest way to evaluate the TUI without needing a real
+  // model round-trip.
+  { name: "demo",        description: "run a canned demo conversation (no LLM round-trip)" },
   { name: "notifications", description: "open the notification center" },
   // Phase 6.3 (T-6-17) — long-running + must-have commands.
   { name: "continue",    description: "resume the active long-running task (task/resume)" },
@@ -341,9 +348,11 @@ export function handleSlash(input: string): SlashResult | null {
       if (rest.length === 0) return { local: "usage: /model <name>" };
       return { rpcMethod: "model/set", rpcParams: { name: String(rest[0]) } };
     case "mode":
-      if (rest.length === 0) return {
-        local: "usage: /mode <DEFAULT|ACCEPT_TASK|ACCEPT_EDITS|BYPASS_PERMISSIONS|PLAN|AUTO_READ_ONLY>",
-      };
+      // R352: bare `/mode` triggers the in-process picker so the
+      // user can arrow-key through modes instead of typing the
+      // full enum. With an arg we keep the direct-RPC path for
+      // scripts / pipelines.
+      if (rest.length === 0) return { local: "__PICK_MODE__" };
       return { rpcMethod: "setPermissionMode", rpcParams: { mode: rest[0] } };
     case "no-confirm":
     case "noconfirm":
@@ -465,13 +474,21 @@ export function handleSlash(input: string): SlashResult | null {
       return { local: `unknown snippet subcommand: ${sub}. Try: save, load, list, delete.` };
     }
     case "export": {
-      // export the current scrollback to a file.
-      // Usage: /export <path>      → markdown
-      //        /export json <path> → JSON
-      if (rest.length === 0) return { local: "usage: /export <path>  (or /export json <path>)" };
+      // R347: export the current scrollback. The user can pass
+      // a path or rely on the default
+      // `<cwd>/.aethercode/exports/session-<id>-<timestamp>.md`.
+      // Usage:
+      //   /export                  → markdown to default path
+      //   /export <path>           → markdown to <path>
+      //   /export json             → JSON to default path
+      //   /export json <path>      → JSON to <path>
+      // We keep the `__EXPORT_*__:<path>` sentinel so the
+      // existing dynamic-import handler in tui.tsx still works
+      // — empty path means "let the handler compute a default".
+      if (rest.length === 0) return { local: "__EXPORT_MD__:" };
       const fmt = String(rest[0]).toLowerCase();
       if (fmt === "json") {
-        if (rest.length < 2) return { local: "usage: /export json <path>" };
+        if (rest.length < 2) return { local: "__EXPORT_JSON__:" };
         return { local: "__EXPORT_JSON__:" + String(rest[1]) };
       }
       return { local: "__EXPORT_MD__:" + String(rest[0]) };
@@ -775,6 +792,18 @@ export function handleSlash(input: string): SlashResult | null {
       // modal; on confirm, dispatches
       // `update/refreshDeps`.
       return { local: "__UPDATE_DEPS__" };
+    }
+    case "demo": {
+      // R344: canned conversation that exercises every
+      // visual surface. The TUI host renders a
+      // scripted sequence of reducer dispatches
+      // (welcome → user prompt → assistant reply →
+      // tool call → permission modal → deny →
+      // tool call → status bar changes). No RPC,
+      // no model round-trip — purely client-side
+      // so the user can evaluate the visuals
+      // without burning tokens.
+      return { local: "__DEMO__" };
     }
     case "notifications": {
       // T-431: open the notification center.

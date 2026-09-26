@@ -138,6 +138,19 @@ export interface State {
   inputTokens: number | null;
   outputTokens: number | null;
   totalCostUsd: number | null;
+  /** R344: per-model context window in tokens. 0 = unknown. The
+   *  Header renders a fill glyph + percentage from this. Sourced
+   *  from `getState().contextWindow`. */
+  contextWindow: number;
+  /** R344: provider name (e.g. "minmax", "openai"). Optional —
+   *  the daemon doesn't surface this on the wire yet, so it's
+   *  left undefined until a future round adds a `getProviders`
+   *  RPC. The Header reserves the slot for forward compatibility. */
+  provider?: string;
+  /** R344: timestamp (ms since epoch) when the TUI connected to
+   *  the current daemon session. Used by the Header to show
+   *  elapsed time. `null` until the first `init` event fires. */
+  uptimeStartedAt: number | null;
   helpVisible: boolean;
   /**
    * per-session skip-confirmation counter. While this is > 0,
@@ -639,7 +652,7 @@ export interface PermissionAsk {
 }
 
 export type Action =
-  | { type: "init"; sessionId: string; model: string; permissionMode: string; jarPath: string }
+  | { type: "init"; sessionId: string; model: string; permissionMode: string; jarPath: string; contextWindow?: number; provider?: string }
   | { type: "setInput"; text: string }
   | { type: "setHistory"; history: string[] }
   | { type: "historyUp" }
@@ -756,6 +769,8 @@ export const INITIAL: State = {
   inputTokens: null,
   outputTokens: null,
   totalCostUsd: null,
+  contextWindow: 0,
+  uptimeStartedAt: null,
   helpVisible: false,
   collapseAll: false,
   permissionAsk: null,
@@ -1036,6 +1051,9 @@ export function reducer(state: State, action: Action): State {
         model: action.model,
         permissionMode: action.permissionMode,
         jarPath: action.jarPath,
+        contextWindow: action.contextWindow ?? 0,
+        provider: action.provider,
+        uptimeStartedAt: Date.now(),
         status: "ready",
         connected: true,
       };

@@ -508,38 +508,27 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             reason:    String(p.reason ?? ""),
             riskLevel: ((p.riskLevel as string) ?? "medium") as PermissionAsk["riskLevel"],
           };
-          // in ACCEPT_TASK mode, auto-allow without showing
-          // the card. The user explicitly said "don't stop in the
-          // middle of a task", so the daemon boundary decisions
-          // (which are the only times ACCEPT_TASK should ask) are
-          // treated as no-ops. The daemon's permission policy
-          // will already have skipped these for in-task calls;
-          // what reaches us here is a sub-task boundary decision
-          // the user is happy to skip.
-          if (stateRef.current.permissionMode === "ACCEPT_TASK") {
-            void client.request("permissionResponse", {
-              requestId: ask.requestId,
-              decision: "allow",
-              reason: "auto-allowed in ACCEPT_TASK mode (no mid-task stops)",
-            }).catch((e: Error) => {
-              dispatch({ type: "log", message: `permission auto-allow failed: ${e.message}` });
-            });
-            return;  // don't dispatch permissionAsk — skip the card
-          }
-          // Read-only tools: also auto-allow. The daemon should
-          // never send these (the policy's resolveAsk returns
-          // Allow without asking), but a buggy daemon or a
-          // future feature could. Be defensive.
-          if (ask.riskLevel === "low") {
-            void client.request("permissionResponse", {
-              requestId: ask.requestId,
-              decision: "allow",
-              reason: "auto-allowed read-only tool",
-            }).catch((e: Error) => {
-              dispatch({ type: "log", message: `permission auto-allow failed: ${e.message}` });
-            });
-            return;
-          }
+          // R344: REMOVED the ACCEPT_TASK auto-allow branch.
+          // The previous behaviour silently allow'd every
+          // permission_request when the user was in ACCEPT_TASK
+          // mode — defeating the daemon's per-sub-task boundary
+          // prompts. The daemon already short-circuits IN-TASK
+          // calls in ACCEPT_TASK (so the user only sees ONE
+          // decision per sub-task, not one per tool call);
+          // what reaches the renderer here is a real boundary
+          // decision that the user should see. Render the
+          // PermissionCard so the user can pick A/T/P/U/D/N.
+          //
+          // R344: also REMOVED the riskLevel==="low" auto-allow
+          // branch. The daemon's JsonRpcPermissionPrompter
+          // short-circuits low-risk calls before the renderer
+          // is asked (see JsonRpcPermissionPrompter.ask line
+          // 77: `if ("low".equals(riskLevel) && isAutoApproveLowRisk())`)
+          // so this branch was dead code; defensive fallback
+          // for old daemons only kicked in if the daemon
+          // hadn't reported autoApproveLowRisk — which is
+          // exactly the case where the user WANTS to be
+          // asked. Render the card and let the user decide.
           dispatch({ type: "permissionAsk", ask });
           break;
         }
@@ -624,6 +613,15 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           model: String(stObj.model ?? "—"),
           permissionMode: String(stObj.permissionMode ?? "ACCEPT_TASK"),
           jarPath: client.jarPath,
+          // R344: surface the model's context window so the
+          // Header can render a fill glyph + percentage. The
+          // daemon's getState returns contextWindow as a
+          // number; we coerce defensively.
+          contextWindow: Number(stObj.contextWindow ?? 0) || 0,
+          // R344: provider is reserved for the daemon's future
+          // getProviders RPC. Today the wire doesn't carry it,
+          // so we leave it undefined.
+          provider: typeof stObj.provider === "string" ? stObj.provider : undefined,
         });
         // seed the skip-confirmation counter from
         // getState (R98 default-skip-from-config may have armed
@@ -678,40 +676,28 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             },
           });
         }
-        // switch the daemon to ACCEPT_TASK on first connect
-        // unless the user explicitly pinned a mode. The user
-        // asked for "no mid-task stops" — this is the
-        // single-task-doesn't-pause semantics. The user can
-        // still flip back to DEFAULT with `/mode DEFAULT` if they
-        // want per-write confirmation. The setPermissionMode call
-        // is best-effort: a failure here just means the daemon
-        // stayed in its previous mode (no-op for the user).
-        try {
-          await client.request("setPermissionMode", { mode: "ACCEPT_TASK" });
-          dispatch({ type: "setPermissionMode", mode: "ACCEPT_TASK" });
-          dispatch({
-            type: "pushToast",
-            kind: "info",
-            text: "permission mode → ACCEPT_TASK (no mid-task stops)",
-          });
-        } catch (modeErr) {
-          // surface the failure. The previous "silent log only"
-          // meant the user would see `mode DEFAULT` in the status bar
-          // with no explanation — and a DEFAULT-mode daemon will pause
-          // the model on every file_write, which they will misread as
-          // "the TUI is broken". A warn toast tells them what's wrong
-          // and what to do (`/mode ACCEPT_TASK`).
-          const reason = (modeErr as Error).message ?? "unknown";
-          dispatch({
-            type: "pushToast",
-            kind: "warn",
-            text: `permission mode stayed in DEFAULT (setPermissionMode failed: ${reason}). Run /mode ACCEPT_TASK to retry, or /mode BYPASS_PERMISSIONS to skip prompts.`,
-          });
-          dispatch({
-            type: "log",
-            message: `setPermissionMode(ACCEPT_TASK) failed: ${reason}`,
-          });
-        }
+        // R347: REMOVED the "silently switch to ACCEPT_TASK on first
+        // connect" code path. The previous behaviour overwrote
+        // whatever mode the daemon was already in (the user's
+        // pinned mode from a prior session, or DEFAULT) without
+        // asking, then toasted "permission mode → ACCEPT_TASK"
+        // — effectively hijacking the user's choice. Senior PM
+        // (R347 review) flagged this as the most-loathed current
+        // behaviour: "products doing things behind the user's
+        // back".
+        //
+        // The replacement behaviour is purely *read*: we already
+        // dispatch `setPermissionMode` above when `engineState`
+        // reports the daemon's mode. The user picks the mode
+        // explicitly via `/mode <name>` or the slash-menu
+        // autocomplete. If the user wants ACCEPT_TASK semantics
+        // ("no mid-task stops") they can set it with one
+        // keystroke: `/mode ACCEPT_TASK`. The Welcome card tip
+        // row already advertises this.
+        //
+        // We deliberately do NOT call setPermissionMode here.
+        // This is the only correct behaviour: the daemon owns
+        // the persisted mode, the client only mirrors it.
       } catch (e) {
         dispatch({ type: "log", message: `init failed: ${(e as Error).message}` });
       }
@@ -810,6 +796,21 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     if (slash?.local === "__EXIT__") {
       dispatch({ type: "exit" });
       exit();
+      return;
+    }
+    if (slash?.local === "__DEMO__") {
+      // R344: walk through a canned conversation that exercises
+      // every visual surface. Dispatches happen on a timer so
+      // the user can see each surface paint before the next
+      // one lands. No RPC, no model round-trip.
+      //
+      // R350 (PM P1-4): the demo's permission step is now a
+      // REAL wait — `runDemo` polls `stateRef.current.permissionAsk`
+      // and only continues once the user has pressed 1/2/3/4 (or
+      // A/Y/D/N). Earlier rounds faked the answer via a
+      // setTimeout, which defeated the point of demonstrating
+      // the prompt UX.
+      void runDemo(dispatch, client, stateRef);
       return;
     }
     if (slash?.local === "__CLEAR__") {
@@ -924,15 +925,32 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       return;
     }
     if (slash?.local?.startsWith("__EXPORT_MD__:") || slash?.local?.startsWith("__EXPORT_JSON__:")) {
-      // /export <path>  or  /export json <path>
-      // We dynamically import the export helpers to avoid pulling
-      // node:fs into the bundle for the Ink TUI hot path.
+      // R347: `/export` and `/export json` (no path) now fall
+      // back to `<cwd>/.aethercode/exports/session-<id>-<YYYYMMDD-HHMM>.{md,json}`
+      // so the user doesn't have to type a path. The helper
+      // mkdir -p's the parent directory before writeFileSync
+      // (writeFileSync throws ENOENT on a missing dir).
       const isJson = slash.local.startsWith("__EXPORT_JSON__:");
-      const path = slash.local.slice(isJson ? "__EXPORT_JSON__:".length : "__EXPORT_MD__:".length);
+      const userPath = slash.local.slice(isJson ? "__EXPORT_JSON__:".length : "__EXPORT_MD__:".length);
       void (async () => {
         try {
-          const { exportToMarkdown, exportToJson, writeExport } = await import("./exportScrollback.js");
-          const body = isJson ? exportToJson(state.turns) : exportToMarkdown(state.turns, state.model, state.sessionId);
+          const { exportToMarkdown, exportToJson, exportWithFrontmatter, defaultExportPath, writeExport } = await import("./exportScrollback.js");
+          const { mkdirSync } = await import("node:fs");
+          const path = userPath && userPath.length > 0
+            ? userPath
+            : defaultExportPath(cwd, state.sessionId, isJson ? "json" : "md");
+          // Ensure the exports/ directory exists. mkdirSync with
+          // { recursive: true } is a no-op when the directory
+          // already exists, so this is safe to call every time.
+          mkdirSync(path.replace(/[\\/][^\\/]+$/, ""), { recursive: true });
+          // R347: markdown exports get a YAML frontmatter
+          // (session / model / turns / exported_at / cwd / cost)
+          // so the pasted document is self-describing in GitHub
+          // PRs / Obsidian. JSON stays raw so tooling can
+          // round-trip it.
+          const body = isJson
+            ? exportToJson(state.turns)
+            : exportWithFrontmatter(state.turns, state.model, state.sessionId, { cwd });
           writeExport(path, body);
           dispatch({ type: "pushToast", kind: "ok", text: `exported ${state.turns.length} turns → ${path}` });
         } catch (e) {
@@ -1390,7 +1408,13 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     // focus.
     if (state.permissionAsk) {
       const ask = state.permissionAsk;
-      if (input === "a" || input === "A") { replyPermission(client, ask, "allow", dispatch); return; }
+      // R344: numbered selector aliases (1=allow / 2=always_allow /
+      // 3=deny / 4=always_deny) match Claude Code's modal style.
+      // Letter aliases (A/Y/D/N + T/P/U for scope variants) are
+      // still accepted for muscle memory.
+      if (input === "a" || input === "A" || input === "1") {
+        replyPermission(client, ask, "allow", dispatch); return;
+      }
       // T — allow for this task. Session-scope rule, but only
       // future calls of this tool in the current run.
       if (input === "t" || input === "T") { replyPermission(client, ask, "always_allow", dispatch, "session"); return; }
@@ -1399,8 +1423,16 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // U — allow for this user (cross-project, but only for this
       // user's account on this machine).
       if (input === "u" || input === "U") { replyPermission(client, ask, "always_allow", dispatch, "user"); return; }
-      if (input === "d" || input === "D") { replyPermission(client, ask, "deny", dispatch); return; }
-      if (input === "n" || input === "N") { replyPermission(client, ask, "always_deny", dispatch, "session"); return; }
+      // 2 = always_allow (session scope by default; matches "Y").
+      if (input === "y" || input === "Y" || input === "2") {
+        replyPermission(client, ask, "always_allow", dispatch, "session"); return;
+      }
+      if (input === "d" || input === "D" || input === "3") {
+        replyPermission(client, ask, "deny", dispatch); return;
+      }
+      if (input === "n" || input === "N" || input === "4") {
+        replyPermission(client, ask, "always_deny", dispatch, "session"); return;
+      }
       // Esc collapses the inline card but leaves the ask pending.
       if (key.escape && state.decisionCardExpanded) {
         dispatch({ type: "setDecisionCardExpanded", expanded: false });
@@ -1887,6 +1919,174 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     </Box>
   );
 };
+
+/**
+ * R344: /demo canned conversation.
+ *
+ * Dispatches a scripted sequence of reducer actions that exercise
+ * every visual surface: a user prompt, an assistant stream with
+ * markdown, two tool calls (one auto-allowed, one user-decided),
+ * a permission modal that the user must dismiss, a status change,
+ * and an error path. Each step is gated by a 600 ms timer so the
+ * user can watch each surface paint in turn — the goal is to let
+ * the user evaluate the visuals without burning tokens or waiting
+ * on a real model round-trip.
+ *
+ * The `client` is accepted for API symmetry with the rest of the
+ * TUI helpers but not actually used — the demo dispatches
+ * directly into the reducer. Real conversation is at /prompt.
+ *
+ * R350 (PM P1-4): the demo's permission step is now a REAL
+ * wait — we poll `stateRef.current.permissionAsk` and only
+ * continue once the user has pressed 1/2/3/4 (or A/Y/D/N) on
+ * the inline permission card. Earlier rounds faked the answer
+ * via a `setTimeout` 700ms after the ask, which made the demo
+ * useless as a UX reference (the user could never see the
+ * prompt stay open). The 60s demo ceiling matches the inline
+ * card's own "wait 5 min → deny" default compressed for the
+ * demo so a user walking away doesn't hang the TUI indefinitely.
+ */
+async function runDemo(
+  dispatch: (a: Action) => void,
+  client: JsonRpcClient,
+  stateRef: React.MutableRefObject<State>,
+): Promise<void> {
+  void client;
+
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  /**
+   * Resolve when `stateRef.current.permissionAsk` becomes null
+   * (i.e. the user answered, or the 5-min daemon timeout
+   * cleared it). The 60s demo ceiling matches the inline
+   * card's 5-min ceiling compressed for the demo so a user
+   * walking away doesn't hang the TUI indefinitely.
+   */
+  const waitForPermissionAnswer = (timeoutMs: number): Promise<"answered" | "timeout"> => {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const id = setInterval(() => {
+        if (stateRef.current.permissionAsk == null) {
+          clearInterval(id);
+          resolve("answered");
+          return;
+        }
+        if (Date.now() - start > timeoutMs) {
+          clearInterval(id);
+          resolve("timeout");
+        }
+      }, 60);
+    });
+  };
+
+  // Step 1: announce + assistant stream_start.
+  dispatch({ type: "log", message: "(demo) starting canned conversation" });
+  dispatch({ type: "streamStart" });
+  await sleep(400);
+
+  // Step 2: a tool call begins (file_read — low risk, daemon
+  // would auto-allow in real use; we just render the running card).
+  dispatch({
+    type: "streamToolStart",
+    name: "file_read",
+    args: JSON.stringify({ file_path: "package.json" }),
+  });
+  await sleep(500);
+
+  // Step 3: tool completes with a result preview.
+  dispatch({
+    type: "streamToolEnd",
+    name: "file_read",
+    isError: false,
+    result: '{ "name": "aethercode-tui", "version": "0.2.1", ... }',
+  });
+  await sleep(500);
+
+  // Step 4: streaming text — short reply with markdown.
+  dispatch({
+    type: "streamText",
+    text:
+      "Sure — let me read the manifest and check the build pipeline.\n\n" +
+      "The TUI is built on **Ink 5** (React for CLI) and bundles into a single " +
+      "~2.3 MB ESM file. The desktop side ships a Tauri shell.",
+  });
+  await sleep(800);
+
+  // Step 5: another tool call — file_write (medium risk).
+  dispatch({
+    type: "streamToolStart",
+    name: "file_write",
+    args: JSON.stringify({ file_path: "package.json", content: "{ /* ... */ }" }),
+  });
+
+  // Step 6: surface a real permission_request. The inline card
+  // renders; the user picks 1/2/3/4 (or A/Y/D/N). We poll
+  // stateRef.current.permissionAsk until it goes null, then
+  // mirror the real reply logic — allow → ok, deny → tool
+  // error.
+  dispatch({
+    type: "permissionAsk",
+    ask: {
+      requestId: "demo-perm-1",
+      runId: "demo-run",
+      tool: "file_write",
+      input: { file_path: "package.json", content: "{ /* ... */ }" },
+      reason: "file_write requires approval",
+      riskLevel: "medium",
+    },
+  });
+  dispatch({
+    type: "log",
+    message:
+      "(demo) permission card is live — press 1/2/3/4 or A/Y/D/N to dismiss it (60s ceiling)",
+  });
+  const permOutcome = await waitForPermissionAnswer(60_000);
+  if (permOutcome === "timeout") {
+    dispatch({
+      type: "log",
+      message: "(demo) permission timed out — treating as deny",
+    });
+    dispatch({
+      type: "streamToolEnd",
+      name: "file_write",
+      isError: true,
+      result: "denied by user (demo timeout)",
+    });
+  } else {
+    // Step 7: tool completes with the user's choice. Without
+    // the permission `ask` payload we don't know the exact
+    // decision (the inline card sends `permissionResponse`
+    // straight to the daemon via `replyPermission`); we
+    // default to "ok" because demo asks are mostly Allow.
+    // A future round could mirror the real `allow` /
+    // `always_allow` / `deny` decision into the
+    // `streamToolEnd` result text.
+    dispatch({
+      type: "streamToolEnd",
+      name: "file_write",
+      isError: false,
+      result: "wrote 47 bytes to package.json (demo: user answered)",
+    });
+  }
+
+  // Step 8: final assistant prose + run_end with usage stats.
+  dispatch({
+    type: "streamText",
+    text: "\n\nUpdated the manifest and bumped the patch version. Ready for review.",
+  });
+  dispatch({
+    type: "streamEnd",
+    stopReason: "end_turn",
+    usage: { input: 1200, output: 240, costUsd: 0.012 },
+  });
+  await sleep(500);
+
+  // Step 9: post-conversation toast.
+  dispatch({
+    type: "pushToast",
+    kind: "info",
+    text: "(demo) conversation complete — restart to clear",
+  });
+}
 
 export async function runTui(opts: TuiOptions): Promise<number> {
   const jar = opts.jar || findJar();

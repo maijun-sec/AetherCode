@@ -105,6 +105,9 @@ export const icon = {
   toolRun: "▸",   // tool call running
   ask: "?",       // user ask
   pause: "‖",     // paused
+  // R344 additions: provider pill + memory-bank status pill.
+  provider: "⌃",  // provider name (e.g. minmax, openai)
+  bank:     "◐",  // memory bank status (live count + kinds)
   // tool-category icons — one per ToolCategory.
   catRead:   "○",  // read (file_read, glob, grep)
   catWrite:  "✎",  // write/edit (file_write, file_edit)
