@@ -1,30 +1,42 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import './Header.css';
 
 interface HeaderProps {
   onSettingsClick: () => void;
-  onToolsClick?: () => void;
   onSessionPickerClick?: () => void;
-  /** Toggles the right-side Telemetry panel; redundant with Ctrl+Shift+E. `telemetryActive` drives the icon's pressed state. */
+  /** R347: Telemetry / Session details moved to SettingsPanel — Header no longer carries their buttons. The two props remain optional for callers that still want to wire the right-side drawers, but Header itself does not render them. */
   onTelemetryClick?: () => void;
   telemetryActive?: boolean;
-  /** Toggles the session details drawer; redundant with Ctrl+Shift+D. `detailsActive` drives the icon's pressed state. */
   onDetailsClick?: () => void;
   detailsActive?: boolean;
+  onToolsClick?: () => void;
 }
 
 /** Top navigation bar.
  *
+ *  R347: The right-side icon cluster has been trimmed from 8 buttons to
+ *  4 (`📂` project, `🗂` session picker, `☾/☀` theme, `⚙` settings)
+ *  plus the status pill. `🔧` tools / `📊` telemetry / `📋` details
+ *  used to live here as well; their hotkeys (Ctrl+T / Ctrl+Shift+E /
+ *  Ctrl+Shift+D) are unchanged, the buttons just moved to the
+ *  SettingsPanel first row. Backpressure / throttle indicators also
+ *  moved to the StatusBar where they belong (see StatusBar.tsx).
+ *
  *  The status indicator has three parts:
  *   - Thinking timer: shown during streaming until the first chunk arrives, ticking every 100ms;
- *   - Backpressure badge: appears when engine memory exceeds 88%; click to switch the concurrency profile to low;
  *   - Status pill: color-graded by preparing / streaming / stale / idle, readable at a glance. */
-export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, onTelemetryClick, telemetryActive, onDetailsClick, detailsActive }: HeaderProps) {
+// R347: telemetry / details / tools props are kept in the type
+// for legacy callers that still want to wire a right-side
+// drawer; the Header itself does not render those buttons.
+// Backpressure / throttle moved to StatusBar, so the
+// `engineStats` and `requestConcurrencyProfile` are no longer
+// referenced here either.
+export function Header({ onSettingsClick, onSessionPickerClick }: HeaderProps) {
   const {
     engineState, currentTaskId, tasks,
     isStreaming, isConnected, currentQuery,
-    lastChunkTs, engineStats, requestConcurrencyProfile,
+    lastChunkTs,
     pickCwd, cwd,
     // Theme state; setTheme() mirrors the value onto <html data-theme="...">, with the preference persisted to prefs.theme.
     theme, setTheme,
@@ -42,13 +54,23 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
     return () => clearInterval(id);
   }, [isStreaming]);
 
-  // The streaming phase has four states: preparing / streaming / stale (no new chunk for 30s) / idle.
+  // The streaming phase has four states: preparing / streaming / stale (no new chunk for 60s) / idle.
+  // R349: stale threshold raised from 30s → 60s. The user
+  // reported the 30s default was triggering during legitimate
+  // 60-120s LLM thinking phases — every long thought read as
+  // "stalled", which destroyed trust. 60s is the new floor and
+  // still trips on actual stalls within a minute.
+  //
+  // R350: renamed `phase` → `streamingPhase` to avoid the
+  // name collision with the new `fadePhase` variable
+  // introduced by the session-fade transition (UX P1-3).
+  const STALE_THRESHOLD_MS = 60_000;
   const now = Date.now();
   const elapsedSinceChunk = lastChunkTs ? now - lastChunkTs : 0;
-  const phase: 'preparing' | 'streaming' | 'stale' | null = (() => {
+  const streamingPhase: 'preparing' | 'streaming' | 'stale' | null = (() => {
     if (!isStreaming) return null;
     if (!lastChunkTs) return 'preparing';
-    if (elapsedSinceChunk > 30_000) return 'stale';
+    if (elapsedSinceChunk > STALE_THRESHOLD_MS) return 'stale';
     return 'streaming';
   })();
   // The current run's elapsed time: prefer the query's startedAt, otherwise fall back to the timestamp of the first chunk; if neither is available, treat as 0.
@@ -57,19 +79,19 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
 
   const statusText = (() => {
     if (!isConnected) return { text: '● Disconnected', color: 'var(--error)' };
-    if (phase === 'preparing') {
+    if (streamingPhase === 'preparing') {
       return {
         text: `● Thinking ${(runElapsedMs / 1000).toFixed(1)}s`,
         color: 'var(--accent)',
       };
     }
-    if (phase === 'streaming') {
+    if (streamingPhase === 'streaming') {
       return {
         text: `● Streaming ${(runElapsedMs / 1000).toFixed(1)}s`,
         color: 'var(--accent)',
       };
     }
-    if (phase === 'stale') {
+    if (streamingPhase === 'stale') {
       return {
         text: `● Stalled ${Math.floor(elapsedSinceChunk / 1000)}s`,
         color: 'var(--warning)',
@@ -83,13 +105,88 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
   const activeLabel = currentQuery
     ? currentQuery.prompt
     : (activeSubagent?.description ?? 'No active task');
+  const activeModel = engineState?.model ?? '';
+
+  // R350 (UX P1-3): Header fade transition on session / model
+  // change. The previous design yanked the label out and
+  // inserted a new string with no animation, which read as a
+  // glitch to power users switching sessions rapidly. We
+  // keep the previous label visible for 300ms (fade-out + 2px
+  // slide-up), then swap in the new label with a 200ms fade-in
+  // + 2px slide-down. The transitions only fire when the
+  // value actually changes.
+  //
+  // The transition is local state (displayLabel/phase) — we
+  // never mutate the store. The hook always renders the
+  // displayLabel; activeLabel is only the trigger.
+  type FadePhase = 'idle' | 'leaving' | 'entering';
+  const [displayLabel, setDisplayLabel] = useState(activeLabel);
+  const [displayModel, setDisplayModel] = useState(activeModel);
+  const [phase, setPhase] = useState<FadePhase>('idle');
+  // Phase applied to the model pill; we keep a separate phase
+  // because label and model can switch on different ticks
+  // (e.g. user switches session, model takes 200ms more to
+  // arrive from the daemon).
+  const [modelPhase, setModelPhase] = useState<FadePhase>('idle');
+  // Two separate timer refs so a fast label switch doesn't
+  // stomp on a still-in-flight model transition (or vice
+  // versa). Each effect owns its own queue.
+  const labelTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const modelTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    // Clear any in-flight timers so a fast double-switch
+    // doesn't leave us stuck on a stale label.
+    labelTimers.current.forEach(clearTimeout);
+    labelTimers.current = [];
+    if (activeLabel === displayLabel) return;
+    setPhase('leaving');
+    const t1 = setTimeout(() => {
+      setDisplayLabel(activeLabel);
+      setPhase('entering');
+      const t2 = setTimeout(() => setPhase('idle'), 220);
+      labelTimers.current.push(t2);
+    }, 300);
+    labelTimers.current.push(t1);
+    return () => {
+      labelTimers.current.forEach(clearTimeout);
+      labelTimers.current = [];
+    };
+  }, [activeLabel, displayLabel]);
+
+  useEffect(() => {
+    modelTimers.current.forEach(clearTimeout);
+    modelTimers.current = [];
+    if (activeModel === displayModel) return;
+    setModelPhase('leaving');
+    const t1 = setTimeout(() => {
+      setDisplayModel(activeModel);
+      setModelPhase('entering');
+      const t2 = setTimeout(() => setModelPhase('idle'), 220);
+      modelTimers.current.push(t2);
+    }, 300);
+    modelTimers.current.push(t1);
+    return () => {
+      modelTimers.current.forEach(clearTimeout);
+      modelTimers.current = [];
+    };
+  }, [activeModel, displayModel]);
 
   return (
     <header className="header">
       <div className="header-left">
         <span className="header-brand">✦ AetherCode</span>
         <span className="header-sep">›</span>
-        <span className="header-task-name" title={currentQuery ? 'Current query' : activeLabel}>{activeLabel}</span>
+        <span
+          className={`header-task-name header-fade header-fade-${phase}`}
+          title={currentQuery ? 'Current query' : activeLabel}
+          // `key` is the stable identity; React reuses the DOM
+          // node and re-runs the CSS animation when the class
+          // flips from `entering` to `idle`.
+          data-fade={phase}
+        >
+          {displayLabel}
+        </span>
         {currentQuery && (
           <span className="header-task-status task-status-running">running</span>
         )}
@@ -100,26 +197,20 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
         )}
       </div>
       <div className="header-right">
-        {/* Backpressure badge: appears when engine memory exceeds the threshold; click to switch the concurrency profile to low. The text also shows the current memory percentage so the cause is obvious at a glance. */}
-        {engineStats?.backpressured && (
-          <button
-            className="header-backpressure"
-            title="引擎内存超限，新 query 会被拒绝。点击调低并发配置。"
-            onClick={() => void requestConcurrencyProfile('low')}
-          >
-            ⚠ Backpressure · {engineStats.memPct}%
-          </button>
-        )}
-        {!engineStats?.backpressured && engineStats?.throttled && (
+        <span className="header-status" style={{ color: statusText.color }}>{statusText.text}</span>
+        {/* R350: model pill now uses the same fade transition
+            as the active label. Two independent phases so a
+            fast session switch + late model update don't get
+            clobbered into a single animation. */}
+        {activeModel && (
           <span
-            className="header-throttle"
-            title={`内存达到 ${engineStats.memPct}%,引擎进入限流模式`}
+            className={`header-meta header-fade header-fade-${modelPhase}`}
+            title="Active model"
+            data-fade={modelPhase}
           >
-            ⏳ 限流中 · {engineStats.memPct}%
+            {displayModel}
           </span>
         )}
-        <span className="header-status" style={{ color: statusText.color }}>{statusText.text}</span>
-        {engineState?.model && <span className="header-meta" title="Active model">{engineState.model}</span>}
         {/* Project / cwd selector: always visible; on first launch the user can pick a project directly. The icon is fixed to avoid layout shift. */}
         <button
           className="header-icon-btn"
@@ -128,9 +219,6 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
               : '点击选择项目文件夹（首次）'}
           onClick={() => void pickCwd()}
         >📂</button>
-        {onToolsClick ? (
-          <button className="header-icon-btn" title="Tools & Permission (Ctrl+T)" onClick={onToolsClick}>🔧</button>
-        ) : null}
         {onSessionPickerClick ? (
           <button
             className="header-icon-btn"
@@ -138,27 +226,6 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
             onClick={onSessionPickerClick}
           >
             🗂
-          </button>
-        ) : null}
-        {/* Telemetry panel toggle: sits next to the session details; `is-active` reflects the pressed state, with Ctrl+Shift+E as the parallel shortcut. */}
-        {onTelemetryClick ? (
-          <button
-            className={`header-icon-btn${telemetryActive ? ' is-active' : ''}`}
-            title="Telemetry panel (Ctrl/Cmd+Shift+E)"
-            onClick={onTelemetryClick}
-          >
-            📊
-          </button>
-        ) : null}
-        {/* Session details drawer toggle: shares the `is-active` pressed state with Telemetry; shortcut is Ctrl+Shift+D. */}
-        {onDetailsClick ? (
-          <button
-            className={`header-icon-btn${detailsActive ? ' is-active' : ''}`}
-            title="Session details (Ctrl/Cmd+Shift+D)"
-            onClick={onDetailsClick}
-            data-testid="header-details-btn"
-          >
-            📋
           </button>
         ) : null}
         {/* Theme switch: the icon flips with the current theme, but the actual theming is driven by [data-theme="light"] CSS variable overrides. */}
@@ -171,6 +238,10 @@ export function Header({ onSettingsClick, onToolsClick, onSessionPickerClick, on
           {theme === 'light' ? '☀' : '☾'}
         </button>
         <button className="header-icon-btn" title="Settings" onClick={onSettingsClick}>⚙</button>
+        {/* R347: The Telemetry / Session details / Tools icon buttons
+         *  moved to SettingsPanel — the Header now only carries the
+         *  five elements above. Their shortcuts (Ctrl+Shift+E /
+         *  Ctrl+Shift+D / Ctrl+T) are unchanged. */}
       </div>
     </header>
   );

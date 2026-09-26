@@ -135,14 +135,8 @@
   color: var(--fg-muted, #888);
 }
 
-.session-picker-footer kbd {
-  font-family: monospace;
-  padding: 1px 4px;
-  background: var(--bg-base, #2a2a2a);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-  border-radius: 3px;
-  font-size: 10px;
-}
+/* R350: the local kbd {} block was removed — SessionPickerModal
+ * now uses the shared <Kbd> atom (atoms/Kbd.tsx). */
 
 .session-picker-new .session-picker-label {
   color: var(--success, #4caf50);

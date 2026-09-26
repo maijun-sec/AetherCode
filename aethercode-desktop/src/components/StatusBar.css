@@ -285,6 +285,56 @@
   line-height: inherit;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
+
+/* R349 (PM P0-2): cost / budget pill. Sits between the
+ * memory badge and the version chip. Two tones:
+ *  - default (under budget):  greenish, tabular-nums, quiet
+ *  - `.is-over` (over budget): red border + soft red bg so
+ *    the eye picks it up at a glance. Click to edit the cap.
+ */
+.status-budget {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(127, 224, 159, 0.30);
+  background: rgba(127, 224, 159, 0.06);
+  color: var(--success, #7fe09f);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.status-budget:hover {
+  background: rgba(127, 224, 159, 0.12);
+  border-color: rgba(127, 224, 159, 0.45);
+}
+.status-budget.is-over {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.10);
+  color: var(--error, #f87171);
+}
+.status-budget.is-over:hover {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.70);
+}
+
+/* R349 (PM P0-2): step counter + ETA pill. Same visual
+ * weight as the budget pill — tabular-nums, rounded box,
+ * accent border. Helps the user answer "should I keep
+ * waiting or ctrl+C this thing?" without opening /state.
+ */
+.status-step-eta {
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(127, 224, 159, 0.30);
+  background: rgba(127, 224, 159, 0.06);
+  color: var(--success, #7fe09f);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
 .status-auto-approve:hover {
   background: rgba(127, 224, 159, 0.12);
   border-color: rgba(127, 224, 159, 0.50);

@@ -116,23 +116,10 @@
   margin-top: 4px;
   font-style: italic;
 }
-/* kbd styling for the Ctrl+L hint. A small
- * monospace box that matches the GitHub-style "press
- * these keys" look. The 1px border + 1px Y padding
- * keeps the line height stable across font scales. */
-.loop-guard-hint kbd {
-  display: inline-block;
-  padding: 0 4px;
-  margin: 0 1px;
-  font-family: ui-monospace, monospace;
-  font-size: 10px;
-  line-height: 14px;
-  color: rgba(230, 230, 230, 0.85);
-  background: rgba(0, 0, 0, 0.30);
-  border: 1px solid rgba(230, 230, 230, 0.20);
-  border-radius: 3px;
-  vertical-align: 1px;
-}
+/* R350: the local kbd {} block was removed — LoopGuardBanner now
+ * uses the shared <Kbd> atom (atoms/Kbd.tsx). The atom reads
+ * the global theme tokens, which gives the Ctrl+L hint the
+ * same chip shape as Welcome / CommandPalette / etc. */
 
 .loop-guard-actions {
   display: flex;

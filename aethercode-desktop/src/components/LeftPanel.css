@@ -216,6 +216,74 @@
   text-overflow: ellipsis;
 }
 
+/* R348 (2026-09-25) — PM P0-3 four columns. Each session row
+ * now carries status / cost / files / model pills so the user
+ * can scan 30+ sessions in a glance and pick out "failed" /
+ * "expensive" / "long" ones without reading the title. The
+ * row gets 4px of vertical breathing room above the stats
+ * strip and the pills are 10px so they fit in 220px wide
+ * sidebar panels without wrapping. */
+.session-list-row-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+.session-list-row-stat {
+  font-size: 9.5px;
+  font-family: ui-monospace, monospace;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* state tone colour mapping. Each tone gets a soft bg + a
+ * coloured left border so the eye picks the running/failed
+ * pills without having to read the glyph. */
+.session-list-row-state-running {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success, #4ade80);
+  border-left: 2px solid var(--success, #4ade80);
+}
+.session-list-row-state-paused {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning, #fbbf24);
+  border-left: 2px solid var(--warning, #fbbf24);
+}
+.session-list-row-state-ok {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--text-dim);
+  border-left: 2px solid var(--accent, #5da9ff);
+}
+.session-list-row-state-err {
+  background: rgba(239, 68, 68, 0.18);
+  color: var(--error, #f87171);
+  border-left: 2px solid var(--error, #f87171);
+}
+.session-list-row-state-idle {
+  background: var(--bg-input);
+  color: var(--text-dim);
+  border-left: 2px solid var(--border);
+}
+.session-list-row-cost {
+  /* cost is the only column that's purely informational —
+   * no state colour, just a subdued pill so the eye doesn't
+   * get distracted by the $ amount. */
+  font-variant-numeric: tabular-nums;
+}
+.session-list-row-files {
+  background: var(--bg-input);
+  color: var(--text-dim);
+}
+.session-list-row-model {
+  background: var(--bg-input);
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+
 /* R270 (2026-09-15): third line on each session row —
    "→ <last agent action>". Renders between the meta line
    (cwd · time · tokens) and the optional verbatim first

@@ -100,6 +100,15 @@ export interface SessionListItem {
    *  can see what the agent was just doing, not just the
    *  first user prompt. */
   lastAgentEvent?: string;
+  /** R348 (2026-09-25): cumulative session cost in USD.
+   *  Optional — sessions that haven't completed a turn yet
+   *  (or older daemons that don't surface cost in
+   *  listSessions) leave this undefined. */
+  costUsd?: number;
+  /** R348 (2026-09-25): files the agent created or modified
+   *  during this session. Optional — sessions with no tool
+   *  activity yet have an empty / undefined list. */
+  filesChanged?: string[];
 }
 
 export interface SessionListResult {

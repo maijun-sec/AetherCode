@@ -543,15 +543,10 @@
   margin: 8px 0 0;
   opacity: 0.85;
 }
-.input-hint kbd {
-  background: var(--chat-surface-2);
-  border: 1px solid var(--chat-divider);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 10px;
-  font-family: ui-monospace, 'Cascadia Code', monospace;
-  color: var(--chat-text);
-}
+/* R350: the local kbd {} block was removed — MessageInput now uses
+ * the shared <Kbd> atom (atoms/Kbd.tsx). The atom reads
+ * --bg-input / --border / --text from the global theme so the
+ * input hint visually matches Welcome / CommandPalette / etc. */
 .input-hint-streaming {
   margin-left: auto;
   color: var(--chat-accent);

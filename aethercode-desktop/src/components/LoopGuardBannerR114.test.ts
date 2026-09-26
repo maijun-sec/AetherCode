@@ -60,7 +60,12 @@ describe('对应历史 round: LoopGuardBanner is persistent', () => {
   });
 
   it('the hint text mentions Ctrl+L', () => {
-    expect(src).toContain('Ctrl</kbd>+<kbd>L');
+    // R350: LoopGuardBanner now uses the shared <KbdPlus> atom
+    // (renders <kbd>Ctrl</kbd>+<kbd>L</kbd> in the DOM, so a
+    // user-facing visual check still works) but the source
+    // string changed from `Ctrl</kbd>+<kbd>L` to
+    // `KbdPlus>{['Ctrl', 'L']}`. Match the source pattern.
+    expect(src).toContain("KbdPlus>{['Ctrl', 'L']}</KbdPlus>");
   });
 });
 

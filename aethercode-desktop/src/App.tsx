@@ -45,6 +45,7 @@ import { ConsentModal } from './components/consent/ConsentModal';
 import { ModelPicker } from './components/models/ModelPicker';
 import { useStore } from './store';
 import './App.css';
+import './components/atoms/Kbd.css';
 
 /** Inner shell mounted after the providers.
  *  The router layer (BrowserRouter / MemoryRouter) is chosen in the outer `<App>` so tests can inject deep links via initialEntries. */
@@ -59,6 +60,10 @@ function Shell() {
   const [showModelPicker, setShowModelPicker] = useState(false);
   // The right-side Telemetry panel is hidden by default; toggle it via 📊 in the Header.
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  // R347: Welcome overlay can be re-triggered manually via Ctrl/Cmd+Shift+H
+  // even when messages.length > 0. Power users want to revisit onboarding
+  // tiles and the "recent session" shortcut without scrolling the chat.
+  const [forceShowWelcome, setForceShowWelcome] = useState(false);
   const awaitingCwd = connectionState === 'awaiting-cwd';
   const location = useLocation();
   const navigate = useNavigate();
@@ -124,6 +129,25 @@ function Shell() {
         setShowSessionPicker((v) => !v);
         return;
       }
+      // R348: Ctrl/Cmd+Shift+F is the PM-P0-3 global-search
+      //  shortcut — opens the same SessionPickerModal but with
+      //  the input focused and a "search across all sessions
+      //  (incl. trash)" hint visible. Aliasing it to the
+      //  existing shortcut keeps muscle memory intact while
+      //  giving power users a second entry point.
+      if ((e.key === 'f' || e.key === 'F') && e.shiftKey) {
+        e.preventDefault();
+        setShowSessionPicker(true);
+        return;
+      }
+      // R347: Ctrl/Cmd+Shift+H re-shows the Welcome overlay regardless
+      // of how many messages the current session has. Pressing the
+      // shortcut a second time hides it again.
+      if ((e.key === 'h' || e.key === 'H') && e.shiftKey) {
+        e.preventDefault();
+        setForceShowWelcome((v) => !v);
+        return;
+      }
       if ((e.key === 'k' || e.key === 'K') && e.shiftKey) {
         e.preventDefault();
         setShowRpcPalette((v) => !v);
@@ -165,8 +189,12 @@ function Shell() {
   }, [sessions, switchSession, detailsDrawerOpen, setDetailsDrawerOpen]);
 
   const currentTask = tasks.find((t) => t.id === currentTaskId);
+  // R347: forceShowWelcome (Ctrl/Cmd+Shift+H) overrides the
+  // "messages.length === 0" auto-trigger so power users can
+  // re-show onboarding any time.
   const showWelcome =
-    !initError && !awaitingCwd && isConnected && messages.length === 0 && !currentTask;
+    !initError && !awaitingCwd && isConnected &&
+    (messages.length === 0 || forceShowWelcome) && !currentTask;
 
   const isFullPage = location.pathname.startsWith('/trash')
     || location.pathname.startsWith('/settings')

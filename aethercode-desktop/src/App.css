@@ -113,6 +113,30 @@
   --chat-error: #f87171;
   --chat-warning-soft: rgba(245, 158, 11, 0.18);
   --chat-warning: #fbbf24;
+  /* R350 (UX P1-7): unified tool/task status tokens. The
+   * ToolCallCard / SessionListRow / StatusBar budget pill /
+   * LoopGuardBanner tier colors all needed to read as
+   * "the same shape, different state". The 5 states map to
+   * the canonical tool/task lifecycle:
+   *   - pending : queued, no result yet (subtle accent)
+   *   - running : executing (accent blue, animated)
+   *   - done    : success (green)
+   *   - failed  : error (red)
+   *   - skipped : user opted out (dim gray, "✓ skipped" label)
+   * Soft variants (-soft) sit on the same hue at 0.18 alpha
+   * for pill backgrounds; full variants are borders + dots.
+   * Anything in the chat area that previously hard-coded a
+   * status color should now read these tokens. */
+  --status-pending: #94a3b8;
+  --status-pending-soft: rgba(148, 163, 184, 0.18);
+  --status-running: var(--chat-accent);
+  --status-running-soft: var(--chat-accent-soft);
+  --status-done: var(--chat-success);
+  --status-done-soft: var(--chat-success-soft);
+  --status-failed: var(--chat-error);
+  --status-failed-soft: var(--chat-error-soft);
+  --status-skipped: var(--chat-text-muted);
+  --status-skipped-soft: rgba(156, 163, 175, 0.18);
   color: var(--chat-text);
 }
 
@@ -175,4 +199,17 @@
   --chat-error: #cf222e;
   --chat-warning-soft: rgba(154, 103, 0, 0.14);
   --chat-warning: #9a6700;
+  /* R350: status tokens (light theme). The pending / skipped
+   * defaults stay neutral grey; the soft variants drop alpha
+   * because the light surface has less headroom for tint. */
+  --status-pending: #6e7781;
+  --status-pending-soft: rgba(110, 119, 129, 0.14);
+  --status-running: var(--chat-accent);
+  --status-running-soft: var(--chat-accent-soft);
+  --status-done: var(--chat-success);
+  --status-done-soft: var(--chat-success-soft);
+  --status-failed: var(--chat-error);
+  --status-failed-soft: var(--chat-error-soft);
+  --status-skipped: var(--chat-text-muted);
+  --status-skipped-soft: rgba(110, 119, 129, 0.14);
 }

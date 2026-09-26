@@ -1,43 +1,148 @@
-/* welcome / empty-state. The 3-tile grid replaces
- *  the legacy single-line prompt. Each tile is a button
- *  with an emoji, headline, and description; hover lifts
- *  the tile and adds a 1px accent border. The grid is
- *  centred horizontally and constrained to 720px so it
- *  reads as a "menu" instead of a stretched list. */
+/* welcome / empty-state. R350 (UX P1-1) restructured the visual
+ * hierarchy:
+ *
+ *   Logo (24px) → Headline (32px / 600) → Subhead (--text-dim)
+ *   → Primary CTA (44px tall, accent-tinted, dominant)
+ *   → Secondary tiles (2-col, smaller)
+ *   → Recent sessions strip (chips, max 3)
+ *   → Keyboard map footer
+ *
+ * The original 3-tile grid treated all actions as equals;
+ * the new layout makes the primary CTA the visual anchor by
+ * stacking it (height + accent background) above the secondary
+ * tiles. */
 
 .welcome {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 32px;
+  padding: 48px 32px 32px 32px;
   text-align: center;
-  gap: 12px;
+  gap: 14px;
   flex: 1;
   color: var(--text);
 }
 
-.welcome h1 {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+/* R350: Logo demoted to a small brand mark. */
+.welcome-logo {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
   color: var(--accent);
+  opacity: 0.85;
+  margin-bottom: 4px;
+}
+
+/* R350: Headline is now the largest type on the page. */
+.welcome-headline {
+  margin: 4px 0 0 0;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--text);
+  line-height: 1.15;
 }
 
 .welcome-subtitle {
-  margin: 0 0 18px 0;
+  margin: 0 0 12px 0;
   color: var(--text-dim);
   font-size: 13px;
   letter-spacing: 0.1px;
+  max-width: 540px;
 }
 
-.welcome-tiles {
+/* R350: Primary CTA — accent-tinted, full-width, height 44px.
+ *  The visual anchor of the welcome surface. Hover lifts it
+ *  and adds a 4px accent shadow (the "soft glow" UX P1-1 calls
+ *  out). Disabled state greys to 0.4 opacity (matches the
+ *  secondary tiles' disabled state). */
+.welcome-cta-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: min(420px, 100%);
+  min-height: 44px;
+  margin: 4px 0 8px 0;
+  padding: 0 18px;
+  background: var(--accent);
+  color: white;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  /* 4-token shadow system — outer ring on hover uses a
+   *  low-opacity accent tint for the "soft glow". */
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.20), 0 0 0 0 rgba(99, 179, 237, 0);
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    transform 120ms ease-out,
+    box-shadow 200ms ease-out;
+  user-select: none;
+}
+
+.welcome-cta-primary:hover:not(:disabled) {
+  /* the 4px soft glow expands on hover — UX P1-1 likes
+   *  this as "first focus" affordance. */
+  background: var(--accent-hover, #4a90e2);
+  border-color: var(--accent-hover, #4a90e2);
+  transform: translateY(-1px);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.18),
+    0 0 0 4px rgba(99, 179, 237, 0.20);
+}
+
+.welcome-cta-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.20);
+}
+
+.welcome-cta-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.welcome-cta-primary-icon {
+  font-size: 18px;
+  line-height: 1;
+  /* optical: shift the sparkles icon down 1px so it visually
+   *  centers against the label baseline. */
+  transform: translateY(0.5px);
+}
+
+.welcome-cta-primary-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* KBD hint sits on the right of the CTA label. Uses the
+ *  shared <Kbd> atom but overridden to render in a white-on-
+ *  accent chip — the contrast against the accent bg is the
+ *  "shortcut hint" affordance Linear uses. */
+.welcome-cta-primary-kbd {
+  margin-left: 8px;
+  display: inline-flex;
+}
+.welcome-cta-primary-kbd .kbd-atom {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.30);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* R350: Secondary tile row — 2 columns, smaller than before.
+ *  The primary CTA above draws the eye first; the secondary
+ *  tiles are for users who already know what they want. */
+.welcome-secondary-row {
   display: grid;
-  grid-template-columns: repeat(3, 220px);
-  gap: 16px;
-  margin: 4px 0 24px 0;
-  max-width: 720px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: min(420px, 100%);
+  margin: 0 0 8px 0;
 }
 
 .welcome-tile {
@@ -50,7 +155,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 16px 18px;
+  padding: 14px 16px;
   font-family: inherit;
   font-size: 13px;
   text-align: left;
@@ -75,29 +180,21 @@
   cursor: not-allowed;
 }
 
-.welcome-tile-primary {
-  /* The "New Session" tile is the primary action. A 1px accent
-   *  border at rest + accent-tinted background makes it
-   *  the visual anchor of the row. */
-  border-color: rgba(99, 179, 237, 0.40);
-  background: linear-gradient(180deg, rgba(99, 179, 237, 0.10), rgba(99, 179, 237, 0.04));
-}
-
 .welcome-tile-icon {
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1;
   margin-bottom: 4px;
 }
 
 .welcome-tile-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
 }
 
 .welcome-tile-desc {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
   letter-spacing: 0.05px;
   line-height: 1.45;
@@ -106,25 +203,87 @@
   max-width: 100%;
 }
 
-.welcome-hint {
-  margin-top: 8px;
-  color: var(--text-dim);
-  font-size: 12px;
-  letter-spacing: 0.1px;
-  max-width: 600px;
-  line-height: 1.5;
+/* R350: Recent sessions strip — chips below the CTA group.
+ *  Each chip is a button; clicking jumps into that session.
+ *  Dim by design (UX P1-1 wants CTA first, history last). */
+.welcome-recent-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(420px, 100%);
+  margin-top: 4px;
 }
 
-.welcome-hint kbd {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
+.welcome-recent-strip-label {
   font-size: 10px;
-  font-family: ui-monospace, 'Cascadia Code', monospace;
-  color: var(--text);
-  margin: 0 2px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  opacity: 0.7;
 }
+
+.welcome-recent-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.welcome-recent-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 100ms ease-out, background-color 100ms ease-out;
+  max-width: 220px;
+}
+.welcome-recent-chip:hover {
+  border-color: var(--accent);
+  background: var(--bg-input);
+}
+
+.welcome-recent-chip-name {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.welcome-recent-chip-meta {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.05px;
+  /* tabular numerals so "5 turns" / "12m" line up. */
+  font-feature-settings: 'tnum' 1;
+}
+
+.welcome-hint {
+  margin-top: 16px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.1px;
+  max-width: 600px;
+  line-height: 1.7;
+}
+
+/* The Welcome hint uses the shared <Kbd> atom (atoms/Kbd.tsx).
+ * R350 removed the local kbd {} block so any visual tweak happens
+ * in one place — earlier rounds let six local kbd styles drift
+ * across the desktop on padding / font-size / background. */
 
 .welcome.error h1 {
   color: var(--error);
@@ -142,46 +301,19 @@
   margin: 4px 0 12px 0;
 }
 
-/* first-launch "awaiting-cwd" surface. The 3-tile
- *  grid is hidden and a single full-width tile takes its
- *  place. Width is bumped to 480px so the longer desc fits
- *  on one line. The whole grid centres to the same axis
- *  as the regular 3-tile grid (so the layout doesn't
- *  jump when the user picks a folder and we transition
- *  to the post-cwd view). */
-.welcome-awaiting-cwd .welcome-tiles {
-  grid-template-columns: 480px;
-  max-width: 480px;
+/* first-launch "awaiting-cwd" surface. The single primary
+ *  CTA replaces the regular CTA + secondary row + recent
+ *  strip — there is no daemon yet, so secondary actions
+ *  (Skills / Recent) would be confusing. The CTA widens to
+ *  480px so the longer description fits comfortably on
+ *  one line. */
+.welcome-awaiting-cwd .welcome-cta-primary {
+  width: min(480px, 100%);
+  min-height: 56px;
+  font-size: 15px;
 }
-
-.welcome-tile-cwd {
-  align-items: center;
-  text-align: center;
-  padding: 28px 24px;
-}
-
-.welcome-tile-cwd .welcome-tile-icon {
-  font-size: 36px;
-  margin-bottom: 8px;
-}
-
-.welcome-tile-cwd .welcome-tile-title {
-  font-size: 18px;
-}
-
-.welcome-tile-cwd .welcome-tile-desc {
-  font-size: 13px;
-  line-height: 1.5;
-}
-  color: var(--error);
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  background: rgba(244, 135, 113, 0.10);
-  padding: 8px 12px;
-  border-radius: 4px;
-  max-width: 600px;
-  word-break: break-word;
-  margin: 4px 0 12px 0;
+.welcome-awaiting-cwd .welcome-cta-primary-icon {
+  font-size: 22px;
 }
 
 .welcome button.primary {

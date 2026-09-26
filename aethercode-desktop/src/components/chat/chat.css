@@ -93,12 +93,56 @@
   font-size: 12.5px;
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  transition: border-color 120ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 .tool-call-card:hover { border-color: rgba(99, 102, 241, 0.45); }
 
+/* R350 (UX P1-7): per-status border + accent. The 5
+ * lifecycle states (pending / running / done / failed /
+ * skipped) each pull from the `--status-*` tokens defined
+ * in App.css. The border is 1px solid for done/failed and
+ * 1.5px dashed for pending so the user sees the lifecycle
+ * "in motion" without an animation. */
+.tool-call-card-status-pending {
+  border-color: var(--status-pending);
+  border-style: dashed;
+}
+.tool-call-card-status-running {
+  border-color: var(--status-running);
+  border-left: 3px solid var(--status-running);
+  /* subtle pulse to signal "this card is alive" — the
+   * status dot below also animates so the user has two
+   * independent visual cues. */
+  box-shadow: 0 0 0 0 var(--status-running-soft);
+  animation: tool-call-card-pulse 1.6s ease-out infinite;
+}
+.tool-call-card-status-done {
+  border-color: var(--status-done);
+}
+.tool-call-card-status-failed {
+  border-color: var(--status-failed);
+  border-left: 3px solid var(--status-failed);
+}
+.tool-call-card-status-skipped {
+  border-color: var(--status-skipped);
+  /* dimmed whole card so "skipped" reads as opt-out, not
+   * "error that was hidden". 0.65 opacity is the GitHub
+   * "neutralised" treatment. */
+  opacity: 0.78;
+}
+@keyframes tool-call-card-pulse {
+  0%   { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 0 0 0 var(--status-running-soft); }
+  60%  { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 0 0 6px transparent; }
+  100% { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 0 0 0 transparent; }
+}
+
+/* legacy alias — the error class still triggers when
+ * resultIsError is set; the new status-`failed` class
+ * wins on specificity because it's applied last in the
+ * className array. Keep the legacy class so existing
+ * test selectors keep matching. */
 .tool-call-card-error {
-  border-color: rgba(239, 68, 68, 0.45);
+  border-color: var(--status-failed);
 }
 .tool-call-card-head {
   display: flex;
@@ -231,6 +275,76 @@
 .tool-call-card-risk-medium { background: var(--chat-warning-soft); }
 .tool-call-card-risk-high { background: rgba(251, 146, 60, 0.15); }
 .tool-call-card-risk-critical { background: var(--chat-error-soft); }
+
+/* R350 (UX P1-7): unified status pill. Each of the 5
+ * lifecycle states shares the same chip shape and reads
+ * from the matching --status-* token. The status dot uses
+ * a 1.2s pulse animation when the card is "running" so the
+ * user sees the lifecycle in motion. */
+.tool-call-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 9.5px;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border: 1px solid;
+  border-radius: 999px;
+  /* the margin-left: auto is overridden by .risk being
+   * positioned after the status pill; we keep `auto` so
+   * status sits left of the risk chip in the head row. */
+  margin-right: 4px;
+  margin-left: 0;
+}
+.tool-call-card-status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+/* pending: dashed border, neutral dot */
+.tool-call-card-status-pill-pending {
+  background: var(--status-pending-soft);
+  border-color: var(--status-pending);
+  color: var(--status-pending);
+}
+/* running: accent color, pulsing dot */
+.tool-call-card-status-pill-running {
+  background: var(--status-running-soft);
+  border-color: var(--status-running);
+  color: var(--status-running);
+}
+.tool-call-card-status-pill-running .tool-call-card-status-dot {
+  animation: tool-call-status-pulse 1.2s ease-in-out infinite;
+}
+/* done: green check */
+.tool-call-card-status-pill-done {
+  background: var(--status-done-soft);
+  border-color: var(--status-done);
+  color: var(--status-done);
+}
+/* failed: red cross */
+.tool-call-card-status-pill-failed {
+  background: var(--status-failed-soft);
+  border-color: var(--status-failed);
+  color: var(--status-failed);
+}
+/* skipped: dimmed grey, hollow circle */
+.tool-call-card-status-pill-skipped {
+  background: var(--status-skipped-soft);
+  border-color: var(--status-skipped);
+  color: var(--status-skipped);
+}
+@keyframes tool-call-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.7); }
+}
 
 /* ----------------------------------------------------------------------
  * FileDiffCard — T-4-13

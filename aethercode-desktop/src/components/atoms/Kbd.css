@@ -1,0 +1,79 @@
+/* <Kbd> atom styles. The previous design had six near-identical
+ * local styles for the bare <kbd> tag (Welcome, MessageInput,
+ * CommandPalette, RpcCommandPalette, LoopGuardBanner,
+ * SessionPickerModal) that drifted on padding / font-size /
+ * background tokens. This is the one source of truth.
+ *
+ * Sizing rule: sm = 10px (default, dense footers), md = 11px
+ * (standalone hints). Tone: default / accent / danger. */
+
+.kbd-atom {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, 'Cascadia Code', Menlo, Consolas, monospace;
+  font-feature-settings: 'tnum' 1;
+  /* SVG glyphs (⌘ ⇧ ⌃ ⌥ ↵ ⇥ ↑ ↓ ← →) read better with tabular numerals
+   * so the box width stays stable as the key string changes. */
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  /* the 1.6× vertical pad keeps the chip from clipping ascenders
+   * at small sizes while staying tight on the line. */
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  /* 0.5px X-margin so a sequence of <Kbd> renders with a visible gap
+   * even when the caller forgets to wrap them in a flex / gap parent. */
+  margin: 0 1px;
+  white-space: nowrap;
+  user-select: text;
+  transition: background-color 100ms ease-out, border-color 100ms ease-out;
+}
+
+/* size variants. Line-height is the only thing that changes —
+ * the chip stays 2px Y padding for both sizes. */
+.kbd-atom-sm {
+  font-size: 10px;
+  padding: 2px 5px;
+}
+.kbd-atom-md {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+/* tone variants. default = neutral, accent = highlight (e.g. when
+ * the kbd is teaching the primary CTA shortcut), danger = warning. */
+.kbd-atom-default {
+  background: var(--bg-input);
+  border-color: var(--border);
+  color: var(--text);
+}
+.kbd-atom-accent {
+  /* subtle accent tint; sits inside a paragraph without competing
+   * with the primary CTA. */
+  background: rgba(99, 179, 237, 0.12);
+  border-color: rgba(99, 179, 237, 0.40);
+  color: var(--accent);
+}
+.kbd-atom-danger {
+  background: rgba(244, 135, 113, 0.12);
+  border-color: rgba(244, 135, 113, 0.40);
+  color: var(--error);
+}
+
+/* chord wrapper. Renders "Kbd + Kbd" with a muted plus sign in the
+ * middle. The plus keeps the same vertical baseline as the chips. */
+.kbd-chord {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.kbd-chord .kbd-plus {
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  /* optical: shift the plus slightly up so it visually centers
+   * against the chip's body (which sits between its borders). */
+  transform: translateY(-0.5px);
+}

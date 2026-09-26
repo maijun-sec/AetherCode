@@ -21,6 +21,35 @@
 }
 .header-sep { color: var(--text-dim); opacity: 0.5; }
 .header-task-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px; }
+/* R350 (UX P1-3): session-switch fade transition. When the
+   active label changes (user picked a different session from
+   SessionPickerModal, or a new query's prompt arrived), the
+   active label fades out + slides up 2px over 300ms, then the
+   new label fades in + slides up from 2px over 200ms. The
+   `data-fade` attribute on the span lets us test the
+   transition state from the DOM. */
+.header-fade {
+  display: inline-block;
+  /* `position: relative` keeps the slide transform from
+     bleeding into the parent flex layout. */
+  position: relative;
+  transform-origin: left center;
+  will-change: opacity, transform;
+}
+.header-fade-leaving {
+  animation: header-fade-leave 300ms ease-out forwards;
+}
+.header-fade-entering {
+  animation: header-fade-enter 200ms ease-out;
+}
+@keyframes header-fade-leave {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-2px); }
+}
+@keyframes header-fade-enter {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 .header-task-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 .task-status-running { background: rgba(0, 120, 212, 0.2); color: var(--accent); }
 .task-status-pending { background: rgba(220, 220, 170, 0.2); color: var(--warning); }

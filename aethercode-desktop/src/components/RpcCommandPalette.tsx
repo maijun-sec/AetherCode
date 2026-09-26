@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { rpc } from '../lib/methods';
+import { Kbd } from './atoms/Kbd';
 import './RpcCommandPalette.css';
 
 // persistent favourites + recently-used RPCs.
@@ -566,9 +567,9 @@ export function RpcCommandPalette({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="rpc-palette-footer">
-          <span><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
-          <span><kbd>Enter</kbd> 执行</span>
-          <span><kbd>Esc</kbd> 关闭 / 清结果</span>
+          <span><Kbd>↑</Kbd><Kbd>↓</Kbd> 导航</span>
+          <span><Kbd>Enter</Kbd> 执行</span>
+          <span><Kbd>Esc</Kbd> 关闭 / 清结果</span>
         </div>
       </div>
     </div>

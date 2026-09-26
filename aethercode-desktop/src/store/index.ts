@@ -1886,6 +1886,35 @@ interface AppState {
    *  by {@link refreshSummary}. Null until the
    *  first poll completes. */
   lastSessionSummary: import('../lib/methods').SessionSummary | null;
+  /** R348 (PM P0-4): the prompt of the last failed run.
+   *  Set on run_end with stopReason ∈ {error, loop, max_turns};
+   *  cleared on the next successful run_end. Power users
+   *  hit the ↻ retry button on the EndOfTaskPanel to
+   *  re-fire this prompt without retyping it. */
+  lastFailedPrompt: string | null;
+  /** R348: re-fire the last failed prompt. Walks the same
+   *  path as `sendMessage` (so queued / streaming /
+   *  awaiting-decision branches all work) but seeds the
+   *  input box with lastFailedPrompt before dispatching. */
+  retryLastFailedPrompt: () => Promise<void>;
+  /** R349 (PM P0-2): per-session cost budget in USD. When
+   *  set, the StatusBar / Footer renders a progress bar
+   *  comparing cumulativeCostUsd against this limit.
+   *  Soft cap (R349.4): over the limit, queries are NOT
+   *  blocked — the UI just turns the bar red and toasts
+   *  the user. The user can keep working; the warning
+   *  reminds them they're over budget. */
+  budgetUsd: number | null;
+  /** R349: cumulative USD spent in the current session.
+   *  Sourced from `run_end.usage.costUsd` when the daemon
+   *  surfaces it; falls back to a heuristic estimate
+   *  (input * $0.000003 + output * $0.000015) when the
+   *  daemon hasn't shipped the field. Reset to 0 on a
+   *  fresh session. */
+  cumulativeCostUsd: number;
+  /** R349: setter for the budget. Persists to prefs.json
+   *  so the user's chosen cap survives a restart. */
+  setBudget: (usd: number | null) => void;
   /** switch the engine's active
    *  provider + model. The daemon rebuilds
    *  its ChatClient on the fly; the next
@@ -2961,6 +2990,24 @@ export const useStore = create<AppState>((set, get) => {
         // per-todo controller hit max bumps and is pausing for
         // the user. We surface a special prompt.
         const stopReason = (ev as any).stopReason as string | undefined;
+        // R348 (PM P0-4): when a run ends with an error / loop
+        //  / max-turns stopReason, capture the prompt so the
+        //  user can retry it via the ↻ button on the
+        //  EndOfTaskPanel. Successful runs leave the
+        //  lastFailedPrompt intact — a brief error after a
+        //  long conversation shouldn't trigger a retry of
+        //  the very first query of the session.
+        const failedStopKinds = new Set(['error', 'loop', 'max_turns']);
+        const isFailedRun = stopReason ? failedStopKinds.has(stopReason) : false;
+        if (isFailedRun) {
+          set({ lastFailedPrompt: get().currentInput || get().lastFailedPrompt });
+        } else if (stopReason === 'stop' || stopReason === 'end_turn') {
+          // Successful end — clear the retry slot so the
+          // ↻ button only appears for the latest failure.
+          // Don't clear on awaiting_user_decision (the user
+          // hasn't finished the conversation yet).
+          set({ lastFailedPrompt: null });
+        }
         set((s) => {
           const msgs = [...s.messages];
           for (let i = msgs.length - 1; i >= 0; i--) {
@@ -3919,6 +3966,21 @@ export const useStore = create<AppState>((set, get) => {
     // ran 3 shell commands" without a new
     // round-trip.
     lastSessionSummary: null,
+    // R348: PM P0-4 retry slot. Null until a run_end
+    // with stopReason ∈ {error, loop, max_turns} lands;
+    // cleared on the next successful run_end. The
+    // EndOfTaskPanel renders a ↻ button when this is
+    // non-null + the latest summary's state signals
+    // failure, so the user can re-fire the failed
+    // prompt with one keystroke.
+    lastFailedPrompt: null,
+    // R349 (PM P0-2): budget + cumulative cost. The
+    // budget is null until the user sets it (Settings
+    // panel has a "cost cap" slider). cumulativeCostUsd
+    // is bumped on every run_end that surfaces a cost;
+    // cleared on session switch so the bar is per-session.
+    budgetUsd: null,
+    cumulativeCostUsd: 0,
     tasks: [], currentTaskId: null,
     // 3-layer memory defaults — empty for all
     // three scopes until refreshMemory() pulls the
@@ -4846,6 +4908,41 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
+    // R348 (PM P0-4): re-fire the last failed prompt. The
+    // EndOfTaskPanel surfaces a ↻ button when
+    // `lastFailedPrompt` is set; clicking it (after the
+    // confirm dialog) calls this function. We seed
+    // currentInput with the saved prompt, clear the
+    // retry slot, and dispatch through the regular
+    // sendMessage path so all the existing branching
+    // (queued, streaming, awaiting-decision, etc.)
+    // keeps working.
+    retryLastFailedPrompt: async () => {
+      const prompt = get().lastFailedPrompt;
+      if (!prompt) return;
+      set({ currentInput: prompt, lastFailedPrompt: null });
+      await get().sendMessage();
+    },
+
+    // R349 (PM P0-2): set / clear the per-session cost
+    // budget. Passing null disables the budget bar (the
+    // StatusBar / footer stops rendering it). The
+    // budget persists to prefs.json via the standard
+    // prefs-save path so it survives a restart.
+    setBudget: (usd) => {
+      if (usd != null && (!Number.isFinite(usd) || usd <= 0)) {
+        // invalid input — clamp to null so we don't
+        // ship a $0 / negative budget that would always
+        // read as "100% spent".
+        set({ budgetUsd: null });
+        return;
+      }
+      set({ budgetUsd: usd });
+      // The Settings panel also dispatches prefs.json
+      // saves — keeping them in sync is the settings
+      // page's job, not this actioner's.
+    },
+
     cancelQuery: async () => {
       // R267 polish: a cancel means "stop everything",
       // which includes the queued follow-up. The user
@@ -4904,6 +5001,12 @@ export const useStore = create<AppState>((set, get) => {
         isStreaming: false,
         messages: [],
         currentInput: readDraft(sessionId),
+        // R349 (PM P0-2): the budget bar is per-session.
+        // Reset the cumulative cost so the new session
+        // starts at $0. The budgetUsd limit itself is
+        // global (one preference, applies to every
+        // session until the user changes it).
+        cumulativeCostUsd: 0,
       });
       // ask the daemon to swap its in-memory
       // transcript to this session, then back-fill our
@@ -6062,7 +6165,27 @@ export const useStore = create<AppState>((set, get) => {
         set({ projects: projects ?? [], currentProjectId: projects?.find((p) => p.active)?.id ?? get().currentProjectId });
       } catch {}
     },
-    refreshMetrics: async () => { try { const m = await rpc.getMetrics(); set({ metrics: m }); } catch {} },
+    refreshMetrics: async () => {
+      try {
+        const m = await rpc.getMetrics();
+        // R349 (PM P0-2): mirror daemon-side cost into the
+        //  store so the StatusBar budget bar can render
+        //  cumulativeCostUsd. The daemon surfaces
+        //  `metrics.costUsd` as the per-session total; we
+        //  use it directly. When the daemon hasn't shipped
+        //  the field yet, we fall back to a heuristic
+        //  (input * $3/M + output * $15/M, the same rate
+        //  the TokenUsage panel already uses) so the bar
+        //  isn't permanently "—".
+        const mCost = (m as { costUsd?: number } | null | undefined)?.costUsd;
+        const mIn = (m as { inputTokens?: number } | null | undefined)?.inputTokens ?? 0;
+        const mOut = (m as { outputTokens?: number } | null | undefined)?.outputTokens ?? 0;
+        const est = (mCost != null && Number.isFinite(mCost))
+          ? mCost
+          : mIn * 0.000003 + mOut * 0.000015;
+        set({ metrics: m, cumulativeCostUsd: est });
+      } catch { /* best-effort */ }
+    },
     refreshTraces: async () => { try { const { traces } = await rpc.getTraces(20); set({ traces: traces ?? [] }); } catch {} },
     refreshEngineStats: async () => {
       // pull the latest stats. The daemon's

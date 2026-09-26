@@ -37,6 +37,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { KbdPlus } from './atoms/Kbd';
 import './LoopGuardBanner.css';
 
 // auto-dismiss is disabled. legacy-C the 8s
@@ -219,7 +220,7 @@ export function LoopGuardBanner() {
               hotkey and reiterates the two-button
               decision. The copy (文案) stays in Chinese to match
               the rest of the banner. */}
-          持续显示,直到你点「继续」或「停止」。继续: <kbd>Ctrl</kbd>+<kbd>L</kbd>(重置检测器,本 session 不再触发) · 停止: 取消当前任务
+          持续显示,直到你点「继续」或「停止」。继续: <KbdPlus>{['Ctrl', 'L']}</KbdPlus>(重置检测器,本 session 不再触发) · 停止: 取消当前任务
         </div>
         {/* surface the cached session
             summary as a one-liner. The user

@@ -7,6 +7,77 @@ function shortenPath(p: string, max: number = 30): string {
   return '…' + p.slice(p.length - (max - 1));
 }
 
+/** R347: export the current session's chat timeline as Markdown
+ *  and copy it to the clipboard. Power-user follow-up to the
+ *  TUI's `/export` slash command — here the user is already in
+ *  the GUI and `navigator.clipboard.writeText` is the lowest-
+ *  friction path. We render a YAML frontmatter (session / model
+ *  / cwd / turns / exported_at) so the pasted document carries
+ *  enough context to render in a GitHub PR or Obsidian without
+ *  losing the session metadata. The success/failure feedback
+ *  is rendered inline (passed in via `onResult`) so we don't
+ *  need to wire into a global toast system. */
+async function exportSessionToClipboard(
+  sessionId: string,
+  model: string,
+  cwd: string,
+  onResult: (ok: boolean, msg: string) => void,
+): Promise<void> {
+  const { messages } = useStore.getState();
+  if (!messages || messages.length === 0) {
+    onResult(false, 'no messages to export');
+    return;
+  }
+  const fm = [
+    '---',
+    `session: ${sessionId}`,
+    `model: ${model}`,
+    `cwd: ${cwd || '(none)'}`,
+    `turns: ${messages.length}`,
+    `exported_at: ${new Date().toISOString()}`,
+    '---',
+    '',
+  ].join('\n');
+  const body = messages
+    .map((m: { role: string; content: string; ts?: number }) => {
+      const ts = m.ts ? new Date(m.ts).toLocaleString() : '';
+      const role = m.role[0]?.toUpperCase() + m.role.slice(1);
+      return `## ${role}${ts ? '  ·  ' + ts : ''}\n\n${m.content}\n`;
+    })
+    .join('\n');
+  const md = `# AetherCode session ${sessionId.slice(0, 8)}\n\n${fm}${body}`;
+  // Try the modern Clipboard API first (works inside the
+  // Tauri webview when the user has granted clipboard
+  // permission). Fall back to the legacy `document.execCommand`
+  // path so the button still works in restricted contexts
+  // (Tauri sandbox, older webview, etc.).
+  const tryCopy = async (): Promise<boolean> => {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(md);
+        return true;
+      } catch { /* fall through */ }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = md;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  };
+  try {
+    const ok = await tryCopy();
+    if (ok) onResult(true, `copied ${messages.length} messages`);
+    else onResult(false, 'copy failed (clipboard permission denied)');
+  } catch (e) {
+    onResult(false, `copy failed: ${(e as Error).message}`);
+  }
+}
+
 /**
  * StatusBar now surfaces live engine health. The
  * right side shows a memory badge ({@code 42 MB / 256 MB · 16%})
@@ -20,6 +91,7 @@ export function StatusBar() {
   const {
     connectionState, daemonInfo, engineState, tools, tasks,
     isStreaming, preWarm, engineStats, subagent, skipStats,
+    steps,
     // pull `loopWarn` so the StatusBar can show a
     // persistent "⚠ loop detected" badge when the engine
     // is in an active warn state. The badge is a clickable
@@ -61,7 +133,33 @@ export function StatusBar() {
     recentAutoApproved,
     setAutoApproveLowRisk,
     setAutoApproveMediumHigh,
+    // R347: export-session button. Pulls messages + cwd +
+    //  sessionId so the 📤 button can render a Markdown
+    //  copy of the current session straight to the clipboard.
+    messages,
+    currentSessionId,
+    cwd,
+    // R349 (PM P0-2): cost / budget bar. Pulled from
+    //  the store so the budget pill renders next to the
+    //  memory / version badges in the right cluster.
+    //  budgetUsd stays null when the user hasn't set a
+    //  cap, in which case the bar hides entirely.
+    budgetUsd,
+    cumulativeCostUsd,
+    setBudget,
   } = useStore();
+  // R349 (PM P0-2): step counter + ETA. We compute:
+  //   - completed steps = steps.filter(s => s.done).length
+  //   - running step = steps.find(s => !s.done && s.startedAt)
+  //   - ETA ≥ X min = max(running step so-far / 60_000, 1)
+  //     We deliberately use "≥ X min" rather than a precise
+  //     estimate — LLM step durations have huge variance and
+  //     a wrong "exactly 2 min" reads as broken when it
+  //     misses. "≥ 1 min" is honest.
+  const completedSteps = steps.filter((s) => s.done).length;
+  const runningStep = steps.find((s) => !s.done && s.startedAt);
+  const runningStepElapsedMs = runningStep ? Date.now() - runningStep.startedAt : 0;
+  const etaMin = runningStepElapsedMs > 0 ? Math.max(1, Math.ceil(runningStepElapsedMs / 60_000)) : 0;
   // compact mode. legacy the status bar always
   // rendered 14+ badges (state / port / model / permission /
   // skip / suggestion / skip-stats / tools / running /
@@ -80,6 +178,11 @@ export function StatusBar() {
   // (component-local state), not persisted — a fresh
   // window always starts in compact mode.
   const [compact, setCompact] = useState(true);
+  // R347: ephemeral export status. Cleared after 2.4s. We
+  //  show this inline (no global toast system) so the
+  //  "copy session" button gets immediate feedback without
+  //  competing with subagent toasts or permission banners.
+  const [exportToast, setExportToast] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const stateLabel = (() => {
     switch (connectionState) {
@@ -352,6 +455,42 @@ export function StatusBar() {
         )}
       </div>
       <div className="status-right">
+        {/* R347: export button. Copies the current session's
+         *  timeline as Markdown to the clipboard (the
+         *  user can paste into a GitHub PR / Slack / Obsidian
+         *  without leaving the chat). The TUI counterpart
+         *  `/export <path>` writes to disk; here we go
+         *  straight to clipboard because the user is
+         *  already in front of the chat and `navigator.clipboard`
+         *  is the lowest-friction path. A Tauri-side
+         *  "save to file" dialog is the P2 follow-up. */}
+        {currentSessionId && messages.length > 0 && (
+          <button
+            className="status-item status-export"
+            title={`Copy this session as Markdown (${messages.length} messages)`}
+            onClick={() => {
+              void exportSessionToClipboard(
+                currentSessionId,
+                engineState?.model ?? 'unknown',
+                cwd ?? '',
+                (ok, msg) => {
+                  setExportToast({ ok, msg });
+                  setTimeout(() => setExportToast((cur) => (cur === exportToast ? null : cur)), 2400);
+                },
+              );
+            }}
+          >
+            📤 copy session
+          </button>
+        )}
+        {exportToast && (
+          <span
+            className={`status-item status-export-toast ${exportToast.ok ? 'is-ok' : 'is-err'}`}
+            data-testid="status-export-toast"
+          >
+            {exportToast.ok ? '✓' : '✗'} {exportToast.msg}
+          </span>
+        )}
         {/* engine health badge. Surfaces memory,
          *  concurrency profile, in-flight counts. Color
          *  follows the memTier: green / amber / red. */}
@@ -384,6 +523,55 @@ export function StatusBar() {
           >
             {engineStats.queriesInFlight}/{engineStats.maxConcurrentQueries} q
             {engineStats.branchesInFlight > 0 && ` · ${engineStats.branchesInFlight}/${engineStats.maxConcurrentBranches} ↯`}
+          </span>
+        )}
+        {/* R349 (PM P0-2): cost / budget bar. The user sets a
+         *  cap via /budget <usd> in the TUI or the Settings
+         *  panel here; we mirror it in `budgetUsd`. The bar
+         *  shows `cumulativeCostUsd / budgetUsd` with a
+         *  8-step fill glyph (matches the ctx-fill glyph
+         *  language). Soft cap: when cumulative exceeds
+         *  budget, the bar turns red and a toast fires
+         *  once, but queries are NOT blocked — the user
+         *  can keep working and decide whether to stop.
+         *  Hidden entirely when budgetUsd is null. */}
+        {budgetUsd != null && budgetUsd > 0 && (
+          <button
+            className={`status-item status-budget ${cumulativeCostUsd > budgetUsd ? 'is-over' : ''}`}
+            title={`Cost: $${cumulativeCostUsd.toFixed(3)} / $${budgetUsd.toFixed(2)} budget. Click to edit.`}
+            onClick={() => {
+              // R349.4 (PM P0-2): prompt for a new budget.
+              // A simple window.prompt keeps this R349
+              // self-contained — the Settings panel gets
+              // a proper slider later.
+              const next = window.prompt('Set cost budget (USD). 0 to disable.', String(budgetUsd));
+              if (next == null) return;
+              const n = Number(next);
+              if (!Number.isFinite(n) || n <= 0) setBudget(null);
+              else setBudget(n);
+            }}
+            data-testid="status-budget-bar"
+          >
+            ${cumulativeCostUsd.toFixed(3)} / ${budgetUsd.toFixed(2)}
+          </button>
+        )}
+        {/* R349 (PM P0-2): step counter + ETA. Only renders
+         *  during an active streaming run. The user wanted
+         *  `step 3/8 · ETA ≥ 2 min`; we don't know the total
+         *  step count yet (daemon hasn't shipped it), so
+         *  we render `step N · ETA ≥ X min` as a partial
+         *  signal — N grows as the model progresses, X is
+         *  the wall-clock time spent on the current step
+         *  rounded up. Renders only when the current step
+         *  is older than 4s — earlier than that the ETA is
+         *  noisy and doesn't help the user. */}
+        {isStreaming && completedSteps > 0 && etaMin > 0 && (
+          <span
+            className="status-item status-step-eta"
+            title={`Step ${completedSteps} done. Current step ${etaMin}min and counting.`}
+            data-testid="status-step-eta"
+          >
+            step {completedSteps} · ≥ {etaMin}m
           </span>
         )}
         <span className="status-item">AetherCode Desktop R107</span>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { SessionInfo } from '../lib/methods';
+import { Kbd } from './atoms/Kbd';
 import './SessionPickerModal.css';
 
 /**
@@ -212,12 +213,12 @@ export function SessionPickerModal({
           })}
         </ul>
         <div className="session-picker-footer">
-          <kbd>↑</kbd>
-          <kbd>↓</kbd>
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd>
           <span>navigate</span>
-          <kbd>↵</kbd>
+          <Kbd>Enter</Kbd>
           <span>switch</span>
-          <kbd>esc</kbd>
+          <Kbd>Esc</Kbd>
           <span>close</span>
         </div>
       </div>

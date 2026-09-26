@@ -93,6 +93,44 @@ function formatTokens(n?: number): string {
   return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
+/** R348: format cumulative session cost. Returns "—" when
+ *  the daemon hasn't surfaced cost in listSessions yet
+ *  (older daemons or sessions with no completed turn). */
+function formatCost(usd?: number): string {
+  if (usd == null || !Number.isFinite(usd)) return '—';
+  if (usd < 0.001) return '<$0.001';
+  if (usd < 1) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+/** R348: short label for the session's lifecycle state.
+ *  The daemon reports one of running / paused / completed /
+ *  failed / cancelled. We surface a 1-2 char glyph + state
+ *  text so the user can scan a list of 30 sessions at a
+ *  glance and pick out the "still running" / "errored" ones
+ *  without reading the title. */
+function sessionStateLabel(state: SessionListItem['state']): { glyph: string; text: string; tone: string } {
+  switch (state) {
+    case 'running':   return { glyph: '●', text: 'running',   tone: 'running' };
+    case 'paused':    return { glyph: '⏸', text: 'paused',    tone: 'paused' };
+    case 'completed': return { glyph: '✓', text: 'done',      tone: 'ok' };
+    case 'failed':    return { glyph: '✗', text: 'failed',    tone: 'err' };
+    case 'cancelled': return { glyph: '⊘', text: 'cancelled', tone: 'idle' };
+    default:          return { glyph: '·', text: String(state ?? '?'), tone: 'idle' };
+  }
+}
+
+/** R348: short label for the files-changed list. The full
+ *  list is in `session.filesChanged` but the row only has
+ *  ~32px to display it — we show the count + first 2 file
+ *  basenames. */
+function formatFilesChanged(files?: string[]): string {
+  if (!files || files.length === 0) return '—';
+  if (files.length === 1) return `1 file`;
+  if (files.length === 2) return `2 files`;
+  return `${files.length} files`;
+}
+
 function sessionDisplayTitle(s: SessionListItem): string {
   // title fallback chain. The user asked for
   // a clear name instead of the cryptic session id
@@ -139,6 +177,12 @@ export function SessionListRow({
     [session.tokensIn, session.tokensOut],
   );
   const isStale = !isCurrent && (session.lastActiveAt ?? 0) < Date.now() - 3_600_000;
+  // R348: 4-column session list (PM P0-3) — status / cost /
+  //  files changed / last activity. Each column is a tiny
+  //  pill with a fixed semantic colour so the user can scan
+  //  30 sessions in 5 seconds and find "the one that failed"
+  //  or "the one that just cost $5".
+  const stateLabel = useMemo(() => sessionStateLabel(session.state), [session.state]);
 
   return (
     <div
@@ -159,7 +203,7 @@ export function SessionListRow({
           onSelect(session.id);
         }
       }}
-      title={`${session.id}\n${session.cwd ?? ''}\nlast active ${lastActive}`}
+      title={`${session.id}\n${session.cwd ?? ''}\nstate: ${stateLabel.text}\nlast active ${lastActive}`}
     >
       <span
         className={[
@@ -181,6 +225,21 @@ export function SessionListRow({
               <span className="session-list-row-tokens">{formatTokens(totalTokens)} tok</span>
             </>
           )}
+        </div>
+        {/* R348: PM P0-3 four columns. Status / cost / files / model. */}
+        <div className="session-list-row-stats" data-testid="session-list-row-stats">
+          <span className={`session-list-row-stat session-list-row-state session-list-row-state-${stateLabel.tone}`}>
+            {stateLabel.glyph} {stateLabel.text}
+          </span>
+          <span className="session-list-row-stat session-list-row-cost" title="Cumulative cost (USD)">
+            {formatCost(session.costUsd)}
+          </span>
+          <span className="session-list-row-stat session-list-row-files" title={session.filesChanged?.join('\n') || 'no files changed'}>
+            {formatFilesChanged(session.filesChanged)}
+          </span>
+          <span className="session-list-row-stat session-list-row-model" title={session.model}>
+            {session.model?.split('/').pop() ?? '—'}
+          </span>
         </div>
         {session.lastAgentEvent && session.lastAgentEvent.trim() && (
           // R270: most recent agent activity. Always renders

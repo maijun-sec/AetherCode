@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useMemo } from 'react';
 import { useStore, UI_PERMISSION_MODES } from '../store';
 import { CommandDropdown } from './CommandDropdown';
 import { parseSlash, filterCommands, SlashCommand } from './commandCommands';
+import { Kbd, KbdPlus } from './atoms/Kbd';
 import { rpc } from '../lib/methods';
 import type { ProviderInfo } from '../lib/methods';
 // bundled starter workflows + the import helper.
@@ -1254,7 +1255,7 @@ export function MessageInput() {
         )}
       </div>
       <div className="input-hint">
-        <kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline · <kbd>Esc</kbd> cancel · <kbd>/</kbd> commands
+        <Kbd>Enter</Kbd> send · <KbdPlus>{['Shift', 'Enter']}</KbdPlus> newline · <Kbd>Esc</Kbd> cancel · <Kbd>/</Kbd> commands
         {cmdStatus && (
           <span
             className={`input-hint-cmd input-hint-cmd-${cmdStatus.kind}`}

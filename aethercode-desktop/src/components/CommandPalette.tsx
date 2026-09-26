@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useStore } from '../store';
+import { Kbd } from './atoms/Kbd';
 import './CommandPalette.css';
 
 /** VS Code-style command palette. Open with Ctrl/Cmd+K.
@@ -138,9 +139,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           )}
         </ul>
         <div className="command-palette-footer">
-          <span><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
-          <span><kbd>Enter</kbd> 选择</span>
-          <span><kbd>Esc</kbd> 关闭</span>
+          <span><Kbd>↑</Kbd><Kbd>↓</Kbd> 导航</span>
+          <span><Kbd>Enter</Kbd> 选择</span>
+          <span><Kbd>Esc</Kbd> 关闭</span>
         </div>
       </div>
     </div>

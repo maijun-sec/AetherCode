@@ -131,14 +131,7 @@
   background: var(--bg, rgba(0, 0, 0, 0.15));
 }
 
-.command-palette-footer kbd {
-  display: inline-block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 9px;
-  padding: 1px 5px;
-  margin-right: 3px;
-  background: var(--bg-input);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 3px;
-  color: var(--text);
-}
+/* R350: the local kbd {} block was removed — CommandPalette now
+ * uses the shared <Kbd> atom (atoms/Kbd.tsx) which inherits
+ * the global theme tokens. The bare-kbd fallback here only
+ * catches third-party / future code that hasn't migrated yet. */

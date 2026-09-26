@@ -31,6 +31,20 @@ import { useState, useMemo } from 'react';
 
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
+/**
+ * R350 (UX P1-7): unified tool/task status. 5 states map to
+ * the canonical lifecycle. Anything outside the chat that
+ * needs to render the same lifecycle (LoopGuardBanner tier,
+ * SessionListRow state, StatusBar budget bar, Toast severity)
+ * reads the same `--status-*` tokens defined in App.css.
+ */
+export type ToolStatus =
+  | 'pending'   // queued, no result yet
+  | 'running'   // actively executing
+  | 'done'      // success
+  | 'failed'    // error
+  | 'skipped';  // user opted out / daemon skipped
+
 export interface ToolCallCardProps {
   /** Tool name (e.g. `read_file`, `bash`). */
   toolName: string;
@@ -46,6 +60,18 @@ export interface ToolCallCardProps {
   result?: string;
   /** True when the result is an error message. */
   resultIsError?: boolean;
+  /**
+   * Explicit execution status. When omitted, the card
+   * derives it from the existing props:
+   *   - resultIsError && result → 'failed'
+   *   - result                  → 'done'
+   *   - !result && consentChoice starts with 'deny-' → 'skipped'
+   *   - else                    → 'pending'
+   * Callers with a streaming tool call (the daemon reports
+   * 'running' on streamToolStart before any result) should
+   * pass `status="running"` explicitly so the card animates.
+   */
+  status?: ToolStatus;
   /** User's consent choice (if a prompt was shown). */
   consentChoice?: 'allow-once' | 'deny-once' | 'allow-session' | 'deny-session' | 'allow-project' | 'deny-project' | 'allow-user' | 'deny-user' | 'allow-category-project' | 'deny-category-project';
   /** Duration in ms (for the "took 0.4s" footer). */
@@ -63,6 +89,36 @@ const RISK_COLORS: Record<ToolRiskLevel, string> = {
   high: 'var(--risk-high, #fb923c)',
   critical: 'var(--risk-critical, #f87171)',
 };
+
+/** R350: status → CSS-class suffix. The CSS uses
+ *  `.tool-call-card-status-{status}` selectors so any
+ *  visual tweak (color, icon, animation) happens in
+ *  chat.css, not in this component. */
+const STATUS_LABEL: Record<ToolStatus, string> = {
+  pending: '○ pending',
+  running: '◐ running',
+  done:    '✓ done',
+  failed:  '✗ failed',
+  skipped: '⊘ skipped',
+};
+
+/**
+ * Derive a default `status` from the existing props. New
+ * callers should pass `status` explicitly; this fallback
+ * keeps the legacy `<ToolCallCard />` call sites
+ * (which never knew about lifecycle states) rendering
+ * with reasonable colors.
+ */
+function deriveStatus(
+  result: string | undefined,
+  resultIsError: boolean | undefined,
+  consentChoice: ToolCallCardProps['consentChoice'],
+): ToolStatus {
+  if (resultIsError && result) return 'failed';
+  if (result) return 'done';
+  if (consentChoice?.startsWith('deny-')) return 'skipped';
+  return 'pending';
+}
 
 const CONSENT_LABELS: Record<NonNullable<ToolCallCardProps['consentChoice']>, string> = {
   'allow-once': '✓ allow (once)',
@@ -116,6 +172,7 @@ export function ToolCallCard({
   args,
   result,
   resultIsError,
+  status: statusProp,
   consentChoice,
   durationMs,
   defaultExpanded = false,
@@ -131,6 +188,8 @@ export function ToolCallCard({
   const resultFull = result ?? '';
   const risk = riskLevel ?? 'low';
   const riskColor = RISK_COLORS[risk];
+  // R350: explicit status wins; otherwise derive from props.
+  const status: ToolStatus = statusProp ?? deriveStatus(result, resultIsError, consentChoice);
 
   const handleToggle = () => {
     const next = !expanded;
@@ -142,11 +201,13 @@ export function ToolCallCard({
     <div
       className={[
         'tool-call-card',
+        `tool-call-card-status-${status}`,
         expanded ? 'tool-call-card-expanded' : '',
         resultIsError ? 'tool-call-card-error' : '',
       ].filter(Boolean).join(' ')}
       role="group"
       aria-label={`Tool call: ${toolName}`}
+      data-status={status}
     >
       <button
         type="button"
@@ -157,6 +218,16 @@ export function ToolCallCard({
         <span className="tool-call-card-icon" aria-hidden>🔧</span>
         <span className="tool-call-card-name">{toolName}</span>
         {category && <span className="tool-call-card-category">{category}</span>}
+        {/* R350: status pill — small dot + label on the head.
+         *  Uses --status-* tokens so any visual tweak happens
+         *  in chat.css once and propagates everywhere. */}
+        <span
+          className={`tool-call-card-status tool-call-card-status-pill-${status}`}
+          title={`Status: ${status}`}
+        >
+          <span className="tool-call-card-status-dot" aria-hidden />
+          {STATUS_LABEL[status]}
+        </span>
         <span
           className={`tool-call-card-risk tool-call-card-risk-${risk}`}
           style={{ borderColor: riskColor, color: riskColor }}

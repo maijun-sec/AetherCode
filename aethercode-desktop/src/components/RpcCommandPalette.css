@@ -367,12 +367,5 @@
   color: var(--text-dim, #888);
   font-size: 11px;
 }
-.rpc-palette-footer kbd {
-  background: var(--bg, #15151a);
-  border: 1px solid var(--border, #2a2a30);
-  border-radius: 3px;
-  padding: 0 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10.5px;
-  margin: 0 1px;
-}
+/* R350: the local kbd {} block was removed — RpcCommandPalette now
+ * uses the shared <Kbd> atom (atoms/Kbd.tsx). */

@@ -11,12 +11,24 @@
   position: relative;
 }
 
+/* R348 (PM P0-4) — failed-run panel variant. Distinct colour
+ * (amber/red) so the eye lands on it without reading, plus
+ * a ↻ retry affordance at the bottom. */
+.end-of-task-panel-failed {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: linear-gradient(180deg, rgba(248, 113, 113, 0.10) 0%, rgba(248, 113, 113, 0.04) 100%);
+}
+
 .end-of-task-icon {
   font-size: 1.4rem;
   color: rgb(72, 199, 142);
   line-height: 1;
   flex-shrink: 0;
   padding-top: 0.05rem;
+}
+
+.end-of-task-icon-failed {
+  color: rgb(248, 113, 113);
 }
 
 .end-of-task-content {
@@ -45,6 +57,31 @@
   margin-top: 0.45rem;
 }
 
+/* R348 — list of side effects that already happened
+ * during the failed run, so the user can decide whether
+ * a retry is safe (e.g. "you already wrote 3 files"). */
+.end-of-task-side-effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  align-items: center;
+}
+.end-of-task-side-effects-label {
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  margin-right: 0.15rem;
+}
+.end-of-task-side-effects-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  background: rgba(248, 113, 113, 0.18);
+  color: rgb(252, 165, 165);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .end-of-task-tool-chip {
   display: inline-block;
   padding: 0.15rem 0.5rem;
@@ -53,6 +90,49 @@
   border-radius: 999px;
   font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* R348 — ↻ retry button row. The two-step confirm uses
+ * two button classes: the first click arms (`.end-of-task-retry`),
+ * the second click commits (`.end-of-task-retry-confirm`). The
+ * colour change is the only "are you sure?" surface; we
+ * deliberately avoid a modal here because the chat panel
+ * already has a lot of modal-like surfaces. */
+.end-of-task-retry-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+.end-of-task-retry {
+  background: rgba(248, 113, 113, 0.18);
+  color: rgb(252, 165, 165);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  padding: 0.25rem 0.7rem;
+  border-radius: 5px;
+  font-size: 0.82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.end-of-task-retry:hover {
+  background: rgba(248, 113, 113, 0.30);
+  border-color: rgba(248, 113, 113, 0.7);
+}
+.end-of-task-retry-confirm {
+  background: rgba(252, 165, 165, 0.95);
+  color: #1f1f1f;
+  border: 1px solid rgba(252, 165, 165, 1);
+  padding: 0.25rem 0.7rem;
+  border-radius: 5px;
+  font-size: 0.82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  cursor: pointer;
+  animation: end-of-task-retry-pulse 600ms ease-in-out infinite alternate;
+}
+@keyframes end-of-task-retry-pulse {
+  from { box-shadow: 0 0 0 0 rgba(252, 165, 165, 0.45); }
+  to   { box-shadow: 0 0 0 4px rgba(252, 165, 165, 0.0); }
 }
 
 .end-of-task-close {
