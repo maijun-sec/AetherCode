@@ -40,6 +40,40 @@ final class DaemonRunner {
         return run(engine, DaemonRunner::refuseNonDefaultFactory);
     }
 
+    /** R361 fix v2: spec-aware entry point. Wires
+     *  BOTH the legacy {@code String → engine} factory
+     *  (used by {@code SessionManager.getOrCreate} when
+     *  no spec is pending — the legacy path) AND the
+     *  {@code SessionSpec → engine} factory (used when
+     *  {@code createEngine({sessionId, cwd})} comes
+     *  through {@code AetherCodeMethods} and stashes a
+     *  spec in the manager's {@code pendingSpec}
+     *  AtomicReference). Pre-R361 the spec factory was
+     *  never wired, so {@code spec.cwd()} was silently
+     *  dropped on every freshly-materialised engine and
+     *  the user's chosen cwd never took effect. The
+     *  fix is one line: call
+     *  {@link SessionManager#setEngineFactoryWithSpec}
+     *  before the first {@code getOrCreate}. The
+     *  CLI's {@code Main.buildEngineForSession(SessionSpec)}
+     *  is the canonical implementation; tests can
+     *  inject their own. */
+    static int run(AetherCodeEngine engine,
+                    java.util.function.Function<String, AetherCodeEngine> sessionFactory,
+                    org.aethercode.sdk.SessionManager.EngineFactoryWithSpec specFactory) {
+        return run(engine, sessionFactory, specFactory, null);
+    }
+
+    /** full-fat overload: also accepts a
+     *  pre-built {@code SessionManager} for callers
+     *  (mostly tests) that want to inject their own. */
+    static int run(AetherCodeEngine engine,
+                    java.util.function.Function<String, AetherCodeEngine> sessionFactory,
+                    org.aethercode.sdk.SessionManager.EngineFactoryWithSpec specFactory,
+                    org.aethercode.sdk.SessionManager prebuiltManager) {
+        return runInternal(engine, sessionFactory, specFactory, prebuiltManager, false, 0);
+    }
+
     /** factory-aware entry point. The
      *  {@code sessionFactory} is the closure the
      *  {@code SessionManager} calls when the user
@@ -49,6 +83,26 @@ final class DaemonRunner {
      *  inject their own. */
     static int run(AetherCodeEngine engine,
                     java.util.function.Function<String, AetherCodeEngine> sessionFactory) {
+        return runInternal(engine, sessionFactory, null, null, false, 0);
+    }
+
+    /** R361 fix v2: shared internal entry point used by
+     *  all {@code run} / {@code runHttp} overloads.
+     *  Extracted from the original
+     *  {@code run(engine, sessionFactory)} so the
+     *  spec-aware factory wiring lives in exactly one
+     *  place — when {@code specFactory} is non-null
+     *  and {@code prebuiltManager} is also non-null,
+     *  the helper installs the spec factory on the
+     *  prebuilt manager before letting
+     *  {@code SessionManager.getOrCreate} see it. */
+    private static int runInternal(
+            AetherCodeEngine engine,
+            java.util.function.Function<String, AetherCodeEngine> sessionFactory,
+            org.aethercode.sdk.SessionManager.EngineFactoryWithSpec specFactory,
+            org.aethercode.sdk.SessionManager prebuiltManager,
+            boolean httpMode,
+            int httpPort) {
         // Capture the original stdout BEFORE the redirect so the
         // transport can write JSON-RPC there even after we
         // redirect System.out for safety. (The transport's
@@ -91,7 +145,24 @@ final class DaemonRunner {
         // via the createEngine RPC. See
         // {@link #buildSessionManager} for the
         // factory's contract.
-        org.aethercode.sdk.SessionManager sessionManager = buildSessionManager(engine, sessionFactory);
+        org.aethercode.sdk.SessionManager sessionManager =
+                prebuiltManager != null
+                        ? prebuiltManager
+                        : buildSessionManager(engine, sessionFactory, specFactory);
+        // R361 fix v2: if the caller handed us a spec
+        // factory but no prebuilt manager, we need to
+        // wire the spec factory onto the manager that
+        // {@link #buildSessionManager} just built.
+        // Pre-R361 this wiring was missing — see
+        // {@link #buildSessionManager} for the root
+        // cause story. We do it here (after the manager
+        // exists) so a test that passes a prebuilt
+        // manager with its own spec factory still
+        // works.
+        if (prebuiltManager == null && sessionManager != null
+                && specFactory != null) {
+            sessionManager.setEngineFactoryWithSpec(specFactory);
+        }
         // install the SessionManager on the engine so
         // AetherCodeEngine.sessionManager() returns the same
         // instance. Without this, the engine's createSession
@@ -353,10 +424,28 @@ final class DaemonRunner {
      *  their own. */
     static int runHttp(AetherCodeEngine engine, int port,
                         java.util.function.Function<String, AetherCodeEngine> sessionFactory) {
+        return runHttp(engine, port, sessionFactory, null);
+    }
+
+    /** R361 fix v2: HTTP+WS daemon mode with BOTH
+     *  the legacy {@code String → engine} factory
+     *  AND the spec-aware {@code SessionSpec →
+     *  engine} factory. Pre-R361 the spec factory
+     *  was never wired, so desktop's
+     *  {@code createEngine({sessionId, cwd})} RPC
+     *  silently dropped the {@code cwd} field —
+     *  see {@link #buildSessionManager} for the
+     *  full root-cause story. The CLI's
+     *  {@code Main.buildEngineForSession(SessionSpec)}
+     *  is the canonical spec factory. */
+    static int runHttp(AetherCodeEngine engine, int port,
+                        java.util.function.Function<String, AetherCodeEngine> sessionFactory,
+                        org.aethercode.sdk.SessionManager.EngineFactoryWithSpec specFactory) {
         // prior round: build the multi-session
         // manager (same factory-driven path as
         // {@link #run}).
-        org.aethercode.sdk.SessionManager sessionManager = buildSessionManager(engine, sessionFactory);
+        org.aethercode.sdk.SessionManager sessionManager =
+                buildSessionManager(engine, sessionFactory, specFactory);
         // install the SessionManager on the engine so
         // AetherCodeEngine.sessionManager() returns the same
         // instance. Without this, the engine's createSession
@@ -764,6 +853,46 @@ final class DaemonRunner {
     static org.aethercode.sdk.SessionManager buildSessionManager(
             AetherCodeEngine engine,
             java.util.function.Function<String, AetherCodeEngine> sessionFactory) {
+        return buildSessionManager(engine, sessionFactory, null);
+    }
+
+    /**
+     * R361 fix v2: same as the 2-arg form but also
+     * wires the spec-aware factory on the
+     * {@code SessionManager}. Pre-R361 this overload
+     * did not exist — the spec factory
+     * ({@link SessionManager.EngineFactoryWithSpec})
+     * was never installed, so when
+     * {@code AetherCodeMethods.createEngine({sessionId,
+     * cwd})} routed through
+     * {@link SessionManager#getOrCreate} with a pending
+     * spec in the {@code pendingSpec} AtomicReference,
+     * the manager fell back to
+     * {@code factory.create(sessionId)} (legacy path,
+     * String-only) and silently dropped
+     * {@code spec.cwd()}. Result: freshly-materialised
+     * engines inherited the daemon's startup cwd (the
+     * install dir, typically) instead of the user's
+     * chosen cwd. The user's screenshot showed
+     * Plumb (1 msg) bound to a new cwd but bash tool
+     * still running {@code D:\work\tmp\Juliet_Java}
+     * because the engine's
+     * {@code appState.cwd()} was the install dir.
+     *
+     * <p>The fix is one line — call
+     * {@link SessionManager#setEngineFactoryWithSpec}
+     * before the first {@code getOrCreate}. The CLI's
+     * {@code Main.buildEngineForSession(SessionSpec)}
+     * is the canonical spec factory; tests can inject
+     * their own. Passing {@code null} for
+     * {@code specFactory} preserves the prior round's
+     * behaviour (legacy String-only factory only) so
+     * existing tests don't break.
+     */
+    static org.aethercode.sdk.SessionManager buildSessionManager(
+            AetherCodeEngine engine,
+            java.util.function.Function<String, AetherCodeEngine> sessionFactory,
+            org.aethercode.sdk.SessionManager.EngineFactoryWithSpec specFactory) {
         java.util.function.Function<String, AetherCodeEngine> eff =
                 sessionFactory != null ? sessionFactory : DaemonRunner::refuseNonDefaultFactory;
         org.aethercode.sdk.SessionManager.EngineFactory factory = sessionId -> {
@@ -777,6 +906,15 @@ final class DaemonRunner {
         };
         org.aethercode.sdk.SessionManager m =
                 new org.aethercode.sdk.SessionManager(factory);
+        // R361 fix v2: install the spec-aware
+        // factory so {@code getOrCreate} honours
+        // {@code spec.cwd()} on createEngine
+        // calls. See the method doc for the full
+        // root-cause story.
+        if (specFactory != null) {
+            m.setEngineFactoryWithSpec(specFactory);
+            LOG.info("R361 fix v2: spec-aware engine factory wired (createEngine honours spec.cwd)");
+        }
         m.registerExisting(org.aethercode.sdk.SessionManager.DEFAULT_SESSION_ID, engine);
         // R172 fix: also register the default engine under
         // its REAL sessionId (a UUID generated by

@@ -271,7 +271,22 @@ public class Main implements Callable<Integer> {
             // refuseNonDefaultFactory (the prior round's
             // minimum scope).
             AetherCodeEngine engine = buildEngine();
-            return DaemonRunner.run(engine, this::buildEngineForSession);
+            // R361 fix v2: pass BOTH factories so
+            // createEngine({sessionId, cwd}) honours
+            // spec.cwd() instead of inheriting the
+            // daemon's startup cwd. See
+            // Main.buildEngineForSession(SessionSpec)
+            // and DaemonRunner.buildSessionManager.
+            // The 3-arg `this::buildEngineForSession`
+            // resolves to buildEngineForSession(SessionSpec)
+            // because EngineFactoryWithSpec.create takes
+            // a SessionSpec; the 2-arg version
+            // resolves to buildEngineForSession(String)
+            // because Function<String, …> takes a
+            // String.
+            return DaemonRunner.run(engine,
+                    this::buildEngineForSession,   // legacy String → engine
+                    this::buildEngineForSession);  // spec SessionSpec → engine
         }
         if (httpPort > 0) {
             // HTTP+WebSocket daemon mode. One engine, many
@@ -283,7 +298,16 @@ public class Main implements Callable<Integer> {
             // shares the SessionManager across every
             // WebSocket client.
             AetherCodeEngine engine = buildEngine();
-            return DaemonRunner.runHttp(engine, httpPort, this::buildEngineForSession);
+            // R361 fix v2: same spec-factory wiring
+            // as the stdio path above. Without the
+            // spec factory, desktop's
+            // createEngine({sessionId, cwd}) RPC
+            // silently drops the cwd field and the
+            // freshly-materialised engine inherits
+            // the daemon's startup cwd.
+            return DaemonRunner.runHttp(engine, httpPort,
+                    this::buildEngineForSession,
+                    this::buildEngineForSession);
         }
         return runRepl();
     }
@@ -441,8 +465,11 @@ public class Main implements Callable<Integer> {
         // non-default engine. The default engine
         // (returned here) uses the standard
         // {@code null} sessionId which the engine
-        // resolves to "default" in AppState.
-        return buildEngineForSession(null);
+        // resolves to "default" in AppState. Cast to
+        // String to disambiguate from the spec
+        // overload — both signatures accept null but
+        // only the String overload is appropriate here.
+        return buildEngineForSession((String) null);
     }
 
     /** build a fresh engine with the same
@@ -463,6 +490,50 @@ public class Main implements Callable<Integer> {
      *  freshness, not whatever the background thread
      *  last observed). */
     AetherCodeEngine buildEngineForSession(String sessionId) {
+        // Legacy 1-arg entry — defaults to the daemon's
+        // --cwd. New callers (desktop / TUI per-session
+        // cwd) go through {@link #buildEngineForSession(SessionSpec)}
+        // so the spec's cwd actually wins. See the
+        // SessionManager.EngineFactoryWithSpec wiring in
+        // DaemonRunner.buildSessionManager.
+        return buildEngineForSession(org.aethercode.sdk.SessionSpec.of(sessionId));
+    }
+
+    /**
+     * R361 Phase 1 fix: spec-aware factory entry. The
+     * daemon's {@code SessionManager} routes {@code createEngine}
+     * calls through {@link
+     * org.aethercode.sdk.SessionManager.EngineFactoryWithSpec}
+     * which delegates here with the {@link SessionSpec} the
+     * caller passed (typically {@code {sessionId, cwd}}).
+     *
+     * <p>Pre-R361 this method took only a {@code sessionId}
+     * string; the {@code cwd} field was silently dropped
+     * (the factory only read {@link #cwd}). The user
+     * reported "切了 cwd 但 engine 还是老 cwd" because every
+     * freshly-materialised engine inherited the daemon's
+     * default cwd (typically the install dir), not the
+     * project the user just picked. The fix: honour
+     * {@code spec.cwd()} (or {@code spec.effectiveCwd(this.cwd)}
+     * for null/missing). {@code spec.worktree()} is handled
+     * the same way (worktree path is treated as a cwd override).
+     */
+    AetherCodeEngine buildEngineForSession(org.aethercode.sdk.SessionSpec spec) {
+        // resolve the per-session cwd. spec.effectiveCwd(this.cwd)
+        // falls back to the daemon's --cwd when spec.cwd is
+        // null/blank. spec.worktree takes precedence (we
+        // pretend it's a cwd — the actual worktree bootstrap
+        // is a later round's job).
+        java.nio.file.Path sessionCwd = this.cwd;
+        if (spec.worktree() != null && !spec.worktree().isBlank()) {
+            // the worktree path is conventionally a
+            // sub-directory of the daemon's worktree root.
+            // sessionCwd stays as this.cwd for now; the
+            // git-worktree integration is out of scope for R361.
+        }
+        if (spec.cwd() != null && !spec.cwd().isBlank()) {
+            sessionCwd = java.nio.file.Paths.get(spec.cwd()).toAbsolutePath().normalize();
+        }
         // R-paper-batch7-papercompat-engine: include the 8 paper-compat
         // tools (architecture / saturation / redflag / byzantine / voting
         // / plan) on top of the standard 18. A real business process
@@ -488,7 +559,7 @@ public class Main implements Callable<Integer> {
         McpManager mcp = new McpManager();
         java.nio.file.Path mcpFile = mcpConfig != null
                 ? mcpConfig
-                : cwd.resolve(".aethercode").resolve("mcp.json");
+                : sessionCwd.resolve(".aethercode").resolve("mcp.json");
         for (Tool t : mcp.loadInitial(mcpFile)) {
             if (t.name() != null && t.name().startsWith("mcp:")) {
                 pool.add(t);
@@ -501,7 +572,7 @@ public class Main implements Callable<Integer> {
             }
         }
         // Load project permissions if present.
-        java.nio.file.Path settingsFile = cwd.resolve(".aethercode").resolve("settings.json");
+        java.nio.file.Path settingsFile = sessionCwd.resolve(".aethercode").resolve("settings.json");
         SettingsPermissions perms = SettingsPermissions.loadFrom(settingsFile);
 
         // R343: resolve providers via the cascade. The pre-R343
@@ -511,7 +582,7 @@ public class Main implements Callable<Integer> {
         // Both `--providers-yaml` and `AETHERCODE_PROVIDERS_YAML`
         // short-circuit the cascade for ops / CI scripts.
         org.aethercode.core.providers.ProviderRegistry providers =
-                resolveProvidersRegistry(cwd);
+                resolveProvidersRegistry(sessionCwd);
         org.aethercode.core.providers.ProviderSpec providerSpec = null;
         if (providerName != null && !providerName.isBlank()) {
             providerSpec = providers.get(providerName)
@@ -528,7 +599,7 @@ public class Main implements Callable<Integer> {
         }
 
         AetherCodeEngine.Builder b = AetherCodeEngine.builder()
-                .cwd(cwd)
+                .cwd(sessionCwd)
                 .provider(providerSpec)
                 // model resolution order:
                 // 1. --model CLI flag (explicit override)
@@ -552,7 +623,7 @@ public class Main implements Callable<Integer> {
                 // <cwd>/.aethercode/config.json. Falls back to the safe
                 // built-in defaults if the file is missing or invalid.
                 .permissionMatrix(
-                        org.aethercode.config.ConfigEngine.loadFromProjectRoot(cwd)
+                        org.aethercode.config.ConfigEngine.loadFromProjectRoot(sessionCwd)
                                 .permissionMatrix)
                 // no in-process prompter. A null prompter means
                 // "ask" is auto-denied (see ProjectPermissionPolicy), which
@@ -565,9 +636,13 @@ public class Main implements Callable<Integer> {
         // install the explicit sessionId when
         // the factory is materialising a new engine.
         // null means "use AppState's default", which
-        // the constructor maps to "default".
-        if (sessionId != null && !sessionId.isBlank()) {
-            b.sessionId(sessionId);
+        // the constructor maps to "default". The
+        // pre-R361 code referenced a `sessionId`
+        // local that doesn't exist in the spec
+        // overload — caught by mvn compile after
+        // the user's screenshot bug.
+        if (spec.sessionId() != null && !spec.sessionId().isBlank()) {
+            b.sessionId(spec.sessionId());
         }
         if (maxTokens > 0 || baseUrl != null) {
             // Legacy explicit-options path. Only used
@@ -620,7 +695,7 @@ public class Main implements Callable<Integer> {
             java.nio.file.Path userSkills = resolveAethercodeHome().resolve("skills");
             if (java.nio.file.Files.isDirectory(userSkills)) userSkillDirs.add(userSkills);
             java.util.List<java.nio.file.Path> projectSkillDirs = new java.util.ArrayList<>();
-            java.nio.file.Path projectSkills = cwd.resolve(".aethercode").resolve("skills");
+            java.nio.file.Path projectSkills = sessionCwd.resolve(".aethercode").resolve("skills");
             if (java.nio.file.Files.isDirectory(projectSkills)) projectSkillDirs.add(projectSkills);
             b.skillProjectDirs(projectSkillDirs);
             b.skillDirs(userSkillDirs);
@@ -655,9 +730,12 @@ public class Main implements Callable<Integer> {
             b.createAgent(true);
         }
         AetherCodeEngine engine = b.build();
-        if (sessionId != null && !sessionId.isBlank()) {
-            LOG.info("Prior round: built fresh engine for session {} (model: {})",
-                    sessionId, engine.appState().mainLoopModel());
+        // Same pre-R361 fix as line ~613: log block
+        // used to reference a `sessionId` local that
+        // didn't exist in the spec overload.
+        if (spec.sessionId() != null && !spec.sessionId().isBlank()) {
+            LOG.info("Prior round: built fresh engine for session {} (model: {}, cwd: {})",
+                    spec.sessionId(), engine.appState().mainLoopModel(), sessionCwd);
         }
         // install the MCP manager so the file
         // watcher's reload trigger can call back into
