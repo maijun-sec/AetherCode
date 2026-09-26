@@ -207,39 +207,37 @@ describe('R204 #4: setPermissionMode action surfaces daemon rejection', () => {
   });
 });
 
-describe('R204 #4: setCwd re-applies the user\'s persisted permission mode after the daemon swap', () => {
+describe('R204 #4 → R361: setCwd no longer needs to re-apply the persisted permission mode', () => {
   const storeSrc = readFileSync(join(root, 'src', 'store', 'index.ts'), 'utf-8');
 
-  it('re-applies the persisted mode via setPermissionMode after the new daemon comes up', () => {
-    // A setCwd → set_cwd_daemon swap creates a brand
-    // new JVM rooted at the new cwd. The new engine
-    // boots with its DEFAULT mode (the daemon
-    // doesn't carry the old JVM's user-set mode).
-    // Without this re-apply, the renderer would
-    // briefly show 主动询问 (ask), then on the next
-    // refreshEngineState the dropdown would land on
-    // whatever the daemon reported. The user
-    // explicitly picked 始终运行 (Always Run) and the new daemon
-    // shouldn't silently flip them back to the
-    // default.
-    const block = storeSrc.match(/setCwd:\s*async\s*\(path:\s*string\)\s*=>\s*\{[\s\S]*?void get\(\)\.preWarmCwd\(suggestSibling\(path\)\)\.catch\(\(\) => \{\}\)/);
-    expect(block).toBeTruthy();
-    expect(block![0]).toMatch(/R204: re-apply the user'?s persisted/);
-    expect(block![0]).toMatch(/const prefsForPerm = readEnginePrefs\(\)/);
-    expect(block![0]).toMatch(/void get\(\)\.setPermissionMode\(prefsForPerm\.permissionMode\)\.catch\(\(\) => \{\}\)/);
+  it('setCwd does NOT call setPermissionMode (R361: daemon survives the cwd switch)', () => {
+    // R204 added the re-apply because the OLD R199
+    // set_cwd_daemon killed the daemon and spawned a
+    // fresh JVM on every cwd switch — the new JVM
+    // booted with the engine's DEFAULT mode, which
+    // silently flipped the user's 始终运行 (Always Run)
+    // pick back to 主动询问 (ask). R361 retired the
+    // swap dance: the same daemon survives the cwd
+    // switch via bindSessionCwd, so its engine keeps
+    // the user-picked permission mode intact. Pin the
+    // absence of the re-apply block so a future
+    // refactor that re-introduces the swap dance is
+    // caught here.
+    const setCwdBlock = storeSrc.match(/setCwd:\s*async\s*\(path:\s*string\)\s*=>\s*\{[\s\S]*?\n\s{4}\}/);
+    expect(setCwdBlock, 'setCwd action must exist').toBeTruthy();
+    expect(setCwdBlock![0]).not.toMatch(/prefsForPerm = readEnginePrefs/);
+    expect(setCwdBlock![0]).not.toMatch(/R204: re-apply the user'?s persisted/);
   });
 
-  it('only re-applies when the persisted value differs from the current store value', () => {
-    // The re-apply is conditional to avoid an
-    // unnecessary RPC when the user is on the
-    // daemon's default mode (e.g. a fresh install
-    // where prefs.permissionMode === 'ask' and
-    // the engine's mode === DEFAULT, both of which
-    // map to 主动询问 / ask). Pin the guard so a refactor
-    // that drops it doesn't add a round-trip on
-    // every cwd switch.
-    const block = storeSrc.match(/setCwd:\s*async\s*\(path:\s*string\)\s*=>\s*\{[\s\S]*?void get\(\)\.preWarmCwd\(suggestSibling\(path\)\)\.catch\(\(\) => \{\}\)/);
-    expect(block).toBeTruthy();
-    expect(block![0]).toMatch(/prefsForPerm\.permissionMode && prefsForPerm\.permissionMode !== get\(\)\.permissionMode/);
+  it('setCwd does NOT call preWarmCwd (R361: no pre-warm slot — single daemon)', () => {
+    // R199's set_cwd_daemon pre-warmed a sibling
+    // daemon for sub-second future cwd switches. R361
+    // retired the pre-warm dance entirely: there's
+    // one daemon and cwd switches are a single RPC.
+    // Pin the absence of preWarmCwd from setCwd so
+    // the cleanup isn't undone by a future round.
+    const setCwdBlock = storeSrc.match(/setCwd:\s*async\s*\(path:\s*string\)\s*=>\s*\{[\s\S]*?\n\s{4}\}/);
+    expect(setCwdBlock).toBeTruthy();
+    expect(setCwdBlock![0]).not.toMatch(/preWarmCwd\(suggestSibling/);
   });
 });

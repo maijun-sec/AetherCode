@@ -228,23 +228,26 @@ describe('R195: in-app folding + file_read suppression + banner-to-bottom', () =
   });
 });
 
-describe('对应历史 round: setCwd on a different path creates a new session on a freshly-swapped daemon', () => {
+describe('对应历史 round: setCwd on a different path is a per-session cwd rebind (R361)', () => {
   const storeSrc = read('src/store/index.ts');
   const methodsSrc = read('src/lib/methods.ts');
   const libRsSrc = read('src-tauri/src/lib.rs');
 
-  it('store.setCwd delegates to the Rust `set_cwd` Tauri command (R199: swap dance lives in Rust)', () => {
-    // R197 made cwd switch = new session. R199 escalated
-    // this further: the new session must be minted on a
-    // daemon rooted at the new cwd, not the current one
-    // (the multi-daemon Layer-2 bug). The renderer now
-    // hands the whole job to Rust via the `set_cwd`
-    // command, which does pre_warm + swap + createSession.
-    // We pin the renderer-side call site to make sure a
-    // refactor doesn't fall back to calling
-    // `rpc.createSession({ cwd })` on the WS — that would
-    // bring back the Layer-2 bug.
-    expect(storeSrc).toMatch(/setCwd:[\s\S]*?rpc\.setCwd\(\s*path/);
+  it('store.setCwd delegates to the Rust `set_cwd` Tauri command (R361: bindSessionCwd lives in Rust)', () => {
+    // R361 supersedes R199. R199 made cwd switch = a
+    // full daemon pre_warm + swap + createSession
+    // dance — the swap was the source of the user's
+    // R360 bug 1+2 ("new session's output sits on top
+    // of the old session's prompt") because it killed
+    // the daemon mid-stream and the store's messages[]
+    // got polluted. R361 routes through the daemon's
+    // existing bindSessionCwd (per-session cwd
+    // binding on the same JVM) — a single RPC round-
+    // trip, no daemon swap, no race against in-flight
+    // streams. We pin the renderer-side call site to
+    // make sure a refactor doesn't fall back to the
+    // legacy swap dance.
+    expect(storeSrc).toMatch(/setCwd:[\s\S]*?rpc\.setCwd\(\s*path,\s*sid/);
   });
 
   it('store.setCwd is a no-op when the new path equals the current cwd', () => {
@@ -264,51 +267,73 @@ describe('对应历史 round: setCwd on a different path creates a new session o
     expect(methodsSrc).toMatch(/createSession\(opts\?:\s*\{\s*cwd\?:\s*string/);
   });
 
-  it('lib/methods.setCwd returns { cwd, sessionId, swapped } (R199: the renderer switches on this)', () => {
-    // the Rust `set_cwd` command returns a JSON
-    // object with the resolved cwd, the new sessionId
-    // (or null when no daemon is up yet), and a `swapped`
-    // flag so the renderer can decide whether to refresh
-    // sessions / tools / providers. We pin the TS wrapper
-    // so a refactor that drops one of these fields breaks
-    // the test before runtime.
-    expect(methodsSrc).toMatch(/setCwd\(path:\s*string\):\s*Promise<\{\s*cwd:\s*string;\s*sessionId:\s*string\s*\|\s*null;\s*swapped:\s*boolean\s*\}>/);
+  it('lib/methods.setCwd accepts an optional sessionId and forwards to bindSessionCwd', () => {
+    // R361: setCwd now takes a sessionId so the Rust
+    // supervisor can forward to the daemon's
+    // bindSessionCwd on the active engine. The return
+    // shape keeps the swapped field (always false now)
+    // for back-compat with any renderer code that
+    // still branches on it.
+    expect(methodsSrc).toMatch(/setCwd\(path:\s*string,\s*sessionId\?:\s*string\s*\|\s*null\)/);
+    expect(methodsSrc).toMatch(/return invoke\('set_cwd',\s*\{\s*path,\s*sessionId:\s*sessionId\s*\?\?\s*null\s*\}\)/);
   });
 
-  it('lib.rs set_cwd delegates to set_cwd_daemon (R199: swap dance is the only path)', () => {
-    // the Tauri `set_cwd` command is now a thin
-    // wrapper around `set_cwd_daemon`, which does the
-    // pre_warm → swap → createSession dance. We pin this
-    // wiring so a regression that calls
-    // `rpc_call("createSession", ...)` directly (the
-    // Layer-2 bug) breaks the test before runtime.
-    const setCwdBlock = libRsSrc.match(
-      /#\[tauri::command\][\s\S]*?async fn set_cwd\([\s\S]*?\n\}/,
-    );
-    expect(setCwdBlock).toBeTruthy();
-    expect(setCwdBlock![0]).toMatch(/set_cwd_daemon\(path,\s*app,\s*state\)/);
+  it('lib/methods exposes createEngine / setActiveEngine (R361: SessionManager multi-session API)', () => {
+    // R361 introduces the multi-session surface: the
+    // daemon's SessionManager can host N engines per
+    // sessionId, and the desktop calls createEngine
+    // (with per-session cwd) instead of the legacy
+    // createSession. Pin the TS wrappers exist so a
+    // refactor that drops them breaks the test before
+    // runtime.
+    expect(methodsSrc).toMatch(/createEngine\(opts:\s*\{\s*sessionId:\s*string/);
+    expect(methodsSrc).toMatch(/setActiveEngine\(sessionId:\s*string\)/);
   });
 
-  it('lib.rs set_cwd_daemon calls pre_warm_daemon, swap_to_pre_warm, and createSession in that order (R199: the dance)', () => {
-    // switching cwd must switch the daemon. The
-    // three calls must be in this exact order — pre-warm
-    // the new daemon, swap it to primary, then mint a
-    // session on it. If a future refactor re-orders these
-    // (e.g. createSession before swap), the session would
-    // land on the old daemon and we'd be back to Layer 2.
-    const daemonBlock = libRsSrc.match(
-      /async fn set_cwd_daemon\([\s\S]*?\n\}/,
-    );
-    expect(daemonBlock).toBeTruthy();
-    const body = daemonBlock![0];
-    const pwIdx = body.search(/pre_warm_daemon\(/);
-    const swapIdx = body.search(/swap_to_pre_warm\(/);
-    const csIdx = body.search(/rpc_call\(\s*"createSession"/);
-    expect(pwIdx).toBeGreaterThan(-1);
-    expect(swapIdx).toBeGreaterThan(-1);
-    expect(csIdx).toBeGreaterThan(-1);
-    expect(pwIdx).toBeLessThan(swapIdx);
-    expect(swapIdx).toBeLessThan(csIdx);
+  it('lib.rs set_cwd is a thin wrapper that forwards to bindSessionCwd (R361: no swap)', () => {
+    // R361 dropped the swap dance. The Tauri set_cwd
+    // command now reads `session_id` and forwards
+    // straight to the daemon's bindSessionCwd RPC on
+    // the existing WS — no JVM restart. We pin the
+    // forwarding RPC name so a regression that calls
+    // the legacy createSession brings back the bug.
+    //
+    // Walk balanced braces from `async fn set_cwd(` to
+    // its closing `}` so we capture the function body
+    // in full (the regex must not match the FIRST
+    // `#[tauri::command]` block — that's ensure_daemon,
+    // which is several hundred lines earlier).
+    const sigIdx = libRsSrc.indexOf('async fn set_cwd(');
+    expect(sigIdx, 'set_cwd function must exist').toBeGreaterThan(0);
+    let depth = 0;
+    let bodyEnd = sigIdx;
+    for (let i = sigIdx; i < libRsSrc.length; i++) {
+      const ch = libRsSrc.charAt(i);
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) { bodyEnd = i + 1; break; }
+      }
+    }
+    const setCwdBlock = libRsSrc.slice(sigIdx, bodyEnd);
+    expect(setCwdBlock).toMatch(/bindSessionCwd/);
+    // the swap dance is gone from the set_cwd function
+    // body. pre_warm_daemon / swap_to_pre_warm are still
+    // exported as Tauri commands (Phase 3 cleanup can
+    // remove them) but the set_cwd path itself must
+    // not call them.
+    expect(setCwdBlock).not.toMatch(/pre_warm_daemon\(/);
+    expect(setCwdBlock).not.toMatch(/swap_to_pre_warm\(/);
+  });
+
+  it('lib.rs set_cwd does NOT call set_cwd_daemon (R199 was retired)', () => {
+    // R199 introduced set_cwd_daemon (pre_warm + swap
+    // + createSession). R361 retired it. The new
+    // set_cwd is the thin wrapper that calls
+    // bindSessionCwd directly. Pin the absence of the
+    // legacy helper so a future refactor that re-adds
+    // the swap dance is caught here.
+    expect(libRsSrc).not.toMatch(/async fn set_cwd_daemon/);
   });
 });
 
@@ -507,21 +532,26 @@ describe('R201: 5 fixes from one user feedback round (second batch)', () => {
   const appSrc = read('src/App.tsx');
   void libRsSrc; // referenced below via substring
 
-  it('#1: set_cwd_daemon flips a swap guard so the old daemon\'s WS close is not re-broadcast', () => {
-    // The user reported "when switching cwd, the daemon reconnects
-    // daemon". The chain: swap_to_pre_warm kills the OLD
-    // primary → its WS task emits daemon.disconnected →
-    // renderer invokes Tauri `disconnect` (which clears
-    // ws_tx + daemon state) → scheduleReconnect calls
-    // ensure_daemon → the brand-new primary's ws_tx is
-    // wiped. The fix: set_cwd_daemon flips an
-    // Arc<AtomicBool> (`swapping`) for the duration of
-    // the swap; the WS task consults it before emitting
-    // daemon.disconnected and swallows the close.
-    expect(libRsSrc).toMatch(/swapping:\s*Arc<AtomicBool>/);
-    expect(libRsSrc).toMatch(/ScopingGuard\s*\{/);
-    expect(libRsSrc).toMatch(/notify_disconnect/);
-    expect(libRsSrc).toMatch(/swapping_task\.load\(Ordering::Acquire\)/);
+  it('#1 R361: set_cwd no longer swaps the daemon — single RPC bindSessionCwd', () => {
+    // R361 replaced the R199 + R302 + R204 swap dance
+    // (set_cwd_daemon → pre_warm_daemon + swap_to_pre_warm
+    // + createSession) with a single RPC round-trip:
+    // set_cwd → bindSessionCwd({sessionId, cwd}). The
+    // swap dance was the root cause of R360 bug 1+2
+    // ("new session's output lands on the old session's
+    // prompt") because the swap killed the daemon
+    // mid-stream. The fix is structural — no swap means
+    // no spurious-disconnect guard, no ScopingGuard, no
+    // pre-warm slot.
+    expect(libRsSrc).toMatch(/bindSessionCwd/);
+    // Swap dance is fully retired from set_cwd.
+    expect(libRsSrc).not.toMatch(/set_cwd_daemon/);
+    expect(libRsSrc).not.toMatch(/pre_warm_daemon\(/);
+    expect(libRsSrc).not.toMatch(/swap_to_pre_warm/);
+    // ScopingGuard is no longer needed (no swap to guard).
+    expect(libRsSrc).not.toMatch(/ScopingGuard/);
+    // The pre-warm range was retired from the port sweep.
+    expect(libRsSrc).not.toMatch(/PRE_WARM_PORTS/);
   });
 
   it('#4: createSession writes the (sessionId → cwd) binding to the memory store', () => {

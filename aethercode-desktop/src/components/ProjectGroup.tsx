@@ -176,29 +176,29 @@ export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId
 // `createNewSession({ mode })` with the user's choice — at
 // that point the cwd is already in place (the picker reads
 // `pendingNewSession.cwd` from store state).
+//
+// R361: the cwd-switch path no longer pre_warm + swap a
+// daemon. `setCwd` now flows through the daemon's
+// bindSessionCwd (single RPC, no JVM restart). When the
+// user clicks "+" on a different cwd's project group, we
+// update the local cwd slot, then createNewSession binds
+// the new session to that cwd via createEngine's per-
+// session spec. The picker fires for mode selection
+// regardless of which cwd the user picked.
 export function useNewSessionInCwd() {
   const createNewSession = useStore((s) => s.createNewSession);
   return async (cwd: string | null) => {
     if (cwd) {
-      // distinguish "user is already on this project,
-      // just give me a fresh session" from "user is switching
-      // to this project". The first case is cheap (just
-      // createSession on the current daemon); the second
-      // case is the multi-daemon swap dance (pre_warm +
-      // swap + createSession), which costs ~1-2s and kills
-      // the current daemon. ProjectGroup's "+" button is
-      // hit in both cases — the user is in abc_1 and clicks
-      // "+" on abc_1's group (cheap) vs clicks "+" on
-      // abc_2's group (swap).
       const curCwd = useStore.getState().cwd;
       const sameCwd = curCwd
         && curCwd.replace(/[\\/]+$/, '').toLowerCase() === cwd.replace(/[\\/]+$/, '').toLowerCase();
       if (!sameCwd) {
-        // R199: different cwd — swap to the target daemon
-        // first. The picker reads pendingNewSession.cwd
-        // AFTER the user has picked a mode, so we swap
-        // here, then createNewSession({}) opens the
-        // picker with the new cwd.
+        // R361: different cwd — update the active
+        // session's cwd via bindSessionCwd (no daemon
+        // swap). The picker reads pendingNewSession.cwd
+        // AFTER the user has picked a mode, so we update
+        // the cwd here, then createNewSession({}) opens
+        // the picker with the new cwd.
         await useStore.getState().setCwd(cwd);
       }
     }
