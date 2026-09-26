@@ -442,3 +442,48 @@ switchSession: async (sessionId) => {
 - `aethercode-core/src/main/java/org/aethercode/core/transcript/SessionStore.java` â€”â€” SessionStore (è¦æ”¹æˆ SQLite)
 - `aethercode-cli/src/main/java/org/aethercode/cli/DaemonRunner.java` â€”â€” DaemonRunner
 - `aethercode-cli/src/main/java/org/aethercode/cli/Main.java` â€”â€” buildEngineForSession
+## R361 fix v2 (2026-09-27) ¡ª Plumb session cwd
+
+**User-reported bug (screenshot, 2026-09-26):**
+> "ÎÒÔ­À´ session µÄ cwd ÊÇ d:\work\tmp\Juliet_java£¬µ«ÊÇÎÒ´´½¨ÁËÐÂµÄ session£¬ÇÐ»»ÁË cwd£¬È»ºó prompt ÎÊµ±Ç°Ä¿Â¼ÏÂµÄÏîÄ¿ÊÇ×öÊ²Ã´ÓÃµÄ£¬½á¹ûÈÔÈ»ÊÇ²Ù×÷µÄÔ­À´µÄ sesson µÄ cwd£¬Ã²ËÆ session ÇÐÁË£¬µ«ÊÇ cwd Ã»ÓÐÇÐ"
+
+User's LeftPanel showed "Plumb" session (1 msg) as active, but bash tool still ran `dir D:\work\tmp\Juliet_Java\src /B 2>nul` ¡ª the OLD cwd from the prior session, not the new cwd the user picked for Plumb.
+
+**Root cause** (discovered after the R361 round-1 MSI was built and tested):
+
+`DaemonRunner.buildSessionManager` only installed the legacy `String ¡ú engine` factory on the `SessionManager`. The spec-aware `SessionSpec ¡ú engine` factory (the one that honours `spec.cwd()`) existed in `SessionManager.EngineFactoryWithSpec` but **was never wired up**. Result:
+
+1. Desktop calls `rpc.createEngine({sessionId: "plumb-xxx", cwd: "<new dir>"})`
+2. Daemon's `AetherCodeMethods.createEngine` receives spec with `cwd`
+3. `m.create(spec)` stashes spec in `SessionManager.pendingSpec` AtomicReference
+4. `getOrCreate(sessionId)` finds `specFactory == null`
+5. Falls through to `factory.create(sessionId)` ¡ª the legacy String-only factory ¡ª and **`spec.cwd` is silently dropped**
+6. Freshly-materialised Plumb engine inherits daemon's startup `Main.cwd` (typically install dir), NOT the user's chosen cwd
+7. User's `bindSessionCwd({sessionId, cwd: newDir})` *does* update `appState.cwd()`, BUT the legacy single-engine path leaves the engine constructed with the wrong cwd at materialisation time
+
+**Fix** (R361 fix v2, commit `4cad3ec`, `aethercode` repo):
+
+- `DaemonRunner.buildSessionManager(engine, factory, specFactory)` overload calls `m.setEngineFactoryWithSpec(specFactory)` when `specFactory != null`. 2-arg form preserved as a delegating wrapper for legacy callers.
+- `DaemonRunner.run` / `runHttp` get 3-arg / 4-arg overloads taking the spec factory. Stdio run body extracts into `runInternal` so the wiring lives in one place.
+- `Main.buildEngineForSession(SessionSpec spec)` overload uses `sessionCwd = spec.cwd()` (falls back to `this.cwd`). Plumbs resolved cwd through 6 sites: `mcpFile`, `settingsFile`, `resolveProvidersRegistry`, `Builder.cwd`, `ConfigEngine.loadFromProjectRoot`, `projectSkills`. `sessionId` wiring fixed (was referencing a non-existent local; now uses `spec.sessionId()`).
+- `Main.runDaemon` / `runHttpDaemon` call sites pass `this::buildEngineForSession` twice ¡ª Java method-reference resolution picks `(String)` for `Function<String,¡­>` and `(SessionSpec)` for `EngineFactoryWithSpec.create(SessionSpec)`.
+
+**Tests** (4 new, all pass in `DaemonRunnerR361V2Test`):
+- `buildSessionManager_wiresSpecFactoryOnManager` ¡ª spec factory actually invoked (not legacy fallback)
+- `createWithSpec_honoursSpecCwdNotLegacyFactoryCwd` ¡ª end-to-end, engine built for `spec.cwd()` not daemon default (the user's exact screenshot bug)
+- `buildSessionManager_withoutSpecFactory_fallsBackToLegacy` ¡ª pins legacy behaviour for callers that haven't migrated
+- `twoArgBuildSessionManager_legacyCompatDoesNotThrow` ¡ª 2-arg form still works for older tests
+
+**Verification**:
+- `aethercode-cli`: 67/67 (was 63 +4 new)
+- `aethercode-protocol`: 313/313
+- `aethercode-core`: 1220/1222 (2 pre-existing flaky tests: `SubagentPoolTest.submit_multipleConcurrently`, `StreamingToolExecutorBackpressureTest.eventsEmittedAsTheyArrive_notBuffered` ¡ª both pass individually)
+- `aethercode-sdk`: 268/269 (1 pre-existing flaky test: `PolicyListenerChainTest.installPolicyListeners_swapPolicyReinstallsAllThree` ¡ª passes individually)
+
+**Jar fingerprint** (verified against `aethercode-cli-0.1.0-SNAPSHOT.jar`):
+- `DaemonRunner.class` contains literal `"R361 fix v2: spec-aware engine factory wired"`
+- `EngineFactoryWithSpec` references in `DaemonRunner$1.class` (lambda) + `DaemonRunner.class` + `Main.class`
+
+**Release artifact**: re-built `AetherCode_0.3.0_x64_en-US.msi` + `AetherCode_0.3.0_x64-setup.exe` + `aethercode-desktop.exe` + `aethercode.jar` packaged as `release/aethercode-0.3.0-r361v2.zip`. MSI/NSIS bundles the post-fix-v2 jar.
+
+**Lesson learned**: *Spec-aware factory wiring must be done at construction time, not lazily.* The `SessionManager.EngineFactoryWithSpec` interface existed since prior round, but DaemonRunner never called `setEngineFactoryWithSpec`. The sessionId-aware engine-building path silently fell through to the legacy String-only factory. This is exactly the kind of bug a "well-tested" spec factory can hide ¡ª the legacy path works for the common case (no per-session cwd) and only fails when the user actually exercises the new feature. Always wire all supported factory overloads even if the legacy path is the common case.
