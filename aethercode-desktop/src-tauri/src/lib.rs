@@ -1,4 +1,4 @@
-﻿// AetherCode Desktop — Tauri 2 backend.
+// AetherCode Desktop — Tauri 2 backend.
 //
 // The renderer NEVER opens a WebSocket directly (WebView2's secure-context
 // rules + cross-port WS from http://localhost:1420 to ws://localhost:17888
@@ -39,8 +39,6 @@ use bank_client::{BankClient, BankStats, BankUnit};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
@@ -53,7 +51,12 @@ use tokio_tungstenite::connect_async;
 
 const DAEMON_HEALTH_TIMEOUT_MS: u64 = 15_000;
 const DAEMON_HEALTH_POLL_MS: u64 = 200;
-const DEFAULT_DAEMON_PORTS: &[u16] = &[7777, 7778, 17888];
+// R361: removed DEFAULT_DAEMON_PORTS. The pre-R199
+// single-port list was retired when the desktop adopted
+// the `DESKTOP_DAEMON_PORTS` range + cross-port sweep.
+// Sweeping every port in DESKTOP_DAEMON_PORTS (the
+// primary range) is enough to enforce "at most one
+// AetherCode daemon alive at any time".
 const DESKTOP_DAEMON_PORTS: &[u16] = &[17888, 18888, 19888, 20888, 21888, 22888];
 
 // R333: union of every port range any of our daemon
@@ -65,15 +68,12 @@ const DESKTOP_DAEMON_PORTS: &[u16] = &[17888, 18888, 19888, 20888, 21888, 22888]
 // of native memory each is operationally confusing and
 // wastes RAM.
 //
-// We include both DESKTOP_DAEMON_PORTS (xxx88 — the
-// primary range) AND PRE_WARM_PORTS (xxx89 — the
-// pre-warm daemon range). The desktop spawns primaries
-// via `ensure_daemon`; pre-warm daemons are spawned via
-// `pre_warm_daemon`. Both are JVMs serving our chat
-// engine, and the user wants exactly one of them alive.
+// R361: the pre-warm range (xxx89) was retired — setCwd now
+// routes through the daemon's `bindSessionCwd` RPC instead
+// of killing+respawning the daemon. We only sweep the
+// primary range now.
 const ALL_DESKTOP_DAEMON_PORTS: &[u16] = &[
     17888, 18888, 19888, 20888, 21888, 22888,  // DESKTOP primary range
-    18889, 19889, 20889, 21889, 22889, 23889,  // PRE_WARM range
 ];
 
 #[derive(Debug, Serialize, Clone)]
@@ -111,15 +111,6 @@ struct AppState {
     daemon: TokioMutex<Option<DaemonInfo>>,
     cwd: TokioMutex<Option<PathBuf>>,
     daemon_handle: TokioMutex<Option<std::process::Child>>,
-    /// R82+ Issue 3: a second daemon kept warm in a sibling cwd
-    /// so a `setCwd` to that sibling is sub-second (no JVM
-    /// startup). The pre-warm is independent of the active
-    /// primary: it has its own port, its own child process, and
-    /// its own WS connection. On `swap_to_pre_warm`, the Rust
-    /// side kills the primary, copies the pre-warm's DaemonInfo
-    /// into the primary slot, and re-opens the WS — all without
-    /// spawning a new JVM.
-    pre_warm: TokioMutex<Option<PreWarmSlot>>,
     /// R250b: a single shared BankClient. Constructed lazily
     /// from the daemon's http_url when the daemon is up. Lets
     /// the renderer call `invoke('bank_stats')` / `'bank_recall'`
@@ -135,25 +126,6 @@ struct AppState {
     /// which both updates the in-memory slot and rewrites the
     /// file so a restart restores the user's last project.
     persisted_cwd: TokioMutex<Option<PathBuf>>,
-    /// R201: set to `true` for the duration of a
-    /// `set_cwd_daemon` swap. The WS task consults this flag
-    /// before emitting `daemon.disconnected` — the OLD
-    /// daemon's WS closing during a swap is expected, not a
-    /// reconnect trigger. Without this guard, every cwd
-    /// switch would fire a `disconnect` notification that the
-    /// store's reconnect handler turns into a fresh
-    /// `ensure_daemon`, killing the brand-new primary's
-    /// `ws_tx` and re-establishing a connection that has
-    /// already been opened. The user reported "every time I
-    /// switch cwd, the daemon reconnects again" — the visible reconnect
-    /// spinner was the symptom; the cause was the spurious
-    /// disconnect.
-    swapping: Arc<AtomicBool>,
-}
-
-struct PreWarmSlot {
-    info: DaemonInfo,
-    handle: Option<std::process::Child>,
 }
 
 impl Default for AppState {
@@ -163,38 +135,17 @@ impl Default for AppState {
             daemon: TokioMutex::new(None),
             cwd: TokioMutex::new(None),
             daemon_handle: TokioMutex::new(None),
-            pre_warm: TokioMutex::new(None),
             bank_client: TokioMutex::new(None),
             // load the persisted cwd on App start. This
             // restores the user's "last project" without the
             // renderer needing to manage persistence. The file
             // is read once on startup; set_cwd rewrites it.
             persisted_cwd: TokioMutex::new(load_persisted_cwd()),
-            // no swap in progress at startup.
-            swapping: Arc::new(AtomicBool::new(false)),
         }
     }
 }
 
 static HANDLE: Lazy<TokioMutex<Option<DaemonInfo>>> = Lazy::new(|| TokioMutex::new(None));
-
-/// R201: tiny RAII guard that flips an `AtomicBool` back to
-/// `false` on drop. Used by `set_cwd_daemon` to release the
-/// swap flag when the function returns (normal or error
-/// path). The actual flag lives on `AppState.swapping` and
-/// is checked by the WS task before emitting
-/// `daemon.disconnected`; this guard's only job is the
-/// "release on drop" semantics so the flag is always reset
-/// even if a swap error panics the function.
-struct ScopingGuard {
-    flag: Arc<AtomicBool>,
-}
-impl Drop for ScopingGuard {
-    fn drop(&mut self) {
-        self.flag.store(false, Ordering::Release);
-        eprintln!("[R201] swap guard released");
-    }
-}
 
 #[tauri::command]
 async fn ensure_daemon(
@@ -217,10 +168,10 @@ async fn ensure_daemon(
     // entry point — exactly the moment when it's safe to
     // sweep every known port and kill any leftover daemon
     // (orphan from a previous crashed session, user-
-    // launched daemon via start-daemon.bat, stale pre-warm
-    // from a previous cwd). Doing this here rather than in
-    // spawn_daemon matters because spawn_daemon is also
-    // called by pre_warm_daemon mid-session, and sweeping
+    // launched daemon via start-daemon.bat, orphan from a previous
+    // crashed session). Doing this here rather than in
+    // spawn_daemon matters because spawn_daemon is called
+    // mid-session on the reconnect path, and sweeping
     // mid-session would kill the primary we just attached.
     eprintln!("[R333] ensure_daemon: pre-bind sweep over ports {:?}",
         ALL_DESKTOP_DAEMON_PORTS);
@@ -261,7 +212,7 @@ async fn ensure_daemon(
                 Path::new(&resolved_jar),
                 &cwd_for_info,
             );
-            let tx = open_ws(&info.ws_url, app.clone(), state.swapping.clone()).await?;
+            let tx = open_ws(&info.ws_url, app.clone()).await?;
             *ws_guard = Some(tx);
             *daemon_guard = Some(info.clone());
             *HANDLE.lock().await = Some(info.clone());
@@ -353,7 +304,7 @@ async fn ensure_daemon(
 
     let (info, child) = spawn_daemon(&app, &jar, &java, &cwd, DESKTOP_DAEMON_PORTS).await?;
     *state.daemon_handle.lock().await = Some(child);
-    let tx = open_ws(&info.ws_url, app.clone(), state.swapping.clone()).await?;
+    let tx = open_ws(&info.ws_url, app.clone()).await?;
     *ws_guard = Some(tx);
     *daemon_guard = Some(info.clone());
     *HANDLE.lock().await = Some(info.clone());
@@ -367,15 +318,17 @@ async fn ensure_daemon(
     Ok(info)
 }
 
-/// R82+ Issue 3: shared spawn helper used by both `ensure_daemon`
-/// and `pre_warm_daemon`. Tries each port in `ports` until one
-/// spawns a healthy daemon for the given cwd. Returns the
-/// spawned `DaemonInfo` + `Child` handle on success.
+/// R82+ Issue 3: shared spawn helper used by `ensure_daemon`.
+/// R361: also used by any future caller that needs a daemon on
+/// a different cwd (currently `ensure_daemon` is the only one
+/// — setCwd no longer spawns). Tries each port in `ports`
+/// until one spawns a healthy daemon for the given cwd.
+/// Returns the spawned `DaemonInfo` + `Child` handle on
+/// success.
 ///
 /// Critically, this does NOT touch any of the `AppState` slots
 /// (ws_tx, daemon, daemon_handle) — callers decide where the
-/// result lands. `ensure_daemon` writes to the primary slots;
-/// `pre_warm_daemon` writes to the pre-warm slot.
+/// result lands. `ensure_daemon` writes to the primary slots.
 async fn spawn_daemon(
     _app: &AppHandle,
     jar: &Path,
@@ -385,8 +338,7 @@ async fn spawn_daemon(
 ) -> Result<(DaemonInfo, std::process::Child), String> {
     let mut last_err = String::new();
     // R333 follow-up: the sweep is now performed by the
-    // CALLER (ensure_daemon for primary / pre_warm_daemon for
-    // pre-warm), not by spawn_daemon. The previous round
+    // CALLER (ensure_daemon), not by spawn_daemon. The previous round
     // (R333) put the sweep inside spawn_daemon, which broke
     // the pre-warm path: when the desktop attached to the
     // primary daemon on port X (e.g. 18889), then the
@@ -614,289 +566,86 @@ fn kill_orphan_on_port(_port: u16) {
     // no-op on non-Windows
 }
 
-/// R82+ Issue 3: pre-warm a daemon in a sibling cwd so the next
-/// `setCwd` to that directory is sub-second. The pre-warm
-/// daemon is fully independent of the primary — its own port,
-/// its own JVM, its own state. We do NOT open a WS to it from
-/// here; the WS is only opened on swap (which is rare).
-///
-/// If a pre-warm already exists for the requested cwd, this is
-/// a no-op (returns the existing info). If a pre-warm exists
-/// for a DIFFERENT cwd, the old one is killed first.
-///
-/// Uses a separate port range (PRE_WARM_PORTS) so the primary
-/// and pre-warm never collide even if both are in the middle
-/// of (re)starting. The set is shifted up to avoid clashing
-/// with `DESKTOP_DAEMON_PORTS`.
-const PRE_WARM_PORTS: &[u16] = &[18889, 19889, 20889, 21889, 22889, 23889];
-
-#[tauri::command]
-async fn pre_warm_daemon(
-    path: String,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<DaemonInfo, String> {
-    let new_cwd = PathBuf::from(&path);
-    if !new_cwd.is_dir() {
-        return Err(format!("Not a directory: {}", path));
-    }
-    eprintln!("[R82+] pre_warm_daemon: {}", path);
-
-    // No-op if a pre-warm for this exact cwd already exists.
-    {
-        let pw = state.pre_warm.lock().await;
-        if let Some(slot) = pw.as_ref() {
-            if slot.info.cwd.replace('\\', "/").trim_end_matches('/').to_lowercase()
-                == path.replace('\\', "/").trim_end_matches('/').to_lowercase()
-            {
-                eprintln!("[R82+] pre_warm already warm for {}", path);
-                return Ok(slot.info.clone());
-            }
-        }
-    }
-
-    // Replace any existing pre-warm.
-    {
-        let mut pw = state.pre_warm.lock().await;
-        if let Some(mut slot) = pw.take() {
-            if let Some(mut child) = slot.handle.take() {
-                let _ = child.kill();
-                eprintln!("[R82+] killed stale pre-warm on port {}", slot.info.port);
-            }
-        }
-    }
-
-    let jar = find_jar_path(&app).map_err(|e| format!("jar not found: {}", e))?;
-    let java = find_java().ok_or_else(|| "java executable not found on PATH".to_string())?;
-
-    let (info, child) = spawn_daemon(&app, &jar, &java, &new_cwd, PRE_WARM_PORTS).await?;
-    eprintln!("[R82+] pre-warm ready: {} (cwd={})", info.http_url, info.cwd);
-
-    *state.pre_warm.lock().await = Some(PreWarmSlot { info: info.clone(), handle: Some(child) });
-    Ok(info)
-}
-
-/// R82+ Issue 3: atomically promote the pre-warm daemon to
-/// primary. Kills the current primary JVM, copies the
-/// pre-warm's DaemonInfo into the primary slots, re-opens the
-/// WS, and clears the pre-warm slot. The renderer's subsequent
-/// `initialize()` call will short-circuit on `is_healthy &&
-/// ws_guard.is_some()`.
-///
-/// Returns the new primary's `DaemonInfo`.
-#[tauri::command]
-async fn swap_to_pre_warm(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<DaemonInfo, String> {
-    eprintln!("[R82+] swap_to_pre_warm");
-
-    // Take the pre-warm slot first (so we own it).
-    let slot = {
-        let mut pw = state.pre_warm.lock().await;
-        pw.take()
-    }.ok_or_else(|| "no pre-warm daemon available".to_string())?;
-
-    // Kill the current primary.
-    {
-        let mut h = state.daemon_handle.lock().await;
-        if let Some(mut child) = h.take() {
-            let _ = child.kill();
-        }
-    }
-    // Drop the dead WS sender (the open_ws task will see the
-    // closed socket and exit, which fires a daemon.disconnected
-    // notification — but the store is already in 'reconnecting'
-    // because the renderer set that state BEFORE calling us,
-    // so the notification handler is a no-op).
-    {
-        let mut w = state.ws_tx.lock().await;
-        *w = None;
-    }
-    {
-        let mut d = state.daemon.lock().await;
-        *d = None;
-    }
-
-    // Promote the pre-warm to primary.
-    let info = slot.info;
-    let handle = slot.handle; // may be None if pre-warm daemon exited
-    let tx = open_ws(&info.ws_url, app.clone(), state.swapping.clone()).await?;
-    *state.ws_tx.lock().await = Some(tx);
-    *state.daemon.lock().await = Some(info.clone());
-    *state.cwd.lock().await = Some(PathBuf::from(&info.cwd));
-    *state.daemon_handle.lock().await = handle;
-    *HANDLE.lock().await = Some(info.clone());
-    // refresh the bank client too — the new daemon
-    // listens on a different port. The old client (if any)
-    // is replaced wholesale; this is the same lifecycle as
-    // `state.daemon`.
-    *state.bank_client.lock().await = Some(build_bank_client(&info));
-    eprintln!("[R82+] swap complete: {} (cwd={})", info.http_url, info.cwd);
-    Ok(info)
-}
-
-/// R82+ Issue 3: drop the pre-warm daemon. No-op if none.
-#[tauri::command]
-async fn discard_pre_warm(state: State<'_, AppState>) -> Result<(), String> {
-    let mut pw = state.pre_warm.lock().await;
-    if let Some(mut slot) = pw.take() {
-        if let Some(mut child) = slot.handle.take() {
-            let _ = child.kill();
-        }
-        eprintln!("[R82+] discarded pre-warm on port {}", slot.info.port);
-    }
-    Ok(())
-}
+/// R82+ Issue 3: pre-warm + swap dance was retired in R361. setCwd now routes through the daemon`s bindSessionCwd RPC. See docs/R361-SINGLE-DAEMON-MULTI-SESSION-2026-09-26.md.
 
 #[tauri::command]
 async fn set_cwd(
     path: String,
-    app: AppHandle,
+    session_id: Option<String>,
+    _app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    // this command used to call `createSession` on the
-    // EXISTING primary daemon. That worked when one project
-    // = one daemon, but in the multi-daemon world each daemon
-    // has a fixed --sessions-dir of <cwd>/.aethercode/sessions.
-    // Calling `createSession` on the wrong daemon (e.g. the
-    // abc_1 daemon) wrote the new transcript to
-    // abc_1/.aethercode/sessions/<id>.jsonl and bound the
-    // engine's cwd to abc_2 — but the engine *process* was
-    // still the abc_1 JVM, so model state (loaded files,
-    // tool history) was from abc_1, and the next file_read
-    // / bash ran with relative paths from abc_1. The user
-    // saw "I picked abc_2 but it operated on abc_1".
+    // R361: set_cwd no longer swaps the daemon. The
+    // daemon's `SessionManager` already supports per-session
+    // cwd binding (`bindSessionCwd({sessionId, cwd})`),
+    // and the Rust supervisor's R199 pre-warm + swap dance
+    // was the source of the user's "new session's output
+    // lands on the old session's prompt" bug (R360). The
+    // swap killed the daemon mid-stream, leaving the
+    // store's `messages[]` polluted with the old session's
+    // text_delta events. Routing through bindSessionCwd
+    // is a single RPC round-trip — no JVM restart, no WS
+    // reconnect, no race.
     //
-    // The fix is structural: switching cwd must switch the
-    // daemon too. We delegate to `set_cwd_daemon` which
-    // does the full pre-warm → swap → createSession dance
-    // and returns the new sessionId so the renderer can
-    // switch its local view.
-    set_cwd_daemon(path, app, state).await
-}
-
-/// R199: switching cwd must switch the underlying daemon,
-/// not just mint a session on the current one. Each daemon
-/// has a fixed --sessions-dir of <cwd>/.aethercode/sessions
-/// (see `spawn_daemon` above), so the only way to get a
-/// daemon that writes transcripts to the right directory
-/// and runs the engine with the right cwd is to spawn a
-/// fresh daemon rooted at the new cwd and promote it to
-/// primary.
-///
-/// Flow:
-///   1. pre_warm_daemon(newCwd) — spawn a fresh JVM in
-///      newCwd, wait for /health to come up. Returns the
-///      pre-warm slot's DaemonInfo (port, ws_url, cwd).
-///   2. swap_to_pre_warm() — kill the current primary,
-///      promote the pre-warm to primary, re-open the WS.
-///   3. RPC createSession({cwd: newCwd}) on the new
-///      primary — gives the engine a clean session id +
-///      transcript rooted at newCwd, with no leakage from
-///      the old session.
-///
-/// Persistence: desktop-state.json is written *before* any
-/// of the swap work, so a crash mid-flow leaves the file
-/// consistent with what the user picked. The next App
-/// launch reads the file and spawns a daemon for the
-/// picked cwd directly.
-async fn set_cwd_daemon(
-    path: String,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<serde_json::Value, String> {
-    eprintln!("[R199] set_cwd_daemon: {}", path);
+    // When `session_id` is null (no active session yet —
+    // the user is picking a project before any session
+    // exists), we just update the persisted cwd slot and
+    // return; the next session creation will read
+    // `get().cwd` and pass it to `createEngine`.
+    eprintln!("[R361] set_cwd: path={} sessionId={:?}", path, session_id);
     let new_cwd = PathBuf::from(&path);
     if !new_cwd.is_dir() {
         return Err(format!("Not a directory: {}", path));
     }
-    // persist BEFORE swapping. The file is the
-    // source of truth on App start, so it must reflect
-    // the user's pick even if we crash mid-swap.
+    // persist BEFORE invoking the daemon. Same crash-
+    // safety reasoning as R199.
     if let Err(e) = save_persisted_cwd(&new_cwd) {
-        eprintln!("[prior round] save_persisted_cwd failed: {}", e);
+        eprintln!("[R361] save_persisted_cwd failed: {}", e);
     }
     *state.cwd.lock().await = Some(new_cwd.clone());
     *state.persisted_cwd.lock().await = Some(new_cwd.clone());
 
-    // lift the swap guard for the duration of the
-    // swap so the OLD daemon's WS close (during the kill
-    // step of swap_to_pre_warm) doesn't fan out as a
-    // `daemon.disconnected` notification. The flag is
-    // released at function exit (deferred); we only set
-    // it when a daemon is actually alive — otherwise the
-    // notify_disconnect path inside the WS task is never
-    // triggered anyway, so the flag is moot.
-    let daemon_alive = state.ws_tx.lock().await.is_some();
-    let _swap_guard = if daemon_alive {
-        state.swapping.store(true, Ordering::Release);
-        eprintln!("[R201] swap guard lifted");
-        Some(ScopingGuard {
-            flag: state.swapping.clone(),
-        })
-    } else {
-        None
+    let sid = match session_id {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            // No active session — nothing to bind. The
+            // renderer will call createEngine later with
+            // the cwd it just picked.
+            eprintln!("[R361] set_cwd: no session_id, slot updated");
+            return Ok(serde_json::json!({
+                "cwd": new_cwd.to_string_lossy().to_string(),
+                "sessionId": null,
+                "swapped": false,
+            }));
+        }
     };
 
-    // If no daemon is up yet, just update the slot. The
-    // next ensure_daemon call will spawn one rooted at
-    // new_cwd via spawn_daemon's `cwd` argument — no need
-    // to pre-warm + swap. We have no session to mint yet
-    // (the engine doesn't exist), so sessionId is null.
-    if !daemon_alive {
-        eprintln!("[R199] set_cwd_daemon: no daemon up, slot updated; ensure_daemon will pick up {}", new_cwd.display());
-        return Ok(serde_json::json!({
+    // 1. Forward to the daemon's bindSessionCwd. The
+    //    daemon's SessionManager routes to the engine
+    //    bound to that sessionId and sets its cwd —
+    //    no JVM restart, no WS reconnect. The current
+    //    sessionId is the active session; if the user
+    //    wants the NEW cwd to belong to a different
+    //    session, they'd call createEngine with the
+    //    new cwd first (which daemon's lazy-create
+    //    handles atomically).
+    let bind_result = rpc_call(
+        "bindSessionCwd".to_string(),
+        serde_json::json!({
+            "sessionId": sid,
             "cwd": new_cwd.to_string_lossy().to_string(),
-            "sessionId": null,
-            "swapped": false,
-        }));
-    }
-
-    // 1. Pre-warm a daemon rooted at new_cwd. This is the
-    //    long pole (~1-2s JVM startup + health-check). If
-    //    one is already warm for this exact cwd, this is
-    //    a no-op (returns the existing slot info).
-    let pre_warm_info = pre_warm_daemon(new_cwd.to_string_lossy().to_string(), app.clone(), state.clone()).await?;
-    eprintln!("[R199] pre-warm ready: port={}, cwd={}", pre_warm_info.port, pre_warm_info.cwd);
-
-    // 2. Promote the pre-warm to primary. This kills the
-    //    current primary and re-opens the WS to the new
-    //    one.
-    let new_primary = swap_to_pre_warm(app.clone(), state.clone()).await?;
-    eprintln!("[R199] swap complete: port={}, cwd={}", new_primary.port, new_primary.cwd);
-
-    // 3. Mint a fresh session on the new primary. We use
-    //    the same WS that swap_to_pre_warm just opened.
-    let create_result = rpc_call(
-        "createSession".to_string(),
-        serde_json::json!({ "cwd": new_cwd.to_string_lossy() }),
+        }),
         state.clone(),
     )
     .await;
-    let session_id = match create_result {
-        Ok(value) => {
-            eprintln!("[R199] createSession on new daemon ok: {}", value);
-            value.get("sessionId")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .ok_or_else(|| "createSession returned no sessionId".to_string())?
-        }
-        Err(e) => {
-            // The new daemon is up but createSession
-            // failed. We log loudly; the renderer will
-            // see the empty session list and prompt the
-            // user to retry. The pre-warm was consumed
-            // by the swap, so the next setCwd pays the
-            // full 1-2s startup again.
-            eprintln!("[R199] createSession failed after swap: {}", e);
-            return Err(format!("createSession on new daemon failed: {}", e));
-        }
-    };
+    if let Err(e) = bind_result {
+        eprintln!("[R361] bindSessionCwd failed: {}", e);
+        return Err(format!("bindSessionCwd failed: {}", e));
+    }
     Ok(serde_json::json!({
         "cwd": new_cwd.to_string_lossy().to_string(),
-        "sessionId": session_id,
-        "swapped": true,
+        "sessionId": sid,
+        "swapped": false,
     }))
 }
 
@@ -1168,7 +917,6 @@ async fn disconnect(
 async fn open_ws(
     url: &str,
     app: AppHandle,
-    swapping: Arc<AtomicBool>,
 ) -> Result<mpsc::UnboundedSender<RpcRequest>, String> {
     eprintln!("[prior round] connecting to {}", url);
     let (ws, _) = connect_async(url)
@@ -1177,28 +925,18 @@ async fn open_ws(
     let (mut write, mut read) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<RpcRequest>();
 
-    // pass the Arc clone into the task so the swap
-    // guard consults the live flag, not a snapshot.
-    let swapping_task = swapping.clone();
     tokio::spawn(async move {
         eprintln!("[prior round] task started");
         let mut pending: HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>> =
             HashMap::new();
         let mut next_id: u64 = 1;
 
-        // helper that suppresses the daemon.disconnected
-        // notification while a cwd swap is in progress. The
-        // OLD daemon's WS is expected to close during the
-        // swap (because we kill it) — that close should NOT
-        // trigger the renderer's reconnect path, because the
-        // swap has already opened a new WS to the new
-        // primary. Without this guard, every cwd switch
-        // would flash a "reconnecting" spinner.
+        // R361: removed the swap-spurious-disconnect guard.
+        // setCwd no longer kills the daemon, so every WS
+        // close is a real disconnect worth surfacing to the
+        // renderer. The renderer's reconnect handler will
+        // call ensure_daemon again.
         let notify_disconnect = |reason: String| {
-            if swapping_task.load(Ordering::Acquire) {
-                eprintln!("[R201] suppressed daemon.disconnected during swap: {}", reason);
-                return;
-            }
             let _ = app.emit("ws-notify", serde_json::json!({
                 "method": "daemon.disconnected",
                 "params": { "reason": reason },
@@ -1543,15 +1281,6 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
     Err("no aethercode-*.jar found".to_string())
 }
 
-fn collect_jars(dir: &Path, out: &mut Vec<PathBuf>) {
-    // legacy helper, no longer called by
-    // find_jar_path (which now does its own
-    // filtering + closest-ancestor short-circuit).
-    // Left here in case a future round wants to
-    // collect across multiple ancestors. Marked
-    // `#[allow(dead_code)]` to keep the build green.
-    let _ = (dir, out);
-}
 
 //
 // The App's "last opened project" lives in
@@ -1865,7 +1594,6 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             ensure_daemon, rpc_call, get_daemon_info, get_app_paths, set_cwd, get_cwd, disconnect,
-            pre_warm_daemon, swap_to_pre_warm, discard_pre_warm,
             write_text_file, read_text_file, append_text_file, mkdir_p,
             // bank surface from Rust over HTTP
             bank_stats, bank_recall, bank_recall_all_kinds
