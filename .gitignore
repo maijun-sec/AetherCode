@@ -93,6 +93,23 @@ desktop.ini
 .cursor/
 
 # ------------------------------------------------------------
+# R-round commit message drafts (R342-COMMIT-MSG.txt etc.)
+# These are inline git commit -m message drafts saved as files for
+# later use. They should NOT be committed to git history — git commit
+# messages are written inline at commit time, not stored as files.
+# Cleanup: rm R*-COMMIT-MSG.txt after the round is committed.
+# ------------------------------------------------------------
+R*-COMMIT-MSG.txt
+
+# ------------------------------------------------------------
+# Round-specific debug Java files (R343Debug.java, R343ParseDebug.java etc.)
+# Generated during round R343 to debug parser issues. Once the round
+# is committed and the bug is fixed, these files are obsolete.
+# Cleanup: rm **/R*Debug.java after the round is committed.
+# ------------------------------------------------------------
+**/R*Debug.java
+
+# ------------------------------------------------------------
 # Logs / temp files
 # ------------------------------------------------------------
 *.log
