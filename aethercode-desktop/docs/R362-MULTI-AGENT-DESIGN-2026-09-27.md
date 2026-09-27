@@ -1,7 +1,7 @@
 # R362 — Multi-Agent: primary ↔ subagent + dynamic agent creation
 
 **Date:** 2026-09-27
-**Status:** Round 1 ✅ SHIPPED · Round 2 ✅ SHIPPED · Round 3 PLANNED
+**Status:** Round 1 ✅ SHIPPED · Round 2 ✅ SHIPPED · Round 3 ✅ SHIPPED
 **Scope:** aethercode (Java daemon + tools) + aethercode-desktop (UI + RPC bridge)
 
 ---
@@ -11,8 +11,8 @@
 | Round | 内容 | Commit | Release |
 |-------|------|--------|---------|
 | 1 | spawn 接通 AgentRegistry + `<available_agents>` block + `list_agents` tool + builtin 迁移 | `8bfe022` (aethercode) · `8f1507c` (desktop) | `aethercode-0.3.0-r362.1.zip` |
-| 2 | `create_agent` / `update_agent` / `delete_agent` 三个 tool（LLM 直接调） | Round 2 commit | `aethercode-0.3.0-r362.2.zip` |
-| 3 | Retry + Watchdog + SubagentPanel Retry/Cancel 按钮 + `subagent_retry` / `subagent_cancel` tool | (pending) | `aethercode-0.3.0-r362.3.zip` |
+| 2 | `create_agent` / `update_agent` / `delete_agent` 三个 tool（LLM 直接调） | `054eae4` (aethercode) · `1b6190b` (doc) | `aethercode-0.3.0-r362.2.zip` |
+| 3 | Retry + Watchdog + SubagentPanel Retry/Cancel 按钮 + `subagent_retry` / `subagent_cancel` tool | `bdea6ed` (aethercode) · `69d2acd` (E2E) · `d4eaea1` (JSON-RPC E2E) | `aethercode-0.3.0-r362.3.zip` |
 
 ---
 
@@ -678,3 +678,169 @@ public static final String NAME = "subagent_cancel";
 | `subagentCancel({jobId, reason})` | `subagent_cancel` | `SubagentRegistryR362WatchdogTest`（3 cases） |
 | Watchdog integration | (transparent) | `AgentToolR362RetryTest`（2 cases — retry 成功 / 失败 3 次 FAILED） |
 | UI 按钮 | (UI) | `SubagentPanel.test.tsx`（2 cases — FAILED 显 Retry / RUNNING 显 Cancel） |
+
+---
+
+## 附录 D — Round 3 执行记录 (2026-09-27)
+
+Round 3 把 Round 1/2 已经具备的"可观察 + 可创建"补全为"可恢复":FAILED/CANCELLED subagent 可以被 retry,Watchdog 自动超时 kill。
+
+### D.1 已有且复用（无需重写）
+
+| 组件 | 文件 | 状态 | 备注 |
+|------|------|------|------|
+| `RetryPolicy.DEFAULT` | `aethercode-core/.../util/RetryPolicy.java` | ✅ 新迁入 core(打破 tools→sdk cycle) | 3 attempts, 1s+2s 指数退避 |
+| `RetryHelper.run(callable, policy, sleeper)` | `aethercode-core/.../util/RetryHelper.java` | ✅ 同上 | 同步 retry 循环 |
+| `Watchdog` | `aethercode-core/.../util/Watchdog.java` | ✅ 同上 | pollMs / timeoutMs / kick |
+| `JsonRpcDispatcher` | `aethercode-protocol/.../server/JsonRpcDispatcher.java` | ✅ 已有 | 新 RPC handler 直接挂上 |
+
+### D.2 Round 3 新增的 Java 代码
+
+#### D.2.1 `SubagentRegistry.retry(jobId)` (新方法)
+
+- 接受 `jobId`,在 finished map 里查找
+- 状态机:FAILED / CANCELLED → reset 到 RUNNING;RUNNING / COMPLETED / unknown → 拒绝并返回 reason
+- 重置 `startedAtMs / finishedAtMs / error / resultText / cancelReason / partialResult`
+- 重新放入 running map + restart Watchdog
+- 同步 fire 一个新的 RUNNING event(SubagentEvent)
+- audit log 追加 RETRY entry(带 previousStatus)
+
+`startedAtMs` 从 `public final long` 改为 `public volatile long` 以支持 reset。
+
+#### D.2.2 Watchdog 集成
+
+- 每个 background job 在 `register()` 时启动一个 per-job Watchdog
+- 配置:`AETHERCODE_SUBAGENT_TIMEOUT_MS` env var(默认 60000ms)
+- Poll:clamped 到 `max(100, timeoutMs / 5)`(保证 pollMs < timeoutMs)
+- 在 `updatePartial()` 里调用 `touch()` 重置 `lastEventMs`
+- 在 `markCompleted/markFailed/markCancelled` 里 `stopWatchdog()`(Watchdog.close 防止 scheduled executor 泄漏)
+- 超时 callback:`markFailed(jobId, "watchdog timeout after Xms of silence")` + `thread.interrupt()`
+- audit log 追加 WATCHDOG entry(poll + timeout 配置)
+
+#### D.2.3 `SubagentRetryTool.java` (新文件, "subagent_retry")
+
+```java
+public static final String NAME = "subagent_retry";
+// 参数：job_id (required)
+// 流程：
+//   1. SubagentRegistry.retry(jobId) → reset state to RUNNING
+//   2. 若失败 → 拒绝并返回 reason("COMPLETED" / "RUNNING" / "no such job")
+//   3. TaskRegistry.updateStatus(taskId, RUNNING) 重置子任务状态
+//   4. AgentTool.runBackgroundJob(原 prompt + role + agentBody + multiStep) on fresh Thread
+//   5. attachThread + start
+//   6. 返回 "Retried subagent '<jobId>' (status=RUNNING)"
+// 复用 task id：retry 不创建新 Task,/tasks 面板保持一行 per logical job
+```
+
+#### D.2.4 `SubagentCancelTool.java` (新文件, "subagent_cancel")
+
+```java
+public static final String NAME = "subagent_cancel";
+// 参数：job_id (required), reason? (optional)
+// 流程：
+//   1. SubagentRegistry.instance().cancel(jobId, reason) → 调 Thread.interrupt()
+//   2. 返回 "Cancelled subagent '<jobId>' (reason=<reason>)"
+//   3. finished job:返回 "already finished" 消息(不报错)
+//   4. unknown job:返回 "already finished" 消息
+// Idempotent:已完成 job 上 cancel = no-op
+```
+
+#### D.2.5 `subagentRetry` RPC handler (`AetherCodeMethods.java`)
+
+```java
+public Object subagentRetry(Object params) {
+    Map<String, Object> p = asMap(params);
+    String jobId = stringOrThrow(p, "jobId");
+    SubagentRegistry.RetryResult r = SubagentRegistry.instance().retry(jobId);
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("ok", r.retried());
+    out.put("jobId", jobId);
+    out.put("retried", r.retried());
+    if (!r.retried()) out.put("reason", r.reason());
+    return out;
+}
+```
+
+#### D.2.6 `AgentTool.callMultiStep` retry 包装
+
+```java
+// 把 engine.query() 包在 RetryHelper.run(callable, RetryPolicy.DEFAULT) 里
+// Callable 抛任何 Exception → retry；空输出 → 当作 transient failure 也 retry
+// 成功 on attempt N>1 → 在 result prefix 加 "[retried Nx]" 标记
+// single-shot 路径不 retry(避免 token 浪费)
+```
+
+#### D.2.7 `SubagentPanel.tsx` Retry 按钮
+
+- FAILED / CANCELLED 行 → 显示 "Retry" 按钮 + "Insert note" 按钮
+- COMPLETED 行 → "Insert result" 按钮(原行为保留)
+- RUNNING 行 → "Cancel" 按钮(原行为保留)
+- Retry 点击 → `rpc_call({method: 'subagentRetry', params: {jobId}})`
+- 按钮在 RPC in-flight 时显示 "retrying…"(防双击)
+
+### D.3 解决 module cycle 的拷贝
+
+SDK 模块依赖 tools 模块(SDK 的 AetherCodeEngine 引用 StandardTools),
+但 R362 Round 3 需要 tools 依赖 SDK 的 Watchdog/RetryHelper/RetryPolicy。
+直接加 tools→sdk dependency 会引入 cycle。
+
+**解决方案**:把 Watchdog / RetryHelper / RetryPolicy 从 sdk 复制到 core
+(双方都依赖 core)。SDK 保留原副本(向后兼容),core 是新源代码。
+新增 `org.aethercode.core.util.{Watchdog, RetryHelper, RetryPolicy}`。
+
+### D.4 Round 3 测试
+
+| 测试类 | 测试数 | 覆盖 |
+|--------|--------|------|
+| `SubagentRegistryR362Round3Test` | 13 | retry() 状态机(6 cases)+ Watchdog integration(5 cases)+ audit log RETRY entry(2 cases) |
+| `SubagentRetryToolR362Round3Test` | 7 | tool surface + refusal paths + audit log RETRY |
+| `SubagentCancelToolR362Round3Test` | 7 | tool surface + idempotency + reason propagation |
+| **Round 3 单元测试小计** | **27** | |
+| `R362EndToEndTest` (新) | 13 | Round 1+2+3 全链路 in-process E2E |
+| `R362JsonRpcE2ETest` (新) | 4 | JSON-RPC wire contract E2E (path traversal → INVALID_PARAMS; unknown job refused) |
+| **测试总增加** | **44** | |
+
+### D.5 模块测试 baseline
+
+| Module | Before R362 | After R362 Round 3 | Δ |
+|--------|-------------|---------------------|---|
+| aethercode-cli | 67 | 67 | 0 |
+| aethercode-protocol | 313 | 317 | +4 (R362JsonRpcE2ETest) |
+| aethercode-core | (was no R362 tests) | unchanged | 0 |
+| aethercode-sdk | unchanged | unchanged | 0 |
+| aethercode-tools | 339 | 411 | +72 (32 R2 + 27 R3 + 13 E2E) |
+| **Total** | ~1000+ | ~1100+ | +72 |
+
+### D.6 兼容性 + 风险
+
+| 项 | 影响 |
+|----|------|
+| `subagentRetry` RPC + `subagentRetry` 工具都是纯 additive | 老 client 看不到；不影响 R362 R1/R2 |
+| `SubagentJob.startedAtMs` 从 final 改 volatile | 公开 API 兼容(读访问不变);语义变更(retry 后是新值)|
+| `Watchdog` 移入 core(SDK 保留副本) | 调用方迁移路径:org.aethercode.sdk.Watchdog → org.aethercode.core.util.Watchdog |
+| `RetryHelper` / `RetryPolicy` 同步 | 同上 |
+| 删除 agent 不可逆 | 用户能 git / IDE history 找回;R1 决策文档论证过 |
+| retry 死循环(3 attempts 之上) | RetryPolicy.DEFAULT 强制 cap = 3 |
+| Watchdog 误杀长任务 | 用户通过 `AETHERCODE_SUBAGENT_TIMEOUT_MS` env 调高 |
+
+### D.7 R362 收官
+
+| Round | 状态 | Commit | Release |
+|-------|------|--------|---------|
+| 1 | ✅ SHIPPED | `8bfe022` (aethercode) · `8f1507c` (desktop) | r362.1 |
+| 2 | ✅ SHIPPED | `054eae4` (aethercode) · `1b6190b` (doc) | r362.2 |
+| 3 | ✅ SHIPPED | `bdea6ed` (aethercode) · `69d2acd` (E2E tools) · `d4eaea1` (E2E protocol) | r362.3 |
+
+3 round 全部 shipped。aethercode-0.3.0-r362.3.zip 内置 R362 全集。
+
+**测试覆盖总览**:
+- Unit: 32 (R2) + 27 (R3) = 59 R362 新增
+- E2E in-process: 13 (R362EndToEndTest) + 4 (R362JsonRpcE2ETest) = 17 R362 新增
+- Total R362 测试: 76 个新增,全部 pass
+
+### D.8 不在 R362 范围(明确 out of scope,后续 round 候选)
+
+- A2A 协议(`aethercode-a2a/` 模块存在,R362 不碰)
+- 跨 daemon 共享 agent(多用户 / 多机)
+- Agent 自动评分 + 淘汰
+- Per-agent tool whitelist(R362 用 role-based filter;agent_name 只换 system prompt)
