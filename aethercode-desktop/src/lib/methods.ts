@@ -247,6 +247,26 @@ export interface ProjectInfo {
   lastUsedAt?: number;
 }
 
+/** R362: metadata for one agent in {@code ~/.aethercode/agents/<name>/}.
+ *  Mirrors the daemon's `AgentRegistry.AgentMeta` record so the
+ *  desktop can render an Agent Manager panel without extra
+ *  round-trips. The full body is fetched separately via
+ *  {@link AetherCodeRpc.getAgentBody}. */
+export interface AgentInfo {
+  name: string;
+  description: string;
+  displayName: string;
+  /** per-agent model binding (e.g. "glm/glm-4-flash").
+   *  Empty string when the agent inherits the engine's default
+   *  model. */
+  model: string;
+  /** R286 quality preset ("low" / "medium" / "high" /
+   *  "xhigh" / opencode aliases). Empty string means
+   *  "inherit from env override / bundled default". */
+  variant: string;
+  lastModifiedMs: number;
+}
+
 export interface MetricsSnapshot {
   /** R77 alias for {@code turnsStarted} on the Java side. */
   totalQueries: number;
@@ -676,6 +696,31 @@ export class AetherCodeRpc {
    *  session cannot be deleted (the daemon rejects with
    *  IllegalStateException). */
   deleteSession(sessionId: string): Promise<{ ok: true; sessionId: string; removed: boolean }> { return this.call('deleteSession', { sessionId }); }
+  /** R362: list every agent the primary can dispatch to via
+   *  spawn_agent(agent_name=...). The daemon reads
+   *  {@code ~/.aethercode/agents/<name>/agent.md} on startup and
+   *  returns the metadata here. The desktop's store caches the
+   *  list so the Settings panel / Agent Manager can show it
+   *  without an extra round-trip per render.
+   *
+   *  <p>Each agent entry has {@code name}, {@code description},
+   *  {@code displayName}, {@code model} (optional),
+   *  {@code variant} (optional — R286 quality preset),
+   *  {@code lastModifiedMs}. The full agent body is NOT in the
+   *  list response — call {@link #getAgentBody} to fetch one.
+   *
+   *  <p>Empty registry returns
+   *  {@code { ok: true, count: 0, agents: [] }}. */
+  listAgents(): Promise<{ ok: boolean; count: number; agents: AgentInfo[]; error?: string }> {
+    return this.call('listAgents');
+  }
+  /** R362: fetch the full agent.md body for one agent. Returns
+   *  {@code { ok, name, body, path, lastModifiedMs }}.
+   *  The body is the user's authored system prompt — it can be
+   *  5-10 KB so we don't inline it in listAgents. */
+  getAgentBody(name: string): Promise<{ ok: boolean; name: string; body: string; path?: string; lastModifiedMs?: number; error?: string }> {
+    return this.call('getAgentBody', { name });
+  }
   // listTasks / createTask / updateTaskStatus
   // are defined in the prior round block below (line ~500).
   // The original legacy-3 listTasks shape returned

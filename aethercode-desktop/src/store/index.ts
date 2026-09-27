@@ -1380,6 +1380,17 @@ interface AppState {
   // in that case this field stays empty and the
   // palette hides the chip bar.
   rpcMethodInfos: RpcMethodInfo[];
+  // R362: list of agents the primary can dispatch to via
+  // spawn_agent(agent_name=...). Cached at boot from the
+  // daemon's listAgents RPC. The Settings panel's "Agents"
+  // tab and the AgentManager modal read this array. Empty
+  // when the daemon has no AgentRegistry wired (e.g. a
+  // startup with --no-agents or without --agents-dir).
+  agents: import('../lib/methods').AgentInfo[];
+  // wall-clock ms of the last successful refreshAgents().
+  // 0 = never. Used by the AgentManager empty-state to
+  // show how stale the cached list is.
+  agentsRefreshedAt: number;
   // rolling buffer of the most recent RPC
   // round-trips. The diagnostic panel reads this
   // array to render a per-call list (timestamp,
@@ -2355,6 +2366,20 @@ interface AppState {
    *  a 404 / network blip leaves the previous list
    *  intact (same defensive pattern as refreshTools). */
   loadRpcMethods: () => Promise<void>;
+  /** R362: pull the latest agent list from the daemon. The
+   *  daemon reads {@code ~/.aethercode/agents/<name>/agent.md}
+   *  at startup and caches the metadata; the store mirrors
+   *  that into {@code agents}. Best-effort: a 404 / network
+   *  blip leaves the previous list intact (same defensive
+   *  pattern as refreshTools / refreshSessions). */
+  refreshAgents: () => Promise<void>;
+  /** R362: fetch the full body of one agent on demand.
+   *  Used by the AgentManager "edit" affordance — the body
+   *  is loaded into a markdown editor and the user can
+   *  re-save via updateAgent (Round 2 RPC, will land then).
+   *  For now this is a read-only fetch; the Round 2
+   *  CreateAgent RPC will add a write path. */
+  fetchAgentBody: (name: string) => Promise<string | null>;
   /** runtime loop-detector threshold tweak. The
    *  Settings panel's "Loop Detection" section calls
    *  this when the user drags a slider. The store
@@ -4026,7 +4051,7 @@ export const useStore = create<AppState>((set, get) => {
 
   return {
     daemonInfo: null, isConnected: false, connectionState: 'idle', initError: null,
-    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [],
+    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [], agents: [], agentsRefreshedAt: 0,
     // supervisor auto-restart cached
     // flag. Default false (matches the
     // daemon-side default; opt-in via Settings
@@ -4269,7 +4294,7 @@ export const useStore = create<AppState>((set, get) => {
             throw e;
           }
           set({ daemonInfo: info, connectionState: 'connected', isConnected: true, reconnectAttempts: 0 });
-          const [state, tools, actions, sessions, projects, tasks, metrics, traces, workflows] = await Promise.all([
+          const [state, tools, actions, sessions, projects, tasks, metrics, traces, workflows, agents] = await Promise.all([
             rpc.getState().catch(() => null),
             rpc.listTools().catch(() => ({ tools: [] })),
             // per-tool permission action assessment.
@@ -4286,6 +4311,13 @@ export const useStore = create<AppState>((set, get) => {
             // Cheap (single directory scan + small parse) and
             // safe to call before the WS RPCs above.
             rpc.listWorkflows().catch(() => ({ workflows: [], count: 0, dir: '' })),
+            // R362: list agents so the Settings panel and
+            // AgentManager modal can render immediately. The
+            // daemon's AgentRegistry scans ~/.aethercode/agents/
+            // on startup with a 10s background re-scan, so a
+            // freshly-written agent.md shows up within ~10s of
+            // a refreshAgents() call from the UI.
+            rpc.listAgents().catch(() => ({ ok: false, count: 0, agents: [] })),
           ]);
           set({
             engineState: state,
@@ -4324,6 +4356,12 @@ export const useStore = create<AppState>((set, get) => {
             metrics,
             traces: traces.traces ?? [],
             availableWorkflows: workflows.workflows ?? [],
+            // R362: agent list. The daemon's listAgents
+            // returns {ok, count, agents}; fall back to []
+            // on a missing/incompatible response (e.g. a
+            // legacy daemon built before this RPC).
+            agents: (agents as { ok?: boolean; agents?: import('../lib/methods').AgentInfo[] }).agents ?? [],
+            agentsRefreshedAt: Date.now(),
             model: state?.model ?? '',
             // the renderer's standalone
             // `permissionMode` field is now a UI tier
@@ -7418,6 +7456,44 @@ export const useStore = create<AppState>((set, get) => {
         // state.
         console.warn('refreshTools failed:', e);
       }
+    },
+    // R362: pull the latest agent list from the daemon.
+    // Best-effort: a 404 / network blip leaves the
+    // previous list intact (same defensive pattern as
+    // refreshTools / refreshSessions). The Settings
+    // panel calls this after Create/Update/Delete
+    // (Round 2) so the rendered list reflects disk
+    // state within ~10s of the daemon's background
+    // AgentRegistry re-scan.
+    refreshAgents: async () => {
+      try {
+        const resp = await rpc.listAgents().catch(() => null);
+        if (resp && Array.isArray((resp as { agents?: unknown[] }).agents)) {
+          set({
+            agents: (resp as { agents: import('../lib/methods').AgentInfo[] }).agents,
+            agentsRefreshedAt: Date.now(),
+          });
+        }
+      } catch (e) {
+        console.warn('refreshAgents failed:', e);
+      }
+    },
+    // R362: read-only body fetch for the AgentManager
+    // editor. Returns the raw agent.md content as a
+    // string, or null on failure / not-found. The
+    // caller passes it through the markdown editor
+    // for live preview; saving goes through the
+    // updateAgent RPC (Round 2).
+    fetchAgentBody: async (name: string) => {
+      try {
+        const resp = await rpc.getAgentBody(name);
+        if (resp && (resp as { ok?: boolean }).ok) {
+          return (resp as { body?: string }).body ?? '';
+        }
+      } catch (e) {
+        console.warn('fetchAgentBody failed:', e);
+      }
+      return null;
     },
 
     // re-fetch the engine state snapshot. The prior round
