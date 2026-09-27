@@ -3653,8 +3653,48 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         /** install a pre-built registry (skips the
          *  dir-based construction). */
         public Builder skillRegistry(org.aethercode.core.skill.SkillRegistry r) { this.skillRegistry = r; return this; }
-        /** Mavis agents directory. */
-        public Builder agentsDir(Path p) { this.agentsDir = p; return this; }
+        /** Mavis agents directory.
+         *  R363: pre-construct the {@link AgentRegistry} the
+         *  first time this setter is called with a non-null
+         *  path, so the constructor body and
+         *  {@link #defaultSystemPrompt(Builder)} share the
+         *  same instance. Without this, the prior round's
+         *  layout triggered two full {@code AgentRegistry}
+         *  reloads at every {@code build()} — once when the
+         *  constructor wired {@code this.agentRegistry = new
+         *  AgentRegistry(b.agentsDir, ...)} (line ~557),
+         *  then a second time when
+         *  {@code agentsBlock(b)} inside
+         *  {@code defaultSystemPrompt(b)} saw
+         *  {@code b.agentRegistry == null} and constructed
+         *  a fresh registry just to render the
+         *  {@code <available_agents>} block (line ~1066).
+         *  Each reload reads every {@code agent.md} from
+         *  disk (currently 9 files, ~50-100 ms per pass);
+         *  the duplicate pass was the single biggest
+         *  "fixable" waste on the cold-start timeline.
+         *
+         *  <p>If the caller later overrides with
+         *  {@link #agentRegistry(AgentRegistry)} before
+         *  {@code build()}, that explicit registry wins —
+         *  the pre-built one is replaced.
+         *
+         *  <p>If the caller later invokes {@code agentsDir()}
+         *  again with a different path, we replace the
+         *  pre-built registry so the path change actually
+         *  takes effect; a stale {@code this.agentRegistry}
+         *  pointing at the old directory would otherwise
+         *  survive {@code build()}.
+         */
+        public Builder agentsDir(Path p) {
+            this.agentsDir = p;
+            if (p != null && (this.agentRegistry == null
+                    || !p.equals(this.agentRegistry.agentsDir()))) {
+                this.agentRegistry = new org.aethercode.core.agent.AgentRegistry(
+                        p, this.agentReloadInterval);
+            }
+            return this;
+        }
         /** override the default 10s reload interval. */
         public Builder agentReloadInterval(java.time.Duration d) { this.agentReloadInterval = d; return this; }
         /** install a pre-built registry. */

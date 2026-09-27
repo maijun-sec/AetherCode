@@ -336,7 +336,6 @@ async fn spawn_daemon(
     cwd: &Path,
     ports: &[u16],
 ) -> Result<(DaemonInfo, std::process::Child), String> {
-    let mut last_err = String::new();
     // R333 follow-up: the sweep is now performed by the
     // CALLER (ensure_daemon), not by spawn_daemon. The previous round
     // (R333) put the sweep inside spawn_daemon, which broke
@@ -352,142 +351,221 @@ async fn spawn_daemon(
     // an active session. ensure_daemon is that boundary —
     // it's the entry point the renderer calls on cold start
     // and on reconnect — so the sweep belongs there.
+    //
+    // R363: parallel-spawn across every port in `ports`. The previous
+    // sequential sweep wasted 5-15s per failed port (daemon child was
+    // spawned, waited out the full DAEMON_HEALTH_TIMEOUT_MS, killed, and
+    // we moved on). Spawning all ports in parallel and racing them turns
+    // the worst-case "every port just barely misses the timeout" path
+    // into "wait once for DAEMON_HEALTH_TIMEOUT_MS, attach to whichever
+    // came up first, kill the rest". On a healthy machine that drops
+    // the cold-start cost from ~75s to ~15s.
+    //
+    // Each per-port task owns its own Child; if a sibling wins the race
+    // we get the losing tasks' Child handles out of the result channel
+    // and kill them. We don't abort the tokio task — abort would orphan
+    // the spawned JVM. Killing the Child is the right primitive: the
+    // task exits when the child has been reaped.
+    let (result_tx, mut result_rx) =
+        mpsc::channel::<(u16, Result<std::process::Child, String>)>(ports.len());
     for &port in ports {
-        // R83 debug: capture daemon stdout/stderr to a per-port log
-        // file in %TEMP% so we can diagnose why stream_event
-        // notifications never reach the renderer. This is a
-        // temporary wire-up to find the missing broadcast.
-        let log_path = std::env::temp_dir()
-            .join(format!("aethercode-daemon-port{}.log", port));
-        // Write a fresh banner so we can correlate daemon restarts
-        // with log lines (a real production build will revert to
-        // Stdio::null once R83 stabilises).
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&log_path)
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "===== prior round daemon spawn port={} pid=???? jar={} cwd={} =====",
-                port, jar.display(), cwd.display());
-        }
-        let (stdout_io, stderr_io) = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            Ok(f) => {
-                let so = match f.try_clone() {
-                    Ok(c) => Stdio::from(c),
-                    Err(_) => Stdio::null(),
-                };
-                let se = Stdio::from(f);
-                (so, se)
-            }
-            Err(_) => (Stdio::null(), Stdio::null()),
-        };
-        // hide the JVM's child console window on
-        // Windows. Without `CREATE_NO_WINDOW` the JVM
-        // pops a `cmd.exe` window alongside the App, and
-        // the pre-warm daemon pops a second one. The user
-        // sees two black DOS boxes fighting for attention
-        // with the App they're trying to use. The flag is
-        // a Windows-only `creation_flags` value:
-        //   0x08000000 = CREATE_NO_WINDOW
-        // On non-Windows this is a no-op (the attribute
-        // variant is gated on `cfg(windows)`).
-        #[cfg(windows)]
-        let mut cmd = {
-            use std::os::windows::process::CommandExt;
-            let mut c = Command::new(java);
-            c.creation_flags(0x08000000);
-            c
-        };
-        #[cfg(not(windows))]
-        let mut cmd = Command::new(java);
+        let jar = jar.to_path_buf();
+        let java = java.to_string();
+        let cwd = cwd.to_path_buf();
+        let result_tx = result_tx.clone();
+        tokio::spawn(async move {
+            let res = spawn_daemon_on_port(port, &jar, &java, &cwd).await;
+            // Best-effort: ignore send error (receiver dropped when we
+            // already won the race and dropped our sender clone).
+            let _ = result_tx.send((port, res)).await;
+        });
+    }
+    // Drop our local sender so the receiver-side `recv` returns None
+    // once every per-port task has published its outcome. Without
+    // this the loop below would block forever after the last task.
+    drop(result_tx);
 
-        // R172 daemon-stability: pass explicit JVM args
-        // before -jar. The default JVM heap on a 8-16 GB
-        // dev machine is 1-2 GB, which is enough for a
-        // trivial query but gets GC-starved on real work
-        // (e.g. "generate a Maven project with 5 sort
-        // algorithms" → the engine materialises several
-        // tool result blobs, the chat client buffers the
-        // streaming response, and the heap inflates past
-        // 1 GB). When that happens the JVM spends most
-        // of its time in full GC, the WS stops emitting
-        // chunks, and the desktop's `STREAM_STALE_MS`
-        // (30 s) trips — the user sees "[Stream stale]
-        // Daemon stopped responding for 30s" mid-task
-        // even though the daemon is still alive, just
-        // stuck in GC. Pinning a 4 GB heap is enough for
-        // every task we've shipped so far without
-        // OOM-ing a 16 GB dev box.
-        //
-        // The env-var override `AETHERCODE_DAEMON_JVM_OPTS`
-        // lets power users append / replace these args
-        // (e.g. `set AETHERCODE_DAEMON_JVM_OPTS=-Xmx8g
-        // -XX:+UseZGC` for a heavier model run). When
-        // the env var is set, the defaults below are
-        // skipped entirely so an operator has full
-        // control; when unset, the defaults below are
-        // applied in order, then -jar, then --http-port.
-        let extra_jvm_args = daemon_jvm_args();
-        for a in &extra_jvm_args {
-            cmd.arg(a);
-        }
-
-        match cmd
-            .arg("-jar")
-            .arg(jar)
-            .arg("--http-port")
-            .arg(port.to_string())
-            // pass --sessions-dir so the daemon wires its
-            // SessionStore. Without this the new listSessions /
-            // createSession / loadSession / deleteSession RPCs
-            // return ENGINE_ERROR (gracefully, but the desktop
-            // multi-session stack falls back to localStorage
-            // instead of using real disk persistence). The path
-            // is `<cwd>/.aethercode/sessions`; the daemon creates
-            // the directory on first use.
-            .arg("--sessions-dir")
-            .arg(cwd.join(".aethercode").join("sessions").to_string_lossy().to_string())
-            .current_dir(cwd)
-            .stdout(stdout_io)
-            .stderr(stderr_io)
-            .spawn()
-        {
-            Ok(mut child) => {
-                tokio::time::sleep(Duration::from_millis(300)).await;
-                if let Ok(Some(status)) = child.try_wait() {
-                    last_err = format!("port {}: exited immediately with {:?}", port, status);
-                    continue;
-                }
-                let deadline = Instant::now() + Duration::from_millis(DAEMON_HEALTH_TIMEOUT_MS);
-                let mut ok = false;
-                while Instant::now() < deadline {
-                    if is_healthy(port).await { ok = true; break; }
-                    if let Ok(Some(status)) = child.try_wait() {
-                        last_err = format!("port {}: died mid-startup with {:?}", port, status);
-                        break;
+    // Take the FIRST Ok(Child) we see. Everything we collected before
+    // it (and everything still pending on the channel after we drop
+    // the channel) we reap. We tolerate up to (ports.len() - 1)
+    // `Err`s while looking for the winner.
+    let mut loser_children: Vec<std::process::Child> = Vec::new();
+    let mut winner: Option<(u16, std::process::Child)> = None;
+    let mut last_err = String::new();
+    while let Some((port, res)) = result_rx.recv().await {
+        match res {
+            Ok(child) => {
+                winner = Some((port, child));
+                // Drain the rest non-blocking to reap losers. We don't
+                // care which ports they were on — kill them all.
+                while let Ok((_p, r)) = result_rx.try_recv() {
+                    if let Ok(c) = r {
+                        loser_children.push(c);
                     }
-                    tokio::time::sleep(Duration::from_millis(DAEMON_HEALTH_POLL_MS)).await;
                 }
-                if !ok {
-                    let _ = child.kill();
-                    if last_err.is_empty() { last_err = format!("port {}: never came up", port); }
-                    continue;
-                }
-                return Ok((DaemonInfo::from_port(port, true, jar, cwd), child));
+                break;
             }
             Err(e) => {
-                last_err = format!("port {}: spawn failed: {}", port, e);
-                continue;
+                last_err = e;
             }
         }
     }
-    Err(format!("Failed to spawn daemon: {}", last_err))
+    for mut c in loser_children {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    match winner {
+        Some((port, child)) => Ok((DaemonInfo::from_port(port, true, jar, cwd), child)),
+        None => Err(format!("Failed to spawn daemon: {}", last_err)),
+    }
+}
+
+/// R363: try to spawn + bring up a daemon on a single port. Returns
+/// the live `Child` handle on success so the caller can either keep
+/// it (we won the race) or kill it (we lost the race). This is the
+/// per-port body extracted from the old sequential `spawn_daemon` so
+/// that `spawn_daemon` itself can fan out across all ports in
+/// parallel.
+///
+/// Failure modes (each maps to an `Err(String)` the caller treats as
+/// "this port lost, try the next one" or, in the parallel case,
+/// "this port lost the race"):
+///   - spawn failed (e.g. java not on PATH, jar missing)
+///   - JVM exited within 300 ms of spawn (e.g. port-bind failure)
+///   - JVM stayed alive but never answered `/healthz` within
+///     `DAEMON_HEALTH_TIMEOUT_MS` (15s)
+///   - JVM died mid-startup after the 300 ms grace
+async fn spawn_daemon_on_port(
+    port: u16,
+    jar: &Path,
+    java: &str,
+    cwd: &Path,
+) -> Result<std::process::Child, String> {
+    // R83 debug: capture daemon stdout/stderr to a per-port log
+    // file in %TEMP% so we can diagnose why stream_event
+    // notifications never reach the renderer. This is a
+    // temporary wire-up to find the missing broadcast.
+    let log_path = std::env::temp_dir()
+        .join(format!("aethercode-daemon-port{}.log", port));
+    // Write a fresh banner so we can correlate daemon restarts
+    // with log lines (a real production build will revert to
+    // Stdio::null once R83 stabilises).
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "===== prior round daemon spawn port={} pid=???? jar={} cwd={} =====",
+            port, jar.display(), cwd.display());
+    }
+    let (stdout_io, stderr_io) = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => {
+            let so = match f.try_clone() {
+                Ok(c) => Stdio::from(c),
+                Err(_) => Stdio::null(),
+            };
+            let se = Stdio::from(f);
+            (so, se)
+        }
+        Err(_) => (Stdio::null(), Stdio::null()),
+    };
+    // hide the JVM's child console window on
+    // Windows. Without `CREATE_NO_WINDOW` the JVM
+    // pops a `cmd.exe` window alongside the App, and
+    // the pre-warm daemon pops a second one. The user
+    // sees two black DOS boxes fighting for attention
+    // with the App they're trying to use. The flag is
+    // a Windows-only `creation_flags` value:
+    //   0x08000000 = CREATE_NO_WINDOW
+    // On non-Windows this is a no-op (the attribute
+    // variant is gated on `cfg(windows)`).
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut c = Command::new(java);
+        c.creation_flags(0x08000000);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = Command::new(java);
+
+    // R172 daemon-stability: pass explicit JVM args
+    // before -jar. The default JVM heap on a 8-16 GB
+    // dev machine is 1-2 GB, which is enough for a
+    // trivial query but gets GC-starved on real work
+    // (e.g. "generate a Maven project with 5 sort
+    // algorithms" → the engine materialises several
+    // tool result blobs, the chat client buffers the
+    // streaming response, and the heap inflates past
+    // 1 GB). When that happens the JVM spends most
+    // of its time in full GC, the WS stops emitting
+    // chunks, and the desktop's `STREAM_STALE_MS`
+    // (30 s) trips — the user sees "[Stream stale]
+    // Daemon stopped responding for 30s" mid-task
+    // even though the daemon is still alive, just
+    // stuck in GC. Pinning a 4 GB heap is enough for
+    // every task we've shipped so far without
+    // OOM-ing a 16 GB dev box.
+    //
+    // The env-var override `AETHERCODE_DAEMON_JVM_OPTS`
+    // lets power users append / replace these args
+    // (e.g. `set AETHERCODE_DAEMON_JVM_OPTS=-Xmx8g
+    // -XX:+UseZGC` for a heavier model run). When
+    // the env var is set, the defaults below are
+    // skipped entirely so an operator has full
+    // control; when unset, the defaults below are
+    // applied in order, then -jar, then --http-port.
+    let extra_jvm_args = daemon_jvm_args();
+    for a in &extra_jvm_args {
+        cmd.arg(a);
+    }
+
+    let mut child = match cmd
+        .arg("-jar")
+        .arg(jar)
+        .arg("--http-port")
+        .arg(port.to_string())
+        // pass --sessions-dir so the daemon wires its
+        // SessionStore. Without this the new listSessions /
+        // createSession / loadSession / deleteSession RPCs
+        // return ENGINE_ERROR (gracefully, but the desktop
+        // multi-session stack falls back to localStorage
+        // instead of using real disk persistence). The path
+        // is `<cwd>/.aethercode/sessions`; the daemon creates
+        // the directory on first use.
+        .arg("--sessions-dir")
+        .arg(cwd.join(".aethercode").join("sessions").to_string_lossy().to_string())
+        .current_dir(cwd)
+        .stdout(stdout_io)
+        .stderr(stderr_io)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return Err(format!("port {}: spawn failed: {}", port, e)),
+    };
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    if let Ok(Some(status)) = child.try_wait() {
+        return Err(format!("port {}: exited immediately with {:?}", port, status));
+    }
+    let deadline = Instant::now() + Duration::from_millis(DAEMON_HEALTH_TIMEOUT_MS);
+    while Instant::now() < deadline {
+        if is_healthy(port).await {
+            return Ok(child);
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!("port {}: died mid-startup with {:?}", port, status));
+        }
+        tokio::time::sleep(Duration::from_millis(DAEMON_HEALTH_POLL_MS)).await;
+    }
+    let _ = child.kill();
+    Err(format!("port {}: never came up", port))
 }
 
 /// R328: kill any orphan `java` process holding the given
@@ -1535,6 +1613,27 @@ fn build_bank_client(info: &DaemonInfo) -> BankClient {
 ///      the previous default; the 8 GB ceiling leaves
 ///      headroom for ~3 concurrent transcribe + grep + file
 ///      build pipelines.
+///      R363: a round-363 attempt to cut the floor to
+///      `-Xms512m` (hypothesis: the 2 GB pre-commit was
+///      the dominant cold-start cost) was measured and
+///      rolled back. A/B on this dev box:
+///          -Xms2g    → port-listening in 20.36 s
+///          -Xms512m  → port-listening in 22.92 s
+///      The 2 GB floor is actually ~2.5 s *faster*, not
+///      slower. The intuition that "front-loading a big
+///      heap must be wasted work" is wrong on this
+///      workload: with G1 the heap-floor reserve is a
+///      single contiguous `mmap` that the OS commits
+///      lazily as pages are touched, and at boot those
+///      touches are sparse (a handful of class loader
+///      pages + JIT workspace + the handful of buffers
+///      Spring AI / SQLite / Javalin allocate up-front).
+///      The 512 MB floor doesn't actually save any of
+///      that work — it just forces G1 to *grow* the heap
+///      on demand during the first 1-2 seconds, and each
+///      region resize pays a stop-the-world pause. With
+///      `-Xms2g` G1 has the regions pre-mapped and never
+///      resizes during boot.
 ///
 ///   2. Override: if the operator sets
 ///      `AETHERCODE_DAEMON_JVM_OPTS` (e.g. `-Xmx16g

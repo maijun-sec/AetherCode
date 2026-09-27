@@ -63,6 +63,14 @@ public class UpdateAgentTool {
                 "New provider/model binding (e.g. 'glm/glm-4-flash'). Empty = inherit engine default."));
         props.put("variant", Tools.stringProp(
                 "New quality preset: low / medium / high / xhigh. Empty = inherit from env or engine default."));
+        // R370.4: lifecycle hook. Update semantics differ
+        // from the other scalar fields: omitting `init`
+        // preserves the existing hook (partial update), and
+        // passing null clears it. This matches the
+        // JSON-patch style update_agent offers for the
+        // body / description / etc. fields.
+        props.put("init", Tools.stringProp(
+                "New lifecycle init prompt (R370.4). Omit to leave unchanged; pass null to clear."));
         props.put("body", Tools.stringProp(
                 "New agent body (markdown). Max 64 KB. The whole body is replaced — there is no " +
                 "merge / patch. To make a tiny edit, call getAgentBody first, modify, then update_agent."));
@@ -107,6 +115,15 @@ public class UpdateAgentTool {
         String displayName = stringOrEmpty(input.get("displayName"));
         String model = stringOrEmpty(input.get("model"));
         String variant = stringOrEmpty(input.get("variant"));
+        // R370.4: lifecycle hook. The caller distinguishes
+        // "leave init alone" (key absent) from "explicit
+        // clear" (key set to null) by wrapping in
+        // Optional. update_agent preserves the existing
+        // init when the caller omits the key — partial
+        // updates don't accidentally wipe the hook.
+        java.util.Optional<String> initRaw =
+                input.containsKey("init") ? java.util.Optional.ofNullable((String) input.get("init"))
+                        : java.util.Optional.empty();
         String body = (String) input.get("body");
         if (body == null) body = "";
 
@@ -137,9 +154,38 @@ public class UpdateAgentTool {
         }
 
         try {
+            // R370.4: lifecycle hook. UpdateTool re-reads
+            // the existing init from disk so a partial
+            // update (omitting `init:`) preserves the
+            // current hook rather than silently clearing
+            // it. Pass null only when the caller explicitly
+            // sets `init: null` to remove the hook.
+            String existingInit = "";
+            try {
+                var existing = registry.getMeta(name).orElse(null);
+                if (existing != null) existingInit = existing.initPrompt() == null
+                        ? "" : existing.initPrompt();
+            } catch (Exception ignore) {}
+            // Sentinel: caller passes `init: null` (or the
+            // string "null") to remove the hook. Anything
+            // else is treated as the new payload (blank
+            // string is fine — the registry writes a blank
+            // `init:` line and the field stays empty).
+            String resolvedInit;
+            if (!initRaw.isPresent()) {
+                resolvedInit = existingInit;
+            } else {
+                String v = initRaw.get();
+                if (v == null) {
+                    resolvedInit = "";  // explicit clear
+                } else {
+                    resolvedInit = v;
+                }
+            }
             registry.update(name, description, displayName,
                     model.isEmpty() ? null : model,
                     variant.isEmpty() ? null : variant,
+                    resolvedInit.isEmpty() ? null : resolvedInit,
                     body);
             AgentRegistry.AgentMeta meta = registry.getMeta(name).orElse(null);
             String path = meta == null ? "" : meta.path().toString();

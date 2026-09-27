@@ -455,6 +455,15 @@ public final class WorkflowExecutor {
             case "gate" -> runGate(step, body);
             case "skill" -> runSkillOrAgent(step, body, "skill");
             case "agent" -> runSkillOrAgent(step, body, "agent");
+            // R370: agent orchestration step types. Each
+            // expands into one or more child step executions
+            // (sequential for pipeline, iterative for
+            // reflection, decision-based for router) and
+            // consolidates their outputs under the parent
+            // step's stdout.
+            case "pipeline"  -> runPipeline(step, body);
+            case "reflection" -> runReflection(step, body);
+            case "router"    -> runRouter(step, body);
             default -> {
                 StepResult r = results.get(step.id());
                 if (r != null) {
@@ -923,6 +932,492 @@ public final class WorkflowExecutor {
             r.stderr = reason;
         }
         emit(step, "error", reason);
+    }
+
+    // ───── R370: pipeline / reflection / router step types ──────────
+    //
+    // These three step types compose agents (and other steps) into
+    // the orchestration patterns mainstream agent frameworks (LangGraph,
+    // CrewAI, AutoGen, MetaGPT) ship as primitives. Each takes a
+    // sub-block of nested step definitions and expands them at
+    // execution time. The execution semantics are:
+    //
+    //   pipeline   — sequential A→B→C; output of step N feeds into
+    //                the prompt template of step N+1 via the existing
+    //                {{steps.<id>.stdout}} substitution. Fail-fast by
+    //                default (the step's continue_on_error: true turns
+    //                a child failure into a soft skip).
+    //
+    //   reflection — Reflexion-style executor+critic loop. The executor
+    //                agent produces an attempt; the critic agent
+    //                reviews it and emits a structured verdict. The
+    //                loop terminates when (a) the critic outputs
+    //                `VERDICT: accept` (case-insensitive), (b) the
+    //                score line `SCORE: 0.85` is >= accept_score, or
+    //                (c) max_rounds is reached. The last executor
+    //                output is the step's stdout.
+    //
+    //   router     — LLM-driven delegation. The router agent receives
+    //                a decision prompt listing the candidate agents
+    //                and the user input; it must respond with a single
+    //                line `AGENT: <name>`. We then delegate the
+    //                original task to that agent.
+    //
+    // The sub-step bodies live as inline YAML under the parent's
+    // chunk — `parsePipelineSteps` pulls them out preserving their
+    // raw text so the existing `runSkillOrAgent` / `runShell` /
+    // `runDelay` handlers can consume them unchanged.
+
+    /** R370: one nested step inside a pipeline / reflection /
+     *  router parent. Holds its own chunk so we can dispatch it
+     *  through the existing runSkillOrAgent / runShell / runDelay
+     *  paths without re-teaching those handlers about parented
+     *  steps. */
+    private record PipelineStep(String id, String type, String chunk) {}
+
+    /** R370: parse a `steps:` block into a list of nested
+     *  PipelineStep records. The body shape is identical to the
+     *  top-level steps list — each entry is `- id: ...` followed
+     *  by `type: ...` + arbitrary keys. We grab the full chunk
+     *  for each entry so the per-type handlers can read the
+     *  `prompt:` / `name:` / `cmd:` / etc. fields directly. */
+    private List<PipelineStep> parsePipelineSteps(String body) {
+        List<PipelineStep> out = new ArrayList<>();
+        if (body == null || body.isBlank()) return out;
+        // If the parent chunk wraps the sub-list in a `steps:`
+        // key (the canonical pipeline / reflection / router
+        // shape), strip that line and use the body that
+        // follows. The body parser in stepBody already chops
+        // off the parent step's leading `- id: ...` line so
+        // we may receive either the wrapped or unwrapped form.
+        String work = body;
+        Matcher sb = Pattern.compile("(?ms)^\\s*steps\\s*:\\s*\\n(.*)\\z").matcher(body);
+        if (sb.find()) {
+            work = sb.group(1);
+        }
+        // Split on each sibling `- id:` boundary (the leading
+        // whitespace before the dash is preserved so the first
+        // chunk still starts with `- id:`).
+        String[] chunks = work.split("(?m)^(?=\\s*-\\s+id\\s*:)");
+        for (String c : chunks) {
+            if (c.isBlank()) continue;
+            // extract id from the first matching `- id:` line
+            Matcher idm = Pattern.compile(
+                    "(?m)^\\s*-\\s+id\\s*:\\s*([^\\s'\"#]+)").matcher(c);
+            if (!idm.find()) continue;
+            String idRaw = idm.group(1).trim().replaceAll("['\"]", "");
+            if (idRaw.isEmpty()) continue;
+            // extract type from the same chunk (may be on the
+            // second line if YAML formatting put id / type on
+            // separate lines).
+            Matcher tm = Pattern.compile(
+                    "(?m)^\\s*type\\s*:\\s*['\"]?([^'\"\\n#]+)['\"]?").matcher(c);
+            String type = tm.find() ? tm.group(1).trim() : "unknown";
+            // chunk is the full YAML block, used verbatim by
+            // the runXxx handlers (which only need id/type/
+            // name/prompt/etc. fields — they ignore the `- id:`
+            // header line because runSkillOrAgent parses by
+            // regex not by Step).
+            out.add(new PipelineStep(idRaw, type, c));
+        }
+        return out;
+    }
+
+    /** R370: build a temporary WorkflowReader.Step from a
+     *  PipelineStep so the existing executeStep / runXxx
+     *  signatures accept it without changing their contract.
+     *  The synthetic Step carries the original continueOnError
+     *  from the parent (sub-steps inherit the pipeline's
+     *  failure policy by default). */
+    private WorkflowReader.Step asStep(PipelineStep ps, boolean continueOnError) {
+        return new WorkflowReader.Step(ps.id(), ps.type(), continueOnError);
+    }
+
+    /** R370: pipeline step body. Runs each child step in order
+     *  with the parent's continue_on_error policy applying to
+     *  any child failure. Sub-step outputs are concatenated
+     *  into the pipeline's stdout for {{steps.<id>.stdout}}
+     *  substitution downstream. */
+    private void runPipeline(WorkflowReader.Step parent, String body) {
+        List<PipelineStep> subs = parsePipelineSteps(body);
+        if (subs.isEmpty()) {
+            fail(parent, "pipeline has no nested `steps:` block");
+            return;
+        }
+        boolean continueOnError = parent.continueOnError();
+        StringBuilder combined = new StringBuilder();
+        int subIdx = 0;
+        for (var ps : subs) {
+            subIdx++;
+            StepResult sr = new StepResult(ps.id(), ps.type());
+            results.put(ps.id(), sr);
+            emitRaw(ps.id(), ps.type(), indexOf(parent.id()) + 1, doc.steps().size(),
+                    "running", null);
+            sr.status = "running";
+            WorkflowReader.Step synthetic = asStep(ps, continueOnError);
+            String errMsg = null;
+            try {
+                switch (ps.type()) {
+                    case "agent" -> runSkillOrAgent(synthetic, ps.chunk(), "agent");
+                    case "skill" -> runSkillOrAgent(synthetic, ps.chunk(), "skill");
+                    case "shell" -> runShell(synthetic, ps.chunk());
+                    case "delay" -> runDelay(synthetic, ps.chunk());
+                    case "pipeline" -> runPipeline(synthetic, ps.chunk());
+                    case "reflection" -> runReflection(synthetic, ps.chunk());
+                    case "router" -> runRouter(synthetic, ps.chunk());
+                    default -> {
+                        sr.status = "error";
+                        sr.stderr = "pipeline sub-step has unknown type: " + ps.type();
+                        errMsg = sr.stderr;
+                    }
+                }
+            } catch (Exception ex) {
+                sr.status = "error";
+                sr.stderr = ex.getMessage();
+                errMsg = sr.stderr;
+            }
+            StepResult after = results.get(ps.id());
+            if (after == null) after = sr;
+            emitRaw(ps.id(), ps.type(), indexOf(parent.id()) + 1, doc.steps().size(),
+                    "error".equals(after.status) ? "error" : "ok",
+                    "error".equals(after.status) ? after.stderr : null);
+            // record sub output for parent stdout
+            if (after.stdout != null) {
+                combined.append("# ").append(ps.id()).append("\n")
+                        .append(after.stdout);
+                if (!after.stdout.endsWith("\n")) combined.append('\n');
+                combined.append("---\n");
+            }
+            // fail-fast unless explicitly told to continue
+            if ("error".equals(after.status) && !continueOnError) {
+                StepResult r = results.get(parent.id());
+                if (r != null) {
+                    r.status = "error";
+                    r.exitCode = 1;
+                    r.stdout = combined.toString();
+                    r.stderr = "sub-step '" + ps.id() + "' failed: " + after.stderr;
+                }
+                emit(parent, "error", r == null ? null : r.stderr);
+                return;
+            }
+        }
+        StepResult r = results.get(parent.id());
+        if (r != null) {
+            r.status = "ok";
+            r.exitCode = 0;
+            r.stdout = combined.toString();
+        }
+        emit(parent, "ok", null);
+    }
+
+    /** R370: reflection step body. Runs an executor agent,
+     *  then a critic agent that reviews the executor's output.
+     *  The loop continues until the critic returns a verdict
+     *  of `accept` (or a SCORE line at or above accept_score),
+     *  capped by max_rounds. The final executor output is the
+     *  step's stdout; the round-by-round transcript is captured
+     *  into `details:` so the renderer's workflow progress bar
+     *  can show "round 2/3 — SCORE 0.61 → revise". */
+    private void runReflection(WorkflowReader.Step parent, String body) {
+        // Parse required + optional fields.
+        String executorName = firstYamlValue(body, "executor");
+        String criticName = firstYamlValue(body, "critic");
+        String prompt = firstYamlValue(body, "prompt");
+        if (prompt == null) prompt = firstYamlValue(body, "input");
+        int maxRounds = 3;
+        try {
+            String mr = firstYamlValue(body, "max_rounds");
+            if (mr != null) maxRounds = Integer.parseInt(mr.trim());
+        } catch (NumberFormatException ignored) {}
+        Double acceptScore = null;
+        try {
+            String as = firstYamlValue(body, "accept_score");
+            if (as != null) acceptScore = Double.parseDouble(as.trim());
+        } catch (NumberFormatException ignored) {}
+        if (executorName == null || criticName == null) {
+            fail(parent, "reflection step requires `executor:` and `critic:` names");
+            return;
+        }
+        if (prompt == null || prompt.isBlank()) {
+            fail(parent, "reflection step requires a non-empty `prompt:`");
+            return;
+        }
+        StringBuilder transcript = new StringBuilder();
+        String lastExecutorOutput = "";
+        String lastVerdict = "pending";
+        Double lastScore = null;
+        for (int round = 1; round <= maxRounds; round++) {
+            emitRaw(parent.id(), parent.type(), indexOf(parent.id()) + 1,
+                    doc.steps().size(), "running",
+                    "reflection round " + round + "/" + maxRounds);
+            // Build the executor prompt. Round 1 = original; subsequent
+            // rounds append the previous critic feedback so the executor
+            // can revise.
+            String execPrompt = prompt;
+            if (round > 1 && lastVerdict != null) {
+                final int prevRound = round - 1;
+                // Extract the critic[prevRound] block from the
+                // transcript: the marker line plus everything
+                // up to (but not including) the next
+                // critic/executor marker for a later round.
+                String[] all = transcript.toString().split("\\r?\\n");
+                StringBuilder criticBlock = new StringBuilder();
+                boolean inBlock = false;
+                for (String line : all) {
+                    if (line.startsWith("critic[" + prevRound + "]")) {
+                        inBlock = true;
+                        criticBlock.append(line).append('\n');
+                        continue;
+                    }
+                    if (inBlock) {
+                        if (line.startsWith("critic[") || line.startsWith("executor[")) {
+                            break;
+                        }
+                        criticBlock.append(line).append('\n');
+                    }
+                }
+                execPrompt = prompt
+                        + "\n\n## Critic feedback (round " + prevRound + ")\n"
+                        + "VERDICT: " + lastVerdict
+                        + (lastScore != null ? "\nSCORE: " + lastScore : "")
+                        + "\n" + criticBlock;
+            }
+            execPrompt = substitute(execPrompt);
+            String executorOut;
+            try {
+                executorOut = invokeNamedAgent(executorName, execPrompt);
+            } catch (Exception ex) {
+                fail(parent, "reflection executor failed on round " + round + ": " + ex.getMessage());
+                return;
+            }
+            lastExecutorOutput = executorOut == null ? "" : executorOut;
+            transcript.append("executor[").append(round).append("]\n")
+                    .append(lastExecutorOutput).append("\n");
+            // Critic: ask for VERDICT + optional SCORE.
+            String criticPrompt = "You are reviewing the following attempt.\n\n"
+                    + "ATTEMPT:\n" + lastExecutorOutput + "\n\n"
+                    + "Respond with EXACTLY two lines, no preamble:\n"
+                    + "VERDICT: accept|revise\n"
+                    + "SCORE: <number 0.0-1.0>\n";
+            criticPrompt = substitute(criticPrompt);
+            String criticOut;
+            try {
+                criticOut = invokeNamedAgent(criticName, criticPrompt);
+            } catch (Exception ex) {
+                fail(parent, "reflection critic failed on round " + round + ": " + ex.getMessage());
+                return;
+            }
+            if (criticOut == null) criticOut = "";
+            transcript.append("critic[").append(round).append("]\n")
+                    .append(criticOut).append("\n");
+            // Parse critic output.
+            String verdict = "revise";
+            Double score = null;
+            for (String line : criticOut.split("\\r?\\n")) {
+                String t = line.trim();
+                String low = t.toLowerCase();
+                if (low.startsWith("verdict:")) {
+                    String v = t.substring("verdict:".length()).trim().toLowerCase();
+                    if (v.startsWith("accept") || v.startsWith("approve")
+                            || v.startsWith("ok") || v.startsWith("pass")) {
+                        verdict = "accept";
+                    } else {
+                        verdict = "revise";
+                    }
+                } else if (low.startsWith("score:")) {
+                    try {
+                        score = Double.parseDouble(t.substring("score:".length()).trim());
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+            lastVerdict = verdict;
+            lastScore = score;
+            boolean scoreAccept = acceptScore != null && score != null && score >= acceptScore;
+            if ("accept".equals(verdict) || scoreAccept) {
+                emitRaw(parent.id(), parent.type(), indexOf(parent.id()) + 1,
+                        doc.steps().size(), "ok",
+                        "reflection converged on round " + round + " (verdict="
+                                + verdict + (score != null ? ", score=" + score : "") + ")");
+                StepResult r = results.get(parent.id());
+                if (r != null) {
+                    r.status = "ok";
+                    r.exitCode = 0;
+                    r.stdout = lastExecutorOutput;
+                    r.stderr = transcript.toString();
+                }
+                emit(parent, "ok", null);
+                return;
+            }
+        }
+        // max_rounds exhausted — surface the last executor output
+        // as the step's stdout (best-effort). Status is still
+        // "ok" because the executor did produce something; the
+        // transcript captures the convergence failure.
+        emitRaw(parent.id(), parent.type(), indexOf(parent.id()) + 1,
+                doc.steps().size(), "ok",
+                "reflection exhausted " + maxRounds + " rounds (last verdict="
+                        + lastVerdict + (lastScore != null ? ", score=" + lastScore : "") + ")");
+        StepResult r = results.get(parent.id());
+        if (r != null) {
+            r.status = "ok";
+            r.exitCode = 0;
+            r.stdout = lastExecutorOutput;
+            r.stderr = transcript.toString();
+        }
+        emit(parent, "ok", null);
+    }
+
+    /** R370: router step body. The router agent decides which
+     *  of the listed candidates should handle the user task.
+     *  We ask the router to respond with a single
+     *  `AGENT: <name>` line, then delegate the original task
+     *  to that agent. Falls back to the first listed candidate
+     *  if the router's response is unparseable (the user
+     *  probably just typed a misconfigured step). */
+    private void runRouter(WorkflowReader.Step parent, String body) {
+        // parse `agents:` list (yaml block or inline)
+        List<String> candidates = parseYamlList(body, "agents");
+        String prompt = firstYamlValue(body, "prompt");
+        if (prompt == null) prompt = firstYamlValue(body, "input");
+        if (candidates.isEmpty()) {
+            fail(parent, "router step requires `agents:` list");
+            return;
+        }
+        if (prompt == null || prompt.isBlank()) {
+            fail(parent, "router step requires non-empty `prompt:`");
+            return;
+        }
+        String routerName = firstYamlValue(body, "router");
+        if (routerName == null) routerName = candidates.get(0);
+        // Build decision prompt.
+        StringBuilder list = new StringBuilder();
+        for (String c : candidates) list.append("- ").append(c).append('\n');
+        String decisionPrompt = "You are a router. The following agents are available:\n"
+                + list
+                + "\nUser task:\n" + prompt
+                + "\n\nRespond with EXACTLY one line, no preamble:\n"
+                + "AGENT: <one of the names above>\n";
+        decisionPrompt = substitute(decisionPrompt);
+        emitRaw(parent.id(), parent.type(), indexOf(parent.id()) + 1,
+                doc.steps().size(), "running",
+                "router choosing among " + candidates);
+        String decision;
+        try {
+            decision = invokeNamedAgent(routerName, decisionPrompt);
+        } catch (Exception ex) {
+            fail(parent, "router agent failed: " + ex.getMessage());
+            return;
+        }
+        if (decision == null) decision = "";
+        String chosen = null;
+        for (String line : decision.split("\\r?\\n")) {
+            String low = line.trim().toLowerCase();
+            if (low.startsWith("agent:")) {
+                chosen = line.trim().substring("agent:".length()).trim();
+                break;
+            }
+        }
+        if (chosen == null || !candidates.contains(chosen)) {
+            // fallback to first candidate; emit a soft warning via stderr
+            chosen = candidates.get(0);
+            StepResult r = results.get(parent.id());
+            if (r != null) r.stderr = "router response unparseable; fell back to " + chosen;
+        }
+        // Delegate to the chosen agent.
+        String taskPrompt = substitute(prompt);
+        String delegated;
+        try {
+            delegated = invokeNamedAgent(chosen, taskPrompt);
+        } catch (Exception ex) {
+            fail(parent, "router-delegated agent '" + chosen + "' failed: " + ex.getMessage());
+            return;
+        }
+        StepResult r = results.get(parent.id());
+        if (r != null) {
+            r.status = "ok";
+            r.exitCode = 0;
+            r.stdout = delegated == null ? "" : delegated;
+            if (r.stderr == null || r.stderr.isBlank()) {
+                r.stderr = "router chose: " + chosen;
+            } else {
+                r.stderr = r.stderr + "\nrouter chose: " + chosen;
+            }
+        }
+        emit(parent, "ok", null);
+    }
+
+    /** R370: shared agent-invocation seam used by reflection and
+     *  router. Falls back to the existing SkillInvoker when one
+     *  is wired (which is the methods-layer wiring); when null,
+     *  records a "stub" stdout and returns "stub: <name>" so the
+     *  workflow continues to drive end-to-end in unit tests.
+     *  Honours the per-agent model binding the same way
+     *  {@link #runSkillOrAgent} does. */
+    private String invokeNamedAgent(String name, String prompt) throws Exception {
+        if (skillInvoker == null) {
+            return "stub: agent \"" + name + "\" (SkillInvoker not wired)";
+        }
+        String modelOverride = null;
+        if (agentModelLookup != null) {
+            try {
+                String m = agentModelLookup.apply(name);
+                if (m != null && !m.isBlank()) modelOverride = m;
+            } catch (Exception ignored) {}
+        }
+        return skillInvoker.invoke("agent", name, prompt, modelOverride, ev -> {
+            // re-emit the child session's events under the
+            // parent step's id so the desktop's workflow
+            // progress bar can attribute them.
+            if (sink == null) return;
+            try {
+                sink.accept(new org.aethercode.core.stream.StreamEvent.SideNote(
+                        "child_session_event",
+                        "router|reflection child '" + name + "': "
+                                + (ev == null ? "" : ev.toString())));
+            } catch (Exception ignored) {}
+        });
+    }
+
+    /** R370: read the first `key: value` line under any
+     *  indent in a YAML chunk. Returns null when the key is
+     *  missing. Single-quoted, double-quoted, and bare values
+     *  are all accepted. */
+    private static String firstYamlValue(String body, String key) {
+        if (body == null) return null;
+        Pattern P = Pattern.compile(
+                "(?m)^\\s*" + Pattern.quote(key) + "\\s*:\\s*['\"]?([^'\"\\n#]+)['\"]?\\s*(?:#.*)?$");
+        Matcher m = P.matcher(body);
+        if (!m.find()) return null;
+        return m.group(1).trim();
+    }
+
+    /** R370: parse a YAML list under `key:`. Accepts both
+     *  inline form (`agents: [a, b, c]`) and block form
+     *  (`agents:\n  - a\n  - b`). */
+    private static List<String> parseYamlList(String body, String key) {
+        List<String> out = new ArrayList<>();
+        if (body == null) return out;
+        // inline form
+        Pattern INLINE = Pattern.compile(
+                "(?m)^\\s*" + Pattern.quote(key) + "\\s*:\\s*\\[(.+?)]\\s*$");
+        Matcher im = INLINE.matcher(body);
+        if (im.find()) {
+            for (String part : im.group(1).split(",")) {
+                String t = part.trim().replaceAll("^['\"]|['\"]$", "");
+                if (!t.isEmpty()) out.add(t);
+            }
+            return out;
+        }
+        // block form
+        Pattern BLOCK = Pattern.compile(
+                "(?ms)^\\s*" + Pattern.quote(key) + "\\s*:\\s*\\n(.*?)(?=^\\S|\\z)");
+        Matcher bm = BLOCK.matcher(body);
+        if (bm.find()) {
+            Pattern ITEM = Pattern.compile("(?m)^\\s*-\\s*['\"]?([^'\"\\n#]+)['\"]?\\s*$");
+            Matcher im2 = ITEM.matcher(bm.group(1));
+            while (im2.find()) out.add(im2.group(1).trim());
+        }
+        return out;
     }
 
     //

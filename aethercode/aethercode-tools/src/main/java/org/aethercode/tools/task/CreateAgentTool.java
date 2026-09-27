@@ -194,6 +194,21 @@ public class CreateAgentTool {
         String displayName = stringOrEmpty(input.get("displayName"));
         String model = stringOrEmpty(input.get("model"));
         String variant = stringOrEmpty(input.get("variant"));
+        // R370.4: lifecycle hook payload. Optional.
+        // When non-blank, the spawn pipeline prepends this
+        // text to the child session's first turn — the
+        // conventional place for "set up a todo before
+        // touching files" or "always greet the user by
+        // name" style setup reminders. Empty / null
+        // means "no init hook" (the legacy behaviour).
+        String initPrompt = stringOrEmpty(input.get("init"));
+        // Cap at 16 KB so a runaway init block doesn't bloat
+        // the frontmatter beyond a sensible agent.md size.
+        if (initPrompt.length() > 16 * 1024) {
+            return Tool.ToolResult.error(
+                    "init too large: " + initPrompt.length()
+                            + " bytes (max 16384). Trim or split into body.");
+        }
         String body = (String) input.get("body");
         if (body == null) body = "";
 
@@ -221,6 +236,7 @@ public class CreateAgentTool {
             registry.create(name, description, displayName,
                     model.isEmpty() ? null : model,
                     variant.isEmpty() ? null : variant,
+                    initPrompt.isEmpty() ? null : initPrompt,
                     body);
             // Re-read the meta so we can echo the resolved
             // path back to the LLM (and ultimately the user).

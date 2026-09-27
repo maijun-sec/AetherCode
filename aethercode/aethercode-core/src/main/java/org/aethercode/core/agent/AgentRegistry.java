@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  * read-only registry of Mavis agents under
  * {@code ~/.minimax/agents/<name>/agent.md}.
  *
- * <p>AetherCode does <b>not</b> own agent definitions — Mavis does.
+ * <p>AetherCode does <b>not</b> own agent definitions �?Mavis does.
  * AetherCode reads them at startup, caches the metadata + body in
  * memory, and surfaces them via the {@code listAgents} RPC. The
  * workflow executor's {@code kind: agent} step looks up the
@@ -36,7 +36,7 @@ public final class AgentRegistry {
     private static final Logger LOG = LoggerFactory.getLogger(AgentRegistry.class);
 
     /** One parsed {@code agent.md}. prior round added the {@code
-     *  model} field — the workflow executor's
+     *  model} field �?the workflow executor's
      *  {@code kind: agent} step reads it to build a
      *  per-agent {@link org.aethercode.core.llm.ChatClient}
      *  (e.g. {@code glm/glm-4-flash}) for the child
@@ -51,7 +51,7 @@ public final class AgentRegistry {
      *  to the bundled default". The resolution happens at
      *  workflow-execution time when the executor has the
      *  {@link org.aethercode.core.providers.ProviderRegistry}
-     *  in scope — the registry already exposes
+     *  in scope �?the registry already exposes
      *  {@link org.aethercode.core.providers.Variant#byName(String)}
      *  for the case-insensitive lookup. */
     public record AgentMeta(
@@ -60,6 +60,21 @@ public final class AgentRegistry {
             String displayName,
             String model,
             String variant,
+            // R370.4: lifecycle hook payload. Read from
+            // the `init:` frontmatter field (a YAML scalar
+            // or block scalar). When non-empty, the
+            // agent-spawn pipeline injects this text as
+            // a one-shot system reminder on the child
+            // session's first turn �?the conventional
+            // place for an agent to record its setup
+            // checklist (e.g. "set up a todo list before
+            // touching files", "always echo the user's
+            // task verbatim before answering"). The
+            // hook is read-only at runtime: it does not
+            // mutate the agent definition or any shared
+            // state. The user can see it via
+            // {@code getAgentMeta(name).initPrompt()}.
+            String initPrompt,
             Path path,
             long lastModifiedMs
     ) {
@@ -87,6 +102,17 @@ public final class AgentRegistry {
                 .sorted(Comparator.comparing(AgentMeta::name, String.CASE_INSENSITIVE_ORDER))
                 .collect(Collectors.toList());
     }
+
+    /** R363: getter for the agents directory the registry
+     *  was constructed with. The {@code AetherCodeEngine.Builder}
+     *  uses this to detect when a caller re-invokes
+     *  {@code .agentsDir(newPath)} on top of a pre-built
+     *  registry and needs the registry re-pointed at the
+     *  new directory (otherwise the stale registry would
+     *  keep reading the old dir at every {@code build()}).
+     *  Returns {@code null} when the registry was built
+     *  without a directory (purely programmatic agents). */
+    public Path agentsDir() { return agentsDir; }
 
     public Optional<String> getBody(String name) {
         ensureFresh();
@@ -124,7 +150,7 @@ public final class AgentRegistry {
     /** R362: render an index of all known agents as a
      *  system-prompt block. Modelled on
      *  {@link org.aethercode.core.skill.SkillRegistry#renderSystemPromptBlock()}
-     *  — the {@code <available_agents>} block sits at the
+     *  �?the {@code <available_agents>} block sits at the
      *  end of the prompt so the primary agent can read
      *  "here are the agents I can dispatch to" without
      *  polluting the identity / tooling sections.
@@ -138,7 +164,7 @@ public final class AgentRegistry {
      *
      *  <p>Each agent entry carries {@code name} +
      *  {@code description}. The full system-prompt body
-     *  is NOT inlined — that would blow up the prompt
+     *  is NOT inlined �?that would blow up the prompt
      *  for projects with many agents. The body is loaded
      *  on demand by {@link #getBody(String)} when
      *  {@code spawn_agent(agent_name=...)} is invoked.
@@ -148,7 +174,7 @@ public final class AgentRegistry {
      *
      *  <p>Cap: at most {@link #MAX_AGENTS_IN_INDEX} 30
      *  entries are emitted, sorted by name. The cap is
-     *  intentionally conservative — a typical project has
+     *  intentionally conservative �?a typical project has
      *  <10 agents, and 30 fits comfortably even with
      *  240-char descriptions (~7K chars). The unused
      *  entries are still discoverable via the
@@ -217,15 +243,27 @@ public final class AgentRegistry {
                         // string means "inherit from the
                         // engine / env override". Same
                         // resolution path as {@code model}
-                        // — deferred until the executor has
+                        // �?deferred until the executor has
                         // the ProviderRegistry in scope.
                         String v = Frontmatter.string(f, "variant");
+                        // R370.4: lifecycle hook. Optional
+                        // `init:` field carries a one-shot
+                        // reminder injected on the agent's
+                        // first turn. Accepts either a plain
+                        // scalar (`init: Set up a todo before
+                        // touching files`) or a YAML block
+                        // scalar (`init: |\n  multi-line\n
+                        // body`). Frontmatter.string handles
+                        // both forms because it returns the
+                        // raw scalar body for `|` blocks.
+                        String init = Frontmatter.string(f, "init");
                         long lm = Files.getLastModifiedTime(md).toMillis();
                         AgentMeta meta = new AgentMeta(name,
                                 desc == null ? "" : desc,
                                 dn == null ? "" : dn,
                                 m == null ? "" : m,
                                 v == null ? "" : v.trim(),
+                                init == null ? "" : init.trim(),
                                 md, lm);
                         next.put(name, new Entry(meta, p.body()));
                     } catch (IOException e) {
@@ -303,6 +341,7 @@ public final class AgentRegistry {
     public synchronized void create(String name, String description,
                                     String displayName, String model,
                                     String variant,
+                                    String initPrompt,
                                     String body) throws IOException {
         validateName(name);
         if (agentsDir == null) {
@@ -315,7 +354,7 @@ public final class AgentRegistry {
             // you want to be explicit.)
             LOG.info("agent {} already exists, overwriting", name);
         }
-        writeAgentMd(name, description, displayName, model, variant, body);
+        writeAgentMd(name, description, displayName, model, variant, initPrompt, body);
         reload();
     }
 
@@ -328,12 +367,13 @@ public final class AgentRegistry {
     public synchronized void update(String name, String description,
                                     String displayName, String model,
                                     String variant,
+                                    String initPrompt,
                                     String body) throws IOException {
         validateName(name);
         if (!byName.containsKey(name)) {
             throw new IllegalArgumentException("agent not found: " + name);
         }
-        writeAgentMd(name, description, displayName, model, variant, body);
+        writeAgentMd(name, description, displayName, model, variant, initPrompt, body);
         reload();
     }
 
@@ -371,6 +411,7 @@ public final class AgentRegistry {
     private void writeAgentMd(String name, String description,
                               String displayName, String model,
                               String variant,
+                              String initPrompt,
                               String body) throws IOException {
         Files.createDirectories(agentsDir.resolve(name));
         StringBuilder fm = new StringBuilder();
@@ -399,11 +440,25 @@ public final class AgentRegistry {
             // when the child session starts. An
             // empty string here means "inherit
             // from the engine's env override /
-            // bundled default" — we omit the
+            // bundled default" �?we omit the
             // frontmatter line so the legacy
             // "missing field = use default" path
             // keeps working.
             fm.append("variant: ").append(quoteYaml(variant.trim())).append("\n");
+        }
+        // R370.4: lifecycle hook. The init block is
+        // emitted as a YAML literal block scalar
+        // (`init: |\n  ...`) so multi-line setup
+        // scripts survive the round-trip through the
+        // file -> Frontmatter.parse pipeline without
+        // losing indentation. Empty / blank inputs
+        // omit the field so the legacy "no init" path
+        // keeps working.
+        if (initPrompt != null && !initPrompt.isBlank()) {
+            fm.append("init: |\n");
+            for (String line : initPrompt.split("\\r?\\n", -1)) {
+                fm.append("  ").append(line).append('\n');
+            }
         }
         fm.append("---\n\n");
         fm.append(body == null ? "" : body);

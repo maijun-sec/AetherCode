@@ -5975,6 +5975,14 @@ public class AetherCodeMethods {
         String variant = p.get("variant") instanceof String v ? v.trim() : null;
         if (variant != null && variant.isBlank()) variant = null;
         String body = p.get("body") instanceof String b ? b : "";
+        // R370.4: lifecycle hook payload. Read from the
+        // params and pass through to the registry. For the
+        // update path (requireExists=true) the wire
+        // distinguishes "absent = keep existing" from
+        // "present-and-null = clear" via
+        // params.containsKey("init"); for the create path
+        // a missing field is always "no init".
+        String init = p.get("init") instanceof String s ? s : null;
         try {
             org.aethercode.core.agent.AgentRegistry reg = engine.agentRegistry();
             if (reg == null) {
@@ -5984,9 +5992,27 @@ public class AetherCodeMethods {
                                 "start the daemon with --agents-dir or agentsDir in the engine builder"));
             }
             if (requireExists) {
-                reg.update(name, description, displayName, model, variant, body);
+                String resolvedInit;
+                if (p.containsKey("init")) {
+                    resolvedInit = init;  // explicit value (possibly null = clear)
+                } else {
+                    // key absent — preserve existing hook
+                    String existing = "";
+                    try {
+                        var meta = reg.getMeta(name).orElse(null);
+                        if (meta != null && meta.initPrompt() != null) {
+                            existing = meta.initPrompt();
+                        }
+                    } catch (Exception ignore) {}
+                    resolvedInit = existing;
+                }
+                reg.update(name, description, displayName, model, variant,
+                        (resolvedInit == null || resolvedInit.isEmpty()) ? null : resolvedInit,
+                        body);
             } else {
-                reg.create(name, description, displayName, model, variant, body);
+                reg.create(name, description, displayName, model, variant,
+                        (init == null || init.isEmpty()) ? null : init,
+                        body);
             }
             return Map.of("ok", true, "name", name);
         } catch (IllegalArgumentException e) {
