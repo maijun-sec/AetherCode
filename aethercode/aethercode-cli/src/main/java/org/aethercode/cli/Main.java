@@ -463,13 +463,30 @@ public class Main implements Callable<Integer> {
         // (see DaemonRunner.buildSessionManager) calls
         // back into this method when the user creates a
         // non-default engine. The default engine
-        // (returned here) uses the standard
-        // {@code null} sessionId which the engine
-        // resolves to "default" in AppState. Cast to
-        // String to disambiguate from the spec
-        // overload — both signatures accept null but
-        // only the String overload is appropriate here.
-        return buildEngineForSession((String) null);
+        // (returned here) represents the daemon's own
+        // session — it MUST have a non-blank sessionId
+        // because {@code SessionSpec}'s canonical
+        // constructor rejects null/blank (it was added
+        // in R361 fix v2 to harden the spec contract
+        // against empty-sessionId wire payloads).
+        //
+        // R362 Round 3 fix: previously this method
+        // called {@code buildEngineForSession((String)
+        // null)} which threw IllegalArgumentException
+        // at startup — the pre-R361 daemon swap dance
+        // hid the bug because every session creation
+        // restarted the JVM. After R361 fix v2
+        // collapsed the swap into a long-lived daemon,
+        // the null sessionId at boot time broke the
+        // daemon's very first buildEngine() call. The
+        // fix is the literal "default" string: the
+        // engine's AppState resolves it as the
+        // daemon-internal session, the desktop / TUI
+        // never references it (they create their own
+        // session via createEngine RPC), and the
+        // SessionManager treats it as the bucket for
+        // legacy callers that omit a sessionId.
+        return buildEngineForSession("default");
     }
 
     /** build a fresh engine with the same

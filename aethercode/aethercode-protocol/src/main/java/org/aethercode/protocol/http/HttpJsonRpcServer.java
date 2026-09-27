@@ -913,6 +913,14 @@ public final class HttpJsonRpcServer {
             // daemon (this file) needs an explicit switch arm
             // or the desktop / Tauri gets METHOD_NOT_FOUND.
             case "subagentCancel"         -> methods.subagentCancel(params);
+            // R362 Round 3: retry a FAILED / CANCELLED
+            // background subagent. Without this arm the
+            // HTTP+WS daemon returns METHOD_NOT_FOUND
+            // even though the stdio daemon (which uses
+            // AetherCodeMethods.registerAll) serves it
+            // correctly. Same dual-path gotcha as
+            // subagentCancel above.
+            case "subagentRetry"          -> methods.subagentRetry(params);
             // R234 (daemon parity fix): the switch above was
             // missing arms for several methods that AetherCodeMethods
             // already exposes via registerAll() for the stdio
