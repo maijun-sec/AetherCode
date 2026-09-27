@@ -772,48 +772,64 @@ class SubagentRegistryTest {
         SubagentRegistry.instance().attachThread(id, t);
         SubagentRegistry.instance().cancel(id, "audit-reason");
         var entries = SubagentRegistry.instance().auditLog(id);
-        assertEquals(3, entries.size());
-        assertEquals("REGISTER",     entries.get(0).action());
-        assertEquals("ATTACH_THREAD", entries.get(1).action());
-        assertEquals("CANCEL",       entries.get(2).action());
+        // R362 Round 3: WATCHDOG entry is appended by
+        // startWatchdog() at register time. The
+        // audit-log expectations shifted by +1 vs
+        // pre-R362 (REGISTER + WATCHDOG + ATTACH_THREAD +
+        // CANCEL = 4 entries). The WATCHDOG entry's
+        // details carry the poll + timeout so a debug
+        // dump can correlate the watchdog config with
+        // the job's lifecycle.
+        assertEquals(4, entries.size());
+        assertEquals("REGISTER",      entries.get(0).action());
+        assertEquals("WATCHDOG",      entries.get(1).action());
+        assertEquals("ATTACH_THREAD", entries.get(2).action());
+        assertEquals("CANCEL",        entries.get(3).action());
         // The CANCEL entry's details should include the reason.
-        assertTrue(entries.get(2).details().contains("audit-reason"),
-                "CANCEL details should include the reason; was: " + entries.get(2).details());
+        assertTrue(entries.get(3).details().contains("audit-reason"),
+                "CANCEL details should include the reason; was: " + entries.get(3).details());
         // And the ATTACH_THREAD entry's details should
         // include the thread name.
-        assertTrue(entries.get(1).details().contains("r93d-test-thread"),
-                "ATTACH_THREAD details should include the thread name; was: " + entries.get(1).details());
+        assertTrue(entries.get(2).details().contains("r93d-test-thread"),
+                "ATTACH_THREAD details should include the thread name; was: " + entries.get(2).details());
     }
 
     @Test
     void auditLog_completeJob_hasFourEntries() {
-        // REGISTER + ATTACH_THREAD + COMPLETE = 3 entries
-        // (no CANCEL on the happy path).
+        // R362 Round 3: REGISTER + WATCHDOG + ATTACH_THREAD
+        // + COMPLETE = 4 entries (no CANCEL on the
+        // happy path). The WATCHDOG entry documents
+        // the configured poll / timeout so an offline
+        // dump can correlate the watchdog config
+        // with the job's lifecycle.
         String id = SubagentRegistry.instance().register("t1", "p", "explore", "sess");
         Thread t = new Thread(() -> {}, "r93d-thread-complete");
         SubagentRegistry.instance().attachThread(id, t);
         SubagentRegistry.instance().markCompleted(id, "all good");
         var entries = SubagentRegistry.instance().auditLog(id);
-        assertEquals(3, entries.size());
+        assertEquals(4, entries.size());
         assertEquals("REGISTER",      entries.get(0).action());
-        assertEquals("ATTACH_THREAD", entries.get(1).action());
-        assertEquals("COMPLETE",      entries.get(2).action());
+        assertEquals("WATCHDOG",      entries.get(1).action());
+        assertEquals("ATTACH_THREAD", entries.get(2).action());
+        assertEquals("COMPLETE",      entries.get(3).action());
         // COMPLETE entry should reference the result.
-        assertTrue(entries.get(2).details().contains("all good"));
+        assertTrue(entries.get(3).details().contains("all good"));
     }
 
     @Test
     void auditLog_failedJob_recordsError() {
         // FAIL entry should record the error message in
         // the details so an offline log dump shows what
-        // blew up.
+        // blew up. R362 Round 3: WATCHDOG is appended
+        // after REGISTER (before the terminal FAIL).
         String id = SubagentRegistry.instance().register("t1", "p", "explore", "sess");
         SubagentRegistry.instance().markFailed(id, "synthetic boom");
         var entries = SubagentRegistry.instance().auditLog(id);
-        assertEquals(2, entries.size());
+        assertEquals(3, entries.size());
         assertEquals("REGISTER", entries.get(0).action());
-        assertEquals("FAIL",     entries.get(1).action());
-        assertEquals("synthetic boom", entries.get(1).details());
+        assertEquals("WATCHDOG", entries.get(1).action());
+        assertEquals("FAIL",     entries.get(2).action());
+        assertEquals("synthetic boom", entries.get(2).details());
     }
 
     @Test
@@ -952,15 +968,21 @@ class SubagentRegistryTest {
         SubagentRegistry.instance().updatePartial(id, "chunk 1");
         SubagentRegistry.instance().updatePartial(id, "chunk 2");
         var entries = SubagentRegistry.instance().auditLog(id);
-        // 1 REGISTER + 2 PARTIAL = 3 entries.
-        assertEquals(3, entries.size());
+        // R362 Round 3: REGISTER + WATCHDOG + 2 PARTIAL
+        // = 4 entries. The WATCHDOG entry documents
+        // the watchdog config (poll + timeout); it
+        // is appended by startWatchdog() at register
+        // time and never re-added during the job's
+        // lifetime.
+        assertEquals(4, entries.size());
         assertEquals("REGISTER", entries.get(0).action());
-        assertEquals("PARTIAL",  entries.get(1).action());
+        assertEquals("WATCHDOG", entries.get(1).action());
         assertEquals("PARTIAL",  entries.get(2).action());
+        assertEquals("PARTIAL",  entries.get(3).action());
         // Each PARTIAL entry's details should record
         // the size of the chunk.
-        assertTrue(entries.get(1).details().contains("chars=7"));
         assertTrue(entries.get(2).details().contains("chars=7"));
+        assertTrue(entries.get(3).details().contains("chars=7"));
     }
 
     @Test

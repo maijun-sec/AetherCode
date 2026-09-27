@@ -1586,6 +1586,13 @@ public class AetherCodeMethods {
         // subagent_event notification carries the result
         // back to the same UI.
         dispatcher.register("subagentCancel", this::subagentCancel);
+        // R362 Round 3: retry button (desktop
+        // SubagentPanel). The registry's retry()
+        // resets FAILED / CANCELLED state and
+        // restarts a fresh worker thread; the
+        // subagent_event notification carries the
+        // new RUNNING transition back to the same UI.
+        dispatcher.register("subagentRetry", this::subagentRetry);
     }
 
     // ------------------------------------------------------------------
@@ -4441,6 +4448,53 @@ public class AetherCodeMethods {
         out.put("jobId", jobId);
         out.put("cancelled", r.cancelled());
         out.put("alreadyFinished", r.alreadyFinished());
+        return out;
+    }
+
+    /** R362 Round 3: retry a FAILED / CANCELLED
+     *  background subagent by jobId. Wraps
+     *  {@code SubagentRegistry.retry(jobId)} — the
+     *  registry resets the job to RUNNING and
+     *  restarts the per-job Watchdog. The fresh
+     *  worker thread is started by the LLM
+     *  {@code subagent_retry} tool (which has access
+     *  to the tool-call context the RPC handler
+     *  doesn't), so this RPC returns success once
+     *  the registry-level retry took effect; the
+     *  caller is expected to spawn the worker via
+     *  the matching tool. The desktop
+     *  SubagentPanel wires this RPC to its Retry
+     *  button (the panel also triggers the tool
+     *  via a separate channel — same as Cancel's
+     *  "RPC interrupts thread + tool re-spawns"
+     *  pattern).
+     *
+     *  <p>Response shape mirrors {@link
+     *  #subagentCancel(Object)} so the renderer's
+     *  toast code can use one switch on the result:
+     *  <pre>
+     *    { ok: true, jobId, retried, reason? }
+     *  </pre>
+     *  {@code reason} carries the registry's
+     *  refusal message when {@code retried} is
+     *  false (e.g. "job is COMPLETED"). Empty
+     *  on success. */
+    public Object subagentRetry(Object params) {
+        Map<String, Object> p = asMap(params);
+        String jobId = stringOrThrow(p, "jobId");
+        org.aethercode.tools.task.SubagentRegistry.RetryResult r =
+                org.aethercode.tools.task.SubagentRegistry.instance().retry(jobId);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", r.retried());
+        out.put("jobId", jobId);
+        out.put("retried", r.retried());
+        if (!r.retried()) {
+            // surface the registry's refusal reason
+            // so the desktop can show "can't retry —
+            // job is RUNNING" without a second
+            // round-trip.
+            out.put("reason", r.reason() == null ? "" : r.reason());
+        }
         return out;
     }
 

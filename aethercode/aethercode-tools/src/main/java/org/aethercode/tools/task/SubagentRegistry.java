@@ -1,6 +1,7 @@
 package org.aethercode.tools.task;
 
 import org.aethercode.core.tool.Tool;
+import org.aethercode.core.util.Watchdog;
 import org.aethercode.tasks.Task;
 import org.aethercode.tasks.TaskRegistry;
 import org.aethercode.tasks.TaskStatus;
@@ -55,6 +56,55 @@ public final class SubagentRegistry {
 
     public static SubagentRegistry instance() { return INSTANCE; }
 
+    /** R362 Round 3: Watchdog timeout for background
+     *  subagents. Read once at JVM startup from the
+     *  env var {@code AETHERCODE_SUBAGENT_TIMEOUT_MS}
+     *  (default 60s). The watchdog poll interval is
+     *  fixed at {@link Watchdog#DEFAULT_POLL_MS} —
+     *  users tune the timeout, not the polling
+     *  cadence. An invalid value (≤ 0 or non-numeric)
+     *  falls back to the default. Tests can call
+     *  {@link #setWatchdogTimeoutMs(long)} to override
+     *  before registering jobs. */
+    private volatile long watchdogTimeoutMs = readWatchdogTimeoutMs();
+
+    /** env-var name the user can set to extend or
+     *  shorten the default watchdog timeout. */
+    public static final String WATCHDOG_TIMEOUT_ENV = "AETHERCODE_SUBAGENT_TIMEOUT_MS";
+
+    private static long readWatchdogTimeoutMs() {
+        String v = System.getenv(WATCHDOG_TIMEOUT_ENV);
+        if (v == null || v.isBlank()) return Watchdog.DEFAULT_TIMEOUT_MS;
+        try {
+            long parsed = Long.parseLong(v.trim());
+            if (parsed <= 0) return Watchdog.DEFAULT_TIMEOUT_MS;
+            // clamp to a sane range — 1s to 24h.
+            // Below 1s is too tight to ever fire (any
+            // LLM reply takes longer). Above 24h is
+            // almost certainly a typo. The clamp is
+            // silent (no warning) so a deployment
+            // override just works.
+            if (parsed < 1_000L) return 1_000L;
+            if (parsed > 24L * 60 * 60 * 1000) return 24L * 60 * 60 * 1000;
+            return parsed;
+        } catch (NumberFormatException nfe) {
+            LOG.warn("invalid {} value '{}' — falling back to {}ms",
+                    WATCHDOG_TIMEOUT_ENV, v, Watchdog.DEFAULT_TIMEOUT_MS);
+            return Watchdog.DEFAULT_TIMEOUT_MS;
+        }
+    }
+
+    /** get the configured watchdog timeout (ms). */
+    public long getWatchdogTimeoutMs() { return watchdogTimeoutMs; }
+
+    /** override the watchdog timeout (ms). Tests use
+     *  this to drive a 100ms timeout so the watchdog
+     *  fires within the test's lifetime. */
+    public void setWatchdogTimeoutMs(long ms) {
+        if (ms <= 0) throw new IllegalArgumentException("timeout must be > 0");
+        this.watchdogTimeoutMs = ms;
+    }
+
     private final AtomicInteger idCounter = new AtomicInteger();
     private final Map<String, SubagentJob> running = new ConcurrentHashMap<>();
     /** background worker thread for each running job,
@@ -99,7 +149,17 @@ public final class SubagentRegistry {
          *  compatibility — a single-session daemon sees
          *  no difference). */
         public final String sessionId;
-        public final long startedAtMs;
+        // R362 Round 3: changed from `public final long`
+        // to `public volatile long` so the retry()
+        // method can reset it on a reused SubagentJob.
+        // The field is read by elapsedMs() and summary()
+        // (both run on the caller's thread, holding the
+        // registry's lock — no visibility concern) and by
+        // the Watchdog's LongSupplier (which we just
+        // touch() before the read so the gap is fresh).
+        // The volatility cost is one store-load fence
+        // per status flip — negligible.
+        public volatile long startedAtMs;
         public volatile long finishedAtMs;     // 0 while running
         public volatile Status status;
         public volatile String resultText;     // captured on completion
@@ -126,6 +186,37 @@ public final class SubagentRegistry {
          *  for jobs that have not started streaming
          *  yet. */
         public volatile String partialResult;
+        /** R362 Round 3: per-job Watchdog (null when
+         *  the registry was created without watchdog
+         *  support, e.g. legacy unit tests). The
+         *  watchdog polls {@link #lastEventMs} and fires
+         *  when no activity has been seen for
+         *  {@link #DEFAULT_TIMEOUT_MS}. Activity includes
+         *  register (start), updatePartial (kick), and
+         *  the natural terminal transitions (stop). The
+         *  watchdog is owned by the job (not the registry
+         *  map) so a single subagent's lifecycle owns its
+         *  timer cleanly without cross-job interference.
+         *  Watchdog is created in {@link
+         *  SubagentRegistry#register} and {@link
+         *  #startWatchdog(long, long)}; it is
+         *  {@linkplain Watchdog#stop() stopped} on every
+         *  natural terminal transition (markCompleted /
+         *  markFailed / markCancelled) so it cannot
+         *  misfire after the job is gone. */
+        private volatile Watchdog watchdog;
+        /** Wall-clock ms of the most recent activity
+         *  on this job (register, partial, retry
+         *  reset). The watchdog polls this field every
+         *  {@link Watchdog#DEFAULT_POLL_MS}; if the gap
+         *  to {@code now} exceeds the timeout, the
+         *  watchdog fires. {@code volatile long} is
+         *  fine — the watchdog reads via the
+         *  {@code LongSupplier} passed to
+         *  {@link Watchdog#Watchdog(java.util.function.LongSupplier,
+         *  Watchdog.TimeoutHandler)} so visibility is
+         *  preserved. */
+        public volatile long lastEventMs;
         /** per-job lifecycle log. Each transition
          *  (REGISTER, ATTACH_THREAD, CANCEL, COMPLETE,
          *  FAIL) appends one entry. Append-only and
@@ -151,6 +242,7 @@ public final class SubagentRegistry {
             this.role = role == null ? "general-purpose" : role;
             this.sessionId = sessionId == null ? "" : sessionId;
             this.startedAtMs = System.currentTimeMillis();
+            this.lastEventMs = this.startedAtMs;
             this.status = Status.RUNNING;
             appendAudit("REGISTER", "role=" + this.role);
         }
@@ -180,6 +272,88 @@ public final class SubagentRegistry {
         public long elapsedMs() {
             long end = finishedAtMs > 0 ? finishedAtMs : System.currentTimeMillis();
             return end - startedAtMs;
+        }
+
+        /** touch the lastEventMs to the current wall-clock.
+         *  Called from {@link SubagentRegistry#updatePartial}
+         *  and {@link SubagentRegistry#retry} so the
+         *  watchdog sees fresh activity and does not
+         *  fire prematurely. The {@code volatile long}
+         *  is read by the watchdog's {@code LongSupplier}
+         *  on the watchdog's executor thread; the JVM
+         *  memory model guarantees visibility for
+         *  {@code volatile long} reads. */
+        void touch() {
+            lastEventMs = System.currentTimeMillis();
+        }
+
+        /** Attach + start the per-job Watchdog. The
+         *  watchdog fires after {@code timeoutMs} of
+         *  silence (no register / partial / retry). The
+         *  {@code pollMs} argument controls how often
+         *  the watchdog checks; the registry always
+         *  passes {@link Watchdog#DEFAULT_POLL_MS} so
+         *  the only knob the user has is timeout (via
+         *  {@code AETHERCODE_SUBAGENT_TIMEOUT_MS}).
+         *
+         *  <p>The poll cadence is clamped to at most
+         *  {@code timeoutMs / 5} so the watchdog
+         *  actually polls faster than its timeout when
+         *  a test (or a future env-var) drives a very
+         *  short timeout. Without this clamp the
+         *  Watchdog constructor throws "timeoutMs
+         *  must be >= pollMs" when a 200ms test
+         *  timeout collides with the default 5s poll.
+         *
+         *  <p>Replaces any existing watchdog (defensive:
+         *  if a job is retry'd we restart the timer
+         *  cleanly). The previous watchdog is stopped
+         *  via {@link Watchdog#close()} so a leaked
+         *  executor cannot accumulate across retries. */
+        void startWatchdog(long pollMs, long timeoutMs) {
+            stopWatchdog();
+            // Clamp poll so the Watchdog's invariant
+            // (timeoutMs >= pollMs) holds for any
+            // timeout setting. The min 100ms is the
+            // Watchdog's own floor.
+            long effectivePollMs = Math.min(pollMs, Math.max(100L, timeoutMs / 5));
+            final SubagentJob self = this;
+            Watchdog w = new Watchdog(
+                    () -> self.lastEventMs,
+                    silenceMs -> {
+                        // Watchdog fired — the job has been
+                        // silent too long. Mark it failed so
+                        // the UI sees the transition, and
+                        // interrupt the worker thread so
+                        // the chat-client stream unwinds.
+                        LOG.warn("subagent {} watchdog fired after {}ms of silence",
+                                self.jobId, silenceMs);
+                        SubagentRegistry.instance().markFailed(self.jobId,
+                                "watchdog timeout after " + silenceMs + "ms of silence");
+                        Thread t = SubagentRegistry.instance().runningThreads.get(self.jobId);
+                        if (t != null) {
+                            try { t.interrupt(); } catch (SecurityException ignored) {}
+                        }
+                    },
+                    effectivePollMs, timeoutMs);
+            w.start();
+            this.watchdog = w;
+            appendAudit("WATCHDOG", "poll=" + effectivePollMs + "ms timeout=" + timeoutMs + "ms");
+        }
+
+        /** stop the per-job Watchdog. Safe to call on a
+         *  job that never had one (no-op). The
+         *  watchdog's single-threaded executor is
+         *  shut down via {@link Watchdog#close()} so it
+         *  cannot leak across the daemon's lifetime. */
+        void stopWatchdog() {
+            Watchdog w = this.watchdog;
+            if (w != null) {
+                try { w.close(); } catch (Exception e) {
+                    LOG.debug("watchdog close failed for {}: {}", jobId, e.getMessage());
+                }
+                this.watchdog = null;
+            }
         }
     }
 
@@ -260,6 +434,15 @@ public final class SubagentRegistry {
         String id = "sag-" + idCounter.incrementAndGet();
         SubagentJob j = new SubagentJob(id, taskId, prompt, role, sessionId);
         running.put(id, j);
+        // R362 Round 3: start a per-job Watchdog. The
+        // watchdog polls j.lastEventMs; if the gap to
+        // "now" exceeds watchdogTimeoutMs, it fires
+        // and we mark the job FAILED. The timer is
+        // kicked by every updatePartial() call (the
+        // worker streams tokens) and by retry(). The
+        // timer is stopped by every natural terminal
+        // transition below.
+        j.startWatchdog(Watchdog.DEFAULT_POLL_MS, watchdogTimeoutMs);
         // SubagentEvent now carries a reason field
         // (empty for non-cancellation transitions). Wire
         // shape is additive — existing consumers that
@@ -314,6 +497,13 @@ public final class SubagentRegistry {
         SubagentJob j = running.remove(jobId);
         if (j == null) return;
         runningThreads.remove(jobId);
+        // R362 Round 3: stop the watchdog so it can't
+        // misfire after a natural completion (the
+        // worker is done; we don't need the timer
+        // anymore). stopWatchdog is a no-op when the
+        // job never had a watchdog (legacy tests
+        // that pre-date Round 3).
+        j.stopWatchdog();
         j.resultText = result;
         j.finishedAtMs = System.currentTimeMillis();
         j.status = SubagentJob.Status.COMPLETED;
@@ -333,6 +523,14 @@ public final class SubagentRegistry {
         SubagentJob j = running.remove(jobId);
         if (j == null) return;
         runningThreads.remove(jobId);
+        // R362 Round 3: stop the watchdog. The
+        // watchdog may have been the very thing that
+        // fired markFailed (via the timeout handler);
+        // stopping here is still safe because
+        // Watchdog.close() is idempotent (it just
+        // cancels the scheduled task and shuts down
+        // the executor — no callback fires on close).
+        j.stopWatchdog();
         j.error = error;
         j.finishedAtMs = System.currentTimeMillis();
         j.status = SubagentJob.Status.FAILED;
@@ -374,6 +572,8 @@ public final class SubagentRegistry {
         SubagentJob j = running.remove(jobId);
         if (j == null) return;
         runningThreads.remove(jobId);
+        // R362 Round 3: stop the watchdog on cancel.
+        j.stopWatchdog();
         j.finishedAtMs = System.currentTimeMillis();
         j.status = SubagentJob.Status.CANCELLED;
         j.cancelReason = reason == null ? "" : reason;
@@ -418,6 +618,15 @@ public final class SubagentRegistry {
         SubagentJob j = running.get(jobId);
         if (j == null) return;  // already finished; drop
         j.partialResult = text == null ? "" : text;
+        // R362 Round 3: kick the watchdog so a
+        // streaming job never trips the timeout while
+        // tokens are arriving. touch() also resets
+        // lastEventMs (which the watchdog polls). The
+        // kick is implicit — the watchdog's tick reads
+        // j.lastEventMs each poll cycle, and the new
+        // timestamp is fresh enough that the gap is
+        // well below the timeout.
+        j.touch();
         // also append a PARTIAL entry to the
         // audit log so a debug dump shows the streaming
         // history. The log is bounded so a long-running
@@ -532,6 +741,116 @@ public final class SubagentRegistry {
      *  to the JSON-RPC caller so the UI can show
      *  "cancelled" / "was already finished" appropriately. */
     public record CancelResult(boolean cancelled, boolean alreadyFinished) {}
+
+    /** R362 Round 3: retry a failed/cancelled job.
+     *  Resets the job to RUNNING (clearing the error,
+     *  finishedAtMs, partialResult) and fires a fresh
+     *  RUNNING event so the TUI / desktop SubagentPanel
+     *  re-renders the row as "running" again.
+     *
+     *  <p>The job is moved from {@code finished} back
+     *  to {@code running}; the watchdog is restarted
+     *  with the current timeout setting (the previous
+     *  watchdog is stopped via {@link
+     *  SubagentJob#stopWatchdog()} so we never leak
+     *  a scheduled executor across retries). The
+     *  worker thread is NOT attached here — that's
+     *  the caller's job (the {@code SubagentRetryTool}
+     *  or {@code subagentRetry} RPC kicks a new daemon
+     *  thread that re-runs the original prompt via
+     *  {@link AgentTool#runBackgroundJob}.
+     *
+     *  <p>State machine:
+     *  <pre>
+     *    FAILED    → retry() → RUNNING (cleared)
+     *    CANCELLED → retry() → RUNNING (cleared)
+     *    COMPLETED → retry() → refused (terminal — the
+     *                job succeeded; re-running would
+     *                change history)
+     *    RUNNING   → retry() → refused (already running;
+     *                no double-spawn)
+     *    unknown   → refused (no such job)
+     *  </pre>
+     *
+     *  <p>Returns a {@link RetryResult} so the caller
+     *  can render a precise toast ("retried!" vs "can't
+     *  retry, job is RUNNING").
+     */
+    public synchronized RetryResult retry(String jobId) {
+        if (jobId == null) {
+            return new RetryResult(false, "jobId is required", null, null);
+        }
+        // First check running — we refuse to retry a
+        // currently-running job (caller should cancel
+        // first or wait). Without this check we'd have
+        // two jobs sharing the same id.
+        SubagentJob live = running.get(jobId);
+        if (live != null) {
+            return new RetryResult(false,
+                    "job " + jobId + " is currently RUNNING; cancel first if you want to restart",
+                    live, null);
+        }
+        SubagentJob j = finished.get(jobId);
+        if (j == null) {
+            return new RetryResult(false, "no such job: " + jobId, null, null);
+        }
+        if (j.status == SubagentJob.Status.COMPLETED) {
+            return new RetryResult(false,
+                    "job " + jobId + " is COMPLETED; re-running would change history. " +
+                    "Spawn a fresh subagent instead.",
+                    j, null);
+        }
+        // CANCELLED or FAILED — proceed.
+        // Reset the job's mutable state. The job
+        // object itself is reused (same id, same
+        // prompt, same role) so existing event
+        // listeners that hold a reference to it
+        // see the fresh fields. Capture the previous
+        // status for the audit log BEFORE we flip it.
+        String previousStatus = j.status.name();
+        j.status = SubagentJob.Status.RUNNING;
+        j.startedAtMs = System.currentTimeMillis();
+        j.lastEventMs = j.startedAtMs;
+        j.finishedAtMs = 0L;
+        j.error = "";
+        j.resultText = "";
+        j.cancelReason = "";
+        j.partialResult = "";
+        j.appendAudit("RETRY", "previousStatus=" + previousStatus);
+        // move the job back to the running map so a
+        // subsequent cancel / markCompleted / updatePartial
+        // finds it.
+        finished.remove(jobId);
+        running.put(jobId, j);
+        // restart the watchdog with a fresh timer.
+        j.startWatchdog(Watchdog.DEFAULT_POLL_MS, watchdogTimeoutMs);
+        // Fire a RUNNING event so the TUI / desktop
+        // panel re-renders the row as running. The
+        // summary at this moment is still the prior
+        // "failed" text (it's rendered from the live
+        // job fields which we've now reset) — the
+        // TUI/desktop sees a clean RUNNING transition
+        // with the original prompt.
+        fireChange(new SubagentEvent(jobId, j.role, SubagentJob.Status.RUNNING,
+                0L, summary(j), System.currentTimeMillis(), j.sessionId, "", "", ""));
+        return new RetryResult(true, "", j, j.taskId);
+    }
+
+    /** outcome of {@link #retry(String)}. Mirrors
+     *  {@link CancelResult}'s shape so the LLM tool
+     *  and JSON-RPC handler can render a unified
+     *  error / success message.
+     *
+     *  <p>{@code previousJob} is the (now-reset) job
+     *  on success, or the current job on a refusal
+     *  (so the caller can show "this job is currently
+     *  RUNNING" without a second registry lookup).
+     *  {@code previousTaskId} carries the task id
+     *  the retry should re-attach to (the AgentTool
+     *  re-uses it so the /tasks panel doesn't see a
+     *  phantom new task per retry). */
+    public record RetryResult(boolean retried, String reason,
+                              SubagentJob previousJob, String previousTaskId) {}
 
     private void moveToFinished(SubagentJob j) {
         finished.put(j.jobId, j);

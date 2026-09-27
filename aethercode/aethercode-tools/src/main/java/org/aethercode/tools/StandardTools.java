@@ -17,6 +17,12 @@ import org.aethercode.tools.task.AgentTool;
 import org.aethercode.tools.task.CreateAgentTool;
 import org.aethercode.tools.task.DeleteAgentTool;
 import org.aethercode.tools.task.ListAgentsTool;
+import org.aethercode.tools.task.SubagentCancelTool;
+import org.aethercode.tools.task.SubagentListTool;
+import org.aethercode.tools.task.SubagentRetryTool;
+import org.aethercode.tools.task.SubagentStatusTool;
+import org.aethercode.tools.task.SubTodoWriteTool;
+import org.aethercode.tools.task.TodoWriteTool;
 import org.aethercode.tools.task.UpdateAgentTool;
 import org.aethercode.tools.task.SubTodoWriteTool;
 import org.aethercode.tools.task.SubagentListTool;
@@ -76,6 +82,17 @@ public final class StandardTools {
                 // background mode is a write-only black box.
                 SubagentStatusTool.build(),
                 SubagentListTool.build(),
+                // R362 Round 3: lifecycle control. The
+                // model uses subagent_retry(job_id) to
+                // re-run a FAILED or CANCELLED background
+                // job (the registry resets state +
+                // restarts a fresh worker thread) and
+                // subagent_cancel(job_id, reason?) to
+                // interrupt a still-running job. Both
+                // complement the JSON-RPC handlers the
+                // desktop SubagentPanel uses.
+                SubagentRetryTool.build(),
+                SubagentCancelTool.build(),
                 WebFetchTool.build(),
                 WebSearchTool.build(),
                 ScholarSearchTool.build(),

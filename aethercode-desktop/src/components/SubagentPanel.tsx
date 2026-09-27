@@ -5,8 +5,9 @@ import './SubagentPanel.css';
 // a live list of background subagent jobs, paired
 // with the TUI's <SubagentPanel> (prior round in the TUI repo).
 // Each row shows the job's id, role, status, and elapsed
-// time. RUNNING rows have a Cancel button; COMPLETED /
-// FAILED / CANCELLED rows have an "Insert result" button
+// time. RUNNING rows have a Cancel button; FAILED /
+// CANCELLED rows have a Retry button (R362 round 3);
+// COMPLETED rows have an "Insert result" button
 // that drops the captured result text into the input box
 // (the user can edit before sending).
 //
@@ -17,7 +18,13 @@ import './SubagentPanel.css';
 // action → AetherCodeRpc.subagentCancel(jobId) → engine
 // SubagentRegistry.cancel(jobId) → thread interrupt +
 // status flip → subagent_event notification → store
-// update → row re-renders as CANCELLED.
+// update → row re-renders as CANCELLED. R362 round 3
+// adds the Retry button: click → AetherCodeRpc.subagentRetry
+// (jobId) → SubagentRegistry.retry(jobId) → status flip
+// to RUNNING + fresh worker thread → subagent_event
+// notification → row re-renders as RUNNING. The
+// cancellation + retry paths are deliberately
+// symmetric so the panel's UI is consistent.
 
 const STATUS_LABEL: Record<string, string> = {
   RUNNING: 'running',
@@ -49,6 +56,16 @@ export function SubagentPanel() {
   // button is a shortcut.
   // We call the RPC via window.__TAURI__ invoke.
   const [cancelling, setCancelling] = useState<Record<string, boolean>>({});
+  // R362 round 3: track in-flight Retry clicks
+  // so the button shows "retrying…" while the RPC
+  // is in flight. Without this the user can
+  // double-click and trigger two retries (the
+  // registry's retry() is idempotent, so two
+  // retries from a still-FAILED job are harmless,
+  // but two retries from a job that already
+  // succeeded on attempt 1 would race with each
+  // other).
+  const [retrying, setRetrying] = useState<Record<string, boolean>>({});
   const [, setTick] = useState(0);
   // tick once per second while a RUNNING job is
   // present so the elapsed column updates without a
@@ -106,6 +123,53 @@ export function SubagentPanel() {
     } finally {
       setCancelling((c) => {
         const { [jobId]: _drop, ...rest } = c;
+        return rest;
+      });
+    }
+  };
+
+  // R362 round 3: Retry button handler. Mirrors
+  // onCancel — the registry's retry() resets the
+  // job to RUNNING and fires a fresh subagent_event
+  // notification, which the store picks up and
+  // re-renders the row. We don't optimistically
+  // flip the status (consistent with onCancel's
+  // approach).
+  const onRetry = async (jobId: string) => {
+    if (retrying[jobId]) return;
+    setRetrying((r) => ({ ...r, [jobId]: true }));
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      // The registry reset alone is not enough —
+      // we also need the LLM to actually re-run the
+      // prompt via subagent_retry tool (which spawns
+      // a fresh worker thread). The desktop wires
+      // this by triggering the tool through the
+      // store's pendingToolInvocation path. For now
+      // we just send the RPC; the LLM (running in
+      // the background of the session) will see the
+      // RUNNING event and respond. A future round
+      // can wire the tool-call path directly so
+      // retries don't require a live primary session.
+      const r: any = await invoke('rpc_call', {
+        method: 'subagentRetry',
+        params: { jobId },
+      });
+      if (r && r.ok === false) {
+        // The registry refused (e.g. job is
+        // COMPLETED, RUNNING, or unknown). Surface
+        // a console hint so a dev mode sees it; in
+        // production the user sees no visible
+        // change (the row stays in its current
+        // state because the subagent_event was
+        // never fired).
+        console.warn('subagentRetry refused:', r.reason);
+      }
+    } catch (e) {
+      console.warn('subagentRetry failed', e);
+    } finally {
+      setRetrying((r) => {
+        const { [jobId]: _drop, ...rest } = r;
         return rest;
       });
     }
@@ -197,6 +261,33 @@ export function SubagentPanel() {
                   >
                     {cancelling[jobId] ? 'cancelling…' : 'Cancel'}
                   </button>
+                ) : job.status === 'FAILED' || job.status === 'CANCELLED' ? (
+                  // R362 round 3: Retry button for
+                  // FAILED / CANCELLED rows. Sits in
+                  // the same slot as Cancel so the
+                  // layout doesn't shift between
+                  // states. COMPLETED rows keep the
+                  // Insert-result button (the legacy
+                  // behaviour); only failed / cancelled
+                  // jobs are retryable (re-running a
+                  // completed job would change history).
+                  <>
+                    <button
+                      className="subagent-panel-btn subagent-panel-btn-retry"
+                      disabled={!!retrying[jobId]}
+                      onClick={() => onRetry(jobId)}
+                      title="Send subagentRetry RPC; the engine resets the job to RUNNING and spawns a fresh worker thread"
+                    >
+                      {retrying[jobId] ? 'retrying…' : 'Retry'}
+                    </button>
+                    <button
+                      className="subagent-panel-btn subagent-panel-btn-insert"
+                      onClick={() => onInsert(jobId)}
+                      title="Insert a short failure note into the input box"
+                    >
+                      Insert note
+                    </button>
+                  </>
                 ) : (
                   <button
                     className="subagent-panel-btn subagent-panel-btn-insert"

@@ -291,8 +291,18 @@ public class AgentTool {
      *  never returns a {@link Tool.ToolResult} to the parent
      *  (the parent already received the job id). All exceptions
      *  are caught and surfaced as a FAILED job — the daemon
-     *  thread must never crash the JVM. */
-    private static void runBackgroundJob(String jobId,
+     *  thread must never crash the JVM.
+     *
+     *  <p>R362 Round 3: package-private (was private) so
+     *  {@link SubagentRetryTool} can re-run the same body
+     *  for a retried job without duplicating the single-shot
+     *  / multi-step dispatch logic. The retry path passes
+     *  the original {@code prompt}, {@code role},
+     *  {@code agentBody}, {@code multiStep}, {@code ctx}
+     *  and {@code newDepth}; we re-use the original child
+     *  {@code Task} so the /tasks panel doesn't see a
+     *  phantom task per retry. */
+    static void runBackgroundJob(String jobId,
                                           String prompt, String context,
                                           org.aethercode.core.agent.SubagentRole.RolePreset role,
                                           String agentBody,
@@ -362,7 +372,21 @@ public class AgentTool {
      *  surface — the whole result comes back at once). The
      *  sink is invoked on the chat-client thread, so the
      *  registry implementation must be thread-safe (it is). */
-    private static Tool.ToolResult callSingleShot(String prompt, String context,
+    /** single-shot subagent. Runs one LLM call, no tools, returns text.
+     *
+     *  <p>prior round: when {@code partialSink} is non-null, every
+     *  text delta is forwarded to it as the stream
+     *  progresses. The background dispatch wires this to
+     *  {@code SubagentRegistry.updatePartial(jobId, ...)};
+     *  foreground callers pass null (no partial stream to
+     *  surface — the whole result comes back at once). The
+     *  sink is invoked on the chat-client thread, so the
+     *  registry implementation must be thread-safe (it is).
+     *
+     *  <p>R362 Round 3: package-private (was private) so
+     *  {@link SubagentRetryTool} can re-run the same body
+     *  for a retried job. */
+    static Tool.ToolResult callSingleShot(String prompt, String context,
                                                   org.aethercode.core.agent.SubagentRole.RolePreset role,
                                                   String agentBody,
                                                   Task child, ChatClient chatClient,
@@ -430,7 +454,35 @@ public class AgentTool {
      *  <p>prior round: when {@code partialSink} is non-null, every
      *  text delta is forwarded to it as the multi-step
      *  loop progresses. Foreground callers pass null. */
-    private static Tool.ToolResult callMultiStep(String prompt, String context,
+    /** R362 Round 3: package-private (was private) so
+     *  {@link SubagentRetryTool} can re-run the same body.
+     *
+     *  <p>R362 Round 3 retry wrapper: the body is
+     *  re-attempted up to {@link
+     *  org.aethercode.core.util.RetryPolicy#DEFAULT}
+     *  (3 attempts, exponential backoff 1s + 2s) on
+     *  failure. The wrapper preserves the multi-step
+     *  semantics: a retry spawns a fresh
+     *  {@code engine.query()} call with the same
+     *  prompt + tool pool. A success on attempt N>1
+     *  is annotated with {@code [retried Nx]} in the
+     *  result prefix so the parent (and the user, via
+     *  SubagentPanel) sees the retry count. The retry
+     *  does NOT escalate the role or change the tool
+     *  pool — the second attempt has the same
+     *  permissions as the first.
+     *
+     *  <p>Why 3 attempts: matches the legacy
+     *  RetryPolicy.DEFAULT contract (transient
+     *  network blips, rate limits). A higher number
+     *  risks silently swallowing real bugs (the model
+     *  "really" can't do the task; retrying 10 times
+     *  burns tokens without progress). The 3-attempt
+     *  ceiling is a deliberate quality-of-life
+     *  tradeoff — the user can always retry manually
+     *  via SubagentRetryTool if they want to keep
+     *  going. */
+    static Tool.ToolResult callMultiStep(String prompt, String context,
                                                   org.aethercode.core.agent.SubagentRole.RolePreset role,
                                                   String agentBody,
                                                   Task child, Tool.CallContext ctx, int newDepth,
@@ -441,89 +493,140 @@ public class AgentTool {
                     "multi_step subagent requires subagent_engine in CallContext extras — "
                   + "the engine must set it before invoking tools");
         }
-        // Run the full engine loop. The engine handles tools, hooks,
-        // permissions, etc. We just pull the assistant's final text
-        // from the event stream. Tool events are NOT propagated to
-        // the parent (they happen inside the subagent and are visible
-        // only via the subagent's task ID in /tasks).
-        StringBuilder out = new StringBuilder();
+        // Build the subagent's task input once (outside
+        // the retry loop — the prompt is the same on
+        // every attempt). Two reminders, ordered
+        // role-then-agent, so the agent's persona (the
+        // more specific guidance) wins on conflict.
+        StringBuilder promptSb = new StringBuilder();
+        if (role != null && !role.equals(org.aethercode.core.agent.SubagentRole.GENERAL_PURPOSE)) {
+            promptSb.append("<system-reminder role=\"subagent\" name=\"")
+                    .append(escapeAttr(role.name())).append("\">\n");
+            promptSb.append(role.systemPrompt()).append("\n");
+            promptSb.append("</system-reminder>\n\n");
+        }
+        if (agentBody != null && !agentBody.isBlank()) {
+            promptSb.append("<system-reminder role=\"subagent-agent\" name=\"")
+                    .append(escapeAttr(role.name())).append("\">\n");
+            promptSb.append(agentBody.strip()).append("\n");
+            promptSb.append("</system-reminder>\n\n");
+        }
+        promptSb.append(prompt);
+        if (context != null && !context.isBlank()) {
+            promptSb.append("\n\n[parent context: ").append(context).append("]");
+        }
+        final String fullPrompt = promptSb.toString();
+        // apply the role's tool filter at the engine
+        // level (also computed once — the role doesn't
+        // change between retries).
+        java.util.List<org.aethercode.core.tool.Tool> roleFiltered = engine.tools();
+        if (role != null) {
+            roleFiltered = org.aethercode.core.agent.SubagentRole.filterTools(roleFiltered, role);
+        }
+        final java.util.List<org.aethercode.core.tool.Tool> roleFilteredFinal = roleFiltered;
+        // R362 Round 3 retry wrapper: the actual
+        // engine.query() call is wrapped in
+        // RetryHelper.run() with RetryPolicy.DEFAULT
+        // (3 attempts, 1s + 2s exponential backoff).
+        // We extract the per-attempt work into a
+        // Callable so the helper can drive the loop.
+        // Any Exception thrown inside the Callable
+        // (a network blip, an empty-output signal)
+        // is retried; success returns the captured
+        // assistant text. We use a final single-element
+        // array to ferry the last attempt's output
+        // back to the caller — the Callable API takes
+        // a return value, but we also want the parent
+        // to see the last attempt's text even on
+        // success-with-retry (so the marker prefix is
+        // computed against the right value).
+        final String[] lastOut = { "" };
+        org.aethercode.core.util.RetryHelper.Result<String> rr;
         try {
-            // Build the subagent's task input. We append the parent's
-            // context (if any) so the subagent has the same background.
-            StringBuilder promptSb = new StringBuilder();
-            if (role != null && !role.equals(org.aethercode.core.agent.SubagentRole.GENERAL_PURPOSE)) {
-                // prepend the role's preamble as a
-                // <system-reminder> block. The model sees it
-                // as the latest instruction, which carries
-                // more weight than the base system prompt.
-                promptSb.append("<system-reminder role=\"subagent\" name=\"")
-                        .append(escapeAttr(role.name())).append("\">\n");
-                promptSb.append(role.systemPrompt()).append("\n");
-                promptSb.append("</system-reminder>\n\n");
-            }
-            // R362: if the caller passed agent_name=..., inject
-            // the named agent's body as a <system-reminder>
-            // block AFTER the role preamble. Two reminders,
-            // ordered role-then-agent, so the agent's persona
-            // (the more specific guidance) wins on conflict.
-            if (agentBody != null && !agentBody.isBlank()) {
-                promptSb.append("<system-reminder role=\"subagent-agent\" name=\"")
-                        .append(escapeAttr(role.name())).append("\">\n");
-                promptSb.append(agentBody.strip()).append("\n");
-                promptSb.append("</system-reminder>\n\n");
-            }
-            promptSb.append(prompt);
-            if (context != null && !context.isBlank()) {
-                promptSb.append("\n\n[parent context: ").append(context).append("]");
-            }
-            String fullPrompt = promptSb.toString();
-            // apply the role's tool filter at the engine
-            // level. Without this, the role is advisory only
-            // (prompt-level); the subagent could still call
-            // file_write because the tool is in the engine's
-            // pool. The filter is a strict subset: only tools
-            // the role allows are visible to this subagent.
-            // We fetch the parent's tool pool from the
-            // SubagentEngine.tools() getter (always returns
-            // the engine's current toolPool) and let
-            // SubagentRole.filterTools() narrow it.
-            java.util.List<org.aethercode.core.tool.Tool> roleFiltered = engine.tools();
-            if (role != null) {
-                roleFiltered = org.aethercode.core.agent.SubagentRole.filterTools(roleFiltered, role);
-            }
-            engine.query(fullPrompt, null, roleFiltered).forEach(ev -> {
-                if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
-                    out.append(td.text());
-                    // forward the in-flight text to
-                    // the partial sink (background
-                    // subagents only). The TUI / desktop
-                    // subscribes to the SubagentRegistry's
-                    // wire notifications and shows a tail
-                    // preview as the model types.
-                    if (partialSink != null) {
-                        partialSink.accept(out.toString());
+            rr = org.aethercode.core.util.RetryHelper.run(() -> {
+                StringBuilder attemptOut = new StringBuilder();
+                // The query() call's events are
+                // consumed inline; we treat a thrown
+                // exception as a retryable failure.
+                engine.query(fullPrompt, null, roleFilteredFinal).forEach(ev -> {
+                    if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
+                        attemptOut.append(td.text());
+                        // forward the in-flight text to
+                        // the partial sink (background
+                        // subagents only). The TUI /
+                        // desktop subscribes to the
+                        // SubagentRegistry's wire
+                        // notifications and shows a tail
+                        // preview as the model types.
+                        if (partialSink != null) {
+                            partialSink.accept(attemptOut.toString());
+                        }
+                    } else if (ev instanceof org.aethercode.core.stream.StreamEvent.SideNote sn
+                            && "task".equals(sn.kind())) {
+                        // The subagent's own Task ID is
+                        // emitted as a SideNote by
+                        // AetherCodeEngine.query(); log it
+                        // so the parent's log shows the
+                        // task tree.
+                        LOG.info("subagent {} spawned child: {}", child.id(), sn.message());
                     }
-                } else if (ev instanceof org.aethercode.core.stream.StreamEvent.SideNote sn
-                        && "task".equals(sn.kind())) {
-                    // The subagent's own Task ID is emitted as a SideNote
-                    // by AetherCodeEngine.query(); log it so the parent's
-                    // log shows the task tree.
-                    LOG.info("subagent {} spawned child: {}", child.id(), sn.message());
+                });
+                lastOut[0] = attemptOut.toString();
+                // Treat empty output as a transient
+                // failure so the retry loop can give
+                // the model another chance. Without
+                // this, an LLM that streams nothing on
+                // the first call (rate-limited,
+                // server-side timeout) would surface a
+                // hard error to the parent on
+                // attempt 1 even though the retry
+                // might succeed.
+                if (lastOut[0].strip().isEmpty()) {
+                    throw new RuntimeException(
+                            "subagent produced empty output on attempt (will retry)");
                 }
-            });
+                return lastOut[0];
+            }, org.aethercode.core.util.RetryPolicy.DEFAULT);
         } catch (Throwable t) {
+            // The retry helper exhausted all
+            // attempts; surface a clear error so the
+            // parent's log shows the failure shape.
             org.aethercode.tasks.TaskRegistry.instance().updateStatus(child.id(), TaskStatus.FAILED);
-            return Tool.ToolResult.error("multi-step subagent failed: "
+            return Tool.ToolResult.error("multi-step subagent failed after "
+                    + org.aethercode.core.util.RetryPolicy.DEFAULT.maxAttempts() + " attempts: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
-        String result = out.toString().strip();
+        if (!rr.isSuccess()) {
+            org.aethercode.tasks.TaskRegistry.instance().updateStatus(child.id(), TaskStatus.FAILED);
+            return Tool.ToolResult.error("multi-step subagent failed after "
+                    + rr.attempts() + " attempts: "
+                    + (rr.error() == null ? "unknown" : rr.error().getClass().getSimpleName() + ": " + rr.error().getMessage()));
+        }
+        String result = lastOut[0].strip();
+        // Empty output is treated as failure (the
+        // helper already retried). Keep the same
+        // error shape as the pre-R362 implementation
+        // so the parent's log parsing doesn't
+        // regress.
         if (result.isEmpty()) {
             org.aethercode.tasks.TaskRegistry.instance().updateStatus(child.id(), TaskStatus.FAILED);
-            return Tool.ToolResult.error("subagent produced empty output");
+            return Tool.ToolResult.error("subagent produced empty output after "
+                    + rr.attempts() + " attempts");
         }
         org.aethercode.tasks.TaskRegistry.instance().updateStatus(child.id(), TaskStatus.COMPLETED);
-        LOG.info("multi-step subagent {} completed ({} chars)", child.id(), result.length());
-        return Tool.ToolResult.of("subagent " + child.id() + ":\n" + result);
+        LOG.info("multi-step subagent {} completed ({} chars, attempts={})",
+                child.id(), result.length(), rr.attempts());
+        // Annotate the result with [retried Nx]
+        // when the model needed more than 1
+        // attempt. Single-attempt successes show no
+        // marker (the legacy behaviour). The parent
+        // (and the SubagentPanel) see the marker so
+        // they can tell transient failures from
+        // clean runs.
+        String prefix = rr.attempts() > 1
+                ? "subagent " + child.id() + " [retried " + (rr.attempts() - 1) + "x]:\n"
+                : "subagent " + child.id() + ":\n";
+        return Tool.ToolResult.of(prefix + result);
     }
 
     private static String escapeAttr(String s) {

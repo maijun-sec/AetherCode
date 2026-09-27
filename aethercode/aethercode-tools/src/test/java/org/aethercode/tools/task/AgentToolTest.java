@@ -466,10 +466,21 @@ class AgentToolTest {
         // Capture every SubagentEvent the registry
         // fires for this run. We only inspect the
         // RUNNING transitions (the partial updates).
+        // R362 round 3: SubagentRegistry is a
+        // process singleton so listeners see
+        // events from other tests too. We hold
+        // jobId in an array (effectively final)
+        // and filter on it; the listener is
+        // registered before AgentTool.call so
+        // jobId is null at registration time,
+        // hence the array indirection.
+        final String[] jobIdHolder = { null };
         java.util.List<SubagentRegistry.SubagentEvent> runningEvents =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         SubagentRegistry.instance().onChange(ev -> {
-            if (ev.status() == SubagentRegistry.SubagentJob.Status.RUNNING) {
+            if (ev.status() == SubagentRegistry.SubagentJob.Status.RUNNING
+                    && jobIdHolder[0] != null
+                    && ev.jobId().equals(jobIdHolder[0])) {
                 runningEvents.add(ev);
             }
         });
@@ -484,6 +495,7 @@ class AgentToolTest {
                 Map.of("prompt", uniquePrompt, "background", true), ctx);
         String text = (String) result.output();
         String jobId = text.replaceFirst(".*?(sag-\\d+).*", "$1");
+        jobIdHolder[0] = jobId;
 
         SubagentRegistry.SubagentJob j = waitForJob(jobId, 2000);
         assertNotNull(j, "background job should be findable in registry: " + jobId);
