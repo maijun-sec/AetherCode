@@ -14,7 +14,10 @@ import org.aethercode.tools.net.WebFetchTool;
 import org.aethercode.tools.net.WebSearchTool;
 import org.aethercode.tools.shell.BashTool;
 import org.aethercode.tools.task.AgentTool;
+import org.aethercode.tools.task.CreateAgentTool;
+import org.aethercode.tools.task.DeleteAgentTool;
 import org.aethercode.tools.task.ListAgentsTool;
+import org.aethercode.tools.task.UpdateAgentTool;
 import org.aethercode.tools.task.SubTodoWriteTool;
 import org.aethercode.tools.task.SubagentListTool;
 import org.aethercode.tools.task.SubagentStatusTool;
@@ -56,6 +59,16 @@ public final class StandardTools {
                 // AgentTool's agent_name parameter takes a name
                 // from this list (or from SubagentRole fallback).
                 ListAgentsTool.build(),
+                // R362 Round 2: agent CRUD trio. These
+                // tools let the LLM write to the same
+                // ~/.aethercode/agents/ directory the
+                // desktop's AgentManager modal manages.
+                // Default mode is permissive; flip
+                // AETHERCODE_CREATE_AGENT_REQUIRE_CONFIRM=1
+                // for strict (must-ask-user-first) mode.
+                CreateAgentTool.build(),
+                UpdateAgentTool.build(),
+                DeleteAgentTool.build(),
                 // background subagent introspection. The
                 // model uses subagent_status(job_id) to poll
                 // a backgrounded spawn_agent, and subagent_list
