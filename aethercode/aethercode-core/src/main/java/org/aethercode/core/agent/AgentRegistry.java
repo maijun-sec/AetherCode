@@ -121,6 +121,69 @@ public final class AgentRegistry {
         sb.append("\n</agent>\n");
         return Optional.of(sb.toString());
     }
+    /** R362: render an index of all known agents as a
+     *  system-prompt block. Modelled on
+     *  {@link org.aethercode.core.skill.SkillRegistry#renderSystemPromptBlock()}
+     *  — the {@code <available_agents>} block sits at the
+     *  end of the prompt so the primary agent can read
+     *  "here are the agents I can dispatch to" without
+     *  polluting the identity / tooling sections.
+     *
+     *  <p>Returns the empty string when the registry is
+     *  empty so callers can {@code .append(...)}
+     *  unconditionally. The block is XML-ish
+     *  ({@code <available_agents> ... </available_agents>})
+     *  so a model trained on the legacy skill-block
+     *  convention parses it the same way.
+     *
+     *  <p>Each agent entry carries {@code name} +
+     *  {@code description}. The full system-prompt body
+     *  is NOT inlined — that would blow up the prompt
+     *  for projects with many agents. The body is loaded
+     *  on demand by {@link #getBody(String)} when
+     *  {@code spawn_agent(agent_name=...)} is invoked.
+     *  Description is truncated to 240 chars (matching
+     *  SkillRegistry) so a runaway description cannot
+     *  bloat the prompt.
+     *
+     *  <p>Cap: at most {@link #MAX_AGENTS_IN_INDEX} 30
+     *  entries are emitted, sorted by name. The cap is
+     *  intentionally conservative — a typical project has
+     *  <10 agents, and 30 fits comfortably even with
+     *  240-char descriptions (~7K chars). The unused
+     *  entries are still discoverable via the
+     *  {@code list_agents} tool. */
+    public String renderIndexBlock() {
+        List<AgentMeta> all = list();
+        if (all.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n<available_agents>\n");
+        sb.append("# Available agents (use spawn_agent(agent_name=\"<name>\") to delegate)\n");
+        int emitted = 0;
+        for (AgentMeta m : all) {
+            if (emitted >= MAX_AGENTS_IN_INDEX) {
+                sb.append("\n<!-- ").append(all.size() - emitted)
+                        .append(" more agents not shown; use list_agents tool to discover -->\n");
+                break;
+            }
+            sb.append("<agent>\n");
+            sb.append("<name>").append(escape(m.name())).append("</name>\n");
+            String desc = m.description();
+            if (desc == null) desc = "";
+            if (desc.length() > 240) desc = desc.substring(0, 237) + "...";
+            sb.append("<description>").append(escape(desc)).append("</description>\n");
+            sb.append("</agent>\n");
+            emitted++;
+        }
+        sb.append("</available_agents>\n");
+        return sb.toString();
+    }
+
+    /** R362 cap on the index block. The legacy skill
+     *  registry has no cap (each skill is small); an agent
+     *  body can be 5-10 KB so we cap aggressively to keep
+     *  the system-prompt bounded. */
+    public static final int MAX_AGENTS_IN_INDEX = 30;
 
     public synchronized int reload() {
         Map<String, Entry> next = new LinkedHashMap<>();

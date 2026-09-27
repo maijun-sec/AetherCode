@@ -14,6 +14,7 @@ import org.aethercode.tools.net.WebFetchTool;
 import org.aethercode.tools.net.WebSearchTool;
 import org.aethercode.tools.shell.BashTool;
 import org.aethercode.tools.task.AgentTool;
+import org.aethercode.tools.task.ListAgentsTool;
 import org.aethercode.tools.task.SubTodoWriteTool;
 import org.aethercode.tools.task.SubagentListTool;
 import org.aethercode.tools.task.SubagentStatusTool;
@@ -49,6 +50,12 @@ public final class StandardTools {
                 TodoWriteTool.build(),
                 SubTodoWriteTool.build(),
                 AgentTool.build(),
+                // R362: let the primary list available agents
+                // so it can discover agents beyond the bounded
+                // <available_agents> system-prompt block. The
+                // AgentTool's agent_name parameter takes a name
+                // from this list (or from SubagentRole fallback).
+                ListAgentsTool.build(),
                 // background subagent introspection. The
                 // model uses subagent_status(job_id) to poll
                 // a backgrounded spawn_agent, and subagent_list

@@ -80,6 +80,17 @@ public class AgentTool {
         props.put("role", Tools.stringProp(
                 "Prior round role preset: 'explore' (read-only), 'general-purpose' (default), " +
                 "'coder' (write-focused, no web)."));
+        // R362: agent_name — dispatch to a named agent from
+        // the AgentRegistry (typically ~/.aethercode/agents/<name>).
+        // Takes priority over `role` when both are supplied.
+        // Use list_agents tool to discover what's available.
+        // The full body of the named agent becomes the
+        // subagent's system-prompt preamble; the `role`
+        // tool-policy filter still applies (R362 does not
+        // introduce per-agent tool whitelists yet).
+        props.put("agent_name", Tools.stringProp(
+                "R362: name of an agent from AgentRegistry (~/.aethercode/agents/<name>). " +
+                "Use list_agents to discover. Takes priority over 'role' when both are supplied."));
         // background mode. If true, the call returns
         // immediately with a subagent job id; the subagent
         // runs on a daemon thread. Poll with subagent_status.
@@ -123,15 +134,57 @@ public class AgentTool {
         // old synchronous behaviour so existing flows don't
         // change.
         boolean background = Boolean.TRUE.equals(input.get("background"));
+        // R362: agent_name — dispatch to a named agent from
+        // the AgentRegistry (~/.aethercode/agents/<name>/agent.md).
+        // Takes priority over `role`: the user picks a SPECIFIC
+        // agent by name when they pass agent_name; `role` falls
+        // back to the SubagentRole builtin presets (explore /
+        // general-purpose / coder). The lookup chain is:
+        //   agent_name → AgentRegistry lookup → agent body
+        //   role        → SubagentRole.lookup() → preset body
+        //   neither     → general-purpose (default)
+        // The registry wins on collision (user customisation
+        // overrides the builtin per the R362 decision log).
+        String agentName = (String) input.get("agent_name");
+        org.aethercode.core.agent.AgentRegistry agentRegistry =
+                ctx.extra("agent_registry");
+        org.aethercode.core.agent.AgentRegistry.AgentMeta agentMeta =
+                (agentName != null && !agentName.isBlank() && agentRegistry != null)
+                        ? agentRegistry.getMeta(agentName).orElse(null)
+                        : null;
+        if (agentName != null && !agentName.isBlank() && agentMeta == null) {
+            // Don't fail-fast — fall through to role lookup.
+            // The legacy `role` parameter is the canonical escape
+            // hatch when a custom agent doesn't exist; surfacing
+            // "unknown agent" here would break backwards compat
+            // for any pre-R362 caller that passed role=general-purpose.
+            LOG.debug("agent_name '{}' not in AgentRegistry; falling back to role", agentName);
+        }
+        // Pre-load the agent body once so both the foreground
+        // single-shot path and the multi-step path use the same
+        // preamble. Null when the user picked a builtin role
+        // (the role's own systemPrompt is used instead).
+        String agentBody = (agentMeta != null && agentRegistry != null)
+                ? agentRegistry.getBody(agentName).orElse(null)
+                : null;
+
         // role preset. The role's system prompt is
         // prepended to the subagent's prompt as a
         // <system-reminder> block so the model knows which
         // role it's playing. The role is purely advisory at
         // the prompt layer — prior round wires it into a per-
         // subagent tool-pool filter at the engine level.
+        // R362: when the user picked agent_name, force the
+        // role to general-purpose (the named agent's body
+        // supplies the persona; role's tool filter is the
+        // only thing we keep — and we don't yet have
+        // per-agent tool whitelists so general-purpose is
+        // the safe default that gives the subagent the full
+        // tool pool).
         org.aethercode.core.agent.SubagentRole.RolePreset role =
-                org.aethercode.core.agent.SubagentRole.lookup(
-                        (String) input.get("role"));
+                (agentMeta != null) ? org.aethercode.core.agent.SubagentRole.GENERAL_PURPOSE
+                                    : org.aethercode.core.agent.SubagentRole.lookup(
+                                            (String) input.get("role"));
 
         // depth tracking. The current call's depth is stored in
         // the parent CallContext's extras (so it can be set by the
@@ -160,9 +213,9 @@ public class AgentTool {
         Task parent = currentParentTask(ctx);
         Task child = registry.create(TaskType.AGENT, prompt, parent == null ? null : parent.id());
         registry.updateStatus(child.id(), TaskStatus.RUNNING);
-        LOG.info("subagent {} started, parent={}, multi_step={}, background={}, role={}, depth={}/{}",
+        LOG.info("subagent {} started, parent={}, multi_step={}, background={}, role={}, agent={}, depth={}/{}",
                 child.id(), parent == null ? "(root)" : parent.id(), multiStep, background,
-                role.name(), currentDepth + 1, MAX_DEPTH);
+                role.name(), agentName == null ? "(none)" : agentName, currentDepth + 1, MAX_DEPTH);
 
         // background dispatch. We register the
         // job in SubagentRegistry BEFORE spawning the
@@ -188,10 +241,15 @@ public class AgentTool {
             // treat that as a single-session daemon and
             // show every event.
             String sessionId = currentSessionId(ctx);
+            // R362: the registry's "role" slot carries agent_name
+            // when the user picked a named agent (so the SubagentPanel
+            // shows "agent:aethercode-pm" instead of a bare role).
+            String registryRoleLabel = (agentName != null && !agentName.isBlank())
+                    ? "agent:" + agentName : role.name();
             String jobId = SubagentRegistry.instance().register(
-                    child.id(), prompt, role.name(), sessionId);
+                    child.id(), prompt, registryRoleLabel, sessionId);
             Thread t = new Thread(() -> runBackgroundJob(
-                    jobId, prompt, context, role, multiStep, child, ctx, currentDepth + 1),
+                    jobId, prompt, context, role, agentBody, multiStep, child, ctx, currentDepth + 1),
                     "subagent-" + jobId);
             t.setDaemon(true);
             // hand the worker thread to the registry
@@ -206,6 +264,7 @@ public class AgentTool {
             return Tool.ToolResult.of("subagent background job " + jobId
                     + " started (task " + child.id()
                     + ", role=" + role.name()
+                    + ", agent=" + (agentName == null ? "(none)" : agentName)
                     + ", multi_step=" + multiStep + "). "
                     + "Poll with subagent_status(job_id=\"" + jobId + "\").");
         }
@@ -215,9 +274,9 @@ public class AgentTool {
                 // Foreground multi-step — no partial
                 // sink (the subagent is foregrounded
                 // and the result returns at once).
-                return callMultiStep(prompt, context, role, child, ctx, currentDepth + 1, null);
+                return callMultiStep(prompt, context, role, agentBody, child, ctx, currentDepth + 1, null);
             } else {
-                return callSingleShot(prompt, context, role, child, chatClient, null);
+                return callSingleShot(prompt, context, role, agentBody, child, chatClient, null);
             }
         } catch (Throwable t) {
             registry.updateStatus(child.id(), TaskStatus.FAILED);
@@ -236,6 +295,7 @@ public class AgentTool {
     private static void runBackgroundJob(String jobId,
                                           String prompt, String context,
                                           org.aethercode.core.agent.SubagentRole.RolePreset role,
+                                          String agentBody,
                                           boolean multiStep,
                                           Task child,
                                           Tool.CallContext ctx, int newDepth) {
@@ -252,9 +312,9 @@ public class AgentTool {
         try {
             Tool.ToolResult r;
             if (multiStep) {
-                r = callMultiStep(prompt, context, role, child, ctx, newDepth, partialSink);
+                r = callMultiStep(prompt, context, role, agentBody, child, ctx, newDepth, partialSink);
             } else {
-                r = callSingleShot(prompt, context, role, child, chatClient, partialSink);
+                r = callSingleShot(prompt, context, role, agentBody, child, chatClient, partialSink);
             }
             if (r == null) {
                 SubagentRegistry.instance().markFailed(jobId, "subagent returned null result");
@@ -304,6 +364,7 @@ public class AgentTool {
      *  registry implementation must be thread-safe (it is). */
     private static Tool.ToolResult callSingleShot(String prompt, String context,
                                                   org.aethercode.core.agent.SubagentRole.RolePreset role,
+                                                  String agentBody,
                                                   Task child, ChatClient chatClient,
                                                   java.util.function.Consumer<String> partialSink) {
         String systemPrompt = "You are a subagent. Complete the user's task concisely. "
@@ -316,6 +377,17 @@ public class AgentTool {
             // model knows which role it's playing even in
             // single-shot mode.
             systemPrompt = systemPrompt + "\n\n" + role.systemPrompt();
+        }
+        // R362: the named agent's body (loaded from AgentRegistry
+        // when agent_name was supplied) is appended LAST so it
+        // carries the most weight — it carries the user's persona
+        // overrides on top of the generic role preamble. The
+        // check above (agentBody non-null) implies role was
+        // forced to GENERAL_PURPOSE, but the role preamble is
+        // still useful as a "you are a subagent" reminder.
+        if (agentBody != null && !agentBody.isBlank()) {
+            systemPrompt = systemPrompt + "\n\n<agent name=\"" + escapeAttr("subagent")
+                    + "\">\n" + agentBody.strip() + "\n</agent>";
         }
         List<Message> msgs = List.of(Message.userText(prompt));
         StringBuilder out = new StringBuilder();
@@ -360,6 +432,7 @@ public class AgentTool {
      *  loop progresses. Foreground callers pass null. */
     private static Tool.ToolResult callMultiStep(String prompt, String context,
                                                   org.aethercode.core.agent.SubagentRole.RolePreset role,
+                                                  String agentBody,
                                                   Task child, Tool.CallContext ctx, int newDepth,
                                                   java.util.function.Consumer<String> partialSink) {
         org.aethercode.core.agent.Subagent.SubagentEngine engine = ctx.extra("subagent_engine");
@@ -386,6 +459,17 @@ public class AgentTool {
                 promptSb.append("<system-reminder role=\"subagent\" name=\"")
                         .append(escapeAttr(role.name())).append("\">\n");
                 promptSb.append(role.systemPrompt()).append("\n");
+                promptSb.append("</system-reminder>\n\n");
+            }
+            // R362: if the caller passed agent_name=..., inject
+            // the named agent's body as a <system-reminder>
+            // block AFTER the role preamble. Two reminders,
+            // ordered role-then-agent, so the agent's persona
+            // (the more specific guidance) wins on conflict.
+            if (agentBody != null && !agentBody.isBlank()) {
+                promptSb.append("<system-reminder role=\"subagent-agent\" name=\"")
+                        .append(escapeAttr(role.name())).append("\">\n");
+                promptSb.append(agentBody.strip()).append("\n");
                 promptSb.append("</system-reminder>\n\n");
             }
             promptSb.append(prompt);

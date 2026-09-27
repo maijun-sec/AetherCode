@@ -77,6 +77,12 @@ public class StreamingToolExecutor {
      *  spawn subagents from inside the engine path. Set by
      *  {@code AetherCodeEngine}; null in unit-test contexts. */
     private org.aethercode.core.llm.ChatClient chatClient;
+    /** R362: optional AgentRegistry so {@code spawn_agent(agent_name=...)}
+     *  can look up custom agents under {@code ~/.aethercode/agents/}.
+     *  Set by {@code AetherCodeEngine}; null in unit-test contexts
+     *  that don't wire one (the tool falls back to SubagentRole
+     *  builtin presets in that case). */
+    private org.aethercode.core.agent.AgentRegistry agentRegistry;
     /** optional supplier for the current per-query
      *  {@code WorkingMemoryBuffer}. prior round created the lifecycle
      *  that owns the buffer, but no consumer wrote to it; this
@@ -180,6 +186,13 @@ public class StreamingToolExecutor {
         return this;
     }
 
+    /** R362: stash the agent registry so {@code spawn_agent(agent_name=...)}
+     *  can look up custom agents. Returns this for chaining. */
+    public StreamingToolExecutor withAgentRegistry(org.aethercode.core.agent.AgentRegistry r) {
+        this.agentRegistry = r;
+        return this;
+    }
+
     /** stash the SubagentEngine so multi-step {@code AgentTool}
      *  can spawn recursive subagents that re-enter the engine loop. */
     public StreamingToolExecutor withSubagentEngine(org.aethercode.core.agent.Subagent.SubagentEngine e) {
@@ -222,6 +235,10 @@ public class StreamingToolExecutor {
         if (chatClient != null) extras.put("chat_client", chatClient);
         if (subagentEngine != null) extras.put("subagent_engine", subagentEngine);
         if (currentSubTaskId != null) extras.put("subTaskId", currentSubTaskId);
+        // R362: agent registry so spawn_agent(agent_name=...) can
+        // resolve custom agents registered under ~/.aethercode/agents/.
+        // Null is fine — the tool falls back to SubagentRole builtin.
+        if (agentRegistry != null) extras.put("agent_registry", agentRegistry);
         // working memory buffer (boxed as Object to avoid a
         // hard dep on the memory module). Stash it under the key the
         // wm_* tools look up.

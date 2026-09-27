@@ -41,6 +41,15 @@ public class SystemPrompt {
      *  so the model reads "design before coding" before reading the existing
      *  Phase 1-4 guidance. Empty by default for callers that don't opt in. */
     private final String designFirst;
+    /** R362: agents index block. Lists every agent the primary can
+     *  dispatch to via spawn_agent(agent_name=...). Rendered right after
+     *  rules so the model reads "what agents I can delegate to" before
+     *  any other context. Full agent bodies are NOT inlined (would
+     *  bloat the prompt); the name + description index is enough for
+     *  the model to know who exists. Loaded on demand by
+     *  AgentRegistry.getBody when spawn_agent is invoked. Empty by
+     *  default (no agents registered). */
+    private final String agents;
 
     private SystemPrompt(Builder b) {
         this.identity = b.identity;
@@ -51,6 +60,7 @@ public class SystemPrompt {
         this.planMode = b.planMode;
         this.rules = b.rules;
         this.designFirst = b.designFirst;
+        this.agents = b.agents;
     }
 
     public String render() {
@@ -88,6 +98,11 @@ public class SystemPrompt {
         appendWithSource(sb, sections, "identity", identity,
                 identity == null || identity.equals(defaultId) ? "default" : "builder");
         appendWithSource(sb, sections, "rules", rules, sourceForRules(rules));
+        // R362: agents index goes right after rules — the model
+        // should see "here's what you can delegate to" before any
+        // other context. Empty string means the section is omitted
+        // entirely (no agents registered).
+        appendWithSource(sb, sections, "agents", agents, "agent-registry");
         appendWithSource(sb, sections, "environment", environment, "builder");
         appendWithSource(sb, sections, "tooling", tooling, "builder");
         // design-first goes BEFORE workflow so the model reads the
@@ -151,6 +166,8 @@ public class SystemPrompt {
         // design-first section. Default to the built-in prompt; callers
         // that want the legacy behaviour should pass an empty string.
         private String designFirst = defaultDesignFirst();
+        /** R362: agents index block. Rendered right after rules so the primary can see "what agents I can delegate to" before any other context. The full agent bodies are not inlined (loaded on demand via AgentRegistry.getBody when spawn_agent is called). Empty by default. */
+        private String agents = "";
 
         public Builder identity(String s) { this.identity = s; return this; }
         public Builder environment(String s) { this.environment = s; return this; }
@@ -162,6 +179,9 @@ public class SystemPrompt {
         public Builder rules(String s) { this.rules = s == null ? "" : s; return this; }
         /** install a custom design-first section. Empty / null clears it
          *  (the prompt then behaves like the legacy workflow). */
+    /** R362: install the user-supplied agents index block. The block lists every agent the primary can dispatch to via spawn_agent(agent_name=...). The full agent bodies are NOT inlined (they would bloat the prompt); only name + description are rendered. Empty / null clears it (the prompt omits the <available_agents> section when there are no agents to dispatch to).
+     *  The block is typically populated by the engine's defaultSystemPrompt via AgentRegistry.renderIndexBlock(). */
+    public Builder agents(String s) { this.agents = s == null ? "" : s; return this; }
         public Builder designFirst(String s) { this.designFirst = s == null ? "" : s; return this; }
 
         public Builder environmentFrom(Path cwd, String os) {

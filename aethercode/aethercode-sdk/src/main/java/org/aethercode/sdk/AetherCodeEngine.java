@@ -808,6 +808,13 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // pass the engine itself (it implements SubagentEngine)
         // so multi-step AgentTool can re-enter the full engine loop.
         this.streamingToolExecutor.withSubagentEngine(this);
+        // R362: pass the agent registry so spawn_agent(agent_name=...)
+        // can look up custom agents under ~/.aethercode/agents/.
+        // Null when the builder didn't supply an agents dir — the tool
+        // falls back to SubagentRole builtin in that case.
+        if (this.agentRegistry != null) {
+            this.streamingToolExecutor.withAgentRegistry(this.agentRegistry);
+        }
         // install a working-memory supplier so the wm_* tools
         // can find the current per-query buffer. The supplier is
         // looked up on every call (the buffer changes per query).
@@ -1020,8 +1027,57 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 .environmentFrom(b.cwd, System.getProperty("os.name"))
                 .toolingFrom(b.tools)
                 .rules(rules)
+                .agents(agentsBlock(b))
                 .build()
                 .render();
+    }
+
+    /** R362: render the agent-index block the SystemPrompt builder expects.
+     *  Returns the empty string when no agent registry is wired (the engine
+     *  was built without --agents-dir or no agents are present), so callers
+     *  can {@code .agents(agentsBlock())} unconditionally.
+     *
+     *  <p>The block lists every agent the primary can dispatch to via
+     *  {@code spawn_agent(agent_name=...)}. Only name + description are
+     *  rendered — the full agent body would bloat the prompt (a single
+     *  agent.md can be 5-10 KB). The body is loaded on demand by
+     *  {@code AgentRegistry.getBody(name)} when spawn_agent is invoked.
+     *
+     *  <p>The block is regenerated on every call so the latest registry
+     *  snapshot is reflected. The registry itself caches its entries (with
+     *  a 10s background re-scan), so this is cheap.
+     */
+    private static String agentsBlock(Builder b) {
+        // Read from the BUILDER's registry slot, not the
+        // engine's instance field. The engine's instance
+        // field is set during construction (this.agentRegistry
+        // = b.agentRegistry) but the static method that builds
+        // the SystemPrompt can run BEFORE the constructor's
+        // body finishes, so it must consult the builder's
+        // pre-construction state. When the builder didn't
+        // supply a registry but supplied an agentsDir, the
+        // builder's agentRegistry field is null — fall back
+        // to creating one on the fly so the block matches
+        // what the constructor would build.
+        if (b == null) return "";
+        org.aethercode.core.agent.AgentRegistry reg = b.agentRegistry;
+        if (reg == null && b.agentsDir != null) {
+            try {
+                reg = new org.aethercode.core.agent.AgentRegistry(
+                        b.agentsDir, b.agentReloadInterval);
+            } catch (Throwable t) {
+                LOG.debug("R362: agentsDir AgentRegistry build failed: {}", t.getMessage());
+                return "";
+            }
+        }
+        if (reg == null) return "";
+        try {
+            String block = reg.renderIndexBlock();
+            return block == null ? "" : block;
+        } catch (Throwable t) {
+            LOG.debug("R362: agentRegistry.renderIndexBlock() failed: {}", t.getMessage());
+            return "";
+        }
     }
 
     /** prior round: rebuild the SystemPrompt object (not just the
@@ -1036,6 +1092,7 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 .environmentFrom(b.cwd, System.getProperty("os.name"))
                 .toolingFrom(b.tools)
                 .rules(rules)
+                .agents(agentsBlock(b))
                 .build();
     }
 
@@ -3669,6 +3726,7 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 .toolingFrom(b.tools)
                 .rules(rules)
                 .designFirst(designFirst)
+                .agents(agentsBlock(b))
                 .build();
     }
 
