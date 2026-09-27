@@ -1,8 +1,18 @@
 # R362 — Multi-Agent: primary ↔ subagent + dynamic agent creation
 
 **Date:** 2026-09-27
-**Status:** PLANNING (3 rounds, design complete, awaiting user sign-off to start coding)
+**Status:** Round 1 ✅ SHIPPED · Round 2 ✅ SHIPPED · Round 3 PLANNED
 **Scope:** aethercode (Java daemon + tools) + aethercode-desktop (UI + RPC bridge)
+
+---
+
+## Round 状态
+
+| Round | 内容 | Commit | Release |
+|-------|------|--------|---------|
+| 1 | spawn 接通 AgentRegistry + `<available_agents>` block + `list_agents` tool + builtin 迁移 | `8bfe022` (aethercode) · `8f1507c` (desktop) | `aethercode-0.3.0-r362.1.zip` |
+| 2 | `create_agent` / `update_agent` / `delete_agent` 三个 tool（LLM 直接调） | Round 2 commit | `aethercode-0.3.0-r362.2.zip` |
+| 3 | Retry + Watchdog + SubagentPanel Retry/Cancel 按钮 + `subagent_retry` / `subagent_cancel` tool | (pending) | `aethercode-0.3.0-r362.3.zip` |
 
 ---
 
@@ -463,3 +473,208 @@ public static final String NAME = "subagent_cancel";
 **保留的可选 confirm 机制**（不强制启用）：
 - 环境变量 `AETHERCODE_CREATE_AGENT_REQUIRE_CONFIRM=1` 让用户开启严格模式
 - 默认 false（不打扰）
+
+---
+
+## 附录 B — Round 2 执行记录 (2026-09-27)
+
+Round 2 把 Round 1 已经在 `AgentRegistry` 里写好的 create/update/delete 方法暴露给 LLM。
+
+### B.1 已有且复用（无需重写）
+
+| 组件 | 状态 | 备注 |
+|------|------|------|
+| `AgentRegistry.create/update/delete/validateName` | ✅ 已在 R286 落地 | Round 1 设计文档里的"写方法已存在但未暴露" — 本轮正是把 LLM 调用入口补上 |
+| `AetherCodeMethods.agentCreate/agentUpdate/agentDelete/reloadAgents` | ✅ 已在 R286 注册 | wire 名就是 `createAgent` / `updateAgent` / `deleteAgent` / `reloadAgents` |
+| `AetherCodeMethods.getAgentBody`（含 description/displayName/model/variant frontmatter） | ✅ 已在 R286 | 编辑既有 agent 时 prefilled 用 |
+| `aethercode-desktop/src/components/AgentsPanel.tsx` + `AgentEditor.tsx` | ✅ R286 已经支持 UI CRUD | `<media>` 文件流：AgentEditor → store.createAgent/updateAgent/deleteAgent → rpc → daemon |
+| `aethercode-desktop/src/store/index.ts` 的 `createAgent/updateAgent/deleteAgent/refreshAgents/fetchAgentBody` | ✅ 已在 | |
+| `aethercode-desktop/src/lib/methods.ts` 的 `rpc.createAgent/updateAgent/deleteAgent/reloadAgents/getAgentBody/listAgents` | ✅ 已在 | |
+
+Round 2 的真正工作量是 **LLM-callable tool 层 + Round 1 留下来的 `<available_agents>` 系统提示块** 串联起来。
+
+### B.2 Round 2 新增的 Java 代码
+
+#### B.2.1 `CreateAgentTool.java`（新文件）
+
+```java
+public static final String NAME = "create_agent";
+public static final int MAX_BODY_BYTES = 64 * 1024;     // 64 KB body cap
+public static final String STRICT_CONFIRM_ENV = "AETHERCODE_CREATE_AGENT_REQUIRE_CONFIRM";
+
+// 参数：name (required), description?, displayName?, model?, variant?, body (required)
+// 流程：
+//   1. isStrictModeStatic() → strict mode 拒绝 + 让 LLM 先 ask_user_question
+//   2. ctx.extra("agent_registry") null → 报错（提示 --agents-dir）
+//   3. name / body 必填检查
+//   4. body size ≤ MAX_BODY_BYTES
+//   5. AgentRegistry.validateName(name) — 路径穿越 / leading dot / 长度
+//   6. registry.create(name, desc, displayName, model, variant, body)
+//   7. 返回 ToolResult.of 包含 path 让 LLM/UI 知道 agent 落在哪里
+// 关键行为：
+//   - 默认 permissive（直接落盘）
+//   - strict mode (env=1) 拒绝并告诉 LLM 调 ask_user_question 或用 UI
+//   - 不 emit permission_request — 跟 chat 修订的"不打扰"政策一致
+//   - body 用 atomic write（registry.writeAgentMd），崩溃半写不会留下损坏文件
+```
+
+#### B.2.2 `UpdateAgentTool.java`（新文件）
+
+```java
+public static final String NAME = "update_agent";
+// 跟 CreateAgentTool 共享 isStrictModeStatic / MAX_BODY_BYTES / STRICT_CONFIRM_ENV
+// 流程：跟 create 几乎一样；多一步 registry.getMeta(name).isEmpty() pre-check
+//   → 失败-fast "agent 'X' does not exist"（不是 silently 写入新文件）
+// body 是 wholesale replace —— 没有 patch / merge；要做小改就让 LLM 先 getAgentBody
+// 结果 ToolResult.of 包含"In-flight subagents NOT interrupted"提示
+```
+
+#### B.2.3 `DeleteAgentTool.java`（新文件）
+
+```java
+public static final String NAME = "delete_agent";
+// 共享 strict mode / name validation / registry extra 检查
+// 流程：registry.getMeta(name) → 拿到 path → registry.delete(name)
+// 失败-fast "agent 'X' does not exist"
+// 结果 ToolResult.of 包含"in-flight subagents NOT interrupted"提示
+```
+
+#### B.2.4 `StandardTools.java` 改动
+
+- 加 `import CreateAgentTool / UpdateAgentTool / DeleteAgentTool`
+- 在 `all()` 里把三个新 tool 加到 `ListAgentsTool.build()` 旁边 —— 共用一个 `<available_agents>` 簇
+
+### B.3 Round 2 测试
+
+| 测试类 | 测试数 | 覆盖 |
+|--------|--------|------|
+| `CreateAgentToolR362Test` | 12 | happy path + 6 个 validation failure + idempotent overwrite + 严格模式 + missing registry + 空 body 接受 + body 边界 64KB |
+| `UpdateAgentToolR362Test` | 9 | happy path + 失败-fast on unknown + 不留幻影文件 + missing name + path traversal + 超出 body + missing registry + 空 frontmatter 字段省略 + spawn_agent 可见性 |
+| `DeleteAgentToolR362Test` | 11 | happy path + 失败-fast + 不动文件系统 + missing name + empty name + path traversal + missing registry + 二次 delete 失败 + 不影响其它 agent + 删 sibling 文件 + 提示 in-flight subagent |
+| **合计** | **32** | |
+
+**额外测试 hooks**:
+- `CreateAgentTool.isStrictModeStatic()` 是 package-private static —— 其他 tool 复用 + 测试可以直接 assert 当 env=unset 时走 permissive branch
+
+### B.4 政策实施细节（chat 2026-09-27 修订版）
+
+| 场景 | LLM 行为 | tool 行为 | 用户感受 |
+|------|----------|-----------|----------|
+| 用户："帮我建一个 X agent" | (可选) 先 `ask_user_question` 展示 preview → 再 `create_agent` | 直接落盘 | 看到新 agent 出现在 picker |
+| 用户："我需要并发处理 Y，建个 Z 专家" | 直接 `create_agent` 不打扰 | 直接落盘 | agent 已可用，无 modal |
+| 用户没要求，primary 自己判断需要持久化 | 直接 `create_agent` | 直接落盘 | 不打扰 |
+| `AETHERCODE_CREATE_AGENT_REQUIRE_CONFIRM=1` 部署 | 必须先 `ask_user_question` | 拒绝 + 提示 | 看到 confirm modal（UI 层） |
+| `update_agent` 不存在 agent | LLM 改用 `create_agent` | 失败-fast + 提示 | 干净信号 |
+| `delete_agent` 不存在 agent | LLM 意识到 typo | 失败-fast + 提示 | 干净信号 |
+| 删除后 in-flight subagent | LLM 已知"不打断"，可建议用户等完成 | 返回 hint | 用户决定 |
+
+**为什么 strict mode 不在 tool 内弹窗**：
+- tool 引擎里没有 UI 通道；permission_request 要走额外的 JsonRpcPermissionPrompter round trip
+- 用户已表达"任务驱动场景不要打扰" — strict mode 是 opt-in 的严格化开关
+- chat 用户表达"default 不用 confirm；如果用户主动给'个性'，可以让用户补完（建议预览但不强制 confirm）"
+- LLM 自己决定什么时候调 `ask_user_question` —— 这是最干净的语义
+
+### B.5 兼容性 + 风险
+
+| 项 | 影响 |
+|----|------|
+| `create_agent` / `update_agent` / `delete_agent` 是纯 additive tool | 老 client 看不到这三个 tool 名；不影响 R361 / R362 round 1 / 旧 desktop |
+| Strict mode 通过 env var 切 | 默认 unset → permissive；想严格只需 set env，无需改代码 |
+| AgentRegistry 的 create / update / delete 已存在 | Round 2 没动 AgentRegistry 的代码（只调现成方法）|
+| 删除不可逆（hard delete） | 用户能 git / IDE history 找回；Round 1 决策文档论证过 |
+| 失败 / missing registry 的 tool error message 都点向 `--agents-dir` 启动配置 | 用户/CLI 排障路径清晰 |
+
+---
+
+## 附录 C — Round 3 计划（详细设计，代码待写）
+
+### C.1 `SubagentRegistry.retry(jobId)` 方法
+
+```java
+// SubagentRegistry.java
+public synchronized SubagentJob retry(String jobId) {
+    SubagentJob j = byId.get(jobId);
+    if (j == null) throw new IllegalArgumentException("unknown jobId: " + jobId);
+    if (j.status != Status.FAILED)
+        throw new IllegalStateException("can only retry FAILED jobs (current=" + j.status + ")");
+    j.status = Status.PENDING;
+    j.error = "";
+    j.startedAtMs = System.currentTimeMillis();
+    j.finishedAtMs = 0;
+    j.partial = "";
+    return j;  // caller must re-attach a thread + start
+}
+```
+
+### C.2 Watchdog 集成（默认 60s timeout）
+
+```java
+// SubagentRegistry.java — register(...)
+public synchronized String register(String parentTaskId, String prompt, String role, String sessionId) {
+    String jobId = nextId();
+    long timeoutMs = Long.parseLong(
+        System.getenv().getOrDefault("AETHERCODE_SUBAGENT_TIMEOUT_MS", "60000"));
+    Watchdog w = Watchdog.create(jobId, timeoutMs, () -> {
+        markFailed(jobId, "watchdog timeout after " + timeoutMs + "ms");
+        // best-effort: interrupt the attached thread
+        Thread t = threadById.get(jobId);
+        if (t != null) t.interrupt();
+    });
+    SubagentJob j = new SubagentJob(jobId, parentTaskId, prompt, role, sessionId,
+        Status.PENDING, 0, 0, "", null, w);
+    byId.put(jobId, j);
+    return jobId;
+}
+// on COMPLETED / CANCELLED → w.stop() 必须先于 markCompleted 避免 race
+```
+
+### C.3 `AgentTool.callMultiStep` retry 包装
+
+```java
+// AgentTool.java
+private static Tool.ToolResult callMultiStep(...) {
+    return RetryHelper.run(() -> doCallMultiStep(...),
+        RetryPolicy.DEFAULT,  // 3 attempts, 1s + 2s backoff
+        (attempt, err) -> LOG.warn("multi_step subagent attempt {} failed: {}", attempt, err));
+}
+```
+
+### C.4 SubagentRetryTool + SubagentCancelTool（新文件）
+
+```java
+// SubagentRetryTool.java
+public static final String NAME = "subagent_retry";
+// 参数：job_id (required)
+// 流程：
+//   1. SubagentRegistry.instance().retry(job_id) → reset job to PENDING
+//   2. 重新 attach thread + 调 runBackgroundJob(...)
+//   3. fireChange(new RUNNING event)
+// 返回 "subagent <job_id> retried, status=PENDING/RUNNING"
+
+// SubagentCancelTool.java
+public static final String NAME = "subagent_cancel";
+// 参数：job_id (required), reason? (optional)
+// 调 SubagentRegistry.instance().cancel(job_id, reason) — 已存在
+// thread.interrupt() 触发 chat-client stream 中断
+// 返回 "subagent <job_id> cancelled: <reason>"
+```
+
+### C.5 SubagentPanel Retry / Cancel 按钮
+
+- `aethercode-desktop/src/components/SubagentPanel.tsx`
+  - 已有 job 行：状态 FAILED → "Retry" 按钮 → 调 `rpc.subagentRetry({jobId})`
+  - 已有 job 行：状态 RUNNING → "Cancel" 按钮 → 调 `rpc.subagentCancel({jobId, reason})`
+  - 状态 COMPLETED → 显示 result + 折叠 body
+- `aethercode-desktop/src/store/index.ts`
+  - 加 `retrySubagent(jobId)` + `cancelSubagent(jobId, reason)` action
+- `aethercode-desktop/src/lib/methods.ts`
+  - 加 `rpc.subagentRetry({jobId})` + `rpc.subagentCancel({jobId, reason})` 包装
+
+### C.6 RPC + tests
+
+| RPC | tool | 测试 |
+|-----|------|------|
+| `subagentRetry({jobId})` | `subagent_retry` | `SubagentRegistryR362RetryTest`（3 cases） |
+| `subagentCancel({jobId, reason})` | `subagent_cancel` | `SubagentRegistryR362WatchdogTest`（3 cases） |
+| Watchdog integration | (transparent) | `AgentToolR362RetryTest`（2 cases — retry 成功 / 失败 3 次 FAILED） |
+| UI 按钮 | (UI) | `SubagentPanel.test.tsx`（2 cases — FAILED 显 Retry / RUNNING 显 Cancel） |
