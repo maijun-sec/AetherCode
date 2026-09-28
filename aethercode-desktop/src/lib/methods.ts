@@ -696,31 +696,16 @@ export class AetherCodeRpc {
    *  session cannot be deleted (the daemon rejects with
    *  IllegalStateException). */
   deleteSession(sessionId: string): Promise<{ ok: true; sessionId: string; removed: boolean }> { return this.call('deleteSession', { sessionId }); }
-  /** R362: list every agent the primary can dispatch to via
-   *  spawn_agent(agent_name=...). The daemon reads
-   *  {@code ~/.aethercode/agents/<name>/agent.md} on startup and
-   *  returns the metadata here. The desktop's store caches the
-   *  list so the Settings panel / Agent Manager can show it
-   *  without an extra round-trip per render.
-   *
-   *  <p>Each agent entry has {@code name}, {@code description},
-   *  {@code displayName}, {@code model} (optional),
-   *  {@code variant} (optional — R286 quality preset),
-   *  {@code lastModifiedMs}. The full agent body is NOT in the
-   *  list response — call {@link #getAgentBody} to fetch one.
-   *
-   *  <p>Empty registry returns
-   *  {@code { ok: true, count: 0, agents: [] }}. */
-  listAgents(): Promise<{ ok: boolean; count: number; agents: AgentInfo[]; error?: string }> {
-    return this.call('listAgents');
-  }
-  /** R362: fetch the full agent.md body for one agent. Returns
-   *  {@code { ok, name, body, path, lastModifiedMs }}.
-   *  The body is the user's authored system prompt — it can be
-   *  5-10 KB so we don't inline it in listAgents. */
-  getAgentBody(name: string): Promise<{ ok: boolean; name: string; body: string; path?: string; lastModifiedMs?: number; error?: string }> {
-    return this.call('getAgentBody', { name });
-  }
+  // listAgents / getAgentBody are defined further below in
+  // the agent picker section (line ~935). The block above
+  // used to declare them with the narrower R362 round 1
+  // shape (AgentInfo + { ok: boolean, error?: string });
+  // R362 round 2 extended them to AgentMeta (which carries
+  // R286's variant field) and changed ok to the literal
+  // `true`. The narrower declaration was kept around as
+  // a "remove before R373 release" task; this comment
+  // marks it as done. The remaining declaration below is
+  // the canonical one.
   // listTasks / createTask / updateTaskStatus
   // are defined in the prior round block below (line ~500).
   // The original legacy-3 listTasks shape returned
@@ -932,7 +917,7 @@ export class AetherCodeRpc {
   // picker (used by the workflow editor's "agent" step) and
   // previews the body in a modal before wiring the agent
   // into a workflow.
-  listAgents(): Promise<{ ok: true; count: number; agents: AgentMeta[] }> {
+  listAgents(): Promise<{ ok: true; count: number; agents: AgentInfo[] }> {
     return this.call('listAgents');
   }
   getAgentBody(name: string): Promise<{
@@ -1508,6 +1493,43 @@ export class AetherCodeRpc {
   subagentDashboard(): Promise<SubagentDashboardSnapshot> {
     return this.call('subagentDashboard', null);
   }
+
+  // R374.2: update a per-agent concurrency quota. The
+  // dashboard card's "quota N" footer opens an editor
+  // that calls this RPC. Quota=0 resets to the
+  // limiter's DEFAULT_QUOTA (= 1).
+  //
+  // Response shape mirrors the backend's
+  // SubagentSetQuota result so the UI can re-render
+  // the card without a second round-trip:
+  //   { ok, quota, previousQuota, inFlight, role }
+  subagentSetQuota(opts: {
+    role: string;
+    quota: number;
+  }): Promise<SubagentSetQuotaResult> {
+    return this.call('subagentSetQuota', {
+      role: opts.role,
+      quota: opts.quota,
+    });
+  }
+
+  // R374.3: clear the circuit breaker for a single
+  // agent. Wired to the dashboard's "Reset circuit"
+  // button (visible only on OPEN / HALF_OPEN cards).
+  // The user has fixed the underlying cause and
+  // wants to skip the 60s cooldown.
+  //
+  // Returns:
+  //   { ok, role, cleared } where cleared=false
+  //   means the role had no breaker slot (the
+  //   dashboard treats this as a no-op, not an error).
+  subagentResetCircuit(opts: {
+    role: string;
+  }): Promise<SubagentResetCircuitResult> {
+    return this.call('subagentResetCircuit', {
+      role: opts.role,
+    });
+  }
 }
 
 // R373: response shape for subagentDashboard.
@@ -1547,6 +1569,35 @@ export interface SubagentDashboardSnapshot {
   asOfMs: number;
   totals: SubagentDashboardTotals;
   agents: SubagentAgentMetric[];
+}
+
+// R374.2: response shape for subagentSetQuota. The
+// dashboard card re-renders directly from this — no
+// second dashboardMetrics() poll needed.
+export interface SubagentSetQuotaResult {
+  ok: true;
+  role: string;
+  /** the new effective quota (clamped to 32 if the
+   *  caller asked for more; set to DEFAULT_QUOTA=1 if
+   *  the caller asked for 0). */
+  quota: number;
+  previousQuota: number;
+  /** current in-flight count for the role — useful for
+   *  the dashboard to show "X/Y concurrent" in the
+   *  card footer next to the new quota pill. */
+  inFlight: number;
+}
+
+// R374.3: response shape for subagentResetCircuit. The
+// `cleared` flag distinguishes "the breaker had a slot
+// and we cleared it" from "the role has never been
+// tripped (no slot)" — both are non-error outcomes, but
+// the dashboard uses cleared to decide whether to show
+// a "✓ circuit reset" confirmation toast.
+export interface SubagentResetCircuitResult {
+  ok: true;
+  role: string;
+  cleared: boolean;
 }
 
 export const rpc = new AetherCodeRpc();

@@ -1,6 +1,7 @@
 package org.aethercode.tools.task;
 
 import org.aethercode.core.tool.Tool;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -15,6 +16,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * returned as text.
  */
 class SubagentStatusToolTest {
+
+    // R374.2: clear the concurrency limiter so a prior
+    // test's role slots don't trip the quota=1 default.
+    @BeforeEach
+    void resetLimiter() {
+        SubagentRegistry.instance().concurrencyLimiter().reset();
+    }
 
     @Test
     void call_missingJobIdIsError() {

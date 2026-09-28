@@ -79,6 +79,16 @@ public final class SubagentRegistry {
      *  {@link SubagentCircuitBreaker#isOpen(String)}. */
     private final SubagentCircuitBreaker circuitBreaker =
             new SubagentCircuitBreaker();
+    // R374.2: per-agent concurrency limiter. Each agent
+    // name has a configurable quota (default 1 = serial);
+    // register() acquires a token before adding the job
+    // to the running set, and the natural markCompleted /
+    // markFailed / markCancelled transitions release it.
+    // The setQuota() setter is wired to the JSON-RPC layer
+    // (subagentSetQuota) so the desktop's per-agent
+    // dashboard can adjust the limit at runtime.
+    private final SubagentConcurrencyLimiter concurrencyLimiter =
+            new SubagentConcurrencyLimiter();
 
     /** R372.2: optional handle the engine / methods
      *  layer can swap in (e.g. with a custom threshold
@@ -102,6 +112,65 @@ public final class SubagentRegistry {
      *  caller can query the state without re-constructing
      *  a separate breaker. */
     public SubagentCircuitBreaker circuitBreaker() { return circuitBreaker; }
+
+    // R374.2: concurrency limiter accessor + quota setter.
+    // Returned by reference so the dashboard can call
+    // snapshot(name) for the per-card "X / quota" display;
+    // the setQuota(name, n) setter is wired to the
+    // subagentSetQuota JSON-RPC method. The limiter is
+    // shared with the registry's spawn path so quota
+    // changes are immediately effective for the next
+    // register() call.
+    public SubagentConcurrencyLimiter concurrencyLimiter() {
+        return concurrencyLimiter;
+    }
+
+    /** R374.2: update the per-agent concurrency quota.
+     *  Default is 1 (serial — the legacy behaviour).
+     *  Setting it to a value smaller than the number of
+     *  in-flight jobs does NOT kill the in-flight jobs;
+     *  future register() calls simply refuse until
+     *  enough have completed to drop below the new quota.
+     *
+     *  <p>The setter is fire-and-forget from the
+     *  registry's perspective; the previous quota is
+     *  captured by the RPC layer (which reads the
+     *  limiter's snapshot before + after the call) so
+     *  it can echo it back to the UI. A non-positive
+     *  {@code n} resets to the default (DEFAULT_QUOTA =
+     *  1) — useful for "remove the custom override"
+     *  semantics. */
+    public void setQuota(String role, int n) {
+        concurrencyLimiter.setQuota(role, n);
+    }
+
+    /** R374.2: reset the concurrency limiter. Test-only
+     *  helper — production code should not call this.
+     *  Exposed so cross-module tests (e.g.
+     *  aethercode-protocol's AetherCodeMethodsR374Test)
+     *  can return the singleton to a known state
+     *  without pulling in the SubagentConcurrencyLimiter
+     *  type. */
+    public void resetConcurrencyLimiter() {
+        concurrencyLimiter.reset();
+    }
+
+    /** R374.2: peek the current quota for a role. Returns
+     *  the default (1) if the user has never set a
+     *  custom value. */
+    public int quotaFor(String role) {
+        return concurrencyLimiter.snapshot(role).quota();
+    }
+
+    /** R374.3: clear the circuit breaker for one agent.
+     *  Wired to the subagentResetCircuit JSON-RPC
+     *  method so the dashboard's "Reset circuit"
+     *  button can short-circuit the 60s cooldown when
+     *  the user has fixed the underlying cause.
+     *  Unknown roles are a no-op (returns false). */
+    public boolean resetCircuit(String role) {
+        return circuitBreaker.reset(role);
+    }
 
     /** env-var name the user can set to extend or
      *  shorten the default watchdog timeout. */
@@ -248,6 +317,24 @@ public final class SubagentRegistry {
          *  blow the token budget long before the
          *  wall-clock timeout fires. */
         public volatile long maxTokens;
+        // R374.2: token id returned by
+        // SubagentConcurrencyLimiter.tryAcquire() in
+        // register(). Stored on the job so the natural
+        // terminal transitions (markCompleted /
+        // markFailed / markCancelled) can release the
+        // exact token without leaking a permit to a
+        // different worker. The token-keyed release is
+        // important: a wrong-key release would let
+        // another thread's job keep its permit and we'd
+        // exceed the quota silently. The id is a String
+        // (UUID-shaped per the limiter's AcquireResult);
+        // empty/null means no token was acquired (the
+        // job either predates R374.2 or the limiter
+        // refused to acquire — but a refusal is a
+        // throw, so this branch is unreachable for new
+        // code; we keep the null check for forward
+        // safety).
+        public volatile String concurrencyTokenId;
         /** R362 Round 3: per-job Watchdog (null when
          *  the registry was created without watchdog
          *  support, e.g. legacy unit tests). The
@@ -509,9 +596,50 @@ public final class SubagentRegistry {
     /** R372.1: full session-aware + token-budget overload. */
     public synchronized String register(String taskId, String prompt, String role,
                                         String sessionId, long maxTokens) {
-        String id = "sag-" + idCounter.incrementAndGet();
-        SubagentJob j = new SubagentJob(id, taskId, prompt, role, sessionId);
+        // Mint the id up front so the same number can be
+        // used as the jobHint for the concurrency limiter
+        // and as the jobId once the acquire succeeds. One
+        // increment per register() call, no wasted ids.
+        long rawId = idCounter.incrementAndGet();
+        String id = "sag-" + rawId;
+        // R374.2: normalise the role to "general-purpose"
+        // BEFORE consulting the limiter. Without this,
+        // a null role becomes a SubagentJob with role
+        // "general-purpose" but a limiter slot keyed on
+        // the literal string "null" — the release in
+        // moveToFinished() would then log a warning
+        // ("unknown token") and silently leak the permit.
+        // The normalised role is what the limiter sees,
+        // what the SubagentJob has, and what the error
+        // message reports, so all three stay in sync.
+        String normalizedRole = role == null ? "general-purpose" : role;
+        SubagentConcurrencyLimiter.AcquireResult ar =
+                concurrencyLimiter.tryAcquire(normalizedRole, id);
+        if (!ar.acquired()) {
+            // The id is just a counter; rolling it back
+            // would require a non-trivial dance with the
+            // AtomicInteger and is not worth it (a
+            // refused spawn still consumed one increment
+            // of a long-lived counter, which is harmless).
+            // The quota-snapshot carried by the result
+            // gives the caller a clear "X/Y concurrent"
+            // error message so the model knows what
+            // happened.
+            throw new IllegalStateException(
+                    "concurrent subagent quota exceeded for role '"
+                            + normalizedRole + "' ("
+                            + ar.currentInFlight() + "/" + ar.quota()
+                            + " in flight); wait for one to finish or "
+                            + "raise the quota via subagentSetQuota RPC");
+        }
+        SubagentJob j = new SubagentJob(id, taskId, prompt, normalizedRole, sessionId);
         j.maxTokens = maxTokens;  // R372.1: token budget (0 = unlimited)
+        // R374.2: stash the token id on the job so the
+        // terminal transitions can release it. Released
+        // by moveToFinished() once status flips to a
+        // terminal state. The token is a String (the
+        // limiter's id format).
+        j.concurrencyTokenId = ar.tokenId();
         running.put(id, j);
         // R362 Round 3: start a per-job Watchdog. The
         // watchdog polls j.lastEventMs; if the gap to
@@ -954,6 +1082,23 @@ public final class SubagentRegistry {
         // see the fresh fields. Capture the previous
         // status for the audit log BEFORE we flip it.
         String previousStatus = j.status.name();
+        // R374.2: re-acquire a concurrency token for the
+        // retry. The original token was released when the
+        // job first moved to finished (see
+        // moveToFinished); without a fresh acquire the
+        // retry would slip past the quota. A refusal
+        // here mirrors the register() error message so
+        // the caller sees the same "X/Y in flight" hint.
+        SubagentConcurrencyLimiter.AcquireResult ar =
+                concurrencyLimiter.tryAcquire(j.role, jobId);
+        if (!ar.acquired()) {
+            return new RetryResult(false,
+                    "concurrent subagent quota exceeded for role '"
+                            + j.role + "' (" + ar.currentInFlight() + "/"
+                            + ar.quota() + " in flight); wait or raise the quota",
+                    j, j.taskId);
+        }
+        j.concurrencyTokenId = ar.tokenId();
         j.status = SubagentJob.Status.RUNNING;
         j.startedAtMs = System.currentTimeMillis();
         j.lastEventMs = j.startedAtMs;
@@ -1004,6 +1149,18 @@ public final class SubagentRegistry {
         while (finished.size() > MAX_FINISHED_JOBS) {
             String oldest = finished.keySet().iterator().next();
             finished.remove(oldest);
+        }
+        // R374.2: release the concurrency token now that
+        // the job is out of the running map. The release
+        // is keyed on the job's stored tokenId (not the
+        // thread or role) so a typo'd release can't free
+        // a different job's permit. A null/empty tokenId
+        // means the job predates R374.2 or the limiter
+        // refused to acquire; either way, release is a
+        // no-op (no token was ever taken).
+        if (j.concurrencyTokenId != null && !j.concurrencyTokenId.isEmpty()) {
+            concurrencyLimiter.release(j.role, j.concurrencyTokenId, j.jobId);
+            j.concurrencyTokenId = null;
         }
     }
 
@@ -1102,16 +1259,19 @@ public final class SubagentRegistry {
                 e.getValue().consecutiveFailures = br.consecutiveFailures();
                 e.getValue().breakerOpenRemainingMs = br.openRemainingMs();
             }
-            // R372.4: concurrency is a separate concern.
-            // We don't wire it into the registry's state
-            // directly because the limiter is owned by the
-            // methods / spawn layer. For the dashboard we
-            // expose what the limiter knows; if it's not
-            // wired, the snapshot just reports the default
-            // quota and zero in-flight.
-            // (No-op in this stub: real wiring lands in the
-            // methods-layer integration commit.)
-            e.getValue().concurrencyQuota = SubagentConcurrencyLimiter.DEFAULT_QUOTA;
+            // R372.4 + R374.2: concurrency is owned by
+            // the limiter we wired into register() above.
+            // Read the actual per-agent quota so the
+            // dashboard shows what the user set via
+            // subagentSetQuota (or DEFAULT_QUOTA = 1 if
+            // they've never overridden). If the agent has
+            // never registered a job, the limiter returns
+            // a snapshot with quota=DEFAULT_QUOTA so the
+            // dashboard's "quota 1" label still makes
+            // sense for brand-new agents.
+            SubagentConcurrencyLimiter.Snapshot limSnap =
+                    concurrencyLimiter.snapshot(e.getKey());
+            e.getValue().concurrencyQuota = limSnap.quota();
         }
         return out;
     }

@@ -41,6 +41,9 @@ class SubagentRetryToolR362Round3Test {
         // don't see each other's state. Tests run
         // sequentially.
         SubagentRegistry.instance().setWatchdogTimeoutMs(60_000L);
+        // R374.2: clear the concurrency limiter so a
+        // prior test's role slots don't carry over.
+        SubagentRegistry.instance().concurrencyLimiter().reset();
     }
 
     @AfterEach

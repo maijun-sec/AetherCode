@@ -27,6 +27,18 @@ class SubagentRegistryR372Test {
         // never trips inside a fast unit test.
         SubagentRegistry r = new SubagentRegistry();
         r.setWatchdogTimeoutMs(24L * 60 * 60 * 1000);
+        // R374.2: bump the default-quota roles this
+        // test class uses so back-to-back register()
+        // calls don't trip the quota=1 default. The
+        // breaker logic + the dashboard metrics test
+        // depend on registering several jobs of the
+        // same role without intervening terminal
+        // transitions. Limiter is fresh on each
+        // freshRegistry() call so this doesn't leak
+        // between tests.
+        r.setQuota("pm", 100);
+        r.setQuota("coder", 100);
+        r.setQuota("general-purpose", 100);
         return r;
     }
 

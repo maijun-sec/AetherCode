@@ -95,6 +95,9 @@ class R362EndToEndTest {
         // default so a previous test's
         // setWatchdogTimeoutMs() doesn't leak.
         SubagentRegistry.instance().setWatchdogTimeoutMs(60_000L);
+        // R374.2: clear the concurrency limiter so a
+        // prior test's role slots don't carry over.
+        SubagentRegistry.instance().concurrencyLimiter().reset();
     }
 
     @AfterEach

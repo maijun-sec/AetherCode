@@ -182,4 +182,23 @@ public final class SubagentCircuitBreaker {
     synchronized void reset() {
         slots.clear();
     }
+
+    /** R374.3: clear the slot for one agent name only.
+     *  Resets its consecutive-failure counter to 0
+     *  and drops the OPEN timer, so subsequent
+     *  register() calls don't see the agent as tripped.
+     *  An unknown agent is a no-op (returns false).
+     *  Returns true if a slot existed and was cleared.
+     *
+     *  <p>The dashboard's "Reset circuit" button calls
+     *  this when the user has fixed the underlying
+     *  cause and wants to short-circuit the 60s
+     *  cooldown. Without a per-agent reset, the user
+     *  would have to wait 60s before new jobs of
+     *  that agent can launch — annoying for short
+     *  iteration loops. */
+    public synchronized boolean reset(String agentName) {
+        if (agentName == null) return false;
+        return slots.remove(agentName) != null;
+    }
 }

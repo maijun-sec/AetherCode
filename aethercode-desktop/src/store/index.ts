@@ -2121,10 +2121,10 @@ interface AppState {
     lastModifiedMs?: number;
     error?: string;
   }>;
-  /** cached list of agents from
-   *  refreshAgents. The Agents tab reads
-   *  this directly; refreshAgents fills it. */
-  agents: any[];
+  // R374 fix: the duplicate `agents: any[]` declaration
+  // was removed; the typed `agents: AgentInfo[]` at the top
+  // of the interface (around line 1389) is canonical.
+  // The Agents tab reads from there; refreshAgents fills it.
   refreshProjects: () => Promise<void>;
   refreshMetrics: () => Promise<void>;
   refreshTraces: () => Promise<void>;
@@ -2366,13 +2366,13 @@ interface AppState {
    *  a 404 / network blip leaves the previous list
    *  intact (same defensive pattern as refreshTools). */
   loadRpcMethods: () => Promise<void>;
-  /** R362: pull the latest agent list from the daemon. The
-   *  daemon reads {@code ~/.aethercode/agents/<name>/agent.md}
-   *  at startup and caches the metadata; the store mirrors
-   *  that into {@code agents}. Best-effort: a 404 / network
-   *  blip leaves the previous list intact (same defensive
-   *  pattern as refreshTools / refreshSessions). */
-  refreshAgents: () => Promise<void>;
+  // R374 fix: the duplicate `refreshAgents: () => Promise<void>;`
+  // declaration was removed; the canonical one is in the
+  // agent picker section above (around line 2097) where it
+  // sits next to createAgent / updateAgent / deleteAgent /
+  // getAgentBody. The implementation also lives in the
+  // store body (around line 6414); the older duplicate at
+  // line 7468 was removed too.
   /** R362: fetch the full body of one agent on demand.
    *  Used by the AgentManager "edit" affordance — the body
    *  is loaded into a markdown editor and the user can
@@ -4051,7 +4051,7 @@ export const useStore = create<AppState>((set, get) => {
 
   return {
     daemonInfo: null, isConnected: false, connectionState: 'idle', initError: null,
-    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [], agents: [], agentsRefreshedAt: 0,
+    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [],
     // supervisor auto-restart cached
     // flag. Default false (matches the
     // daemon-side default; opt-in via Settings
@@ -4256,6 +4256,13 @@ export const useStore = create<AppState>((set, get) => {
     // on demand via getAgentBody when the
     // user opens an agent in the editor.
     agents: [],
+    // R374: agentsRefreshedAt was removed from the
+    // compact one-liner at the top of the return object
+    // (it was a duplicate of the agents[] declaration
+    // there). Kept here next to the agents[] so the
+    // canonical initial values for both fields live
+    // together; 0 means "never refreshed".
+    agentsRefreshedAt: 0,
 
     initialize: async () => {
       // Guard against concurrent re-initialization (e.g. setCwd
@@ -6411,15 +6418,12 @@ export const useStore = create<AppState>((set, get) => {
         return;
       }
     },
-    refreshAgents: async () => {
-      try {
-        const r = await rpc.listAgents();
-        set({ agents: r.agents ?? [] });
-      } catch (e) {
-        console.warn('[store] refreshAgents failed:', e);
-        set({ agents: [] });
-      }
-    },
+    // R374 fix: refreshAgents was duplicated — the simpler
+    // version above was removed; the more careful one further
+    // down (around line 7468) handles the cast + the
+    // agentsRefreshedAt timestamp + the don't-blank-on-error
+    // semantics. The interface declaration is in the agent
+    // picker section above.
     // agent CRUD pass-throughs. The
     // editor calls these directly; the
     // refreshAgents() in onSaved picks up

@@ -49,6 +49,10 @@ class SubagentRegistryR362Round3Test {
         // themselves; @AfterEach also restores the
         // default for belt-and-suspenders.
         SubagentRegistry.instance().setWatchdogTimeoutMs(60_000L);
+        // R374.2: also clear the concurrency limiter so
+        // a prior test's role slots don't trip the
+        // quota=1 default on this test's register.
+        SubagentRegistry.instance().concurrencyLimiter().reset();
     }
 
     @AfterEach

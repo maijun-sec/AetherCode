@@ -1599,6 +1599,23 @@ public class AetherCodeMethods {
         // so the JSON-RPC payload is renderer-friendly. See
         // subagentDashboard(Object) for the wire shape.
         dispatcher.register("subagentDashboard", this::subagentDashboard);
+        // R374.2: per-agent concurrency quota setter. The
+        // desktop's SubagentDashboard surfaces the quota
+        // per card; clicking the value opens an editor
+        // that calls this RPC. A non-positive `quota`
+        // resets to the limiter's DEFAULT_QUOTA (= 1),
+        // useful for "remove the custom override"
+        // semantics — the dashboard treats quota=0 the
+        // same as unset.
+        dispatcher.register("subagentSetQuota", this::subagentSetQuota);
+        // R374.3: reset the circuit breaker for a single
+        // agent name. Wired to the dashboard's "Reset
+        // circuit" button (visible only when the chip
+        // shows OPEN / HALF_OPEN). The user has fixed
+        // the underlying cause and wants to skip the
+        // 60s cooldown; the breaker clears the slot so
+        // the next register() call succeeds immediately.
+        dispatcher.register("subagentResetCircuit", this::subagentResetCircuit);
     }
 
     // ------------------------------------------------------------------
@@ -4590,6 +4607,120 @@ public class AetherCodeMethods {
             agents.add(row);
         }
         out.put("agents", agents);
+        return out;
+    }
+
+    /** R374.2: per-agent concurrency quota setter.
+     *  Wraps {@code SubagentRegistry.setQuota(role, n)} —
+     *  the registry's limiter then refuses any new
+     *  register() calls for that role while N jobs are
+     *  in flight. A non-positive {@code quota} resets to
+     *  the limiter's {@code DEFAULT_QUOTA = 1}; the
+     *  dashboard treats quota=0 the same as "unset"
+     *  (removes the user's custom override).
+     *
+     *  <p>Response shape mirrors {@code subagentDashboard}'s
+     *  per-agent row so the UI can re-render the card with
+     *  the new quota without a second RPC:
+     *  <pre>
+     *  {
+     *    ok: true,
+     *    role: <string>,
+     *    quota: <int>,           // the new effective quota
+     *    previousQuota: <int>,  // the value before this call
+     *    inFlight: <int>         // how many jobs of this role
+     *                            // are currently running
+     *  }
+     *  </pre>
+     *
+     *  <p>Quota caps at {@code MAX_QUOTA = 32} — a
+     *  user-configurable knob above 32 is almost
+     *  certainly a typo (the dashboard is the only
+     *  consumer and the per-card pill renders up to a
+     *  2-digit number legibly). The cap is enforced
+     *  silently: the dashboard asks "set quota to 100"
+     *  and gets back quota=32; this avoids a second
+     *  round-trip for an error the user can fix by
+     *  re-typing. */
+    public Object subagentSetQuota(Object params) {
+        Map<String, Object> p = asMap(params);
+        String role = stringOrThrow(p, "role");
+        // `quota` may arrive as int or string (the
+        // dashboard sends int; the JSON-RPC codec
+        // accepts both). Default to 0 = reset.
+        int requested = 0;
+        Object q = p.get("quota");
+        if (q instanceof Number n) requested = n.intValue();
+        else if (q instanceof String s && !s.isBlank()) {
+            try {
+                requested = Integer.parseInt(s.trim());
+            } catch (NumberFormatException nfe) {
+                throw new IllegalArgumentException(
+                        "quota must be an integer; got '" + s + "'");
+            }
+        }
+        // R374.2: enforce the safety cap. See the Javadoc
+        // above — a value > 32 is almost certainly a typo.
+        int MAX = 32;
+        int clamped = requested > 32 ? MAX : Math.max(requested, 0);
+        org.aethercode.tools.task.SubagentRegistry reg =
+                org.aethercode.tools.task.SubagentRegistry.instance();
+        // snapshot the current quota first so we can echo
+        // the previous value back to the UI after the
+        // setQuota call (which itself is void — the
+        // limiter doesn't carry history).
+        int previous = reg.quotaFor(role);
+        reg.setQuota(role, clamped <= 0
+                ? org.aethercode.tools.task.SubagentConcurrencyLimiter.DEFAULT_QUOTA
+                : clamped);
+        org.aethercode.tools.task.SubagentConcurrencyLimiter.Snapshot snap =
+                reg.concurrencyLimiter().snapshot(role);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("role", role);
+        out.put("quota", clamped <= 0
+                ? org.aethercode.tools.task.SubagentConcurrencyLimiter.DEFAULT_QUOTA
+                : clamped);
+        out.put("previousQuota", previous);
+        out.put("inFlight", snap.inFlight());
+        return out;
+    }
+
+    /** R374.3: clear the circuit breaker for a single
+     *  agent. Wired to the dashboard's "Reset circuit"
+     *  button (visible only when the chip is OPEN or
+     *  HALF_OPEN). The user has fixed the underlying
+     *  cause and wants to skip the 60s cooldown.
+     *
+     *  <p>Returns:
+     *  <pre>
+     *  {
+     *    ok: true,
+     *    role,
+     *    cleared: boolean  // false if the role had no
+     *                       // slot to clear (unknown
+     *                       // agent — the dashboard
+     *                       // treats this as "nothing
+     *                       // to do, no error")
+     *  }
+     *  </pre>
+     *
+     *  <p>Note: this DOES NOT clear the dashboard's
+     *  consecutiveFailures counter for the in-flight
+     *  counter (the dashboard derives that from
+     *  recent jobs, not the breaker state). The
+     *  user-facing message is "✓ circuit reset" plus a
+     *  polling-flash refresh. */
+    public Object subagentResetCircuit(Object params) {
+        Map<String, Object> p = asMap(params);
+        String role = stringOrThrow(p, "role");
+        org.aethercode.tools.task.SubagentRegistry reg =
+                org.aethercode.tools.task.SubagentRegistry.instance();
+        boolean cleared = reg.resetCircuit(role);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("role", role);
+        out.put("cleared", cleared);
         return out;
     }
 

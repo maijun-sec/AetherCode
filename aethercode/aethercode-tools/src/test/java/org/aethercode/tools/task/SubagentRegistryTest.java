@@ -32,6 +32,25 @@ class SubagentRegistryTest {
         // .listFinished) work on the singleton's full
         // state, which is fine for a unit test as long
         // as we only assert on the jobs we just created.
+        //
+        // R374.2: clear the concurrency limiter too.
+        // Prior to R374.2 the registry didn't consult the
+        // limiter so prior tests left slots in whatever
+        // state they ended in. Without a reset, two
+        // back-to-back tests registering jobs of the same
+        // role would trip the quota=1 default after the
+        // first one. Reset to a known-empty table.
+        SubagentRegistry.instance().concurrencyLimiter().reset();
+        // Bump the per-role quota for the two roles this
+        // test class uses ("explore" + "general-purpose"
+        // — the null role gets the latter via the
+        // normalizeRole default). Tests that need many
+        // in-flight jobs of the same role use quota=100
+        // so the limiter doesn't gate progress on what
+        // is effectively a non-test concern.
+        SubagentRegistry reg = SubagentRegistry.instance();
+        reg.setQuota("explore", 100);
+        reg.setQuota("general-purpose", 100);
     }
 
     @Test

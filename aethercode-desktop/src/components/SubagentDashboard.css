@@ -175,6 +175,72 @@
   text-overflow: ellipsis;
 }
 
+/* R374.3: a small wrapper around the circuit chip +
+ * the "Reset" button (visible only on OPEN / HALF_OPEN)
+ * so they sit side-by-side without the chip stretching.
+ * The wrapper is a flex row with a small gap; the chip
+ * takes its natural width and the button is on the
+ * right. */
+.subagent-agent-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* R374.3: "Reset circuit" button. Small, dashed
+ * border so it doesn't compete visually with the
+ * solid chip; turns solid on hover. The flash class
+ * gives a brief green/amber confirmation when the
+ * RPC lands. */
+.subagent-circuit-reset {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.subagent-circuit-reset:hover:not(:disabled) {
+  background: var(--bg);
+  border-style: solid;
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.subagent-circuit-reset:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.subagent-circuit-reset-ok.subagent-circuit-reset:not(:disabled) {
+  color: #5fbf6a;
+  border-color: rgba(95, 191, 106, 0.55);
+  border-style: solid;
+  background: rgba(95, 191, 106, 0.08);
+  animation: circuit-flash 0.5s ease-out;
+}
+
+.subagent-circuit-reset-fail.subagent-circuit-reset:not(:disabled) {
+  color: var(--error);
+  border-color: rgba(244, 135, 113, 0.55);
+  border-style: solid;
+  background: rgba(244, 135, 113, 0.08);
+  animation: circuit-flash 0.5s ease-out;
+}
+
+@keyframes circuit-flash {
+  from { transform: scale(1.05); }
+  to   { transform: scale(1.0);  }
+}
+
 /* The circuit chip is the only place the OPEN/HALF-OPEN
  * colour shows up on the card; the rest of the card stays
  * neutral so the user can read the counts at a glance. */
@@ -308,6 +374,87 @@
 
 .subagent-agent-card-quota {
   font-variant-numeric: tabular-nums;
+}
+
+/* R374.2: the quota pill on each agent card is now a
+ * button (click to edit) — opens an inline <input> that
+ * commits on Enter or blur and cancels on Escape. The
+ * button gets hover / focus / saving / saved visual
+ * states so the user can see the edit is in flight or
+ * just landed. */
+.subagent-agent-card-quota-button {
+  font-variant-numeric: tabular-nums;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.subagent-agent-card-quota-button:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.subagent-agent-card-quota-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.subagent-agent-card-quota-saving {
+  color: var(--accent);
+  font-style: italic;
+  border-color: rgba(99, 179, 237, 0.45);
+  background: rgba(99, 179, 237, 0.06);
+  cursor: progress;
+}
+
+.subagent-agent-card-quota-saved {
+  color: #5fbf6a;
+  border-color: rgba(95, 191, 106, 0.55);
+  background: rgba(95, 191, 106, 0.08);
+  /* a brief "✓ saved" then the next poll restores the
+   * regular quota label */
+  animation: quota-flash 0.5s ease-out;
+}
+
+@keyframes quota-flash {
+  from { transform: scale(1.05); }
+  to   { transform: scale(1.0);  }
+}
+
+.subagent-agent-card-quota-input {
+  font-variant-numeric: tabular-nums;
+  width: 48px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 10px;
+  text-align: center;
+  /* kill the browser's default spinner buttons on
+   * number inputs — they look out of place in this
+   * tight pill. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.subagent-agent-card-quota-input::-webkit-outer-spin-button,
+.subagent-agent-card-quota-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.subagent-agent-card-quota-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
 }
 
 .subagent-agent-card-fr {

@@ -27,7 +27,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class AgentToolTest {
 
     @BeforeEach
-    void reset() { TaskRegistry.resetForTests(); }
+    void reset() {
+        TaskRegistry.resetForTests();
+        // R374.2: clear the concurrency limiter so a prior
+        // test's role slots don't carry over, then bump
+        // the default-quota roles so the same-name
+        // back-to-back register() calls don't trip the
+        // quota=1 default. The AgentTool tests use
+        // "general-purpose" for the default-spawn path.
+        SubagentRegistry.instance().concurrencyLimiter().reset();
+        SubagentRegistry.instance().setQuota("general-purpose", 100);
+        SubagentRegistry.instance().setQuota("explore", 100);
+    }
 
     @Test
     void call_createsChildTaskAndReturnsChatResponse() {

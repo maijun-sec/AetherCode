@@ -138,5 +138,17 @@ public final class SubagentConcurrencyLimiter {
                 agentName, jobHint, s.inFlight, s.quota);
     }
 
+    /** R374.2: clear all slots so a fresh test (or a
+     *  daemon restart in a future round) can start with
+     *  an empty concurrency table. The default-quota
+     *  rule (setQuota(<0) = DEFAULT_QUOTA) means a
+     *  slot that was created by a prior test will be
+     *  reset to 1 when it next sees a register() — a
+     *  blank reset here is the most predictable for
+     *  callers that want a true clean state. */
+    public synchronized void reset() {
+        slots.clear();
+    }
+
     public record Snapshot(int inFlight, int quota) {}
 }

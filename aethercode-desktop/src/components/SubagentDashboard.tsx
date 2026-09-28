@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { rpc } from '../lib/methods';
 import type {
   SubagentDashboardSnapshot,
   SubagentAgentMetric,
@@ -195,11 +196,66 @@ export function SubagentDashboard({ pollMs = 1500 }: Props) {
 function AgentCard({ agent }: { agent: SubagentAgentMetric }) {
   const total = agent.running + agent.completed + agent.failed;
   const failRate = total > 0 ? agent.failed / total : 0;
+  // R374.2: editing the quota on a card. The pill
+  // toggles into a small <input>; on Enter or blur we
+  // fire subagentSetQuota and revert to the pill.
+  // onEscape reverts without sending the RPC. A
+  // transient "saving" pill replaces the pill while
+  // the RPC is in flight so the user can see their
+  // edit took effect; the next dashboard poll will
+  // show the real value.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(String(agent.concurrencyQuota));
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState<number | null>(null);
+  // sync draft when the upstream value changes (e.g.
+  // the user cancels edit and a new poll arrives with
+  // a different value).
+  useEffect(() => {
+    if (!editing) setDraft(String(agent.concurrencyQuota));
+  }, [agent.concurrencyQuota, editing]);
+  const beginEdit = () => {
+    setDraft(String(agent.concurrencyQuota));
+    setEditing(true);
+  };
+  const cancelEdit = () => {
+    setDraft(String(agent.concurrencyQuota));
+    setEditing(false);
+  };
+  const commit = async () => {
+    const n = Number.parseInt(draft.trim(), 10);
+    if (!Number.isFinite(n) || n < 0) {
+      // invalid input — revert without sending
+      cancelEdit();
+      return;
+    }
+    setSaving(true);
+    setEditing(false);
+    try {
+      await rpc.subagentSetQuota({ role: agent.name, quota: n });
+      // Brief flash so the user sees "ok, applied". The
+      // next dashboard poll will refresh the real
+      // value (it can race the flash but that's fine —
+      // both display the new value).
+      setSavedFlash(Date.now());
+      setTimeout(() => setSavedFlash(null), 1200);
+    } catch (e) {
+      // The dashboard doesn't show a toast; the user's
+      // next poll will reflect the unchanged state. A
+      // console hint is enough for dev mode.
+      console.warn('subagentSetQuota failed', e);
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className={`subagent-agent-card subagent-agent-${agent.circuitState.toLowerCase()}`}>
       <div className="subagent-agent-card-header">
         <span className="subagent-agent-card-name">{agent.name}</span>
-        <CircuitBadge state={agent.circuitState} ms={agent.breakerOpenRemainingMs} />
+        <div className="subagent-agent-card-header-right">
+          <CircuitBadge state={agent.circuitState} ms={agent.breakerOpenRemainingMs} />
+          <CircuitResetButton role={agent.name} state={agent.circuitState} />
+        </div>
       </div>
       <div className="subagent-agent-card-stats">
         <Stat label="run" value={agent.running} tone={agent.running > 0 ? 'accent' : 'dim'} />
@@ -228,12 +284,43 @@ function AgentCard({ agent }: { agent: SubagentAgentMetric }) {
             ? `${agent.consecutiveFailures}× fail in a row`
             : 'no recent failures'}
         </span>
-        <span
-          className="subagent-agent-card-quota"
-          title={`concurrency quota — currently 1 per agent; bump to allow parallel subagents of the same name`}
-        >
-          quota {agent.concurrencyQuota}
-        </span>
+        {editing ? (
+          // R374.2: inline editor replaces the pill.
+          // Enter / blur commits, Escape cancels. A
+          // very small input — the user just types a
+          // number. We use inputMode="numeric" so the
+          // soft keyboard on touch devices suggests
+          // digits.
+          <input
+            className="subagent-agent-card-quota-input"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={32}
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => { void commit(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void commit();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelEdit();
+              }
+            }}
+            title="Enter to save, Escape to cancel (clamped to 32)"
+          />
+        ) : (
+          <button
+            className={`subagent-agent-card-quota subagent-agent-card-quota-button ${saving ? 'subagent-agent-card-quota-saving' : ''} ${savedFlash != null ? 'subagent-agent-card-quota-saved' : ''}`}
+            onClick={beginEdit}
+            title={`concurrency quota — click to edit (default 1; max 32)`}
+          >
+            {saving ? 'saving…' : savedFlash != null ? '✓ saved' : `quota ${agent.concurrencyQuota}`}
+          </button>
+        )}
       </div>
       {failRate > 0 && (
         <div className="subagent-agent-card-fr" title="lifetime failure rate">
@@ -309,6 +396,56 @@ function CircuitBadge({
           ? 'HALF-OPEN'
           : 'CLOSED'}
     </span>
+  );
+}
+
+// R374.3: a tiny "Reset" button that sits next to the
+// circuit chip when the state is OPEN or HALF_OPEN.
+// The user has fixed the underlying cause and wants
+// to short-circuit the 60s cooldown. The button calls
+// subagentResetCircuit; the next dashboard poll shows
+// the chip turn CLOSED.
+function CircuitResetButton({
+  role,
+  state,
+}: {
+  role: string;
+  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+}) {
+  // The button only renders when the circuit is
+  // tripped. CLOSED cards have nothing to reset.
+  if (state === 'CLOSED') return null;
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<'ok' | 'fail' | null>(null);
+  const onClick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await rpc.subagentResetCircuit({ role });
+      // Show a brief "✓ reset" pill; the next poll will
+      // see the chip turn CLOSED automatically (the
+      // dashboard's polling refresh takes care of
+      // that — we don't optimistically flip the
+      // parent's circuitState).
+      setFlash(r.cleared ? 'ok' : 'fail');
+      setTimeout(() => setFlash(null), 1200);
+    } catch (e) {
+      setFlash('fail');
+      setTimeout(() => setFlash(null), 1200);
+      console.warn('subagentResetCircuit failed', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      className={`subagent-circuit-reset subagent-circuit-reset-${flash ?? 'ok'}`}
+      onClick={onClick}
+      disabled={busy}
+      title={`force-clear the circuit breaker for ${role} (skip the 60s cooldown)`}
+    >
+      {busy ? 'resetting…' : flash === 'ok' ? '✓ reset' : 'Reset circuit'}
+    </button>
   );
 }
 
