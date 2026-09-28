@@ -921,6 +921,29 @@ public final class HttpJsonRpcServer {
             // correctly. Same dual-path gotcha as
             // subagentCancel above.
             case "subagentRetry"          -> methods.subagentRetry(params);
+            // R373: per-agent dashboard. The desktop's
+            // SubagentPanel "Dashboard" tab polls this
+            // every ~1.5s; without the arm the renderer
+            // silently gets METHOD_NOT_FOUND and the
+            // dashboard tab renders an empty grid.
+            case "subagentDashboard"      -> methods.subagentDashboard(params);
+            // R374.2: per-agent concurrency quota setter.
+            // Same dual-path gotcha as subagentCancel —
+            // AetherCodeMethods.registerAll exposes it for
+            // the stdio daemon; the HTTP+WS switch needs
+            // an explicit arm or the desktop's quota pill
+            // (click-to-edit) silently fails.
+            case "subagentSetQuota"       -> methods.subagentSetQuota(params);
+            // R374.3: clear the circuit breaker for a
+            // single agent name. Without this arm the
+            // desktop's per-card "Reset circuit" button
+            // gets METHOD_NOT_FOUND.
+            case "subagentResetCircuit"   -> methods.subagentResetCircuit(params);
+            // R375.1: fleet-wide circuit reset. The
+            // dashboard header's "Reset all circuits"
+            // button (visible only when at least one
+            // breaker is OPEN/HALF_OPEN) calls this.
+            case "subagentResetAllCircuits" -> methods.subagentResetAllCircuits(params);
             // R234 (daemon parity fix): the switch above was
             // missing arms for several methods that AetherCodeMethods
             // already exposes via registerAll() for the stdio
