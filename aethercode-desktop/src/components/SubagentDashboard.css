@@ -44,6 +44,66 @@
   opacity: 0.7;
 }
 
+/* R375.1: the dashboard header now hosts a fleet-wide
+ * "Reset all circuits" button. Visually it sits next
+ * to the as-of timestamp in the header-left cluster —
+ * same colour vocabulary as the per-card "Reset
+ * circuit" button so the two actions read as related.
+ * The idle state is a soft dashed outline; the
+ * success / failure states get a green / red flash
+ * for ~1s after the RPC lands, mirroring the per-card
+ * reset button's flash animation.
+ */
+.subagent-dashboard-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.subagent-reset-all {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.subagent-reset-all:hover:not(:disabled) {
+  background: var(--bg);
+  border-style: solid;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.subagent-reset-all:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.subagent-reset-all-ok.subagent-reset-all:not(:disabled) {
+  color: #5fbf6a;
+  border-color: rgba(95, 191, 106, 0.55);
+  border-style: solid;
+  background: rgba(95, 191, 106, 0.08);
+  animation: circuit-flash 0.5s ease-out;
+}
+
+.subagent-reset-all-fail.subagent-reset-all:not(:disabled) {
+  color: var(--error);
+  border-color: rgba(244, 135, 113, 0.55);
+  border-style: solid;
+  background: rgba(244, 135, 113, 0.08);
+  animation: circuit-flash 0.5s ease-out;
+}
+
 .subagent-dashboard-error {
   font-size: 10px;
   color: var(--error);
@@ -344,6 +404,62 @@
   border: 1px solid var(--border);
   border-radius: 2px;
   overflow: hidden;
+}
+
+/* R375.4: token-budget bar. The bar's height (3px)
+ * is intentionally thinner than the OK/fail bar
+ * (4px) so the two read as distinct layers. The
+ * label sits inline at the right edge of the bar
+ * to keep the card height compact.
+ *
+ *  fill-ok   = healthy (under 80% of cap)
+ *  fill-warn = approaching cap (80%–99%)
+ *  fill-over = breached the cap (100% or more) —
+ *              the worker thread is interrupted and
+ *              the job marked FAILED by R372.1, but
+ *              the dashboard's bar stays so the user
+ *              can see how far over they went.
+ */
+.subagent-agent-card-budget {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 8px;
+  margin-top: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.subagent-agent-card-budget-fill {
+  height: 100%;
+  transition: width 0.4s ease, background 0.4s ease;
+  background: rgba(99, 179, 237, 0.5);
+}
+
+.subagent-agent-card-budget-fill-ok {
+  background: rgba(99, 179, 237, 0.5);
+}
+
+.subagent-agent-card-budget-fill-warn {
+  background: rgba(230, 193, 104, 0.7);
+}
+
+.subagent-agent-card-budget-fill-over {
+  background: rgba(244, 135, 113, 0.75);
+}
+
+.subagent-agent-card-budget-label {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .subagent-agent-card-bar-fill {

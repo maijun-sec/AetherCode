@@ -162,6 +162,15 @@ public final class SubagentRegistry {
         return concurrencyLimiter.snapshot(role).quota();
     }
 
+    /** R375.2: snapshot every (role, quota) pair the
+     *  limiter knows about, for persistence.
+     *  {@link AgentQuotaStore#save(java.util.Map)} uses
+     *  this so a single setQuota can persist all current
+     *  overrides without losing the rest. */
+    public java.util.Map<String, Integer> allQuotas() {
+        return concurrencyLimiter.snapshotAll();
+    }
+
     /** R374.3: clear the circuit breaker for one agent.
      *  Wired to the subagentResetCircuit JSON-RPC
      *  method so the dashboard's "Reset circuit"
@@ -170,6 +179,15 @@ public final class SubagentRegistry {
      *  Unknown roles are a no-op (returns false). */
     public boolean resetCircuit(String role) {
         return circuitBreaker.reset(role);
+    }
+
+    /** R375.1: clear every tripped breaker — fleet
+     *  recovery path. Wired to subagentResetAllCircuits.
+     *  Returns the number of breakers that were
+     *  cleared (zero means no breakers were tripped
+     *  — still ok, just a no-op). */
+    public int resetAllCircuits() {
+        return circuitBreaker.resetAll();
     }
 
     /** env-var name the user can set to extend or
@@ -1298,6 +1316,16 @@ public final class SubagentRegistry {
         public int consecutiveFailures;
         public long breakerOpenRemainingMs;
         public int concurrencyQuota;
+        /** R375.4: per-agent token-budget context. We
+         *  surface the budget of the most-advanced
+         *  running job (closest to its `maxTokens` cap),
+         *  so the dashboard can draw a "approaching
+         *  cap" progress bar without having to inspect
+         *  every job individually. Both fields are 0
+         *  when no running job carries a budget — the
+         *  UI hides the bar in that case. */
+        public long tokensBudget;
+        public long tokensBudgetUsed;
         AgentMetric(String name, int run, int comp, int fail,
                     long tokens, String cState, int fails, int quota) {
             this.agentName = name;
@@ -1308,12 +1336,30 @@ public final class SubagentRegistry {
             this.circuitState = cState;
             this.consecutiveFailures = fails;
             this.concurrencyQuota = quota;
+            this.tokensBudget = 0L;
+            this.tokensBudgetUsed = 0L;
         }
         void mergeRunning(SubagentJob j) {
             running++;
             tokensTotal += j.tokensUsed;
             if (j.status == SubagentJob.Status.FAILED) failed++;
             else if (j.status == SubagentJob.Status.COMPLETED) completed++;
+            // R375.4: pick the running job whose
+            // `tokensUsed / maxTokens` ratio is highest
+            // (closest to / over the cap). Ties broken
+            // by lower maxTokens so the "smallest
+            // budget" job wins — the one the user is
+            // most likely to be watching.
+            if (j.maxTokens > 0) {
+                long otherRatio = tokensBudget > 0
+                        ? tokensBudgetUsed * 100 / tokensBudget : -1;
+                long thisRatio = j.tokensUsed * 100 / j.maxTokens;
+                if (thisRatio > otherRatio
+                        || (thisRatio == otherRatio && j.maxTokens < tokensBudget)) {
+                    tokensBudget = j.maxTokens;
+                    tokensBudgetUsed = j.tokensUsed;
+                }
+            }
         }
         void mergeFinished(SubagentJob j) {
             // finished jobs are COMPLETED, FAILED, or CANCELLED.

@@ -1530,6 +1530,19 @@ export class AetherCodeRpc {
       role: opts.role,
     });
   }
+
+  // R375.1: clear every tripped circuit breaker.
+  // Wired to the dashboard header's "Reset all
+  // circuits" button — fleet-wide recovery after a
+  // bad deploy tripped multiple breakers at once.
+  // The button is only rendered when totals.circuitOpen
+  // + totals.circuitHalfOpen > 0 (visible state of
+  // the fleet). For a fleet with no tripped breakers
+  // the button is hidden so the user can't
+  // accidentally click it.
+  subagentResetAllCircuits(): Promise<SubagentResetAllCircuitsResult> {
+    return this.call('subagentResetAllCircuits', null);
+  }
 }
 
 // R373: response shape for subagentDashboard.
@@ -1562,6 +1575,15 @@ export interface SubagentAgentMetric {
   consecutiveFailures: number;
   breakerOpenRemainingMs: number;
   concurrencyQuota: number;
+  // R375.4: per-agent token-budget context. `tokensBudget`
+  // is the `maxTokens` cap of the most-advanced running
+  // job for this agent (highest `tokensUsed/maxTokens`
+  // ratio, ties broken by the smallest budget). 0 when
+  // no running job carries a budget — the UI hides the
+  // bar in that case. `tokensBudgetUsed` is that same
+  // job's current `tokensUsed`.
+  tokensBudget: number;
+  tokensBudgetUsed: number;
 }
 
 export interface SubagentDashboardSnapshot {
@@ -1598,6 +1620,17 @@ export interface SubagentResetCircuitResult {
   ok: true;
   role: string;
   cleared: boolean;
+}
+
+// R375.1: response shape for subagentResetAllCircuits.
+// The dashboard uses cleared to render the toast
+// "✓ reset N circuits" — the count is the number of
+// slots that were wiped (0 means no breakers were
+// tripped, still ok; the button shouldn't have been
+// visible in that case anyway).
+export interface SubagentResetAllCircuitsResult {
+  ok: true;
+  cleared: number;
 }
 
 export const rpc = new AetherCodeRpc();

@@ -97,12 +97,23 @@ public final class WorkflowExecutor {
      *  override is always null and the agent uses
      *  the engine's default model. */
     private final java.util.function.Function<String, String> agentModelLookup;
+    /** R375.3: optional callback that resolves a
+     *  named agent/skill to its concurrency
+     *  quota. The executor consults this when a
+     *  step has {@code parallelism: N} so it can
+     *  emit a "quota < parallelism" warning to the
+     *  user before fanning out. Pass {@code null}
+     *  to disable quota validation (the user's
+     *  SkillInvoker implementation still enforces
+     *  the quota via {@code register()} — the
+     *  warning is purely advisory). */
+    private final java.util.function.Function<String, Integer> quotaLookup;
 
     public WorkflowExecutor(WorkflowReader.WorkflowDoc doc,
                             Map<String, Object> inputs,
                             String runId,
                             Consumer<StreamEvent> sink) {
-        this(doc, inputs, runId, sink, null, null);
+        this(doc, inputs, runId, sink, null, null, null);
     }
 
     /** secondary constructor that accepts a
@@ -112,7 +123,7 @@ public final class WorkflowExecutor {
                             String runId,
                             Consumer<StreamEvent> sink,
                             SkillInvoker skillInvoker) {
-        this(doc, inputs, runId, sink, skillInvoker, null);
+        this(doc, inputs, runId, sink, skillInvoker, null, null);
     }
 
     /** tertiary constructor that ALSO
@@ -132,12 +143,33 @@ public final class WorkflowExecutor {
                             Consumer<StreamEvent> sink,
                             SkillInvoker skillInvoker,
                             java.util.function.Function<String, String> agentModelLookup) {
+        this(doc, inputs, runId, sink, skillInvoker, agentModelLookup, null);
+    }
+
+    /** R375.3: full constructor with quota
+     *  validation. Wiring code that wants the
+     *  parallelism-vs-quota warning to surface
+     *  uses this overload; older call sites keep
+     *  working via the 3-arg/4-arg/6-arg
+     *  constructors. The {@code quotaLookup}
+     *  signature matches
+     *  {@code SubagentRegistry.quotaFor}: a
+     *  role name → effective quota (1 if
+     *  unknown). */
+    public WorkflowExecutor(WorkflowReader.WorkflowDoc doc,
+                            Map<String, Object> inputs,
+                            String runId,
+                            Consumer<StreamEvent> sink,
+                            SkillInvoker skillInvoker,
+                            java.util.function.Function<String, String> agentModelLookup,
+                            java.util.function.Function<String, Integer> quotaLookup) {
         this.doc = doc;
         this.inputs = inputs == null ? Map.of() : inputs;
         this.runId = runId;
         this.sink = sink;
         this.skillInvoker = skillInvoker;
         this.agentModelLookup = agentModelLookup;
+        this.quotaLookup = quotaLookup;
     }
 
     /** function signature for the skill/agent hook.
@@ -850,62 +882,133 @@ public final class WorkflowExecutor {
             if (fm.find()) prompt = fm.group(2).trim();
         }
         prompt = substitute(prompt);
+
+        // R375.3: optional `parallelism: N` field. Default 1
+        // (back-compat). Values < 1 or unparseable are
+        // treated as 1 — the user's step still runs.
+        int parallelism = parseParallelism(chunk);
+
         if (skillInvoker == null) {
             // R103 fallback — emit a "skipped" note so the
             // user knows the step was a stub. R106+ should
             // always wire the invoker.
             runStub(step, "stub: " + kind + " \"" + name
-                    + "\" (SkillInvoker not wired; pass one to WorkflowExecutor to enable real execution)");
+                    + "\" x" + parallelism
+                    + " (SkillInvoker not wired; pass one to WorkflowExecutor to enable real execution)");
             return;
         }
-        // per-agent model binding. When
-        // this is a {@code kind: agent} step, look
-        // up the agent's frontmatter {@code model:}
-        // field via the agentModelLookup callback
-        // (the executor is in aethercode-core and
-        // does not have AgentRegistry access; the
-        // methods layer wires the callback at
-        // runWorkflow time). The modelOverride
-        // string is forwarded to the SkillInvoker
-        // — the SkillInvoker implementation
-        // resolves it to a ChatClient via
-        // ProviderRegistry (which only the methods
-        // layer has). For {@code kind: skill} the
-        // override is always null (skills have no
-        // model binding).
-        String modelOverride = null;
-        if ("agent".equals(kind) && agentModelLookup != null) {
+
+        // R375.3: quota validation. When parallelism > the
+        // role's effective quota, the underlying SkillInvoker
+        // (which goes through SubagentRegistry.register())
+        // will get rejected by the concurrency limiter for
+        // the over-quota invocations. We emit a single
+        // warning SideNote so the user can see the issue
+        // without digging through failed invocations. The
+        // fan-out still proceeds — quota enforcement is the
+        // limiter's job, not ours.
+        if (parallelism > 1 && quotaLookup != null) {
             try {
-                String m = agentModelLookup.apply(name);
-                if (m != null && !m.isBlank()) modelOverride = m;
+                Integer q = quotaLookup.apply(name);
+                int quota = q == null ? 1 : q;
+                if (parallelism > quota) {
+                    String warn = "parallelism " + parallelism
+                            + " exceeds quota " + quota
+                            + " for \"" + name
+                            + "\" — the concurrency limiter will reject the over-quota invocations";
+                    StepResult r = results.get(step.id());
+                    if (r != null) {
+                        // R375.3: append the warning to the
+                        // step's stderr so the user can see
+                        // it in the step result panel. We
+                        // guard against r.stderr being null
+                        // (the default state for a freshly
+                        // constructed StepResult) and
+                        // against a non-empty existing stderr
+                        // (insert a newline so the warning
+                        // doesn't run on the same line as
+                        // whatever was there).
+                        String prev = r.stderr == null ? "" : r.stderr;
+                        String sep = prev.isEmpty() ? "" : "\n";
+                        r.stderr = prev + sep + warn;
+                    }
+                    // R375.3: the warning SideNote. The
+                    // eventSink is `sink` (the executor's
+                    // outbound Consumer<StreamEvent>).
+                    if (sink != null) {
+                        try {
+                            sink.accept(new StreamEvent.SideNote(
+                                    "workflow_step_warning",
+                                    "[" + step.id() + "] " + warn));
+                        } catch (Exception ignored) {}
+                    }
+                }
             } catch (Exception e) {
-                LOG.debug("agentModelLookup for {} failed: {}", name, e.getMessage());
+                LOG.debug("quotaLookup for {} failed: {}", name, e.getMessage());
             }
         }
+
+        // Single-invocation path — the common case. Unchanged
+        // from R370: synchronous invoke, events forwarded
+        // through the sink, result captured as stdout.
+        if (parallelism <= 1) {
+            runSkillOrAgentSingle(step, name, prompt, kind, /*modelOverride*/ nullIfBlank(resolveModelOverride(name, kind)));
+            return;
+        }
+
+        // Multi-invocation path: fan out N parallel
+        // invocations on ForkJoinPool.commonPool(). Each
+        // invocation gets a substitute'd prompt — we
+        // additionally expose {{index}} / {{total}} so a
+        // step can vary the prompt across replicas (e.g.
+        // split a list of files into N chunks).
+        runSkillOrAgentParallel(step, name, prompt, kind, parallelism);
+    }
+
+    /** parse {@code parallelism:} from a step's chunk.
+     *  Returns 1 when the field is absent / unparseable /
+     *  less than 1. We intentionally don't cap at any
+     *  particular maximum — the SkillInvoker's quota
+     *  enforces the actual limit. */
+    static int parseParallelism(String chunk) {
+        if (chunk == null) return 1;
+        Matcher m = Pattern.compile("(?im)^\\s*parallelism\\s*:\\s*(\\d+)\\b").matcher(chunk);
+        if (!m.find()) return 1;
         try {
-            // use the 4-arg overload with
-            // {@code this.sink} so the child session's
-            // events (text_delta, tool_use_start,
-            // run_end, side_note, ...) reach the
-            // workflow's WS clients. The default
-            // implementation in SkillInvoker (used by
-            // the R103 stub path) ignores the sink —
-            // see SkillInvoker#invoke(...) above.
-            //
-            // use the 5-arg overload that
-            // also passes the modelOverride so the
-            // child session can use the agent's
-            // frontmatter model.
+            int n = Integer.parseInt(m.group(1).trim());
+            return n < 1 ? 1 : n;
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    /** resolve an agent's frontmatter model. Returns null
+     *  for skills (no model binding) or when the lookup
+     *  is unavailable. */
+    private String resolveModelOverride(String name, String kind) {
+        if (!"agent".equals(kind) || agentModelLookup == null) return null;
+        try {
+            String m = agentModelLookup.apply(name);
+            return (m == null || m.isBlank()) ? null : m;
+        } catch (Exception e) {
+            LOG.debug("agentModelLookup for {} failed: {}", name, e.getMessage());
+            return null;
+        }
+    }
+
+    /** null-safe string trim. */
+    private static String nullIfBlank(String s) {
+        return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /** wrap the single-invocation path so runSkillOrAgent
+     *  stays small. Used when parallelism == 1 (the common
+     *  case). */
+    private void runSkillOrAgentSingle(WorkflowReader.Step step,
+                                        String name, String prompt,
+                                        String kind, String modelOverride) {
+        try {
             String result = skillInvoker.invoke(kind, name, prompt, modelOverride, ev -> {
-                // Re-emit the child's events as
-                // workflow_step SideNotes with an
-                // explicit parentStepId. The desktop
-                // can attribute them to the active
-                // step card. We use a "child_session_event"
-                // kind so the renderer's side_note
-                // handler routes them to the workflow
-                // progress bar instead of the
-                // top-level message list.
                 if (sink == null) return;
                 org.aethercode.core.stream.StreamEvent.SideNote wrapped =
                         new org.aethercode.core.stream.StreamEvent.SideNote(
@@ -923,6 +1026,147 @@ public final class WorkflowExecutor {
         } catch (Exception e) {
             fail(step, kind + " step failed: " + e.getMessage());
         }
+    }
+
+    /** fan out N parallel invocations of a single agent /
+     *  skill step. Waits for all to complete; aggregates
+     *  the captured text into the step's stdout (one
+     *  block per replica, separated by a divider).
+     *
+     *  <p>Each replica gets a fresh prompt substituted
+     *  with {{index}} (1-based) and {{total}} (= N) so the
+     *  step can partition work across replicas without
+     *  having to thread separate prompt fields.
+     *
+     *  <p>The replicas run on {@link java.util.concurrent.ForkJoinPool#commonPool()}
+     *  — we don't allocate our own pool. Workflows are
+     *  typically small (a handful of steps, parallelism ≤
+     *  8 in practice) and FJP commonPool is sized to the
+     *  host's CPU count, which is the right parallelism
+     *  ceiling for an LLM-driven workflow (the LLM call
+     *  itself is the bottleneck, not CPU). */
+    private void runSkillOrAgentParallel(WorkflowReader.Step step,
+                                          String name, String basePrompt,
+                                          String kind, int parallelism) {
+        String modelOverride = resolveModelOverride(name, kind);
+        java.util.List<java.util.concurrent.CompletableFuture<String>> futures =
+                new java.util.ArrayList<>(parallelism);
+        for (int i = 0; i < parallelism; i++) {
+            final int oneBased = i + 1;
+            String replicaPrompt = basePrompt
+                    .replace("{{index}}", String.valueOf(oneBased))
+                    .replace("{{total}}", String.valueOf(parallelism));
+            final String promptForReplica = replicaPrompt;
+            java.util.concurrent.CompletableFuture<String> f =
+                    java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                        try {
+                            return skillInvoker.invoke(kind, name, promptForReplica, modelOverride, ev -> {
+                                if (sink == null) return;
+                                org.aethercode.core.stream.StreamEvent.SideNote wrapped =
+                                        new org.aethercode.core.stream.StreamEvent.SideNote(
+                                                "child_session_event",
+                                                formatChildEventMessageReplica(step.id(), kind, name, oneBased, parallelism, ev));
+                                try { sink.accept(wrapped); } catch (Exception ignored) {}
+                            });
+                        } catch (Exception e) {
+                            // Each replica's exception is captured in
+                            // its own future so a single failure doesn't
+                            // cancel the whole batch. We surface the
+                            // error message in the aggregated output so
+                            // the user can see which replica failed.
+                            return "[replica " + oneBased + "/" + parallelism + " failed: "
+                                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+                                    + "]";
+                        }
+                    });
+            futures.add(f);
+        }
+        // Wait for all replicas. allOf().join() blocks the
+        // caller (the workflow's worker thread); if any
+        // replica hangs the workflow hangs — same shape as
+        // a single blocked SkillInvoker.invoke(), so the
+        // user-visible timeout behaviour is unchanged.
+        java.util.concurrent.CompletableFuture
+                .allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0]))
+                .join();
+
+        // Aggregate. We tag each replica's output with a
+        // header so the user can read them in order. The
+        // headers are intentionally short — the captured
+        // text is the bulk of the stdout, the headers are
+        // just there to disambiguate replicas.
+        StringBuilder agg = new StringBuilder();
+        boolean anyError = false;
+        for (int i = 0; i < futures.size(); i++) {
+            String out;
+            try {
+                out = futures.get(i).getNow("");
+            } catch (Exception e) {
+                out = "[replica " + (i + 1) + " threw: " + e.getMessage() + "]";
+                anyError = true;
+            }
+            if (out == null) out = "";
+            if (out.startsWith("[replica ") && out.contains("failed")) {
+                anyError = true;
+            }
+            agg.append("--- replica ").append(i + 1).append('/').append(parallelism).append(" ---\n");
+            agg.append(out);
+            if (!out.endsWith("\n")) agg.append('\n');
+        }
+        StepResult r = results.get(step.id());
+        if (r != null) {
+            r.stdout = agg.toString();
+            // any individual replica failing makes the step
+            // "error" — the user can read stderr for the
+            // which-replica detail. Partial success is
+            // represented by the [replica N failed] text
+            // embedded in stdout.
+            r.status = anyError ? "error" : "ok";
+            r.exitCode = anyError ? 1 : 0;
+        }
+        emit(step, anyError ? "error" : "ok",
+                anyError ? "one or more replicas failed" : null);
+    }
+
+    /** emit a non-fatal warning SideNote attached to the
+     *  step. Used by the parallelism-vs-quota check so
+     *  the user sees the warning in the workflow UI even
+     *  though the step continues. */
+    private void emitWarning(WorkflowReader.Step step, String message) {
+        System.err.println("DEBUG emitWarning: sink=" + (sink == null ? "null" : "set") + " step=" + step.id() + " msg=" + message);
+        if (sink == null) return;
+        try {
+            sink.accept(new org.aethercode.core.stream.StreamEvent.SideNote(
+                    "workflow_step_warning",
+                    "[" + step.id() + "] " + message));
+        } catch (Exception ignored) {}
+    }
+
+    /** like {@link #formatChildEventMessage} but tags the
+     *  replica index so the renderer can route the event
+     *  to the right sub-card. */
+    static String formatChildEventMessageReplica(String stepId, String kind,
+                                                String name, int oneBased,
+                                                int total,
+                                                org.aethercode.core.stream.StreamEvent ev) {
+        String base = formatChildEventMessage(stepId, kind, name, ev);
+        // Insert replica=<i>/<total> right after `kind=`
+        // so the renderer can parse it without breaking
+        // the existing pipe-delimited format.
+        int idx = base.indexOf("|kind=");
+        if (idx < 0) return base + "|replica=" + oneBased + "/" + total;
+        int after = idx + "|kind=".length();
+        int next = base.indexOf('|', after);
+        if (next < 0) {
+            return base + "|replica=" + oneBased + "/" + total;
+        }
+        // Move past the existing `kind=<value>` so we
+        // splice `|replica=i/N` between kind and the next
+        // key. Strip the leading `|` of the next key so
+        // we don't end up with `||`.
+        return base.substring(0, next)
+                + "|replica=" + oneBased + "/" + total
+                + base.substring(next);
     }
 
     private void fail(WorkflowReader.Step step, String reason) {

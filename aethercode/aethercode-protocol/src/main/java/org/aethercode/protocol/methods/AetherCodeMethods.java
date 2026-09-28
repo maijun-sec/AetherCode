@@ -1616,6 +1616,16 @@ public class AetherCodeMethods {
         // 60s cooldown; the breaker clears the slot so
         // the next register() call succeeds immediately.
         dispatcher.register("subagentResetCircuit", this::subagentResetCircuit);
+        // R375.1: reset every circuit breaker. Wired to
+        // the dashboard header's "Reset all circuits"
+        // button — used for fleet-wide recovery after a
+        // bad deploy tripped multiple breakers at once.
+        // The dashboard renders this button only when
+        // totals.circuitOpen + totals.circuitHalfOpen
+        // > 0; for a fleet with no tripped breakers the
+        // button is hidden so the user can't accidentally
+        // click it.
+        dispatcher.register("subagentResetAllCircuits", this::subagentResetAllCircuits);
     }
 
     // ------------------------------------------------------------------
@@ -4146,7 +4156,19 @@ public class AetherCodeMethods {
                         .orElse(null);
         org.aethercode.core.workflow.WorkflowExecutor exec =
                 new org.aethercode.core.workflow.WorkflowExecutor(
-                        doc, inputs, runId, sink, invoker, agentModelLookup);
+                        doc, inputs, runId, sink, invoker, agentModelLookup,
+                        // R375.3: parallelism-vs-quota validation.
+                        // The closure calls into SubagentRegistry
+                        // (which lives in aethercode-tools; the
+                        // executor is in aethercode-core and can't
+                        // import it directly). A null role maps to
+                        // "general-purpose" — same as the limiter's
+                        // normaliseRole logic — so the workflow
+                        // matches the registry's quota lookup.
+                        roleName -> {
+                            String r = roleName == null ? "general-purpose" : roleName;
+                            return org.aethercode.tools.task.SubagentRegistry.instance().quotaFor(r);
+                        });
         Thread t = new Thread(() -> {
             try {
                 String status = exec.run();
@@ -4604,6 +4626,12 @@ public class AetherCodeMethods {
             row.put("consecutiveFailures", m.consecutiveFailures);
             row.put("breakerOpenRemainingMs", m.breakerOpenRemainingMs);
             row.put("concurrencyQuota", m.concurrencyQuota);
+            // R375.4: token-budget context for the most
+            // advanced running job. Both are 0 when no
+            // running job carries a budget; the UI
+            // treats 0 as "no bar to draw".
+            row.put("tokensBudget", m.tokensBudget);
+            row.put("tokensBudgetUsed", m.tokensBudgetUsed);
             agents.add(row);
         }
         out.put("agents", agents);
@@ -4675,6 +4703,24 @@ public class AetherCodeMethods {
                 : clamped);
         org.aethercode.tools.task.SubagentConcurrencyLimiter.Snapshot snap =
                 reg.concurrencyLimiter().snapshot(role);
+        // R375.2: persist the full override set so the
+        // user's choice survives daemon restarts. The
+        // store writes a sibling agents.yaml.tmp and
+        // renames atomically; a failed save is logged but
+        // does NOT roll back the in-memory update — a
+        // quota that survives in memory but not on disk
+        // is still better than the user clicking the
+        // button and getting an error.
+        try {
+            new org.aethercode.tools.task.AgentQuotaStore(
+                    org.aethercode.tasks.supervisor.SupervisorHome.dir()
+                            .resolve(org.aethercode.tools.task.AgentQuotaStore.DEFAULT_FILE_NAME),
+                    reg).save(reg.allQuotas());
+        } catch (RuntimeException persistEx) {
+            org.slf4j.LoggerFactory.getLogger(AetherCodeMethods.class)
+                    .warn("R375.2: quota persistence save failed ({}) — in-memory quota is set but not persisted",
+                            persistEx.getMessage());
+        }
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("ok", true);
         out.put("role", role);
@@ -4720,6 +4766,37 @@ public class AetherCodeMethods {
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("ok", true);
         out.put("role", role);
+        out.put("cleared", cleared);
+        return out;
+    }
+
+    /** R375.1: clear every tripped circuit breaker.
+     *  Wired to the dashboard header's "Reset all
+     *  circuits" button — fleet-wide recovery after
+     *  a bad deploy tripped multiple breakers at
+     *  once. The params are ignored; the call is a
+     *  blanket "wipe all OPEN/HALF_OPEN slots" with
+     *  no per-role filtering. Returns:
+     *  <pre>
+     *  {
+     *    ok: true,
+     *    cleared: int   // the number of slots wiped
+     *                    // (0 = no breakers were tripped,
+     *                    // still ok — the button should
+     *                    // have been hidden in that case)
+     *  }
+     *  </pre>
+     *
+     *  <p>The cleared count is for the toast — the
+     *  next dashboard poll will see the global
+     *  totals.circuitOpen + totals.circuitHalfOpen
+     *  drop to 0 regardless. */
+    public Object subagentResetAllCircuits(Object params) {
+        org.aethercode.tools.task.SubagentRegistry reg =
+                org.aethercode.tools.task.SubagentRegistry.instance();
+        int cleared = reg.resetAllCircuits();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
         out.put("cleared", cleared);
         return out;
     }

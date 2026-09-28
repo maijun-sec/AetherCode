@@ -118,15 +118,29 @@ export function SubagentDashboard({ pollMs = 1500 }: Props) {
   return (
     <div className="subagent-dashboard">
       <div className="subagent-dashboard-header">
-        <span className="subagent-dashboard-title">Agent dashboard</span>
-        {asOf ? (
-          <span
-            className="subagent-dashboard-asof"
-            title={`Server timestamp ${new Date(asOf).toLocaleString()}`}
-          >
-            {formatRelative(asOf)}
-          </span>
-        ) : null}
+        <div className="subagent-dashboard-header-left">
+          <span className="subagent-dashboard-title">Agent dashboard</span>
+          {asOf ? (
+            <span
+              className="subagent-dashboard-asof"
+              title={`Server timestamp ${new Date(asOf).toLocaleString()}`}
+            >
+              {formatRelative(asOf)}
+            </span>
+          ) : null}
+          {/* R375.1: "Reset all circuits" button — only
+              renders when at least one breaker is
+              currently tripped. Hidden for a healthy
+              fleet so the user can't accidentally wipe
+              state. The button sits in the header row
+              (top-right area) and flashes "✓ reset N"
+              after a successful call. */}
+          {totals && (totals.circuitOpen + totals.circuitHalfOpen) > 0 ? (
+            <ResetAllCircuitsButton
+              tripped={totals.circuitOpen + totals.circuitHalfOpen}
+            />
+          ) : null}
+        </div>
       </div>
 
       {error ? (
@@ -275,6 +289,35 @@ function AgentCard({ agent }: { agent: SubagentAgentMetric }) {
           title={`failed ${agent.failed}/${total}`}
         />
       </div>
+      {/* R375.4: token-budget bar. Only rendered when the
+          agent has at least one running job with a
+          budget set (tokensBudget > 0). The bar fills
+          from 0% to 100% as the running job consumes
+          its maxTokens cap. When the fill crosses 80%
+          we switch to a red tone so the user notices
+          they're approaching the cap; at 100% we add
+          a "⚠ over" suffix to make the over-budget
+          state unambiguous. A separate row keeps the
+          bar visually distinct from the OK/fail
+          lifetime bar above. */}
+      {agent.tokensBudget > 0 ? (
+        <div className="subagent-agent-card-budget">
+          <div
+            className={`subagent-agent-card-budget-fill ${
+              (agent.tokensBudgetUsed / agent.tokensBudget) >= 1
+                ? 'subagent-agent-card-budget-fill-over'
+                : (agent.tokensBudgetUsed / agent.tokensBudget) >= 0.8
+                  ? 'subagent-agent-card-budget-fill-warn'
+                  : 'subagent-agent-card-budget-fill-ok'
+            }`}
+            style={{ width: `${Math.min(100, Math.round((agent.tokensBudgetUsed / agent.tokensBudget) * 100))}%` }}
+            title={`token budget: ${formatTokens(agent.tokensBudgetUsed)} / ${formatTokens(agent.tokensBudget)}`}
+          />
+          <span className="subagent-agent-card-budget-label">
+            budget {formatTokens(agent.tokensBudgetUsed)}/{formatTokens(agent.tokensBudget)}
+          </span>
+        </div>
+      ) : null}
       <div className="subagent-agent-card-footer">
         <span
           className="subagent-agent-card-consecutive"
@@ -449,6 +492,60 @@ function CircuitResetButton({
   );
 }
 
+// R375.1: a fleet-wide reset button for the dashboard
+// header. When multiple breakers have tripped (e.g. a
+// bad deploy knocked out 4 agents at once) the user
+// wants a single click to wipe all of them, not 4
+// separate per-card reset clicks. We accept the count
+// as a prop so the button can render "✓ reset 4
+// circuits" right after the RPC lands.
+//
+// The button is conditional — only rendered when at
+// least one breaker is currently OPEN or HALF_OPEN.
+// For a healthy fleet there's nothing to reset, and
+// hiding the button removes the foot-gun of
+// "accidentally wiped everyone's breakers".
+function ResetAllCircuitsButton({ tripped }: { tripped: number }) {
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'fail'; n: number } | null>(null);
+  const onClick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await rpc.subagentResetAllCircuits();
+      // r.cleared is the count returned by the server.
+      // If 0 we still treat it as a no-op success — the
+      // button shouldn't have been visible in that case
+      // but a race with a breaker auto-resetting is
+      // possible.
+      setFlash({ kind: 'ok', n: r.cleared });
+      setTimeout(() => setFlash(null), 1200);
+    } catch (e) {
+      setFlash({ kind: 'fail', n: 0 });
+      setTimeout(() => setFlash(null), 1200);
+      console.warn('subagentResetAllCircuits failed', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      className={`subagent-reset-all subagent-reset-all-${flash?.kind ?? 'idle'}`}
+      onClick={onClick}
+      disabled={busy}
+      title={`force-clear all ${tripped} tripped circuit breaker(s) — fleet-wide recovery`}
+    >
+      {busy
+        ? 'resetting…'
+        : flash
+          ? (flash.kind === 'ok'
+              ? `✓ reset ${flash.n} circuit${flash.n === 1 ? '' : 's'}`
+              : '✗ reset failed')
+          : `Reset all ${tripped} circuit${tripped === 1 ? '' : 's'}`}
+    </button>
+  );
+}
+
 // 3-digit grouping for >=1k tokens. We don't roll up to
 // "k"/"M" because the user wants exact usage when reading
 // off a budget; rolling up makes it harder to estimate
@@ -511,7 +608,9 @@ function shallowEq(
       x.tokensTotal !== y.tokensTotal ||
       x.running !== y.running ||
       x.completed !== y.completed ||
-      x.failed !== y.failed
+      x.failed !== y.failed ||
+      x.tokensBudget !== y.tokensBudget ||
+      x.tokensBudgetUsed !== y.tokensBudgetUsed
     ) return false;
   }
   return true;

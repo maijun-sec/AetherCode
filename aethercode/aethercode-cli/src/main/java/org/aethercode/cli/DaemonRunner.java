@@ -400,6 +400,21 @@ final class DaemonRunner {
             try { server.close(); } catch (Exception ignored) {}
         }, "aethercode-daemon-shutdown"));
 
+        // R375.2: load persisted per-agent concurrency
+        // quotas from ~/.aethercode/agents.yaml before the
+        // first RPC lands. Without this, the value the
+        // user set via subagentSetQuota in the prior
+        // session is forgotten on restart. Loading here
+        // (after all other init, before server.run())
+        // means the dashboard's first poll already shows
+        // the right value.
+        try {
+            org.aethercode.tools.task.AgentQuotaStore.loadFromHome();
+        } catch (RuntimeException quotaLoadEx) {
+            LOG.warn("R375.2: quota persistence load failed ({}) — using all-default quotas",
+                    quotaLoadEx.getMessage());
+        }
+
         LOG.info("aethercode daemon started (model={}, sessionId={}); awaiting JSON-RPC on stdin",
                 engine.appState().mainLoopModel(), engine.appState().sessionId());
 

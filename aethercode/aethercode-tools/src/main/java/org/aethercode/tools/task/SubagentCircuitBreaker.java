@@ -183,6 +183,18 @@ public final class SubagentCircuitBreaker {
         slots.clear();
     }
 
+    /** R375.1: clear every slot — used by the dashboard's
+     *  "Reset all circuits" button for fleet-wide recovery
+     *  after a bad deploy. Returns the count of slots
+     *  cleared so the UI can show a toast like
+     *  "✓ reset 4 circuits". A zero count means no
+     *  breakers were tripped — still ok, just a no-op. */
+    public synchronized int resetAll() {
+        int n = slots.size();
+        slots.clear();
+        return n;
+    }
+
     /** R374.3: clear the slot for one agent name only.
      *  Resets its consecutive-failure counter to 0
      *  and drops the OPEN timer, so subsequent

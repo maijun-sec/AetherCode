@@ -95,6 +95,25 @@ public final class SubagentConcurrencyLimiter {
         return new Snapshot(s.inFlight, s.quota);
     }
 
+    /** R375.2: snapshot every (role, quota) pair the
+     *  limiter currently knows about. The returned map is
+     *  a defensive copy; mutating it has no impact on the
+     *  limiter. Includes entries created lazily by
+     *  {@link #tryAcquire} — those will have
+     *  {@link #DEFAULT_QUOTA}, which the persistence
+     *  layer filters out before writing.
+     *
+     *  <p>Used by {@code AgentQuotaStore.save} to walk
+     *  the full override set so a save triggered by a
+     *  single role's update still persists the rest. */
+    public synchronized Map<String, Integer> snapshotAll() {
+        Map<String, Integer> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, Slot> e : slots.entrySet()) {
+            out.put(e.getKey(), e.getValue().quota);
+        }
+        return out;
+    }
+
     /** attempt to acquire one slot for {@code agentName}.
      *  Returns {@link AcquireResult#denied()} when the
      *  quota is exhausted; the caller is responsible for
