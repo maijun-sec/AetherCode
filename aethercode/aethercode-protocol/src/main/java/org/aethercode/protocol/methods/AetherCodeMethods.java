@@ -1593,6 +1593,12 @@ public class AetherCodeMethods {
         // subagent_event notification carries the
         // new RUNNING transition back to the same UI.
         dispatcher.register("subagentRetry", this::subagentRetry);
+        // R373: per-agent dashboard snapshot. The desktop
+        // SubagentPanel's "Dashboard" tab polls this every
+        // ~1.5s; returns a flattened Map (totals + agents[])
+        // so the JSON-RPC payload is renderer-friendly. See
+        // subagentDashboard(Object) for the wire shape.
+        dispatcher.register("subagentDashboard", this::subagentDashboard);
     }
 
     // ------------------------------------------------------------------
@@ -4495,6 +4501,95 @@ public class AetherCodeMethods {
             // round-trip.
             out.put("reason", r.reason() == null ? "" : r.reason());
         }
+        return out;
+    }
+
+    /** R373: per-agent dashboard snapshot for the desktop
+     *  SubagentPanel "Dashboard" tab. Wraps
+     *  {@code SubagentRegistry.dashboardMetrics()} (R372.4) and
+     *  flattens the {@code Map<String, AgentMetric>} into a
+     *  JSON-friendly list with a global rollup.
+     *
+     *  <p>Response shape (camelCase fields the TUI / desktop
+     *  TypeScript types expect):
+     *  <pre>
+     *  {
+     *    ok: true,
+     *    asOfMs: 1737000000000,        // server time
+     *    totals: {
+     *      running, completed, failed, tokensTotal,
+     *      agentsKnown, circuitOpen, circuitHalfOpen
+     *    },
+     *    agents: [
+     *      { name, running, completed, failed, tokensTotal,
+     *        circuitState, consecutiveFailures,
+     *        breakerOpenRemainingMs, concurrencyQuota },
+     *      ...
+     *    ]
+     *  }
+     *  </pre>
+     *
+     *  <p>The result is a snapshot — values may shift between
+     *  calls (the registry keeps ~50 finished jobs in a ring
+     *  buffer, so totals reflect recent activity, not all-time
+     *  history). The desktop polls this every ~1.5s while
+     *  the dashboard tab is visible, no-op otherwise.
+     *
+     *  <p>Empty registry: {@code agents: []} and all-zero
+     *  totals — never throws. The dashboard falls back to a
+     *  friendly "no agents yet" state. */
+    public Object subagentDashboard(Object params) {
+        Map<String, org.aethercode.tools.task.SubagentRegistry.AgentMetric> raw =
+                org.aethercode.tools.task.SubagentRegistry.instance().dashboardMetrics();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("asOfMs", System.currentTimeMillis());
+        // global rollup so the dashboard header can show a
+        // single line of "12 running / 234 done / 5 failed /
+        // 1.2M tokens" without scanning the agents array.
+        Map<String, Object> totals = new java.util.LinkedHashMap<>();
+        int totRun = 0, totComp = 0, totFail = 0, totOpen = 0, totHalf = 0;
+        long totTokens = 0L;
+        for (var m : raw.values()) {
+            totRun += m.running;
+            totComp += m.completed;
+            totFail += m.failed;
+            totTokens += m.tokensTotal;
+            if ("OPEN".equals(m.circuitState)) totOpen++;
+            else if ("HALF_OPEN".equals(m.circuitState)) totHalf++;
+        }
+        totals.put("running", totRun);
+        totals.put("completed", totComp);
+        totals.put("failed", totFail);
+        totals.put("tokensTotal", totTokens);
+        totals.put("agentsKnown", raw.size());
+        totals.put("circuitOpen", totOpen);
+        totals.put("circuitHalfOpen", totHalf);
+        out.put("totals", totals);
+        // flatten to a JSON array so the TypeScript types
+        // can model it as AgentMetric[] without a Map
+        // adapter. Sort by agentName for stable rendering
+        // (the dashboard diff check skips the full re-render
+        // when the array is referentially identical, so
+        // stable order is also a perf win).
+        java.util.List<Map<String, Object>> agents = new java.util.ArrayList<>();
+        var names = new java.util.ArrayList<>(raw.keySet());
+        java.util.Collections.sort(names);
+        for (String n : names) {
+            var m = raw.get(n);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("name", m.agentName);
+            row.put("running", m.running);
+            row.put("completed", m.completed);
+            row.put("failed", m.failed);
+            row.put("tokensTotal", m.tokensTotal);
+            row.put("circuitState", m.circuitState == null ? "CLOSED" : m.circuitState);
+            row.put("consecutiveFailures", m.consecutiveFailures);
+            row.put("breakerOpenRemainingMs", m.breakerOpenRemainingMs);
+            row.put("concurrencyQuota", m.concurrencyQuota);
+            agents.add(row);
+        }
+        out.put("agents", agents);
         return out;
     }
 

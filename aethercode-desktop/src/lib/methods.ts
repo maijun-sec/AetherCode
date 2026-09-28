@@ -1494,6 +1494,59 @@ export class AetherCodeRpc {
       sessionId: opts.sessionId ?? null,
     });
   }
+
+  // R373: per-agent dashboard snapshot. The SubagentPanel's
+  // "Dashboard" tab polls this every ~1.5s while visible.
+  // Wraps SubagentRegistry.dashboardMetrics() — see
+  // AetherCodeMethods.subagentDashboard for the wire shape.
+  //
+  // The response carries a global totals block (so the
+  // dashboard header can render a single summary line
+  // without scanning the per-agent list) and a flat agents[]
+  // array sorted by name. A snapshot — values shift between
+  // calls. Empty registry yields all-zero totals + agents: [].
+  subagentDashboard(): Promise<SubagentDashboardSnapshot> {
+    return this.call('subagentDashboard', null);
+  }
+}
+
+// R373: response shape for subagentDashboard.
+// camelCase to match the existing TypeScript conventions in
+// this file; the Java side serialises snake_case-leaning
+// names (running/completed/failed/tokensTotal/...) directly,
+// so we mirror them.
+export interface SubagentDashboardTotals {
+  running: number;
+  completed: number;
+  failed: number;
+  tokensTotal: number;
+  agentsKnown: number;
+  circuitOpen: number;
+  circuitHalfOpen: number;
+}
+
+export interface SubagentAgentMetric {
+  name: string;
+  running: number;
+  completed: number;
+  failed: number;
+  tokensTotal: number;
+  // CLOSED, OPEN, HALF_OPEN. CLOSED = healthy, OPEN = circuit
+  // tripped (paused for `breakerOpenRemainingMs` ms),
+  // HALF_OPEN = probing whether the underlying cause fixed
+  // itself. The dashboard renders OPEN with a red dot +
+  // countdown; HALF_OPEN with a yellow dot.
+  circuitState: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  consecutiveFailures: number;
+  breakerOpenRemainingMs: number;
+  concurrencyQuota: number;
+}
+
+export interface SubagentDashboardSnapshot {
+  ok: true;
+  asOfMs: number;
+  totals: SubagentDashboardTotals;
+  agents: SubagentAgentMetric[];
 }
 
 export const rpc = new AetherCodeRpc();

@@ -1,0 +1,318 @@
+/* R373: per-agent dashboard panel. Reuses the same design
+ * vocabulary as SubagentPanel.css (bg-elevated card surface,
+ * accent/ok/error/warn tones, monospace numerics) so the
+ * two surfaces feel like one panel. The dashboard is the
+ * "summary" view; the per-job list is the "detail" view —
+ * they share the backing store but render at different
+ * cadences. */
+
+.subagent-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.subagent-dashboard-loading {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.subagent-dashboard-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+
+.subagent-dashboard-asof {
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.subagent-dashboard-error {
+  font-size: 10px;
+  color: var(--error);
+  background: rgba(244, 135, 113, 0.08);
+  border: 1px solid rgba(244, 135, 113, 0.35);
+  border-radius: 3px;
+  padding: 3px 6px;
+}
+
+/* Totals row at the top. Each pill is a small chip that
+ * shows one global metric — running, completed, failed,
+ * tokens, agents known, circuit state. The pills wrap when
+ * the panel is narrow; their tone colour matches the per-
+ * stat tiles in the cards below. */
+.subagent-dashboard-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.subagent-totals-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-width: 60px;
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-totals-pill-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.subagent-totals-pill-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.subagent-totals-dim .subagent-totals-pill-value {
+  color: var(--text-dim);
+}
+
+.subagent-totals-ok .subagent-totals-pill-value {
+  color: #5fbf6a;
+}
+
+.subagent-totals-accent .subagent-totals-pill-value {
+  color: var(--accent);
+}
+
+.subagent-totals-warn .subagent-totals-pill-value {
+  color: #e6c168;
+}
+
+.subagent-totals-error .subagent-totals-pill-value {
+  color: var(--error);
+}
+
+/* Per-agent card grid. Wraps to a single column on narrow
+ * panels and a 2-column grid on desktop-width panels.
+ * Cards stretch to fill so each row aligns even when one
+ * card has more stat tiles than another. */
+.subagent-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.subagent-dashboard-empty {
+  margin-top: 4px;
+  padding: 14px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+  opacity: 0.85;
+}
+
+.subagent-agent-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Card border tone reflects the circuit state. CLOSED =
+ * default, OPEN = red, HALF_OPEN = yellow. The colours
+ * match the StatusBar's subagent tone vocabulary so the
+ * user sees the same hue in both places. */
+.subagent-agent-card.subagent-agent-closed {
+  border-color: var(--border);
+}
+
+.subagent-agent-card.subagent-agent-half_open {
+  border-color: rgba(230, 193, 104, 0.55);
+  background: rgba(230, 193, 104, 0.04);
+}
+
+.subagent-agent-card.subagent-agent-open {
+  border-color: rgba(244, 135, 113, 0.55);
+  background: rgba(244, 135, 113, 0.05);
+}
+
+.subagent-agent-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.subagent-agent-card-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The circuit chip is the only place the OPEN/HALF-OPEN
+ * colour shows up on the card; the rest of the card stays
+ * neutral so the user can read the counts at a glance. */
+.subagent-circuit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.subagent-circuit-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.subagent-circuit-closed {
+  color: #5fbf6a;
+  border-color: rgba(95, 191, 106, 0.35);
+}
+
+.subagent-circuit-half_open {
+  color: #e6c168;
+  border-color: rgba(230, 193, 104, 0.55);
+}
+
+.subagent-circuit-open {
+  color: var(--error);
+  border-color: rgba(244, 135, 113, 0.55);
+}
+
+.subagent-agent-card-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.subagent-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-stat-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.subagent-stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+
+.subagent-stat-dim .subagent-stat-value {
+  color: var(--text-dim);
+}
+
+.subagent-stat-ok .subagent-stat-value {
+  color: #5fbf6a;
+}
+
+.subagent-stat-accent .subagent-stat-value {
+  color: var(--accent);
+}
+
+.subagent-stat-warn .subagent-stat-value {
+  color: #e6c168;
+}
+
+.subagent-stat-error .subagent-stat-value {
+  color: var(--error);
+}
+
+/* The OK / fail bar shows the lifetime success / failure
+ * ratio as a horizontal stacked bar. Useful when an agent
+ * has a high fail rate but a low consecutive-failure
+ * count — the user can see the pattern even when the
+ * breaker hasn't tripped yet. */
+.subagent-agent-card-bar {
+  display: flex;
+  height: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.subagent-agent-card-bar-fill {
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.subagent-agent-card-bar-ok {
+  background: rgba(95, 191, 106, 0.7);
+}
+
+.subagent-agent-card-bar-fail {
+  background: rgba(244, 135, 113, 0.7);
+}
+
+.subagent-agent-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.subagent-agent-card-consecutive {
+  font-style: italic;
+}
+
+.subagent-agent-card-quota {
+  font-variant-numeric: tabular-nums;
+}
+
+.subagent-agent-card-fr {
+  font-size: 10px;
+  color: var(--error);
+  text-align: right;
+  opacity: 0.85;
+}

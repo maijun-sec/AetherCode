@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store';
+import { SubagentDashboard } from './SubagentDashboard';
 import './SubagentPanel.css';
 
 // a live list of background subagent jobs, paired
@@ -67,6 +68,15 @@ export function SubagentPanel() {
   // other).
   const [retrying, setRetrying] = useState<Record<string, boolean>>({});
   const [, setTick] = useState(0);
+  // R373: tab toggle between the per-job list (default)
+  // and the new SubagentDashboard view. The dashboard polls
+  // its own RPC at ~1.5s while mounted; switching tabs
+  // back to "jobs" unmounts the dashboard so the polling
+  // stops and the CPU goes idle. The selected tab is
+  // persisted in component state only — losing it on
+  // remount is fine because the per-job view is the
+  // default and the dashboard is opt-in.
+  const [view, setView] = useState<'jobs' | 'dashboard'>('jobs');
   // tick once per second while a RUNNING job is
   // present so the elapsed column updates without a
   // server round-trip. The tick is paused when nothing
@@ -79,12 +89,45 @@ export function SubagentPanel() {
   }, [subagent.jobs]);
 
   const ids = Object.keys(subagent.jobs);
+  const header = (
+    <div className="subagent-panel-header">
+      <div className="subagent-panel-tabs">
+        <button
+          className={`subagent-panel-tab ${view === 'jobs' ? 'subagent-panel-tab-active' : ''}`}
+          onClick={() => setView('jobs')}
+          title="Per-job list — running / completed / failed"
+        >
+          Jobs{ids.length > 0 ? ` (${ids.length})` : ''}
+        </button>
+        <button
+          className={`subagent-panel-tab ${view === 'dashboard' ? 'subagent-panel-tab-active' : ''}`}
+          onClick={() => setView('dashboard')}
+          title="Per-agent dashboard — circuit state, tokens, concurrency quota"
+        >
+          Dashboard
+        </button>
+      </div>
+      {view === 'jobs' && subagent.running > 0 ? (
+        <span className="subagent-running-badge">
+          {subagent.running} running
+        </span>
+      ) : null}
+    </div>
+  );
+
+  if (view === 'dashboard') {
+    return (
+      <div className="subagent-panel">
+        {header}
+        <SubagentDashboard />
+      </div>
+    );
+  }
+
   if (ids.length === 0) {
     return (
       <div className="subagent-panel subagent-panel-empty">
-        <div className="subagent-panel-header">
-          <span>Subagents (0)</span>
-        </div>
+        {header}
         <div className="subagent-panel-empty-msg">
           No background subagents yet. Ask the model to run one in the background.
         </div>
@@ -218,14 +261,7 @@ export function SubagentPanel() {
 
   return (
     <div className="subagent-panel">
-      <div className="subagent-panel-header">
-        <span>Subagents ({ids.length})</span>
-        {subagent.running > 0 ? (
-          <span className="subagent-running-badge">
-            {subagent.running} running
-          </span>
-        ) : null}
-      </div>
+      {header}
       <ul className="subagent-panel-list">
         {sorted.map((jobId) => {
           const job = subagent.jobs[jobId];

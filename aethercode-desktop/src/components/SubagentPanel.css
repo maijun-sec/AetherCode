@@ -192,3 +192,38 @@
   color: var(--accent);
   border-color: rgba(99, 179, 237, 0.45);
 }
+
+/* R373: tab toggle (Jobs / Dashboard) at the top of the
+ * panel. Sits inline with the panel-header so the layout
+ * doesn't shift when the user switches tabs. The active
+ * tab uses an accent-coloured underline so the user can
+ * tell which view they're on even at a glance. */
+.subagent-panel-tabs {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.subagent-panel-tab {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.subagent-panel-tab:hover:not(.subagent-panel-tab-active) {
+  color: var(--text);
+}
+
+.subagent-panel-tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
