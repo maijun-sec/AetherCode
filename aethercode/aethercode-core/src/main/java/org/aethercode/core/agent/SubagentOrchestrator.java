@@ -38,6 +38,21 @@ public final class SubagentOrchestrator {
 
     /** delegate a task to the named subagent. Blocks until the child finishes. */
     public Subagent.Result delegate(Object parent, String agentName, String task) {
+        return delegateWithContext(parent, agentName, task, SharedContext.empty());
+    }
+
+    /** R371.1: cross-agent context sharing. Same as
+     *  {@link #delegate} but the parent publishes a curated
+     *  set of working-memory entries to the child. The
+     *  child sees the shared context as a markdown section
+     *  prepended to its system prompt.
+     *
+     *  <p>Pass {@link SharedContext#empty()} (or use the
+     *  no-context overload) to skip the cross-agent hand-off
+     *  — equivalent to the legacy behaviour.
+     */
+    public Subagent.Result delegateWithContext(Object parent, String agentName,
+                                                String task, SharedContext ctx) {
         Subagent spec = registry.get(agentName);
         if (spec == null) {
             return Subagent.Result.error(agentName, "unknown subagent: " + agentName, 0);
@@ -54,10 +69,19 @@ public final class SubagentOrchestrator {
             return Subagent.Result.error(agentName, "engine factory returned null",
                     System.currentTimeMillis() - start);
         }
+        // R371.1: render the shared context and prepend it
+        // to the task so the child sees the parent's curated
+        // working-memory fragments before it reads the task
+        // body. We prepend rather than append because the
+        // child should treat the parent's context as
+        // authoritative context, not as a follow-up note.
+        String renderedCtx = SharedContextRenderer.render(ctx);
+        String effectiveTask = renderedCtx.isEmpty() ? task
+                : renderedCtx + "\n\n---\n\n## Your task\n\n" + task;
         AtomicInteger toolCalls = new AtomicInteger();
         StringBuilder out = new StringBuilder();
         try {
-            child.query(task).forEach(ev -> {
+            child.query(effectiveTask).forEach(ev -> {
                 if (ev instanceof StreamEvent.TextDelta td) {
                     out.append(td.text());
                 } else if (ev instanceof StreamEvent.ToolUseStart) {
@@ -78,6 +102,13 @@ public final class SubagentOrchestrator {
     /** async variant. */
     public CompletableFuture<Subagent.Result> delegateAsync(Object parent, String agentName, String task) {
         return CompletableFuture.supplyAsync(() -> delegate(parent, agentName, task));
+    }
+
+    /** R371.1: async variant of {@link #delegateWithContext}. */
+    public CompletableFuture<Subagent.Result> delegateAsyncWithContext(Object parent,
+                                                                      String agentName, String task,
+                                                                      SharedContext ctx) {
+        return CompletableFuture.supplyAsync(() -> delegateWithContext(parent, agentName, task, ctx));
     }
 
     /**

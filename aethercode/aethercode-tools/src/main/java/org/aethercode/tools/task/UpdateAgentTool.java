@@ -71,6 +71,11 @@ public class UpdateAgentTool {
         // body / description / etc. fields.
         props.put("init", Tools.stringProp(
                 "New lifecycle init prompt (R370.4). Omit to leave unchanged; pass null to clear."));
+        // R371.2: persistent memory payload. Same partial-
+        // update semantics as init (omit = preserve, null =
+        // clear, non-null = replace).
+        props.put("memory", Tools.stringProp(
+                "New persistent memory payload (R371.2). Omit to leave unchanged; pass null to clear."));
         props.put("body", Tools.stringProp(
                 "New agent body (markdown). Max 64 KB. The whole body is replaced — there is no " +
                 "merge / patch. To make a tiny edit, call getAgentBody first, modify, then update_agent."));
@@ -124,6 +129,20 @@ public class UpdateAgentTool {
         java.util.Optional<String> initRaw =
                 input.containsKey("init") ? java.util.Optional.ofNullable((String) input.get("init"))
                         : java.util.Optional.empty();
+        // R371.2: same partial-update semantics for memory.
+        // Omit → preserve existing; pass null → clear; pass
+        // non-null → replace.
+        java.util.Optional<String> memoryRaw =
+                input.containsKey("memory") ? java.util.Optional.ofNullable((String) input.get("memory"))
+                        : java.util.Optional.empty();
+        // Cap the incoming memory at the same limit as
+        // create_agent to keep agent.md well-bounded.
+        if (memoryRaw.isPresent() && memoryRaw.get() != null
+                && memoryRaw.get().length() > 64 * 1024) {
+            return Tool.ToolResult.error(
+                    "memory too large: " + memoryRaw.get().length()
+                            + " bytes (max 65536). Use a separate knowledge file.");
+        }
         String body = (String) input.get("body");
         if (body == null) body = "";
 
@@ -182,10 +201,32 @@ public class UpdateAgentTool {
                     resolvedInit = v;
                 }
             }
+            // R371.2: same partial-update semantics for
+            // memory. Re-read the existing memory so an
+            // omitted key preserves it; null clears it.
+            String existingMemory = "";
+            try {
+                var existing = registry.getMeta(name).orElse(null);
+                if (existing != null && existing.memory() != null) {
+                    existingMemory = existing.memory();
+                }
+            } catch (Exception ignore) {}
+            String resolvedMemory;
+            if (!memoryRaw.isPresent()) {
+                resolvedMemory = existingMemory;
+            } else {
+                String v = memoryRaw.get();
+                if (v == null) {
+                    resolvedMemory = "";  // explicit clear
+                } else {
+                    resolvedMemory = v;
+                }
+            }
             registry.update(name, description, displayName,
                     model.isEmpty() ? null : model,
                     variant.isEmpty() ? null : variant,
                     resolvedInit.isEmpty() ? null : resolvedInit,
+                    resolvedMemory.isEmpty() ? null : resolvedMemory,
                     body);
             AgentRegistry.AgentMeta meta = registry.getMeta(name).orElse(null);
             String path = meta == null ? "" : meta.path().toString();

@@ -99,12 +99,12 @@ class AgentRegistryR286Test {
         Files.createDirectories(agents);
         AgentRegistry reg = new AgentRegistry(agents, Duration.ofMinutes(1));
 
-        reg.create("a", "test agent", "Test Agent", "glm/glm-4-flash", "xhigh",null,  "body");
+        reg.create("a", "test agent", "Test Agent", "glm/glm-4-flash", "xhigh",null,null,   "body");
         var meta = reg.getMeta("a");
         assertTrue(meta.isPresent());
         assertEquals("xhigh", meta.get().variant());
 
-        reg.update("a", "test agent", "Test Agent", "glm/glm-4-flash", "low",null,  "body");
+        reg.update("a", "test agent", "Test Agent", "glm/glm-4-flash", "low",null,null,   "body");
         meta = reg.getMeta("a");
         assertTrue(meta.isPresent());
         assertEquals("low", meta.get().variant());
@@ -126,17 +126,17 @@ class AgentRegistryR286Test {
         Files.createDirectories(agents);
         AgentRegistry reg = new AgentRegistry(agents, Duration.ofMinutes(1));
 
-        reg.create("b", "test", null, "glm/glm-4-flash", null,null,  "body");
+        reg.create("b", "test", null, "glm/glm-4-flash", null,null,null,   "body");
         String written = Files.readString(agents.resolve("b").resolve("agent.md"));
         assertFalse(written.contains("variant:"),
                 "blank variant must not emit a frontmatter line, got:\n" + written);
 
-        reg.create("c", "test", null, "glm/glm-4-flash", "  ",null,  "body");
+        reg.create("c", "test", null, "glm/glm-4-flash", "  ",null,null,   "body");
         written = Files.readString(agents.resolve("c").resolve("agent.md"));
         assertFalse(written.contains("variant:"),
                 "whitespace-only variant must not emit a frontmatter line, got:\n" + written);
 
-        reg.create("d", "test", null, "glm/glm-4-flash", "medium",null,  "body");
+        reg.create("d", "test", null, "glm/glm-4-flash", "medium",null,null,   "body");
         written = Files.readString(agents.resolve("d").resolve("agent.md"));
         assertTrue(written.contains("variant: medium"),
                 "non-blank variant must emit a frontmatter line, got:\n" + written);

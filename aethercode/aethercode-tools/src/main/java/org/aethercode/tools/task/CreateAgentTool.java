@@ -141,6 +141,17 @@ public class CreateAgentTool {
         props.put("variant", Tools.stringProp(
                 "Optional quality preset: low / medium / high / xhigh (or opencode aliases). " +
                 "Empty = inherit from AETHERCODE_SUBAGENT_VARIANT or engine default."));
+        // R370.4: lifecycle hook payload
+        props.put("init", Tools.stringProp(
+                "Optional one-shot reminder prepended to the child session's FIRST turn. " +
+                "Use for run-once setup checks (\"open todo before touching files\"). " +
+                "Max 16 KB. Empty = no hook."));
+        // R371.2: persistent memory payload
+        props.put("memory", Tools.stringProp(
+                "Optional always-on context prepended to the child session's system prompt on EVERY turn. " +
+                "Use for long-term facts about the user's project, the agent's documented playbook, etc. " +
+                "Unlike `init`, this is sent on every turn — keep it under ~8 KB. " +
+                "Max 64 KB."));
         props.put("body", Tools.stringProp(
                 "The agent's system-prompt body (markdown). Max 64 KB. " +
                 "The first paragraph is what the subagent sees as its persona; " +
@@ -209,6 +220,21 @@ public class CreateAgentTool {
                     "init too large: " + initPrompt.length()
                             + " bytes (max 16384). Trim or split into body.");
         }
+        // R371.2: persistent memory payload. Unlike
+        // {@code init}, which is a one-shot reminder on the
+        // first turn, {@code memory} is prepended to the
+        // child session's system prompt on every turn —
+        // the agent's "I always know this" knowledge
+        // (long-term facts about the user's project, the
+        // agent's documented playbook, etc.). The
+        // frontmatter block scalar form makes
+        // multi-paragraph memory practical.
+        String memory = stringOrEmpty(input.get("memory"));
+        if (memory.length() > 64 * 1024) {
+            return Tool.ToolResult.error(
+                    "memory too large: " + memory.length()
+                            + " bytes (max 65536). Use a separate knowledge file.");
+        }
         String body = (String) input.get("body");
         if (body == null) body = "";
 
@@ -237,6 +263,7 @@ public class CreateAgentTool {
                     model.isEmpty() ? null : model,
                     variant.isEmpty() ? null : variant,
                     initPrompt.isEmpty() ? null : initPrompt,
+                    memory.isEmpty() ? null : memory,
                     body);
             // Re-read the meta so we can echo the resolved
             // path back to the LLM (and ultimately the user).

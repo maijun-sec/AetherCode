@@ -99,7 +99,7 @@ class AgentRegistryR370Test {
         AgentRegistry reg = new AgentRegistry(agentsDir, Duration.ofMinutes(1));
 
         reg.create("gamma", "an agent", "Gamma", null, null,
-                "Pre-task checklist: greet user, open todo.",
+                "Pre-task checklist: greet user, open todo.",null, 
                 "this is the body");
         var meta = reg.getMeta("gamma");
         assertTrue(meta.isPresent());
@@ -113,7 +113,7 @@ class AgentRegistryR370Test {
         AgentRegistry reg = new AgentRegistry(agentsDir, Duration.ofMinutes(1));
 
         reg.create("delta", "an agent", "Delta", null, null,
-                null, "body");
+                null,null,  "body");
         var meta = reg.getMeta("delta");
         assertTrue(meta.isPresent());
         assertEquals("", meta.get().initPrompt());
@@ -125,11 +125,11 @@ class AgentRegistryR370Test {
         AgentRegistry reg = new AgentRegistry(agentsDir, Duration.ofMinutes(1));
 
         reg.create("eps", "d", "Eps", null, null,
-                "first hook", "body");
+                "first hook",null,  "body");
         assertEquals("first hook", reg.getMeta("eps").orElseThrow().initPrompt());
 
         reg.update("eps", "d", "Eps", null, null,
-                "second hook", "body");
+                "second hook",null,  "body");
         assertEquals("second hook", reg.getMeta("eps").orElseThrow().initPrompt());
     }
 
@@ -139,9 +139,9 @@ class AgentRegistryR370Test {
         AgentRegistry reg = new AgentRegistry(agentsDir, Duration.ofMinutes(1));
 
         reg.create("zeta", "d", "Zeta", null, null,
-                "hook to clear", "body");
+                "hook to clear",null,  "body");
         reg.update("zeta", "d", "Zeta", null, null,
-                null, "body");
+                null,null,  "body");
         assertEquals("", reg.getMeta("zeta").orElseThrow().initPrompt());
     }
 }

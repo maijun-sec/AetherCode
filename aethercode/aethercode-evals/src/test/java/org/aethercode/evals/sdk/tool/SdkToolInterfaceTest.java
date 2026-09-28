@@ -124,9 +124,11 @@ class SdkToolInterfaceTest {
     void standardToolsSizeIsStable() {
         // If a new tool is added intentionally, this assertion is
         // the reminder to update the TUI palette + the permission
-        // classifier. 17 is the historical count; bump on purpose,
-        // not by accident.
-        assertEquals(17, StandardTools.all().size(),
+        // classifier. 23 = 17 historical + 6 added in R362
+        // (CreateAgentTool, UpdateAgentTool, DeleteAgentTool,
+        // ListAgentsTool, SubagentRetryTool, SubagentCancelTool).
+        // Bump on purpose, not by accident.
+        assertEquals(23, StandardTools.all().size(),
                 "StandardTools count drifted — review TUI palette and classifiers");
     }
 

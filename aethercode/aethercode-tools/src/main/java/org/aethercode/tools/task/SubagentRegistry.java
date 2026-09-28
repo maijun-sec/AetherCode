@@ -68,6 +68,41 @@ public final class SubagentRegistry {
      *  before registering jobs. */
     private volatile long watchdogTimeoutMs = readWatchdogTimeoutMs();
 
+    /** R372.2: per-agent circuit breaker. Owns the
+     *  failure-streak state for every distinct agent
+     *  name the registry has seen. A new agent creates a
+     *  new slot on first failure; slots never expire
+     *  (the "open until" timestamp is the only TTL). The
+     *  breaker is consulted by callers that want to
+     *  refuse to spawn a known-bad agent before
+     *  burning tokens on it — see
+     *  {@link SubagentCircuitBreaker#isOpen(String)}. */
+    private final SubagentCircuitBreaker circuitBreaker =
+            new SubagentCircuitBreaker();
+
+    /** R372.2: optional handle the engine / methods
+     *  layer can swap in (e.g. with a custom threshold
+     *  loaded from {@code ~/.aethercode/agents.yaml}).
+     *  The default constructor is what tests + most
+     *  deployments use. */
+    public void setCircuitBreaker(SubagentCircuitBreaker breaker) {
+        if (breaker == null) {
+            throw new IllegalArgumentException("breaker must not be null");
+        }
+        this.circuitBreaker.reset();
+        // we can't reassign a final field; rely on the
+        // mutable default breaker instead. This setter
+        // exists for the future "wire a custom breaker"
+        // path — for now callers configure thresholds
+        // via the env-driven constants.
+    }
+
+    /** R372.2: peek the circuit breaker. Returns the
+     *  same instance the registry uses internally so the
+     *  caller can query the state without re-constructing
+     *  a separate breaker. */
+    public SubagentCircuitBreaker circuitBreaker() { return circuitBreaker; }
+
     /** env-var name the user can set to extend or
      *  shorten the default watchdog timeout. */
     public static final String WATCHDOG_TIMEOUT_ENV = "AETHERCODE_SUBAGENT_TIMEOUT_MS";
@@ -131,7 +166,13 @@ public final class SubagentRegistry {
     private final CopyOnWriteArrayList<Consumer<SubagentEvent>> listeners =
             new CopyOnWriteArrayList<>();
 
-    private SubagentRegistry() {}
+    // Package-private constructor so R372 tests can build a
+    // fresh registry with a long watchdog timeout (the
+    // default watchdog trips in seconds and would
+    // misfire inside a fast unit test). Production code
+    // uses the {@link #INSTANCE} singleton via the
+    // static accessor at the bottom of this file.
+    SubagentRegistry() {}
 
     /** One running or recently-finished subagent. */
     public static final class SubagentJob {
@@ -186,6 +227,27 @@ public final class SubagentRegistry {
          *  for jobs that have not started streaming
          *  yet. */
         public volatile String partialResult;
+        /** R372.1: cumulative tokens consumed by this
+         *  subagent. Updated by
+         *  {@link SubagentRegistry#addTokens(String, long)}
+         *  as the worker streams tokens from the LLM.
+         *  Surfaced via the {@code tokenUsage} field on
+         *  {@link SubagentEvent} so the desktop dashboard
+         *  can plot cumulative cost per agent. */
+        public volatile long tokensUsed;
+        /** R372.1: per-agent token budget. 0 = no limit
+         *  (the legacy default). When non-zero, the
+         *  registry checks {@link #addTokens(String, long)}
+         *  on every updatePartial; once cumulative tokens
+         *  exceed this cap, the registry fires the
+         *  watchdog (which interrupts the worker thread)
+         *  and marks the job FAILED with reason
+         *  "token budget exceeded". The token-budget cap
+         *  is independent of the wall-clock watchdog — a
+         *  long-running agent that streams cheaply can
+         *  blow the token budget long before the
+         *  wall-clock timeout fires. */
+        public volatile long maxTokens;
         /** R362 Round 3: per-job Watchdog (null when
          *  the registry was created without watchdog
          *  support, e.g. legacy unit tests). The
@@ -420,7 +482,17 @@ public final class SubagentRegistry {
 
     /** Register a new job and return its id. */
     public synchronized String register(String taskId, String prompt, String role) {
-        return register(taskId, prompt, role, "");
+        return register(taskId, prompt, role, "", 0L);
+    }
+
+    /** R372.1: register with an explicit token budget.
+     *  {@code maxTokens == 0} means "no budget" (the
+     *  legacy behaviour). The budget is enforced by
+     *  {@link #addTokens(String, long)} which the worker
+     *  thread calls on every LLM token arrival. */
+    public synchronized String register(String taskId, String prompt, String role,
+                                        long maxTokens) {
+        return register(taskId, prompt, role, "", maxTokens);
     }
 
     /** register a new job, attributing it to a
@@ -431,8 +503,15 @@ public final class SubagentRegistry {
      *  legacy-D wire shape; a single-session daemon
      *  treats an empty sessionId as "the only session"). */
     public synchronized String register(String taskId, String prompt, String role, String sessionId) {
+        return register(taskId, prompt, role, sessionId, 0L);
+    }
+
+    /** R372.1: full session-aware + token-budget overload. */
+    public synchronized String register(String taskId, String prompt, String role,
+                                        String sessionId, long maxTokens) {
         String id = "sag-" + idCounter.incrementAndGet();
         SubagentJob j = new SubagentJob(id, taskId, prompt, role, sessionId);
+        j.maxTokens = maxTokens;  // R372.1: token budget (0 = unlimited)
         running.put(id, j);
         // R362 Round 3: start a per-job Watchdog. The
         // watchdog polls j.lastEventMs; if the gap to
@@ -512,6 +591,13 @@ public final class SubagentRegistry {
         j.partialResult = "";
         j.appendAudit("COMPLETE", "result=" + truncate(result, 80));
         moveToFinished(j);
+        // R372.2: a successful completion resets the
+        // breaker's failure streak. A single success
+        // after 2 failures doesn't recover a tripped
+        // breaker (we never reached 3 yet) but it does
+        // zero the counter so the next failure is the
+        // "first of a fresh streak".
+        circuitBreaker.recordSuccess(j.role);
         fireChange(new SubagentEvent(jobId, j.role, SubagentJob.Status.COMPLETED,
                 j.elapsedMs(), summary(j), j.finishedAtMs, j.sessionId,
                 truncateResult(result), "", ""));
@@ -538,6 +624,14 @@ public final class SubagentRegistry {
         j.partialResult = "";
         j.appendAudit("FAIL", error == null ? "" : error);
         moveToFinished(j);
+        // R372.2: record the failure with the
+        // circuit breaker. The breaker keys on the
+        // role (which is the agent name for custom
+        // agents, or the SubagentRole enum value for
+        // built-in roles). After enough consecutive
+        // failures the breaker will refuse to spawn
+        // this agent until the cooldown window passes.
+        circuitBreaker.recordFailure(j.role);
         // include the error in the result slot
         // so the panel can render "FAILED: <message>"
         // and the user can decide whether to retry.
@@ -581,6 +675,10 @@ public final class SubagentRegistry {
         j.partialResult = "";
         j.appendAudit("CANCEL", "reason=" + j.cancelReason);
         moveToFinished(j);
+        // R372.2: cancel is not a failure (the user
+        // asked for it). Record success so a string
+        // of cancellations doesn't trip the breaker.
+        circuitBreaker.recordSuccess(j.role);
         fireChange(new SubagentEvent(jobId, j.role, SubagentJob.Status.CANCELLED,
                 j.elapsedMs(), summary(j), j.finishedAtMs, j.sessionId, "", j.cancelReason, ""));
     }
@@ -637,6 +735,54 @@ public final class SubagentRegistry {
         fireChange(new SubagentEvent(jobId, j.role, SubagentJob.Status.RUNNING,
                 j.elapsedMs(), summary(j), System.currentTimeMillis(),
                 j.sessionId, "", "", truncated));
+    }
+
+    /** R372.1: account for {@code delta} more tokens
+     *  consumed by the subagent. The worker thread
+     *  calls this on every LLM token arrival
+     *  (typically via the
+     *  {@code text_delta}/{@code tool_use_start}
+     *  stream-event paths).
+     *
+     *  <p>When {@link SubagentJob#maxTokens} is non-zero
+     *  AND the cumulative {@code tokensUsed} now exceeds
+     *  the budget, the registry fires the watchdog
+     *  (which interrupts the worker thread) and marks
+     *  the job FAILED with reason {@code "token budget
+     *  exceeded"}. A budget breach is fatal — once the
+     *  cap is tripped, the worker is killed regardless
+     *  of partial-result progress. {@code delta <= 0}
+     *  is a no-op.
+     */
+    public synchronized void addTokens(String jobId, long delta) {
+        if (jobId == null || delta <= 0) return;
+        SubagentJob j = running.get(jobId);
+        if (j == null) return;  // already finished; drop
+        j.tokensUsed += delta;
+        // R372.1: enforce the per-job budget. The
+        // check is intentionally "exceeded" (>=)
+        // rather than "would exceed" so a single
+        // delta that pushes us past the cap still
+        // counts the overrun — the dashboard needs
+        // to know how far over we went for
+        // retrospective accounting.
+        if (j.maxTokens > 0 && j.tokensUsed >= j.maxTokens) {
+            String reason = "token budget exceeded: " + j.tokensUsed
+                    + " >= " + j.maxTokens;
+            j.appendAudit("BUDGET_BREACH", reason);
+            // stop the watchdog so it doesn't
+            // double-fire, then mark FAILED which
+            // stops the watchdog's underlying timer.
+            if (j.watchdog != null) j.watchdog.stop();
+            markFailed(jobId, reason);
+            // interrupt the worker thread if the
+            // worker registered itself via
+            // attachThread. The interrupt is
+            // best-effort — a thread that ignores it
+            // is the worker's responsibility.
+            Thread worker = runningThreads.get(jobId);
+            if (worker != null) worker.interrupt();
+        }
     }
 
     /** cap on the partial text we publish on
@@ -917,6 +1063,104 @@ public final class SubagentRegistry {
         List<SubagentJob> out = new java.util.ArrayList<>(finished.values());
         java.util.Collections.reverse(out);
         return out;
+    }
+
+    /** R372.4: aggregated per-agent metrics for the
+     *  Multi-Agent Dashboard. The shape is intentionally
+     *  flat (Map<String, Metric>) so the renderer's
+     *  React component can iterate without nesting. One
+     *  Metric per distinct agent name the registry has
+     *  seen in either running or finished. The breaker
+     *  snapshot and concurrency snapshot come from
+     *  their respective side-channel singletons, which
+     *  means a brand-new agent that's never been
+     *  spawned (no breaker / limiter slot) still gets
+     *  CLOSED / 0 / 1 from this method. */
+    public synchronized Map<String, AgentMetric> agentMetrics() {
+        // Aggregate across running + finished so the
+        // dashboard sees recent completions, not just
+        // in-flight jobs.
+        Map<String, AgentMetric> out = new LinkedHashMap<>();
+        // running tokens are aggregated first so they
+        // take precedence on conflicting keys.
+        for (SubagentJob j : running.values()) {
+            out.computeIfAbsent(j.role, k -> new AgentMetric(k, 0, 0, 0, 0, "CLOSED", 0,
+                            SubagentConcurrencyLimiter.DEFAULT_QUOTA))
+                    .mergeRunning(j);
+        }
+        for (SubagentJob j : finished.values()) {
+            out.computeIfAbsent(j.role, k -> new AgentMetric(k, 0, 0, 0, 0, "CLOSED", 0,
+                            SubagentConcurrencyLimiter.DEFAULT_QUOTA))
+                    .mergeFinished(j);
+        }
+        // decorate with breaker + concurrency snapshots.
+        var brSnap = circuitBreaker.snapshot();
+        for (var e : out.entrySet()) {
+            SubagentCircuitBreaker.SlotState br = brSnap.slots().get(e.getKey());
+            if (br != null) {
+                e.getValue().circuitState = br.state();
+                e.getValue().consecutiveFailures = br.consecutiveFailures();
+                e.getValue().breakerOpenRemainingMs = br.openRemainingMs();
+            }
+            // R372.4: concurrency is a separate concern.
+            // We don't wire it into the registry's state
+            // directly because the limiter is owned by the
+            // methods / spawn layer. For the dashboard we
+            // expose what the limiter knows; if it's not
+            // wired, the snapshot just reports the default
+            // quota and zero in-flight.
+            // (No-op in this stub: real wiring lands in the
+            // methods-layer integration commit.)
+            e.getValue().concurrencyQuota = SubagentConcurrencyLimiter.DEFAULT_QUOTA;
+        }
+        return out;
+    }
+
+    /** R372.1 + R372.2 + R372.4: the public hook a
+     *  dashboard / metrics consumer queries. Returns the
+     *  full set of agent metrics; callers can post-filter
+     *  by agent name. The result is a snapshot — values
+     *  may shift between calls. */
+    public Map<String, AgentMetric> dashboardMetrics() {
+        return agentMetrics();
+    }
+
+    /** Per-agent rollup for the dashboard. Combines
+     *  running / finished counts, total token usage,
+     *  circuit-breaker state, and concurrency quota. */
+    public static final class AgentMetric {
+        public final String agentName;
+        public int running;
+        public int completed;
+        public int failed;
+        public long tokensTotal;
+        public String circuitState;
+        public int consecutiveFailures;
+        public long breakerOpenRemainingMs;
+        public int concurrencyQuota;
+        AgentMetric(String name, int run, int comp, int fail,
+                    long tokens, String cState, int fails, int quota) {
+            this.agentName = name;
+            this.running = run;
+            this.completed = comp;
+            this.failed = fail;
+            this.tokensTotal = tokens;
+            this.circuitState = cState;
+            this.consecutiveFailures = fails;
+            this.concurrencyQuota = quota;
+        }
+        void mergeRunning(SubagentJob j) {
+            running++;
+            tokensTotal += j.tokensUsed;
+            if (j.status == SubagentJob.Status.FAILED) failed++;
+            else if (j.status == SubagentJob.Status.COMPLETED) completed++;
+        }
+        void mergeFinished(SubagentJob j) {
+            // finished jobs are COMPLETED, FAILED, or CANCELLED.
+            if (j.status == SubagentJob.Status.COMPLETED) completed++;
+            else if (j.status == SubagentJob.Status.FAILED) failed++;
+            tokensTotal += j.tokensUsed;
+        }
     }
 
     /** Translate a job's status to a {@code TaskStatus}

@@ -5983,6 +5983,12 @@ public class AetherCodeMethods {
         // params.containsKey("init"); for the create path
         // a missing field is always "no init".
         String init = p.get("init") instanceof String s ? s : null;
+        // R371.2: persistent memory payload. Same wire
+        // semantics — omitted key = preserve, null = clear,
+        // string = replace. The wire surface stays a plain
+        // string so existing callers don't need to know
+        // about the new field.
+        String memory = p.get("memory") instanceof String s ? s : null;
         try {
             org.aethercode.core.agent.AgentRegistry reg = engine.agentRegistry();
             if (reg == null) {
@@ -6006,12 +6012,30 @@ public class AetherCodeMethods {
                     } catch (Exception ignore) {}
                     resolvedInit = existing;
                 }
+                // R371.2: same partial-update rule for
+                // memory — read existing if absent, replace
+                // when present, clear on explicit null.
+                String resolvedMemory;
+                if (p.containsKey("memory")) {
+                    resolvedMemory = memory;
+                } else {
+                    String existing = "";
+                    try {
+                        var meta = reg.getMeta(name).orElse(null);
+                        if (meta != null && meta.memory() != null) {
+                            existing = meta.memory();
+                        }
+                    } catch (Exception ignore) {}
+                    resolvedMemory = existing;
+                }
                 reg.update(name, description, displayName, model, variant,
                         (resolvedInit == null || resolvedInit.isEmpty()) ? null : resolvedInit,
+                        (resolvedMemory == null || resolvedMemory.isEmpty()) ? null : resolvedMemory,
                         body);
             } else {
                 reg.create(name, description, displayName, model, variant,
                         (init == null || init.isEmpty()) ? null : init,
+                        (memory == null || memory.isEmpty()) ? null : memory,
                         body);
             }
             return Map.of("ok", true, "name", name);

@@ -65,7 +65,7 @@ public final class AgentRegistry {
             // or block scalar). When non-empty, the
             // agent-spawn pipeline injects this text as
             // a one-shot system reminder on the child
-            // session's first turn �?the conventional
+            // session's first turn — the conventional
             // place for an agent to record its setup
             // checklist (e.g. "set up a todo list before
             // touching files", "always echo the user's
@@ -75,6 +75,21 @@ public final class AgentRegistry {
             // state. The user can see it via
             // {@code getAgentMeta(name).initPrompt()}.
             String initPrompt,
+            // R371.2: agent's persistent memory payload.
+            // Read from the `memory:` frontmatter field
+            // (a YAML literal block scalar — typically
+            // multi-line). Unlike {@code initPrompt},
+            // which is a one-shot reminder on the first
+            // turn, {@code memory} is prepended to the
+            // child session's system prompt on every
+            // turn — the agent's "I always know this"
+            // knowledge (long-term facts about the user's
+            // project, the agent's documented playbook,
+            // etc.). Use {@code init} for run-once
+            // setup; use {@code memory} for always-on
+            // context. May be large (the spawn pipeline
+            // truncates it to a sensible cap).
+            String memory,
             Path path,
             long lastModifiedMs
     ) {
@@ -257,6 +272,13 @@ public final class AgentRegistry {
                         // both forms because it returns the
                         // raw scalar body for `|` blocks.
                         String init = Frontmatter.string(f, "init");
+                        // R371.2: persistent memory payload.
+                        // Same shape as init (YAML scalar or
+                        // block scalar) but injected on every
+                        // turn of the child session. Distinct
+                        // semantics from init (one-shot) so
+                        // the agent author can choose.
+                        String memory = Frontmatter.string(f, "memory");
                         long lm = Files.getLastModifiedTime(md).toMillis();
                         AgentMeta meta = new AgentMeta(name,
                                 desc == null ? "" : desc,
@@ -264,6 +286,7 @@ public final class AgentRegistry {
                                 m == null ? "" : m,
                                 v == null ? "" : v.trim(),
                                 init == null ? "" : init.trim(),
+                                memory == null ? "" : memory.trim(),
                                 md, lm);
                         next.put(name, new Entry(meta, p.body()));
                     } catch (IOException e) {
@@ -342,6 +365,7 @@ public final class AgentRegistry {
                                     String displayName, String model,
                                     String variant,
                                     String initPrompt,
+                                    String memory,
                                     String body) throws IOException {
         validateName(name);
         if (agentsDir == null) {
@@ -354,7 +378,7 @@ public final class AgentRegistry {
             // you want to be explicit.)
             LOG.info("agent {} already exists, overwriting", name);
         }
-        writeAgentMd(name, description, displayName, model, variant, initPrompt, body);
+        writeAgentMd(name, description, displayName, model, variant, initPrompt, memory, body);
         reload();
     }
 
@@ -368,12 +392,13 @@ public final class AgentRegistry {
                                     String displayName, String model,
                                     String variant,
                                     String initPrompt,
+                                    String memory,
                                     String body) throws IOException {
         validateName(name);
         if (!byName.containsKey(name)) {
             throw new IllegalArgumentException("agent not found: " + name);
         }
-        writeAgentMd(name, description, displayName, model, variant, initPrompt, body);
+        writeAgentMd(name, description, displayName, model, variant, initPrompt, memory, body);
         reload();
     }
 
@@ -412,6 +437,7 @@ public final class AgentRegistry {
                               String displayName, String model,
                               String variant,
                               String initPrompt,
+                              String memory,
                               String body) throws IOException {
         Files.createDirectories(agentsDir.resolve(name));
         StringBuilder fm = new StringBuilder();
@@ -457,6 +483,16 @@ public final class AgentRegistry {
         if (initPrompt != null && !initPrompt.isBlank()) {
             fm.append("init: |\n");
             for (String line : initPrompt.split("\\r?\\n", -1)) {
+                fm.append("  ").append(line).append('\n');
+            }
+        }
+        // R371.2: persistent memory. Same
+        // block-scalar encoding as init. Empty /
+        // blank input omits the field so the
+        // legacy "no memory" path keeps working.
+        if (memory != null && !memory.isBlank()) {
+            fm.append("memory: |\n");
+            for (String line : memory.split("\\r?\\n", -1)) {
                 fm.append("  ").append(line).append('\n');
             }
         }
