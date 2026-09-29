@@ -52,6 +52,16 @@
             <groupId>org.aethercode</groupId>
             <artifactId>aethercode-compact</artifactId>
         </dependency>
+        <!-- R700: SDD product integration. The protocol
+             layer exposes the sdd.* RPC surface (start /
+             advance / status / abort / listRuns). The
+             orchestrator implementation lives in aethercode-sdd;
+             DaemonRunner wires it via setSddOrchestrator()
+             at boot. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-sdd</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

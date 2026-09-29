@@ -6,12 +6,16 @@ import org.aethercode.protocol.server.JsonRpcDispatcher;
 import org.aethercode.protocol.server.JsonRpcServer;
 import org.aethercode.orchestration.papercompat.PaperCompatRpc;
 import org.aethercode.sdk.AetherCodeEngine;
+import org.aethercode.sdd.SddBundleLoader;
+import org.aethercode.sdd.SddOrchestrator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.aethercode.core.concurrency.EngineStats;
+import org.aethercode.core.tool.Tool;
+import java.util.List;
 
 /**
  * the CLI's "headless daemon" entry point. The daemon reads
@@ -592,6 +596,25 @@ final class DaemonRunner {
         } catch (Exception e) {
             LOG.warn("provider registry / chat client resolver load failed: {}",
                     e.getMessage());
+        }
+
+        // R700 — SDD product integration. Build the orchestrator
+        // from the jar-resource bundle and the engine's default
+        // chat client. Wiring is best-effort: if the bundle fails
+        // to load (missing jar resource, partial release) we log
+        // and continue without sdd.* — the rest of the daemon
+        // still works, the desktop / TUI just can't drive SDD.
+        try {
+            SddBundleLoader bundle = SddBundleLoader.load();
+            org.aethercode.core.llm.ChatClient chatForSdd = engine.chatClient();
+            SddOrchestrator sdd = new SddOrchestrator(bundle, chatForSdd, List.of());
+            http.methods().setSddOrchestrator(sdd);
+            LOG.info("R700: SDD orchestrator installed ({} phase refs, {} templates loaded)",
+                    bundle.isLoaded() ? 8 : 0,
+                    4);
+        } catch (Exception sddLoadErr) {
+            LOG.warn("R700: SDD bundle load failed — sdd.* RPC surface disabled: {}",
+                    sddLoadErr.getMessage());
         }
 
         // install a JSON-RPC permission prompter that the

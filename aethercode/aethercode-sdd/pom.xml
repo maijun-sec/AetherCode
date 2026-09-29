@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.aethercode</groupId>
+        <artifactId>aethercode-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>aethercode-sdd</artifactId>
+    <name>AetherCode SDD (Spec-Driven Development)</name>
+    <description>
+        R700 — SDD product integration. Bundles the 8-phase Spec-Driven Development
+        workflow into the AetherCode daemon as a first-class capability. The sdd
+        skill bundle (SKILL.md + 8 phase references + 5 templates) is packaged as
+        a jar resource so desktop / TUI / any RPC client can drive the workflow
+        via the sdd.* RPC namespace without needing a separate file layout on the
+        developer's box.
+
+        Module dependency graph (R700):
+            aethercode-core    (ChatClient, Message, StreamEvent, Tool, QueryEngine)
+            aethercode-skills  (peer module — bundle loader reads SKILL.md
+                                directly from jar resources, independent of the
+                                skill marketplace registry)
+            aethercode-protocol (the sdd.* RPC methods live in AetherCodeMethods,
+                                wired by DaemonRunner when this module is on the
+                                classpath)
+    </description>
+    <dependencies>
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-core</artifactId>
+        </dependency>
+        <!--
+          Peer dep (not transitive): we want to keep aethercode-sdd independent of
+          aethercode-skills. SddBundleLoader is a self-contained jar-resource reader
+          and does not depend on the skill registry / reload service. Listing the
+          dep here is a future-proofing choice — if we later want to also register
+          sdd via engine.skillRegistry(), the dep is already declared.
+        -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-skills</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <resources>
+            <!--
+              The sdd skill bundle is shipped inside the jar as classpath resources
+              so that SddBundleLoader can read it via ClassLoader.getResourceAsStream
+              without any filesystem path lookup. This is what makes SDD work on
+              any machine that has the daemon jar — no external .minimax path is
+              required.
+            -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
+    </build>
+</project>

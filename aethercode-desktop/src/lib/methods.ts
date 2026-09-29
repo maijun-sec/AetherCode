@@ -170,6 +170,37 @@ export interface SkillMeta {
   lastModifiedMs: number;
 }
 
+/**
+ * R700 — SDD run state returned by every {@code sdd.*} RPC. Shape
+ * matches {@code org.aethercode.sdd.SddPhaseState} →
+ * {@code AetherCodeMethods.sddStateToMap} on the daemon side.
+ *
+ * Phase state machine:
+ *   run.status:    running → idle → done | aborted | failed
+ *   phase.state:   idle → running → pending_confirm | skipped | failed
+ *                  pending_confirm → done (approve) | running (modify)
+ */
+export interface SddPhaseEntry {
+  id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
+  title: string;
+  phaseNumber: number;
+  state: 'idle' | 'running' | 'pending_confirm' | 'done' | 'skipped' | 'failed';
+  startedAt: string | null;
+  endedAt: string | null;
+  path: string | null;
+  optional: boolean;
+}
+export interface SddRunState {
+  slug: string;
+  intent: string;
+  cwd: string;
+  status: 'running' | 'idle' | 'done' | 'aborted' | 'failed';
+  currentPhase: number | null;
+  phases: SddPhaseEntry[];
+  startedAt: string;
+  lastUpdatedAt: string;
+}
+
 /** one entry from the daemon's {@code listAgents}
  *  RPC. The shape matches
  *  {@code org.aethercode.core.agent.AgentRegistry.AgentMeta}.
@@ -911,6 +942,56 @@ export class AetherCodeRpc {
   }
   reloadSkills(): Promise<{ ok: true; count: number; reloadedAt: number }> {
     return this.call('reloadSkills');
+  }
+
+  // R700 — SDD product integration. Desktop drives the 8-phase
+  // SDD workflow by calling these RPCs directly instead of going
+  // through the regular chat path. The daemon's SddOrchestrator
+  // owns the state machine + LLM calls + artefact writes; the
+  // desktop is just a status renderer.
+  //
+  // Wire shape matches what the daemon emits in
+  // aethercode-sdd/SddOrchestrator + AetherCodeMethods.sddStateToMap.
+  sddStart(intent: string, cwd: string): Promise<{
+    ok: boolean;
+    error?: string;
+    code?: string;
+    state?: SddRunState;
+  }> {
+    return this.call('sdd.start', { intent, cwd });
+  }
+  sddAdvance(slug: string, action: 'approve' | 'modify' | 'skip' | 'abort',
+              feedback?: string, cwd?: string): Promise<{
+    ok: boolean;
+    error?: string;
+    code?: string;
+    state?: SddRunState;
+  }> {
+    return this.call('sdd.advance', { slug, action, feedback, cwd });
+  }
+  sddStatus(slug: string, cwd: string): Promise<{
+    ok: boolean;
+    error?: string;
+    code?: string;
+    state?: SddRunState;
+  }> {
+    return this.call('sdd.status', { slug, cwd });
+  }
+  sddAbort(slug: string, cwd: string): Promise<{
+    ok: boolean;
+    error?: string;
+    code?: string;
+    state?: SddRunState;
+  }> {
+    return this.call('sdd.abort', { slug, cwd });
+  }
+  sddListRuns(cwd: string): Promise<{
+    ok: boolean;
+    error?: string;
+    code?: string;
+    runs?: SddRunState[];
+  }> {
+    return this.call('sdd.listRuns', { cwd });
   }
 
   // The desktop surfaces the available Mavis agents in a

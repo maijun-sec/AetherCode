@@ -60,6 +60,14 @@
             <groupId>org.aethercode</groupId>
             <artifactId>aethercode-protocol</artifactId>
         </dependency>
+        <!-- R700: SDD orchestrator + bundle shipped in this jar. The
+             DaemonRunner builds the orchestrator at boot using the
+             SddBundleLoader (which reads /skills/sdd/ from this
+             module's classpath) and the engine's chat client. -->
+        <dependency>
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-sdd</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.aethercode</groupId>
             <artifactId>aethercode-sdk</artifactId>

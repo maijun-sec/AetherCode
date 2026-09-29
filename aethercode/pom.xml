@@ -52,6 +52,13 @@
              as a separate module so the source can move out of
              aethercode-evals in a follow-up round. -->
         <module>aethercode-orchestration</module>
+        <!-- R700: SDD product integration — bundles the 8-phase
+             Spec-Driven Development workflow as a first-class
+             AetherCode capability. The sdd skill bundle ships
+             inside the daemon jar (src/main/resources/skills/sdd/)
+             so desktop + TUI can drive SDD via the sdd.* RPC
+             namespace without any external file layout. -->
+        <module>aethercode-sdd</module>
     </modules>
 
     <properties>
@@ -130,6 +137,15 @@
         <dependency>
             <groupId>org.aethercode</groupId>
             <artifactId>aethercode-orchestration</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <!-- R700: SDD product integration module. Sibling
+                 of aethercode-skills (sdd bundle loader reads
+                 jar resources independently of the skill
+                 marketplace registry). -->
+            <groupId>org.aethercode</groupId>
+            <artifactId>aethercode-sdd</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
