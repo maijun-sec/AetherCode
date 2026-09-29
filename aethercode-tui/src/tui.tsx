@@ -30,6 +30,7 @@ import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatte
 import { Header } from "./components/Header.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { SddMode } from "./components/SddMode.js";
+import { SddReview } from "./components/SddReview.js";
 import { SubagentPanel } from "./components/SubagentPanel.js";
 import { InputBox } from "./components/InputBox.js";
 import { Scrollback } from "./components/Scrollback.js";
@@ -337,6 +338,15 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   // BankClient's own 10s timeout (R244.3); we don't add a
   // second layer of bookkeeping here.
   const [bankStatus, setBankStatus] = useState<string | null>(null);
+  // R700d — ephemeral diff-viewer state. /sdd-view and /sdd-diff
+  // populate this; /sdd-clear-cache + /sdd-snapshot both leave
+  // the slot untouched so the user can browse the rendered
+  // output without re-issuing the read.
+  const [sddReview, setSddReview] = useState<{
+    path: string;
+    lines: string[];
+    previousLines: string[] | null;
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1121,6 +1131,56 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           dispatch({ type: "sideNote", kind: "error", message: `sdd.status error: ${(e as Error).message}` });
         }
       })();
+      return;
+    }
+    // R700d — /sdd-view [N] shows the artefact on disk (first
+    // 80 lines) + a file:// link. The artefact path comes from
+    // sddRun.phases[N-1].path, which the daemon populates when
+    // it emits the SddRunState over RPC. When no phase is given
+    // we default to the run's currentPhase.
+    if (slash?.local === "__SDD_VIEW__" || slash?.local === "__SDD_DIFF__" || slash?.local === "__SDD_SNAPSHOT__") {
+      const sddRun = state.sddRun;
+      if (!sddRun) {
+        dispatch({ type: "sideNote", kind: "error", message: "sdd: no active run" });
+        return;
+      }
+      const phaseParam = (slash.rpcParams as { phase?: number | null } | undefined)?.phase;
+      const phaseIdx =
+        phaseParam && phaseParam >= 1 && phaseParam <= sddRun.phases.length
+          ? phaseParam - 1
+          : (sddRun.currentPhase ?? 1) - 1;
+      const phase = sddRun.phases[phaseIdx];
+      if (!phase || !phase.path) {
+        dispatch({ type: "sideNote", kind: "error",
+          message: `sdd: phase ${phaseIdx + 1} has no artefact yet` });
+        return;
+      }
+      const path = phase.path;
+      void (async () => {
+        try {
+          const fs = await import("node:fs");
+          const lines = fs.readFileSync(path, "utf-8").split(/\r?\n/);
+          if (slash?.local === "__SDD_SNAPSHOT__") {
+            dispatch({ type: "sddCache.set", phase: phaseIdx + 1, lines });
+            dispatch({ type: "sideNote", kind: "info",
+              message: `📐 cached snapshot for phase ${phaseIdx + 1} (${lines.length} lines)` });
+            return;
+          }
+          const cached = state.sddCache[phaseIdx + 1] ?? null;
+          setSddReview({ path, lines, previousLines: slash.local === "__SDD_DIFF__" ? cached : null });
+          dispatch({ type: "sideNote", kind: "info",
+            message: `📂 viewing ${path} (${lines.length} lines${cached ? `, diff vs cached ${cached.length} lines` : ""})` });
+        } catch (e) {
+          dispatch({ type: "sideNote", kind: "error",
+            message: `sdd read ${path}: ${(e as Error).message}` });
+        }
+      })();
+      return;
+    }
+    if (slash?.local === "__SDD_CLEAR_CACHE__") {
+      dispatch({ type: "sddCache.clear" });
+      setSddReview(null);
+      dispatch({ type: "sideNote", kind: "info", message: "📐 cleared sdd cache + viewer" });
       return;
     }
     if (slash?.local) {
@@ -1911,6 +1971,16 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 always sees the current phase + chip strip. */}
             {state.sddRun ? (
               <SddMode run={state.sddRun} cwd={cwd} />
+            ) : null}
+            {sddReview ? (
+              <Box flexDirection="column" paddingX={1}>
+                <SddReview
+                  artefactPath={sddReview.path}
+                  currentLines={sddReview.lines}
+                  previousLines={sddReview.previousLines}
+                  maxLines={60}
+                />
+              </Box>
             ) : null}
             <Box flexDirection="row" flexGrow={1}>
               <Box flexDirection="column" flexGrow={1}>

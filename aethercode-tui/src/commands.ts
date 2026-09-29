@@ -86,6 +86,11 @@ export const SLASH_HELP = [
   "/sdd-modify <fb>     R700: re-run the current phase with the user's feedback",
   "/sdd-skip            R700: skip the current phase (REQUIRED phases refuse)",
   "/sdd-abort           R700: abort the current SDD run",
+  // R700d — modify flow helpers (file:// link + diff viewer).
+  "/sdd-view [phase]     R700d: show the phase artefact (first 80 lines) + file:// link",
+  "/sdd-snapshot [phase] R700d: cache the current artefact body (for /sdd-diff later)",
+  "/sdd-diff [phase]     R700d: render diff between cached snapshot and on-disk artefact",
+  "/sdd-clear-cache      R700d: drop every cached per-phase snapshot",
 ].join("\n");
 
 /** the set of slash command names (without the leading "/" and
@@ -172,6 +177,11 @@ export const SLASH_COMMANDS: string[] = [
   "sdd-modify",       // re-run current phase with feedback
   "sdd-skip",         // skip current phase (REQUIRED phases refuse)
   "sdd-abort",        // abort the current SDD run
+  // R700d — modify flow helpers.
+  "sdd-view",          // show artefact + file:// link
+  "sdd-snapshot",      // cache the current artefact for diff
+  "sdd-diff",          // render diff between snapshot + on-disk
+  "sdd-clear-cache",   // drop every cached snapshot
 ];
 
 /** T-442: structured slash-command catalog. Each entry is
@@ -261,7 +271,12 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "sdd-approve",  description: "R700: approve the current phase → advance" },
   { name: "sdd-modify",   description: "R700: re-run current phase with feedback" },
   { name: "sdd-skip",     description: "R700: skip the current phase (REQUIRED refuses)" },
-  { name: "sdd-abort",    description: "R700: abort the current SDD run" }
+  { name: "sdd-abort",    description: "R700: abort the current SDD run" },
+  // R700d — modify flow helpers.
+  { name: "sdd-view",         description: "R700d: show the artefact + file:// link" },
+  { name: "sdd-snapshot",     description: "R700d: cache the current artefact for diff" },
+  { name: "sdd-diff",         description: "R700d: render diff between snapshot and on-disk" },
+  { name: "sdd-clear-cache",  description: "R700d: drop every cached per-phase snapshot" },
 ];
 
 /** tab-completion result.
@@ -341,6 +356,20 @@ function longestCommonPrefix(strs: string[]): string {
     }
   }
   return prefix;
+}
+
+/**
+ * R700d — parse an optional `[phase]` arg (1-8). Returns
+ * undefined when the user did not pass a phase so the daemon
+ * can fall back to the run's currentPhase. Whitespace tokens
+ * and out-of-range values return null.
+ */
+function parsePhase(rest: string[]): number | null | undefined {
+  const tok = rest.find((t) => /^\d+$/.test(t));
+  if (!tok) return undefined;
+  const n = Number.parseInt(tok, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 8) return null;
+  return n;
 }
 
 export function handleSlash(input: string): SlashResult | null {
@@ -986,6 +1015,18 @@ export function handleSlash(input: string): SlashResult | null {
     }
     case "sdd-abort": {
       return { local: "__SDD_ABORT__" };
+    }
+    case "sdd-view": {
+      return { local: "__SDD_VIEW__", rpcParams: { phase: parsePhase(rest) } };
+    }
+    case "sdd-snapshot": {
+      return { local: "__SDD_SNAPSHOT__", rpcParams: { phase: parsePhase(rest) } };
+    }
+    case "sdd-diff": {
+      return { local: "__SDD_DIFF__", rpcParams: { phase: parsePhase(rest) } };
+    }
+    case "sdd-clear-cache": {
+      return { local: "__SDD_CLEAR_CACHE__" };
     }
     default:
       return { local: `unknown slash command: /${cmd}. Try /help.` };

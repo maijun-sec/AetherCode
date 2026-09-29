@@ -583,6 +583,10 @@ export interface State {
   // token handlers via the `sddRun.set` / `sddRun.clear`
   // actions below.
   sddRun: SddRunState | null;
+  // R700d — per-phase artefact snapshot the user took with
+  // `/sdd-snapshot`. Used by `/sdd-diff` to render a unified
+  // diff (snapshot vs on-disk). Cleared by `/sdd-clear-cache`.
+  sddCache: Record<number, string[]>;
 }
 
 /**
@@ -729,6 +733,8 @@ export type Action =
   // sddRun field tracks the daemon's SddPhaseState.
   | { type: "sddRun.set"; state: SddRunState }
   | { type: "sddRun.clear" }
+  | { type: "sddCache.set"; phase: number; lines: string[] } // R700d: /sdd-snapshot N stores on-disk file contents in sddCache[N]
+  | { type: "sddCache.clear" } // R700d: /sdd-clear-cache wipes the snapshot map
   | { type: "trimToasts"; now: number } // R41: drop toasts older than 2s
   | { type: "setTheme"; theme: "default" | "solarized" | "monokai" } // R42
   | { type: "setLayout"; layout: "full" | "minimal" | "focus" } // R43
@@ -839,6 +845,9 @@ export const INITIAL: State = {
   // `sddRun.set` to populate this; /sdd-abort + a daemon
   // 'aborted' response dispatch `sddRun.clear`.
   sddRun: null,
+  // R700d — empty per-phase artefact cache. /sdd-snapshot N
+  // populates sddCache[N]; /sdd-diff reads it.
+  sddCache: {},
   snippets: {},
   lastError: null,
   logBuffer: [],
@@ -1950,6 +1959,17 @@ export function reducer(state: State, action: Action): State {
       return { ...state, sddRun: action.state };
     case "sddRun.clear":
       return { ...state, sddRun: null };
+    // R700d — per-phase artefact snapshot for the diff
+    // viewer. /sdd-snapshot N captures the on-disk file
+    // into sddCache[N]; /sdd-diff renders sddCache[N] vs
+    // the current file.
+    case "sddCache.set":
+      return {
+        ...state,
+        sddCache: { ...state.sddCache, [action.phase]: action.lines },
+      };
+    case "sddCache.clear":
+      return { ...state, sddCache: {} };
     default:
       return state;
   }
