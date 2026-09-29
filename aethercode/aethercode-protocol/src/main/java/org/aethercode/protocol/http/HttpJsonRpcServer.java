@@ -414,6 +414,35 @@ public final class HttpJsonRpcServer {
         // dispatcher is the same one the
         // WebSocket path uses, so the
         // method surface is identical.
+        // R693 follow-up: alias /rpc to /jsonrpc. The Python harness
+        // in D:\research\ai-agent-eval\harness\runner.py sends to
+        // /rpc (legacy convention); the Javalin app uses /jsonrpc.
+        // Mirror the body so external clients don't have to know.
+        app.post("/rpc", ctx -> {
+            try {
+                String raw = ctx.body();
+                if (raw == null || raw.isEmpty()) {
+                    ctx.status(400);
+                    ctx.json(makeErrorResponse(null, -32700, "empty body"));
+                    return;
+                }
+                JsonRpcMessage msg = codec.decode(raw);
+                if (!(msg instanceof JsonRpcRequest req)) {
+                    ctx.status(400);
+                    ctx.json(makeErrorResponse(null, -32600,
+                            "expected JSON-RPC request, got "
+                                    + msg.getClass().getSimpleName()));
+                    return;
+                }
+                JsonRpcResponse resp = dispatchOnce(req);
+                ctx.json(codec.encode(resp));
+            } catch (Exception e) {
+                LOG.warn("R693: /rpc handler failed: {}", e.getMessage());
+                ctx.status(500);
+                ctx.json(makeErrorResponse(null, -32603,
+                        "internal error: " + e.getMessage()));
+            }
+        });
         app.post("/jsonrpc", ctx -> {
             try {
                 String raw = ctx.body();
@@ -944,6 +973,18 @@ public final class HttpJsonRpcServer {
             // button (visible only when at least one
             // breaker is OPEN/HALF_OPEN) calls this.
             case "subagentResetAllCircuits" -> methods.subagentResetAllCircuits(params);
+            // R693: eval RPCs. The Python harness in
+            // D:\research\ai-agent-eval\harness/runner.py was used for
+            // offline baselines with mock agents; these arms are the
+            // production counterpart that routes through the real
+            // AetherCodeEngine. Mirror arms must also exist in
+            // AetherCodeMethods.registerAll() (see Lesson 770).
+            case "agent.run"             -> methods.evalRunTest(params);
+            case "evalRunTest"           -> methods.evalRunTest(params);
+            case "eval/aggregate"        -> methods.evalAggregate(params);
+            case "eval.listCategories"   -> methods.evalListCategories(params);
+            case "eval/listCategories"   -> methods.evalListCategories(params);
+            case "llm.complete"          -> methods.llmComplete(params);
             // R234 (daemon parity fix): the switch above was
             // missing arms for several methods that AetherCodeMethods
             // already exposes via registerAll() for the stdio

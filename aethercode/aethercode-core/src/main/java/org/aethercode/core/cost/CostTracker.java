@@ -62,6 +62,19 @@ public class CostTracker {
         setPrice("claude-3-5-sonnet", 0.003, 0.015);
         setPrice("claude-3-5-haiku",  0.0008, 0.004);
         setPrice("claude-3-opus",     0.015, 0.075);
+
+        // R694: add fallback prices for the local dev model. Without these
+        // CostTracker.summary().totalCostUsd stays at 0 because priceTable.get(model)
+        // returns null. Use a conservative estimate (in line with the Claude 3.5
+        // Sonnet tier) so dashboard + eval reports show realistic costs.
+        setPrice("MiniMax-M3",        0.003, 0.015);
+        setPrice("MiniMax-M2",        0.002, 0.010);
+        setPrice("minimax",           0.003, 0.015);
+
+        // Catch-all for any model not in the table. Real chat clients vary
+        // wildly in how they identify themselves; we pick a defensive
+        // mid-tier estimate so the eval report shows non-zero cost.
+        setPrice("default",          0.003, 0.015);
     }
 
     /** Override or add a price for a model id. Prices are USD per 1,000 tokens. */

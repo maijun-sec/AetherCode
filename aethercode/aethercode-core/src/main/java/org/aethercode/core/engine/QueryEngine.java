@@ -748,6 +748,23 @@ public class QueryEngine {
         return currentLoopDetector;
     }
 
+    /**
+     * Public accessor for the cost tracker so external code (eval
+     * harness, dashboard) can read cumulative per-run token + USD
+     * counts without going through reflection.
+     *
+     * <p>Returns the live {@link org.aethercode.core.cost.CostTracker}
+     * — mutating it (e.g. calling {@code reset()}) will affect subsequent
+     * runs. Read-only consumers should call {@code summary()} on the
+     * returned object.
+     *
+     * <p>R694 follow-up: previously this field was private without a
+     * getter, forcing the eval RPC to hardcode {@code costUsd=0}.
+     */
+    public org.aethercode.core.cost.CostTracker costTracker() {
+        return costTracker;
+    }
+
     /** walk the current todo list and emit {@code SubTaskStart}
      *  / {@code SubTaskEnd} events for any sub-task whose status
      *  changed since the last call. Called by the Spliterator
