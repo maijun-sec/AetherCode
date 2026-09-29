@@ -182,6 +182,12 @@ public class QueryEngine {
     public void setChatClient(ChatClient chatClient) {
         this.chatClient = chatClient;
     }
+    /** R697: getter for the chat client. Eval module uses this to call
+     *  the chat client directly without going through query() (which
+     *  sends a 421KB system prompt that MiniMax rejects with 400). */
+    public ChatClient chatClient() {
+        return chatClient;
+    }
     public int maxTurnsPerQuery() { return maxTurnsPerQuery; }
     public String planModeSuffix() { return planModeSuffix; }
 

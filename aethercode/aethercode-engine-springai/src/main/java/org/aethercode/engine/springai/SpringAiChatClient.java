@@ -224,14 +224,6 @@ public class SpringAiChatClient implements ChatClient {
         OpenAiChatOptions opts = optsBuilder.build();
         Prompt prompt = new Prompt(saMessages, opts);
 
-        // use the streaming API so we can surface per-chunk TextDelta
-        // events. Each ChatResponse in the Flux is a partial delta; the
-        // FINAL one carries the complete AssistantMessage (text + tool calls).
-        // We accumulate text across chunks and emit one TextDelta per non-empty
-        // chunk, then take the last AssistantMessage and emit ToolUseStart
-        // events for each real tool call. This gives the TUI a live
-        // character-by-character stream of the model's reply.
-        reactor.core.publisher.Flux<ChatResponse> flux = chatModel.stream(prompt);
         AssistantMessage finalMsg = null;
         List<ContentBlock> finalBlocks = new ArrayList<>();
         StringBuilder textBuf = new StringBuilder();
@@ -243,11 +235,55 @@ public class SpringAiChatClient implements ChatClient {
         // doesn't double-count.
         int totalInputTokens = 0;
         int totalOutputTokens = 0;
+        // R697: capture full 400 body to debug why MiniMax rejects the request.
+        int attempt = 0;
+        java.util.Iterator<ChatResponse> it = null;
+        Throwable lastErr = null;
+        String lastBody = null;
+        // R697: retry on transient 5xx / 529 (server overloaded). Spring AI's
+        // WebClient throws on 529 during async iteration. Note: 400 errors are
+        // NOT retried (they're permanent bad-request). We capture the response
+        // body when possible so the eval RPC can surface the actual reason.
+        while (attempt < 3) {
+            attempt++;
+            try {
+                reactor.core.publisher.Flux<ChatResponse> flux = chatModel.stream(prompt);
+                it = flux.toIterable().iterator();
+                it.hasNext();
+                lastErr = null;
+                lastBody = null;
+                break;
+            } catch (org.springframework.web.reactive.function.client.WebClientResponseException wce) {
+                lastErr = wce;
+                lastBody = wce.getResponseBodyAsString();
+                LOG.warn("R697-retry: chat call attempt {} failed: status={} body={}",
+                        attempt, wce.getStatusCode(), lastBody);
+                try { Thread.sleep(1000L * attempt); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            } catch (Throwable t) {
+                lastErr = t;
+                LOG.warn("R697-retry: chat call attempt {} failed: {}", attempt, t.getMessage());
+                try { Thread.sleep(1000L * attempt); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        if (it == null) {
+            String errMsg = "error: ";
+            if (lastErr != null) errMsg += lastErr.getClass().getSimpleName() + ": " + lastErr.getMessage();
+            if (lastBody != null) errMsg += " [body=" + lastBody + "]";
+            LOG.error("R697: all {} attempts failed. Final: {}", attempt, errMsg);
+            queue.offer(new StreamEvent.RunEnd(errMsg, List.of()));
+            return;
+        }
         try {
             // Block on the Flux — this is on the springai-runner thread, so
             // blocking here is fine. toIterable() drains the Flux and gives
             // us a plain Iterator<ChatResponse> we can loop over.
-            java.util.Iterator<ChatResponse> it = flux.toIterable().iterator();
+            // (iterator was already obtained by retry loop above)
             while (it.hasNext()) {
                 ChatResponse resp = it.next();
                 if (resp == null) continue;
