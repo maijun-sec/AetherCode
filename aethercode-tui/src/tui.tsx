@@ -24,11 +24,12 @@ import React, { useEffect, useReducer, useRef, useState } from "react";
 import { render, Box, Text, useApp, useInput, type Instance as InkInstance } from "ink";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { findJar } from "./ac-tui.js";
-import { reducer, INITIAL, type State, type Action, type PermissionAsk } from "./state.js";
+import { reducer, INITIAL, type State, type Action, type PermissionAsk, type SddRunState } from "./state.js";
 import { handleSlash, completeSlash } from "./commands.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { Header } from "./components/Header.js";
 import { StatusBar } from "./components/StatusBar.js";
+import { SddMode } from "./components/SddMode.js";
 import { SubagentPanel } from "./components/SubagentPanel.js";
 import { InputBox } from "./components/InputBox.js";
 import { Scrollback } from "./components/Scrollback.js";
@@ -1021,6 +1022,107 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       })();
       return;
     }
+    // R700 — SDD product integration. The TUI dispatches
+    // the sdd.* RPCs and mirrors the returned state into
+    // store.sddRun so SddMode.tsx re-renders. The RPC
+    // parameters come from the slash handler (commands.ts);
+    // we only need the slug here for advance/abort/status,
+    // which we read from store.sddRun if the user didn't pass
+    // it explicitly. cwd is the daemon-side current
+    // working directory from the engine (read from store).
+    if (slash?.local === "__SDD_START__") {
+      const intent = String((slash.rpcParams as { intent?: unknown } | undefined)?.intent ?? "");
+      if (!intent) {
+        dispatch({ type: "sideNote", kind: "error", message: "sdd.start: missing intent" });
+        return;
+      }
+      void (async () => {
+        try {
+          const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string }>(
+            "sdd.start", { intent, cwd } as RpcValue);
+          if (!resp.ok || !resp.state) {
+            dispatch({ type: "sideNote", kind: "error", message: `sdd.start failed: ${resp.error ?? "unknown"}` });
+            return;
+          }
+          dispatch({ type: "sddRun.set", state: resp.state });
+          dispatch({ type: "sideNote", kind: "info",
+            message: `📐 SDD started · slug=${resp.state.slug} · phase 1/8 · ${resp.state.phases[0]?.title ?? "?"}` });
+        } catch (e) {
+          dispatch({ type: "sideNote", kind: "error", message: `sdd.start error: ${(e as Error).message}` });
+        }
+      })();
+      return;
+    }
+    if (slash?.local === "__SDD_ADVANCE__") {
+      const rpcAction = String((slash.rpcParams as { action?: unknown } | undefined)?.action ?? "approve");
+      const feedback = String((slash.rpcParams as { feedback?: unknown } | undefined)?.feedback ?? "");
+      const sddSlug = state.sddRun?.slug;
+      if (!sddSlug) {
+        dispatch({ type: "sideNote", kind: "error", message: "sdd.advance: no active run (run /sdd <intent> first)" });
+        return;
+      }
+      void (async () => {
+        try {
+          const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string; code?: string }>(
+            "sdd.advance",
+            { slug: sddSlug, action: rpcAction, feedback: feedback || undefined, cwd } as RpcValue);
+          if (!resp.ok || !resp.state) {
+            dispatch({ type: "sideNote", kind: "error",
+              message: `sdd.advance failed (${resp.code ?? "UNKNOWN"}): ${resp.error ?? "unknown"}` });
+            return;
+          }
+          dispatch({ type: "sddRun.set", state: resp.state });
+          const ph = resp.state.currentPhase ?? resp.state.phases.length;
+          dispatch({ type: "sideNote", kind: "info",
+            message: `📐 SDD ${rpcAction} · now at phase ${ph}/${resp.state.phases.length}` });
+        } catch (e) {
+          dispatch({ type: "sideNote", kind: "error", message: `sdd.advance error: ${(e as Error).message}` });
+        }
+      })();
+      return;
+    }
+    if (slash?.local === "__SDD_ABORT__") {
+      const sddSlug = state.sddRun?.slug;
+      if (!sddSlug) {
+        dispatch({ type: "sideNote", kind: "error", message: "sdd.abort: no active run" });
+        return;
+      }
+      void (async () => {
+        try {
+          await client.request("sdd.abort", { slug: sddSlug, cwd } as RpcValue);
+          dispatch({ type: "sddRun.clear" });
+          dispatch({ type: "sideNote", kind: "info", message: "📐 SDD run aborted" });
+        } catch (e) {
+          dispatch({ type: "sideNote", kind: "error", message: `sdd.abort error: ${(e as Error).message}` });
+        }
+      })();
+      return;
+    }
+    if (slash?.local === "__SDD_STATUS__") {
+      const sddSlug = state.sddRun?.slug;
+      if (!sddSlug) {
+        dispatch({ type: "sideNote", kind: "info", message: "sdd.status: no active run" });
+        return;
+      }
+      void (async () => {
+        try {
+          const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string }>(
+            "sdd.status", { slug: sddSlug, cwd } as RpcValue);
+          if (!resp.ok || !resp.state) {
+            dispatch({ type: "sideNote", kind: "error",
+              message: `sdd.status failed: ${resp.error ?? "unknown"}` });
+            return;
+          }
+          dispatch({ type: "sddRun.set", state: resp.state });
+          const ph = resp.state.currentPhase ?? resp.state.phases.length;
+          dispatch({ type: "sideNote", kind: "info",
+            message: `📐 SDD · slug=${resp.state.slug} · ${ph}/${resp.state.phases.length} · status=${resp.state.status}` });
+        } catch (e) {
+          dispatch({ type: "sideNote", kind: "error", message: `sdd.status error: ${(e as Error).message}` });
+        }
+      })();
+      return;
+    }
     if (slash?.local) {
       dispatch({ type: "sideNote", kind: "info", message: slash.local });
       return;
@@ -1802,6 +1904,13 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 / statusbar; "focus" = scrollback + input only. */}
             {state.layout !== "focus" && state.layout !== "minimal" ? (
               <Header state={state} cwd={cwd} />
+            ) : null}
+            {/* R700 — SDD mode banner. Renders only when
+                state.sddRun is non-null (i.e. an active SDD run
+                exists). Sits above the scrollback so the user
+                always sees the current phase + chip strip. */}
+            {state.sddRun ? (
+              <SddMode run={state.sddRun} cwd={cwd} />
             ) : null}
             <Box flexDirection="row" flexGrow={1}>
               <Box flexDirection="column" flexGrow={1}>

@@ -576,6 +576,41 @@ export interface State {
     status: string;
     ts: number;
   }>;
+  // R700 — SDD product integration. Mirrors the daemon's
+  // SddPhaseState into the store so SddMode.tsx can render
+  // the 8-phase chip strip + the current phase status.
+  // null = no active run. Updated by tui.tsx's `__SDD_*__`
+  // token handlers via the `sddRun.set` / `sddRun.clear`
+  // actions below.
+  sddRun: SddRunState | null;
+}
+
+/**
+ * R700 — SDD run state, mirrors the daemon's
+ * org.aethercode.sdd.SddPhaseState JSON shape (see
+ * AetherCodeMethods.sddStateToMap). The TUI uses these for
+ * the SddMode banner + the `/sdd-status` summary line.
+ */
+export interface SddPhaseEntry {
+  id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
+  title: string;
+  phaseNumber: number;
+  state: 'idle' | 'running' | 'pending_confirm' | 'done' | 'skipped' | 'failed';
+  startedAt: string | null;
+  endedAt: string | null;
+  path: string | null;
+  optional: boolean;
+}
+
+export interface SddRunState {
+  slug: string;
+  intent: string;
+  cwd: string;
+  status: 'running' | 'idle' | 'done' | 'aborted' | 'failed';
+  currentPhase: number | null;
+  phases: SddPhaseEntry[];
+  startedAt: string;
+  lastUpdatedAt: string;
 }
 
 /** a single row in the SubagentPanel. Mirrors the
@@ -689,6 +724,11 @@ export type Action =
   | { type: "showSearch"; show: boolean; query?: string } // R40: Ctrl-F opens/closes the search bar
   | { type: "setSearchQuery"; query: string; matches: number[] } // R40: update the query + match list
   | { type: "pushToast"; kind: "info" | "ok" | "warn" | "err" | "rpc"; text: string } // R41
+  // R700 — SDD product integration actions. Dispatched from
+  // tui.tsx after a `sdd.*` RPC returns, so the store's
+  // sddRun field tracks the daemon's SddPhaseState.
+  | { type: "sddRun.set"; state: SddRunState }
+  | { type: "sddRun.clear" }
   | { type: "trimToasts"; now: number } // R41: drop toasts older than 2s
   | { type: "setTheme"; theme: "default" | "solarized" | "monokai" } // R42
   | { type: "setLayout"; layout: "full" | "minimal" | "focus" } // R43
@@ -795,6 +835,10 @@ export const INITIAL: State = {
   viewingSubagentId: null,
   viewHistory: [],
   subagentSpawnCards: {},
+  // R700 — no SDD run at app boot. /sdd <intent> dispatches
+  // `sddRun.set` to populate this; /sdd-abort + a daemon
+  // 'aborted' response dispatch `sddRun.clear`.
+  sddRun: null,
   snippets: {},
   lastError: null,
   logBuffer: [],
@@ -1899,6 +1943,13 @@ export function reducer(state: State, action: Action): State {
             ? (action.lastError ? action.lastError.slice(-512) : null)
             : (action.state === "connected" ? null : state.lastStderrTail),
       };
+    // R700 — SDD state actions. tui.tsx dispatches these
+    // after `sdd.start` / `sdd.advance` / `sdd.abort` /
+    // `sdd.status` return so SddMode.tsx can re-render.
+    case "sddRun.set":
+      return { ...state, sddRun: action.state };
+    case "sddRun.clear":
+      return { ...state, sddRun: null };
     default:
       return state;
   }

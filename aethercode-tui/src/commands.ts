@@ -73,6 +73,19 @@ export const SLASH_HELP = [
   "/bank-recall <k> [n]   R245.1: recall top-N (default 3) units for task kind <k>",
   // R245.2 (O-6): cross-process self-eval audit.
   "/memory-audit      R245.2: aggregate self-eval metrics across the daemon's bank (success rate, weakest/top kind, avg confidence)",
+  // R700 — SDD product integration. The TUI drives the
+  // 8-phase Spec-Driven Development workflow through the
+  // daemon's sdd.* RPC. Phase progress prints to chat as
+  // system messages; the active run's slug is remembered
+  // in store.sddRun so /sdd-modify / /sdd-skip / /sdd-abort
+  // don't have to repeat it. See SddMode.tsx for the banner.
+  "/sdd <intent>        R700: start an SDD run (enters SDD mode, runs phase 1)",
+  "/sdd-status          R700: show the current SDD run state",
+  "/sdd-list            R700: list every SDD run under the current cwd",
+  "/sdd-approve         R700: approve the current phase's artefact → next phase",
+  "/sdd-modify <fb>     R700: re-run the current phase with the user's feedback",
+  "/sdd-skip            R700: skip the current phase (REQUIRED phases refuse)",
+  "/sdd-abort           R700: abort the current SDD run",
 ].join("\n");
 
 /** the set of slash command names (without the leading "/" and
@@ -151,6 +164,14 @@ export const SLASH_COMMANDS: string[] = [
   "bank-recall",      // recall top-N units for a task kind
   // R245.2 (O-6) — cross-process self-eval audit.
   "memory-audit",     // aggregate self-eval metrics from the daemon bank
+  // R700 — SDD product integration.
+  "sdd",              // start SDD run with intent
+  "sdd-status",       // show current SDD run state
+  "sdd-list",         // list every SDD run under the cwd
+  "sdd-approve",      // approve current phase
+  "sdd-modify",       // re-run current phase with feedback
+  "sdd-skip",         // skip current phase (REQUIRED phases refuse)
+  "sdd-abort",        // abort the current SDD run
 ];
 
 /** T-442: structured slash-command catalog. Each entry is
@@ -233,6 +254,14 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "bank-recall", description: "recall top-N units for a task kind (default N=3)" },
   // R245.2 (O-6) — cross-process self-eval audit.
   { name: "memory-audit", description: "aggregate self-eval metrics across the daemon bank" },
+  // R700 — SDD product integration.
+  { name: "sdd",          description: "R700: start an 8-phase SDD run with intent" },
+  { name: "sdd-status",   description: "R700: show current SDD run state" },
+  { name: "sdd-list",     description: "R700: list every SDD run under the current cwd" },
+  { name: "sdd-approve",  description: "R700: approve the current phase → advance" },
+  { name: "sdd-modify",   description: "R700: re-run current phase with feedback" },
+  { name: "sdd-skip",     description: "R700: skip the current phase (REQUIRED refuses)" },
+  { name: "sdd-abort",    description: "R700: abort the current SDD run" }
 ];
 
 /** tab-completion result.
@@ -922,6 +951,41 @@ export function handleSlash(input: string): SlashResult | null {
       // pattern matches /bank-stats so the import cost is
       // only paid when the user asks.
       return { local: "__MEMORY_AUDIT__" };
+    }
+    // R700 — SDD product integration. The TUI dispatches
+    // sdd.* RPCs and the daemon's SddOrchestrator owns the
+    // state machine + LLM call + artefact write. The
+    // `__SDD_*__` local tokens are intercepted by tui.tsx
+    // to dispatch the RPC + update store.sddRun so
+    // SddMode.tsx re-renders.
+    case "sdd": {
+      if (rest.length === 0) {
+        return { local: "usage: /sdd <intent>   (e.g. /sdd Build a sorting library)" };
+      }
+      const intent = rest.join(" ").trim();
+      return { local: "__SDD_START__", rpcParams: { intent } };
+    }
+    case "sdd-status": {
+      return { local: "__SDD_STATUS__" };
+    }
+    case "sdd-list": {
+      return { rpcMethod: "sdd.listRuns" };
+    }
+    case "sdd-approve": {
+      return { local: "__SDD_ADVANCE__", rpcParams: { action: "approve" } };
+    }
+    case "sdd-modify": {
+      if (rest.length === 0) {
+        return { local: "usage: /sdd-modify <feedback>   (e.g. /sdd-modify add max-array-size = 10000)" };
+      }
+      const feedback = rest.join(" ").trim();
+      return { local: "__SDD_ADVANCE__", rpcParams: { action: "modify", feedback } };
+    }
+    case "sdd-skip": {
+      return { local: "__SDD_ADVANCE__", rpcParams: { action: "skip" } };
+    }
+    case "sdd-abort": {
+      return { local: "__SDD_ABORT__" };
     }
     default:
       return { local: `unknown slash command: /${cmd}. Try /help.` };
