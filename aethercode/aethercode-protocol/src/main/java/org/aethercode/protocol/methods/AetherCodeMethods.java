@@ -11,6 +11,8 @@ import org.aethercode.protocol.jsonrpc.JsonRpcNotification;
 import org.aethercode.protocol.jsonrpc.JsonRpcProtocolException;
 import org.aethercode.protocol.server.JsonRpcDispatcher;
 import org.aethercode.sdk.AetherCodeEngine;
+import org.aethercode.sdd.SddOrchestrator;
+import org.aethercode.sdd.SddPhaseState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.aethercode.core.eval.AgentRunner;
@@ -539,6 +541,15 @@ public class AetherCodeMethods {
      *  the engine's default client (the legacy
      * legacy behaviour). */
     private volatile java.util.function.Function<String, org.aethercode.core.llm.ChatClient> chatClientResolver;
+
+    /**
+     * R700 — SDD orchestrator wired by DaemonRunner. When null, the
+     * {@code sdd.*} RPC methods return {@code {ok: false, error:
+     * "sdd orchestrator not configured"}} — usually because the
+     * daemon was built without the {@code aethercode-sdd} module on
+     * the classpath (unlikely) or the bundle failed to load.
+     */
+    private volatile SddOrchestrator sddOrchestrator;
 
     public AetherCodeMethods(AetherCodeEngine engine,
                               Consumer<JsonRpcNotification> notifier) {
@@ -1091,6 +1102,203 @@ public class AetherCodeMethods {
         this.chatClientResolver = resolver;
         LOG.info("chat client resolver {}",
                 resolver == null ? "cleared" : "installed");
+    }
+
+    /**
+     * R700 — install the SDD orchestrator. {@code DaemonRunner} calls
+     * this once at startup after building the orchestrator from the
+     * jar-resource {@code SddBundleLoader} + the engine's active
+     * {@link ChatClient}. Pass {@code null} to disable the SDD RPC
+     * surface (e.g. in a build of the daemon that ships without the
+     * {@code aethercode-sdd} module).
+     */
+    public void setSddOrchestrator(SddOrchestrator orchestrator) {
+        this.sddOrchestrator = orchestrator;
+        LOG.info("sdd orchestrator {}",
+                orchestrator == null ? "cleared" : "installed");
+    }
+
+    // ------------------------------------------------------------------
+    // R700 — sdd.* RPC surface (Spec-Driven Development).
+    //
+    // The desktop and TUI clients drive SDD by calling these five
+    // RPCs. The orchestrator owns the per-phase state machine; the
+    // protocol layer is a thin pass-through that maps Map params to
+    // Path / String arguments and unwraps SddException on failure.
+    // ------------------------------------------------------------------
+
+    /** Common guard used by all sdd.* methods: returns the orchestrator
+     *  or fails the call with a clear error. */
+    private SddOrchestrator requireSdd() {
+        if (sddOrchestrator == null) {
+            throw new IllegalStateException("sdd orchestrator not configured");
+        }
+        return sddOrchestrator;
+    }
+
+    /** Map SddPhaseState → JSON-friendly Map (same shape desktop / TUI
+     *  consume). Avoids leaking Java records over the wire. */
+    private static Map<String, Object> sddStateToMap(SddPhaseState state) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("slug", state.slug);
+        m.put("intent", state.intent);
+        m.put("cwd", state.cwd);
+        m.put("status", state.status.name());
+        m.put("currentPhase", state.currentPhase);
+        m.put("startedAt", state.startedAt);
+        m.put("lastUpdatedAt", state.lastUpdatedAt);
+        List<Map<String, Object>> ph = new ArrayList<>();
+        for (var p : state.phases) {
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("id", p.id().name());
+            e.put("title", p.title());
+            e.put("phaseNumber", p.phaseNumber());
+            e.put("state", p.state().name());
+            e.put("startedAt", p.startedAt());
+            e.put("endedAt", p.endedAt());
+            e.put("path", p.path());
+            e.put("optional", p.optional());
+            ph.add(e);
+        }
+        m.put("phases", ph);
+        return m;
+    }
+
+    /** {@code sdd.start} — create a new SDD run for {@code intent}
+     *  under {@code cwd}. Returns the initial state (after phase 1
+     *  has run and the artefact is on disk).
+     *  Params: {@code {intent: "...", cwd: "..."}}. */
+    public Object sddStart(Object params) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        if (!(params instanceof Map<?, ?> m)) {
+            r.put("ok", false); r.put("error", "params must be a map"); return r;
+        }
+        String intent = strField(m, "intent");
+        String cwd = strField(m, "cwd");
+        if (intent == null || intent.isBlank() || cwd == null || cwd.isBlank()) {
+            r.put("ok", false); r.put("error", "intent and cwd are required"); return r;
+        }
+        try {
+            SddPhaseState state = requireSdd().start(intent, java.nio.file.Path.of(cwd));
+            r.put("ok", true);
+            r.put("state", sddStateToMap(state));
+            return r;
+        } catch (org.aethercode.sdd.SddException se) {
+            r.put("ok", false);
+            r.put("error", se.getMessage());
+            r.put("code", se.code().name());
+            return r;
+        }
+    }
+
+    /** {@code sdd.advance} — continue an active run.
+     *  Params: {@code {slug: "...", action: "approve|modify|skip|abort", feedback?: "..."}}. */
+    public Object sddAdvance(Object params) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        if (!(params instanceof Map<?, ?> m)) {
+            r.put("ok", false); r.put("error", "params must be a map"); return r;
+        }
+        String slug = strField(m, "slug");
+        String action = strField(m, "action");
+        String feedback = strField(m, "feedback");
+        if (slug == null || action == null) {
+            r.put("ok", false); r.put("error", "slug and action are required"); return r;
+        }
+        try {
+            SddPhaseState state = requireSdd().advance(slug, action, feedback);
+            r.put("ok", true);
+            r.put("state", sddStateToMap(state));
+            return r;
+        } catch (org.aethercode.sdd.SddException se) {
+            r.put("ok", false);
+            r.put("error", se.getMessage());
+            r.put("code", se.code().name());
+            return r;
+        }
+    }
+
+    /** {@code sdd.status} — read current run state from disk.
+     *  Params: {@code {slug: "...", cwd: "..."}}. */
+    public Object sddStatus(Object params) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        if (!(params instanceof Map<?, ?> m)) {
+            r.put("ok", false); r.put("error", "params must be a map"); return r;
+        }
+        String slug = strField(m, "slug");
+        String cwd = strField(m, "cwd");
+        if (slug == null || cwd == null) {
+            r.put("ok", false); r.put("error", "slug and cwd are required"); return r;
+        }
+        try {
+            SddPhaseState state = requireSdd().status(slug, java.nio.file.Path.of(cwd));
+            r.put("ok", true);
+            r.put("state", sddStateToMap(state));
+            return r;
+        } catch (org.aethercode.sdd.SddException se) {
+            r.put("ok", false);
+            r.put("error", se.getMessage());
+            r.put("code", se.code().name());
+            return r;
+        }
+    }
+
+    /** {@code sdd.abort} — abort a run regardless of phase.
+     *  Params: {@code {slug: "...", cwd: "..."}}. */
+    public Object sddAbort(Object params) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        if (!(params instanceof Map<?, ?> m)) {
+            r.put("ok", false); r.put("error", "params must be a map"); return r;
+        }
+        String slug = strField(m, "slug");
+        String cwd = strField(m, "cwd");
+        if (slug == null || cwd == null) {
+            r.put("ok", false); r.put("error", "slug and cwd are required"); return r;
+        }
+        try {
+            SddPhaseState state = requireSdd().abort(slug, java.nio.file.Path.of(cwd));
+            r.put("ok", true);
+            r.put("state", sddStateToMap(state));
+            return r;
+        } catch (org.aethercode.sdd.SddException se) {
+            r.put("ok", false);
+            r.put("error", se.getMessage());
+            r.put("code", se.code().name());
+            return r;
+        }
+    }
+
+    /** {@code sdd.listRuns} — list every run under {@code <cwd>/.aethercode/sdd/}.
+     *  Params: {@code {cwd: "..."}}. */
+    public Object sddListRuns(Object params) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        if (!(params instanceof Map<?, ?> m)) {
+            r.put("ok", false); r.put("error", "params must be a map"); return r;
+        }
+        String cwd = strField(m, "cwd");
+        if (cwd == null) {
+            r.put("ok", false); r.put("error", "cwd is required"); return r;
+        }
+        try {
+            List<SddPhaseState> runs = requireSdd().listRuns(java.nio.file.Path.of(cwd));
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (var s : runs) out.add(sddStateToMap(s));
+            r.put("ok", true);
+            r.put("runs", out);
+            return r;
+        } catch (org.aethercode.sdd.SddException se) {
+            r.put("ok", false);
+            r.put("error", se.getMessage());
+            r.put("code", se.code().name());
+            return r;
+        }
+    }
+
+    /** Helper: extract a String from {@code params} by name. Returns
+     *  null when the field is absent OR non-string (the sdd.* RPCs
+     *  reject mixed-type payloads to keep the wire shape simple). */
+    private static String strField(Map<?, ?> m, String key) {
+        Object v = m.get(key);
+        return v == null ? null : v.toString();
     }
 
     /**
@@ -1649,6 +1857,14 @@ public class AetherCodeMethods {
         // Returns {"text": "...", "model": "...", "tokens_in": N,
         // "tokens_out": M, "latencyMs": K}.
         dispatcher.register("llm.complete",           this::llmComplete);
+        // R700 — SDD product integration. sdd.start / sdd.advance /
+        // sdd.status / sdd.abort / sdd.listRuns are wired by the
+        // orchestrator installed via setSddOrchestrator() above.
+        dispatcher.register("sdd.start",              this::sddStart);
+        dispatcher.register("sdd.advance",            this::sddAdvance);
+        dispatcher.register("sdd.status",             this::sddStatus);
+        dispatcher.register("sdd.abort",              this::sddAbort);
+        dispatcher.register("sdd.listRuns",           this::sddListRuns);
     }
 
     // ------------------------------------------------------------------

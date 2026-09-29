@@ -6,6 +6,7 @@ import org.aethercode.core.permission.PermissionResult;
 import org.aethercode.core.tool.Tool;
 import org.aethercode.core.tool.ToolHookRegistry;
 import org.aethercode.core.stream.StreamEvent;
+import org.aethercode.core.message.ContentBlock;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -77,6 +78,11 @@ public final class AgentRunner {
             registriesRegistered.add(toolHookRegistry);
         }
         long start = System.currentTimeMillis();
+        // R697: snapshot cumulative cost + token counters so we can report
+        // the per-run delta. Previously we read recorder.tokensInput() (always 0;
+        // the recorder never receives recordLlmUsage()) and costLedger.totalUsd()
+        // (cumulative; double-counted across runs). Both are now diffs.
+        Snapshot snap = snapshot(costLedger);
 
         try {
             // Note: QueryEngine doesn't currently expose a setPermissionPolicy
@@ -96,54 +102,93 @@ public final class AgentRunner {
 
             // QueryEngine.query(String) returns Stream<StreamEvent>.
             // Join text deltas; collect a simple "output" string.
+            StringBuilder debugEvents = new StringBuilder();
             String output = engine.query(req.userMessage)
-                    .filter(e -> e instanceof StreamEvent.TextDelta)
-                    .map(e -> ((StreamEvent.TextDelta) e).text())
-                    .filter(t -> t != null && !t.isEmpty())
+                    .map(e -> {
+                        debugEvents.append('[').append(e.getClass().getSimpleName()).append("] ");
+                        if (e instanceof StreamEvent.TextDelta td) {
+                            String t = td.text() == null ? "" : td.text();
+                            debugEvents.append("text=").append(t.length()).append("c ");
+                            return t;
+                        }
+                        if (e instanceof StreamEvent.ToolOutputDelta tod) {
+                            String t = tod.text() == null ? "" : tod.text();
+                            debugEvents.append("tod=").append(t.length()).append("c ");
+                            return t;
+                        }
+                        if (e instanceof StreamEvent.ToolResult tr) {
+                            Object c = tr.content();
+                            String s = c == null ? "" : c.toString();
+                            debugEvents.append("tr=").append(s.length()).append("c ");
+                            return s;
+                        }
+                        if (e instanceof StreamEvent.RunEnd re) {
+                            debugEvents.append("re(fb=").append(re.finalBlocks().size()).append(") ");
+                            StringBuilder sb = new StringBuilder();
+                            for (ContentBlock b : re.finalBlocks()) {
+                                if (b instanceof org.aethercode.core.message.ContentBlock.TextBlock tb) {
+                                    sb.append(tb.text()).append("\n");
+                                }
+                            }
+                            return sb.toString();
+                        }
+                        return "";
+                    })
+                    .filter(t -> !t.isEmpty())
                     .collect(Collectors.joining("\n"));
+
+            Delta d = computeDelta(costLedger, snap);
 
             long elapsed = System.currentTimeMillis() - start;
             if (elapsed > maxLatencyMs) {
+                Map<String, Object> meta = new java.util.LinkedHashMap<>();
+                meta.put("max_latency_ms", maxLatencyMs);
+                meta.put("event_log", debugEvents.toString());
                 return new EvalResult(
                         req.id, runIdx, output,
                         recorder.snapshotTrace(),
-                        0.0,
-                        recorder.tokensInput(), recorder.tokensOutput(),
+                        d.usd,
+                        d.in, d.out,
                         elapsed,
                         "max_latency_exceeded",
-                        Map.of("max_latency_ms", maxLatencyMs)
+                        meta
                 );
             }
 
-            double cost = costLedger == null ? 0.0 : costLedger.totalUsd();
-            if (cost > maxCostUsd) {
+            if (d.usd > maxCostUsd) {
+                Map<String, Object> meta = new java.util.LinkedHashMap<>();
+                meta.put("max_cost_usd", maxCostUsd);
+                meta.put("event_log", debugEvents.toString());
                 return new EvalResult(
                         req.id, runIdx, output,
                         recorder.snapshotTrace(),
-                        cost,
-                        recorder.tokensInput(), recorder.tokensOutput(),
+                        d.usd,
+                        d.in, d.out,
                         elapsed,
                         "max_cost_exceeded",
-                        Map.of("max_cost_usd", maxCostUsd)
+                        meta
                 );
             }
 
+            Map<String, Object> meta = new java.util.LinkedHashMap<>();
+            meta.put("event_log", debugEvents.toString());
             return new EvalResult(
                     req.id, runIdx, output,
                     recorder.snapshotTrace(),
-                    cost,
-                    recorder.tokensInput(), recorder.tokensOutput(),
+                    d.usd,
+                    d.in, d.out,
                     elapsed,
                     null,
-                    Map.of()
+                    meta
             );
         } catch (Throwable t) {
             long elapsed = System.currentTimeMillis() - start;
+            Delta d = computeDelta(costLedger, snap);
             return new EvalResult(
                     req.id, runIdx, "",
                     recorder.snapshotTrace(),
-                    0.0,
-                    recorder.tokensInput(), recorder.tokensOutput(),
+                    d.usd,
+                    d.in, d.out,
                     elapsed,
                     t.getClass().getSimpleName() + ": " + t.getMessage(),
                     Map.of()
@@ -175,5 +220,36 @@ public final class AgentRunner {
             }
             return new AgentRunner(this);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // R697 helpers (package-private for unit testing without needing
+    // a full QueryEngine). The diff logic lives here so AgentRunnerDiffTest
+    // can poke it without mocking the engine.
+    // ------------------------------------------------------------------
+
+    /** Cumulative ledger snapshot at run-start. */
+    record Snapshot(long in, long out, double usd) {}
+
+    /** Per-run delta computed at run-end. */
+    record Delta(long in, long out, double usd) {}
+
+    static Snapshot snapshot(CostLedger ledger) {
+        if (ledger == null) return new Snapshot(0, 0, 0.0);
+        return new Snapshot(
+                ledger.totalInputTokens(),
+                ledger.totalOutputTokens(),
+                ledger.totalUsd());
+    }
+
+    static Delta computeDelta(CostLedger ledger, Snapshot start) {
+        if (ledger == null) return new Delta(0, 0, 0.0);
+        long endIn = ledger.totalInputTokens();
+        long endOut = ledger.totalOutputTokens();
+        double endUsd = ledger.totalUsd();
+        return new Delta(
+                Math.max(0, endIn - start.in()),
+                Math.max(0, endOut - start.out()),
+                Math.max(0.0, endUsd - start.usd()));
     }
 }
