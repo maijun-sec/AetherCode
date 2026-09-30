@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ProgressBar } from './ProgressBar';
 import { TokenUsage } from './TokenUsage';
@@ -23,9 +23,22 @@ interface RightPanelProps {
    * permanent 320px column.
    */
   onClose?: () => void;
+  /**
+   * R703 (UX-P2-1): initial tab from the lifted
+   * parent state. The previous design had a useState
+   * inside RightPanel and the Header buttons couldn't
+   * control it. The parent now owns the tab and we
+   * mirror it on mount + on every change so clicking
+   * the Header's 🗒 / 🤖 buttons while the panel is
+   * already mounted jumps straight to the right tab
+   * (not "open and stay on whatever tab you were
+   * on"). Default 'telemetry' preserves the pre-R703
+   * behaviour for tests that mount RightPanel in
+   * isolation. */
+  initialTab?: 'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents';
 }
 
-export function RightPanel({ onClose }: RightPanelProps = {}) {
+export function RightPanel({ onClose, initialTab = 'telemetry' }: RightPanelProps = {}) {
   const { refreshMetrics, refreshTraces, refreshEngineStats, isConnected } = useStore();
   // tab toggle between the existing engine
   // telemetry (default), the Kanban board, the
@@ -37,13 +50,46 @@ export function RightPanel({ onClose }: RightPanelProps = {}) {
   // shows the live list of background subagent
   // jobs (a sibling of the StatusBar's indicator,
   // but with per-row Cancel / Insert actions).
-  const [tab, setTab] = useState<'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents'>('telemetry');
+  //
+  // R703 (UX-P2-1): the initial tab is now driven
+  // by the parent's lifted state (initialTab prop)
+  // so the Header's 🗒 / 🤖 jump-to-tab buttons can
+  // switch tabs without the panel being already
+  // mounted. We mirror initialTab into local state
+  // on every change so a click on the Header while
+  // the panel is already open jumps tabs immediately
+  // (the user shouldn't have to close + reopen).
+  const [tab, setTab] = useState<'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents'>(initialTab);
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
   // badge on the Subagents tab so the user
   // notices a running job even when they're on
   // another tab. The badge shows the count of
   // RUNNING jobs; we read the subagent slice to
-  // keep it in sync with the store.
+  // keep it in sync with the store. Declared
+  // before the auto-jump effect below so the
+  // effect can read the running count on first
+  // mount.
   const subagentRunning = useStore((s) => s.subagent.running);
+  // R703 (UX-P2-1, UX-P2-2): auto-jump to the
+  // Subagents tab on first mount when there are
+  // running background jobs. The user opened the
+  // right panel (or had it auto-opened by the
+  // Header's 🤖 button) because something is
+  // running — drop them straight into the
+  // Subagents list instead of forcing a click on
+  // the tab. The effect only fires on mount (no
+  // deps on subagentRunning) so a manual tab click
+  // isn't yanked away mid-session. If the user
+  // navigates to Telemetry, they stay on
+  // Telemetry even if a new subagent starts.
+  const didAutoJumpRef = useRef(false);
+  useEffect(() => {
+    if (didAutoJumpRef.current) return;
+    if (subagentRunning > 0 && initialTab === 'telemetry') {
+      setTab('subagents');
+    }
+    didAutoJumpRef.current = true;
+  }, [subagentRunning, initialTab]);
 
   useEffect(() => {
     if (!isConnected) return;

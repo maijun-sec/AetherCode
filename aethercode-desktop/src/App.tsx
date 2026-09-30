@@ -69,6 +69,28 @@ function Shell() {
   const [showModelPicker, setShowModelPicker] = useState(false);
   // The right-side Telemetry panel is hidden by default; toggle it via 📊 in the Header.
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  // R703 (UX-P2-1): lift the right-panel tab state up
+  // from <RightPanel /> so the new Header buttons can
+  // jump to a specific tab when the panel isn't already
+  // open. The previous useState<tab>() inside
+  // RightPanel made the Header button click a race —
+  // setting the tab only mattered if the panel was
+  // already mounted. Lifting the state fixes the race
+  // and gives us a single source of truth for "what
+  // tab is the user looking at right now". The
+  // initialTab value is `'telemetry'` to preserve the
+  // pre-R703 behaviour.
+  type RightPanelTab = 'telemetry' | 'plan' | 'kanban' | 'subagents' | 'agents';
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('telemetry');
+  // open + jump to a specific tab. Used by the
+  // 🗒 (Kanban) and 🤖 (Subagents) Header buttons so
+  // the user can dive straight into the panel they
+  // need without first opening Telemetry then
+  // clicking the right tab.
+  const openRightPanelTab = (tab: RightPanelTab) => {
+    setRightPanelOpen(true);
+    setRightPanelTab(tab);
+  };
   // R347: Welcome overlay can be re-triggered manually via Ctrl/Cmd+Shift+H
   // even when messages.length > 0. Power users want to revisit onboarding
   // tiles and the "recent session" shortcut without scrolling the chat.
@@ -106,6 +128,22 @@ function Shell() {
     const onOpen = () => setShowPalette(true);
     window.addEventListener('aethercode:open-command-palette', onOpen);
     return () => window.removeEventListener('aethercode:open-command-palette', onOpen);
+  }, []);
+
+  // R703 (UX-P2-4): cross-tree "open Settings" event.
+  // The PermissionPromptBanner's status strip uses
+  // this to jump to Settings without the banner
+  // having to know about App.tsx's local state.
+  // Dispatching a CustomEvent is the lowest-coupling
+  // path: the banner is mounted deep in <main> and
+  // the Settings state lives in Shell. The same
+  // command-palette shortcut uses a similar pattern
+  // (see the effect above), so this is consistent
+  // with the existing convention.
+  useEffect(() => {
+    const onOpen = () => setShowSettings(true);
+    window.addEventListener('aethercode:open-settings', onOpen);
+    return () => window.removeEventListener('aethercode:open-settings', onOpen);
   }, []);
 
   useEffect(() => {
@@ -235,6 +273,7 @@ function Shell() {
               showRpcPalette={showRpcPalette} setShowRpcPalette={setShowRpcPalette}
               showModelPicker={showModelPicker} setShowModelPicker={setShowModelPicker}
               rightPanelOpen={rightPanelOpen} setRightPanelOpen={setRightPanelOpen}
+              rightPanelTab={rightPanelTab} openRightPanelTab={openRightPanelTab}
               awaitingCwd={awaitingCwd}
               showWelcome={showWelcome}
               initError={initError}
@@ -262,6 +301,7 @@ function Shell() {
         showRpcPalette={showRpcPalette} setShowRpcPalette={setShowRpcPalette}
         showModelPicker={showModelPicker} setShowModelPicker={setShowModelPicker}
         rightPanelOpen={rightPanelOpen} setRightPanelOpen={setRightPanelOpen}
+        rightPanelTab={rightPanelTab} openRightPanelTab={openRightPanelTab}
         awaitingCwd={awaitingCwd}
         showWelcome={showWelcome}
         initError={initError}
@@ -285,6 +325,19 @@ interface MainLayoutProps {
   showRpcPalette: boolean; setShowRpcPalette: (v: boolean) => void;
   showModelPicker: boolean; setShowModelPicker: (v: boolean) => void;
   rightPanelOpen: boolean; setRightPanelOpen: (v: boolean) => void;
+  /** R703: lifted right-panel tab state. The Header
+   *  uses this to decide whether to light up the
+   *  🗒 / 🤖 buttons (`is-active` class). The
+   *  <RightPanel /> component itself still owns the
+   *  visible tabs but its initial tab is now
+   *  controlled by this prop instead of being a
+   *  pure useState inside the panel — see
+   *  RightPanel.tsx's `initialTab` prop. */
+  rightPanelTab: 'telemetry' | 'plan' | 'kanban' | 'subagents' | 'agents';
+  /** Open the right panel + jump to a specific tab.
+   *  Used by the Header's 🗒 and 🤖 jump-to-tab
+   *  buttons (R703). */
+  openRightPanelTab: (tab: 'telemetry' | 'plan' | 'kanban' | 'subagents' | 'agents') => void;
   // Session details drawer toggle, flipped by the 📋 button in the Header or Ctrl+Shift+D.
   detailsDrawerOpen: boolean;
   awaitingCwd: boolean;
@@ -299,6 +352,15 @@ interface MainLayoutProps {
 
 function MainLayout(p: MainLayoutProps) {
   const { initialize } = p;
+  // R703 (UX-P2-1): derive live badge counts for the
+  // Header's Kanban / Subagents jump-to-tab buttons. The
+  // store is the source of truth for both, so we read
+  // them straight from useStore and let the Header
+  // re-render on changes. We also need to track whether
+  // the right panel is currently on the matching tab so
+  // the button's `is-active` state lights up.
+  const subagentRunning = useStore((s) => s.subagent.running);
+  const activeTaskCount = useStore((s) => s.tasks.filter((t) => t.status === 'running' || t.status === 'pending').length);
   return (
     <>
       <Header
@@ -306,10 +368,22 @@ function MainLayout(p: MainLayoutProps) {
         onToolsClick={() => p.setShowTools(true)}
         onSessionPickerClick={() => p.setShowSessionPicker(!p.showSessionPicker)}
         onTelemetryClick={() => p.setRightPanelOpen(!p.rightPanelOpen)}
-        telemetryActive={p.rightPanelOpen}
+        telemetryActive={p.rightPanelOpen && p.rightPanelTab === 'telemetry'}
         // 📋 toggles the session details drawer; redundant with the Ctrl+Shift+D shortcut.
         onDetailsClick={() => p.setDetailsDrawerOpen(!p.detailsDrawerOpen)}
         detailsActive={p.detailsDrawerOpen}
+        // R703: 🗒 jumps to the Kanban tab; 🤖 jumps
+        // to the Subagents tab. Both flip the panel
+        // open if it's not already. The active state
+        // mirrors the lifted tab state — the button
+        // lights up when the user is already looking
+        // at that tab.
+        onOpenKanban={() => p.openRightPanelTab('kanban')}
+        onOpenSubagents={() => p.openRightPanelTab('subagents')}
+        kanbanActive={p.rightPanelOpen && p.rightPanelTab === 'kanban'}
+        subagentsActive={p.rightPanelOpen && p.rightPanelTab === 'subagents'}
+        kanbanBadge={activeTaskCount}
+        subagentsBadge={subagentRunning}
       />
       <LeftPanel />
       <main className="center">
@@ -356,7 +430,7 @@ function MainLayout(p: MainLayoutProps) {
         <MessageInput />
       </main>
       {/* The right-side Telemetry panel mounts on demand; when closed, the DOM is released too. */}
-      {p.rightPanelOpen && <RightPanel onClose={() => p.setRightPanelOpen(false)} />}
+      {p.rightPanelOpen && <RightPanel onClose={() => p.setRightPanelOpen(false)} initialTab={p.rightPanelTab} />}
       <StatusBar />
       {/* The drawer is collapsed by default; it opens only when the user explicitly triggers `detailsDrawerOpen`. */}
       <SessionDetailsDrawer

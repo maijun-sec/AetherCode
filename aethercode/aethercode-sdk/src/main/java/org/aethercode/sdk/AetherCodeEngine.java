@@ -3345,12 +3345,49 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     public static Builder builder() { return new Builder(); }
 
     public Builder toBuilder() {
-        return new Builder()
+        Builder b = new Builder()
                 .sessionId(appState.sessionId())
                 .cwd(appState.cwd())
                 .model(appState.mainLoopModel())
                 .permissionMode(appState.permissionMode())
                 .tools(appState.toolPool());
+        // R703 (UX-P2-4): propagate the live
+        // permission prompter to the forked
+        // engine. Without this, the parent's
+        // JsonRpcPermissionPrompter (installed by
+        // DaemonRunner after engine construction) is
+        // dropped on fork — subagents then run with
+        // a default in-process prompter and every
+        // tool call short-circuits without ever
+        // emitting `permission_request`. The user
+        // saw "permission system is wired but no
+        // banner appears when sub-agent tools run".
+        // The accessor below reaches into the live
+        // ProjectPermissionPolicy (or its
+        // MatrixPermissionPolicy subclass) for the
+        // currently-installed prompter. Null is OK
+        // — the new engine just won't ask.
+        ToolPermissionPrompter p = currentPrompter();
+        if (p != null) b.prompter(p);
+        return b;
+    }
+
+    /**
+     * R703 (UX-P2-4): read the currently-installed
+     * prompter from the live {@link
+     * org.aethercode.core.engine.PermissionPolicy}.
+     * Used by {@link #toBuilder()} to propagate
+     * the prompter to forked sub-agent engines.
+     * Returns null when the policy is not a
+     * {@link ProjectPermissionPolicy} or the
+     * prompter has never been installed.
+     */
+    public ToolPermissionPrompter currentPrompter() {
+        org.aethercode.core.engine.PermissionPolicy p = this.policy;
+        if (p instanceof org.aethercode.permission.ProjectPermissionPolicy ppp) {
+            return ppp.prompter();
+        }
+        return null;
     }
 
     public static final class Builder {

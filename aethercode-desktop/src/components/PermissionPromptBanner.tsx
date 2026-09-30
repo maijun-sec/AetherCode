@@ -81,8 +81,40 @@ export function PermissionPromptBanner() {
     // authoritative value); we run it through
     // permissionModeLabel for the Chinese label.
     engineState,
+    // R703 (UX-P2-4): auto-approve counters so the
+    // status strip can show "auto-allow N" even when
+    // there's no pending request. The counters come
+    // from the daemon (cumulative since session
+    // start) so the user can see "12 tool calls have
+    // been auto-approved this session" at a glance —
+    // answering "is the perm system actually working?"
+    // without needing to wait for a real prompt.
+    autoApproveLowRisk,
+    autoApproveMediumHigh,
+    autoApprovedCount,
+    autoApprovedElevatedCount,
+    // R703: jump-to-settings shortcut so the user
+    // can flip the mode or auto-allow flags without
+    // hunting through Settings → Permissions. We
+    // dispatch a window CustomEvent that App.tsx
+    // listens for and flips its local `showSettings`
+    // state — keeping the banner decoupled from
+    // App.tsx's local state and matching the same
+    // pattern the command palette uses.
   } = useStore();
-  if (pendingPermissions.length === 0) return null;
+  // R703 (UX-P2-4): always-on perm status strip.
+  // The legacy banner only rendered when there was
+  // a pending request, which meant the user had no
+  // visible feedback that the permission system was
+  // even wired up — "is it actually asking?" The
+  // new strip is a compact read-only line that
+  // shows the current mode + the two auto-allow
+  // flags + cumulative auto-approved counts. Hidden
+  // when the engine hasn't reported a mode yet
+  // (i.e. right after launch before initialize()
+  // completes) so we don't flash an empty pill.
+  const showStatusStrip = !!engineState?.permissionMode && pendingPermissions.length === 0;
+  if (pendingPermissions.length === 0 && !showStatusStrip) return null;
 
   // Show the OLDEST pending request first (FIFO). The user
   // should answer the first one before the model gets
@@ -105,6 +137,49 @@ export function PermissionPromptBanner() {
   const onAlways = (scope: 'session' | 'project' | 'user') => {
     void installPermissionOverride(p.tool, 'allow', targetFromInput(p.input), scope);
   };
+
+  // R703 (UX-P2-4): when there's no pending request,
+  // render a compact read-only perm status strip
+  // instead of the full banner. The strip shows the
+  // current mode + the two auto-allow flags +
+  // cumulative auto-approved counts so the user can
+  // see at a glance "the perm system is wired up and
+  // here's what it would do right now". Critical
+  // risk (rm -rf, sudo) is never auto-approved
+  // regardless of flags — we surface this in the
+  // tooltip so the user doesn't need to dig through
+  // Settings to confirm.
+  if (showStatusStrip) {
+    const rawMode = engineState?.permissionMode ?? '';
+    const modeLabel = permissionModeLabel(rawMode);
+    return (
+      <div className="perm-status-strip" role="status" aria-label="Permission status">
+        <span className="perm-status-strip-icon" aria-hidden="true">🔐</span>
+        <span className="perm-status-strip-mode" title={`当前权限模式: ${modeLabel} (${rawMode})`}>
+          {modeLabel}
+        </span>
+        <span
+          className={`perm-status-strip-flag ${autoApproveLowRisk ? 'is-on' : 'is-off'}`}
+          title={`低风险自动放行: ${autoApproveLowRisk ? 'ON' : 'OFF'} · ${autoApprovedCount} 此会话`}
+        >
+          ✓ auto-low {autoApproveLowRisk ? 'ON' : 'OFF'}{autoApprovedCount > 0 ? ` · ${autoApprovedCount}` : ''}
+        </span>
+        <span
+          className={`perm-status-strip-flag ${autoApproveMediumHigh ? 'is-on' : 'is-off'}`}
+          title={`中/高风险自动放行: ${autoApproveMediumHigh ? 'ON' : 'OFF'} · ${autoApprovedElevatedCount} 此会话. 关键风险 (rm -rf / sudo) 永不自动放行.`}
+        >
+          ▲ auto-med+ {autoApproveMediumHigh ? 'ON' : 'OFF'}{autoApprovedElevatedCount > 0 ? ` · ${autoApprovedElevatedCount}` : ''}
+        </span>
+        <button
+          className="perm-status-strip-settings"
+          onClick={() => window.dispatchEvent(new CustomEvent('aethercode:open-settings'))}
+          title="打开 Settings 调整权限"
+        >
+          ⚙
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="perm-banner" role="alert">

@@ -160,3 +160,69 @@
 .perm-banner-btn.danger:hover {
   background: rgba(244, 135, 113, 0.15);
 }
+
+/* R703 (UX-P2-4): always-on perm status strip.
+   Renders when there are no pending requests so the
+   user can still see "what would the perm system
+   do right now". The strip is intentionally low-key
+   (one line, faint border, monospace-ish flag pills)
+   so it doesn't visually compete with the input
+   box. The flag pills switch colour based on the
+   flag state (green tint when ON, gray when OFF)
+   so the user can read the perm posture at a
+   glance without hovering. The settings cog sits
+   at the right edge as a one-click escape hatch
+   when the user wants to flip a setting without
+   hunting through Settings. */
+.perm-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  margin: 6px 12px 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.perm-status-strip-icon {
+  font-size: 13px;
+}
+.perm-status-strip-mode {
+  font-weight: 600;
+  color: var(--text);
+  padding: 2px 6px;
+  background: var(--bg);
+  border-radius: 3px;
+}
+.perm-status-strip-flag {
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.2px;
+}
+.perm-status-strip-flag.is-on {
+  border-color: rgba(108, 194, 139, 0.45);
+  background: rgba(108, 194, 139, 0.10);
+  color: #6cc28b;
+}
+.perm-status-strip-flag.is-off {
+  color: var(--text-dim);
+}
+.perm-status-strip-settings {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.perm-status-strip-settings:hover {
+  color: var(--text);
+  background: var(--bg);
+}

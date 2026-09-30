@@ -2429,6 +2429,20 @@ interface AppState {
   // notifications render via <NotificationCenter /> in the
   // bottom-right corner with explicit × + action buttons.
   notifications: Notification[];
+  /** R703 (UX-P2-3): soft-dismiss history. When the user
+   *  clicks × on a toast (or the 10s auto-dismiss timer
+   *  fires) the notification moves here instead of being
+   *  deleted. The user reported "点完 dismiss 之后我就
+   *  不知道刚才发生了什么" — the previous design threw
+   *  the information away. The history powers a 🔔 button
+   *  in the Header that opens a small popover listing the
+   *  most-recent dismissed / expired notifications. The
+   *  list is capped at NOTIFY_HISTORY_MAX entries (FIFO
+   *  eviction of the oldest) so a long session doesn't
+   *  grow without bound. The `dismissedAt` timestamp lets
+   *  the UI render "2m ago" relative times without having
+   *  to re-walk `createdAt`. */
+  notificationHistory: (Notification & { dismissedAt: number })[];
   /** Push a transient notification. Returns its id. The
    *  notification auto-dismisses after 10s for `info` /
    *  `warning` levels (non-sticky). `error` is sticky by
@@ -2436,8 +2450,17 @@ interface AppState {
    *  `clearNotificationsBySource(...)` must fire. Same
    *  `(source, level)` dedups — pushing twice replaces. */
   pushNotification: (n: Omit<Notification, 'id' | 'createdAt'>) => string;
-  /** Remove a single notification by id. No-op if not found. */
+  /** R703 (UX-P2-3): soft-dismiss a single notification
+   *  by id. The notification is removed from
+   *  `notifications` and appended to `notificationHistory`
+   *  with a `dismissedAt` timestamp. No-op if not found
+   *  (matches the pre-R703 contract for the rare case
+   *  where the notification has already been cleared
+   *  by `clearNotificationsBySource`). */
   dismissNotification: (id: string) => void;
+  /** R703 (UX-P2-3): clear the dismissed-history. Wired
+   *  to the "清除历史" button in the Header popover. */
+  clearNotificationHistory: () => void;
   /** Bulk-dismiss every notification whose `source` matches.
    *  Use this from code paths that resolve the underlying
    *  condition (e.g. `sendMessage` clears `source ===
@@ -4190,6 +4213,13 @@ export const useStore = create<AppState>((set, get) => {
     // these are NOT conversation history — they live outside
     // the chat scrollback.
     notifications: [],
+    // R703 (UX-P2-3): dismissed / expired notification
+    // history. Populated by `dismissNotification` (soft
+    // delete — moved from `notifications` to here with a
+    // `dismissedAt` timestamp). Read by the Header's 🔔
+    // popover. Capped at NOTIFY_HISTORY_MAX via the
+    // dismissNotification action.
+    notificationHistory: [],
     currentQuery: null,
     steps: [],
     currentStepId: null,
@@ -7816,10 +7846,35 @@ export const useStore = create<AppState>((set, get) => {
       return id;
     },
 
+    // R703 (UX-P2-3): cap the dismissed-history so a
+    // long session doesn't grow unbounded. 50 entries
+    // is enough for a multi-hour interactive session
+    // (the user can scroll up to see the most recent
+    // few dozen). FIFO eviction drops the oldest
+    // dismissed-notification when a new one arrives
+    // past the cap.
     dismissNotification: (id) =>
-      set((s) => ({
-        notifications: s.notifications.filter((n) => n.id !== id),
-      })),
+      set((s) => {
+        // soft-delete: find the notification, remove
+        // from the live list, append to history. We
+        // need the full notification to preserve
+        // title / message / actions / source so the
+        // Header popover can render them later. If
+        // the id is already gone (race between user
+        // dismiss and the 10s auto-dismiss timer)
+        // this is a no-op — matching the pre-R703
+        // contract.
+        const idx = s.notifications.findIndex((n) => n.id === id);
+        if (idx < 0) return {};
+        const target = s.notifications[idx];
+        const remaining = s.notifications.filter((n) => n.id !== id);
+        const appended = [...s.notificationHistory, { ...target, dismissedAt: Date.now() }];
+        const history = appended.length > 50
+          ? appended.slice(appended.length - 50)
+          : appended;
+        return { notifications: remaining, notificationHistory: history };
+      }),
+    clearNotificationHistory: () => set({ notificationHistory: [] }),
 
     clearNotificationsBySource: (source) =>
       set((s) => ({

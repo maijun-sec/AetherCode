@@ -11,28 +11,88 @@ interface HeaderProps {
   onDetailsClick?: () => void;
   detailsActive?: boolean;
   onToolsClick?: () => void;
+  /** R703 (UX-P2-1): jump-to-tab callbacks. The user
+   *  used to be able to open the right-side panel via the
+   *  now-removed telemetry / kanban / tools buttons; R347
+   *  trimmed them all to a single Ctrl/Cmd+Shift+E hotkey.
+   *  The new Kanban / Subagents buttons in the Header
+   *  re-introduce the affordance: clicking the button
+   *  flips the right panel open and jumps to the requested
+   *  tab. `kanbanBadge` / `subagentsBadge` show live counts
+   *  on the buttons (active task count / running subagent
+   *  count) so the user can see "something is happening"
+   *  without having to open the panel first. */
+  onOpenKanban?: () => void;
+  onOpenSubagents?: () => void;
+  kanbanActive?: boolean;
+  subagentsActive?: boolean;
+  kanbanBadge?: number;
+  subagentsBadge?: number;
 }
 
 /** Top navigation bar.
  *
- *  R347: The right-side icon cluster has been trimmed from 8 buttons to
- *  4 (`📂` project, `🗂` session picker, `☾/☀` theme, `⚙` settings)
- *  plus the status pill. `🔧` tools / `📊` telemetry / `📋` details
- *  used to live here as well; their hotkeys (Ctrl+T / Ctrl+Shift+E /
- *  Ctrl+Shift+D) are unchanged, the buttons just moved to the
- *  SettingsPanel first row. Backpressure / throttle indicators also
- *  moved to the StatusBar where they belong (see StatusBar.tsx).
+ *  R347: The right-side icon cluster was trimmed from 8 buttons
+ *  down to 4 (`📂` project, `🗂` session picker, `☾/☀` theme,
+ *  `⚙` settings) plus the status pill. R703 re-introduces two
+ *  jump-to-tab buttons (`🗒` Kanban, `🤖` Subagents) so the user
+ *  has a one-click path to the panels they use most during an
+ *  active session — the four-button baseline was too quiet for
+ *  the "what's running right now" use case. The two new buttons
+ *  carry live badges (active task count / running subagent count)
+ *  so the user can see activity without opening the panel.
  *
  *  The status indicator has three parts:
  *   - Thinking timer: shown during streaming until the first chunk arrives, ticking every 100ms;
  *   - Status pill: color-graded by preparing / streaming / stale / idle, readable at a glance. */
-// R347: telemetry / details / tools props are kept in the type
-// for legacy callers that still want to wire a right-side
-// drawer; the Header itself does not render those buttons.
-// Backpressure / throttle moved to StatusBar, so the
-// `engineStats` and `requestConcurrencyProfile` are no longer
-// referenced here either.
-export function Header({ onSettingsClick, onSessionPickerClick }: HeaderProps) {
+export function Header({
+  onSettingsClick,
+  onSessionPickerClick,
+  onOpenKanban,
+  onOpenSubagents,
+  kanbanActive,
+  subagentsActive,
+  kanbanBadge,
+  subagentsBadge,
+}: HeaderProps) {
+  // R703 (UX-P2-3): notification-history popover state.
+  // The popover is anchored to the 🔔 button and opens
+  // on click. We use a small piece of local state rather
+  // than the store because the popover's open / closed
+  // state is purely UI — no other component needs to
+  // react to it. The popover renders outside the button
+  // (absolute-positioned) so it doesn't push the Header
+  // layout when open.
+  const notificationHistory = useStore((s) => s.notificationHistory);
+  const clearNotificationHistory = useStore((s) => s.clearNotificationHistory);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // ref to the bell button so outside-click can close
+  // the popover without closing when the user clicks
+  // inside the popover body itself.
+  const bellBtnRef = useRef<HTMLButtonElement | null>(null);
+  const historyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!historyOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (historyRef.current?.contains(t)) return;
+      if (bellBtnRef.current?.contains(t)) return;
+      setHistoryOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [historyOpen]);
+  // format a "Xm ago" relative timestamp for the
+  // history entries. The store stores `dismissedAt`
+  // so the relative-time is consistent regardless of
+  // when the popover is opened.
+  const formatAgo = (ts: number) => {
+    const ms = Date.now() - ts;
+    if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s ago`;
+    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+    return `${Math.round(ms / 3_600_000)}h ago`;
+  };
   const {
     engineState, currentTaskId, tasks,
     isStreaming, isConnected, currentQuery,
@@ -228,6 +288,47 @@ export function Header({ onSettingsClick, onSessionPickerClick }: HeaderProps) {
             🗂
           </button>
         ) : null}
+        {/* R703 (UX-P2-1): jump-to-tab buttons. The user
+            can open the right-side panel via Ctrl/Cmd+Shift+E
+            but the hotkey was the only path after R347 trimmed
+            the Header buttons. Re-introducing two targeted
+            shortcuts here so the user has a visible "go look
+            at tasks / subagents" affordance. Both buttons
+            flip the panel open + jump to the requested tab;
+            the `is-active` class lights up when the panel is
+            already showing that tab. The badges render live
+            counts so the user can see "something is happening"
+            without having to open the panel first. */}
+        {onOpenKanban ? (
+          <button
+            className={`header-icon-btn header-icon-btn-with-badge ${kanbanActive ? 'is-active' : ''}`}
+            title="Open task board (Kanban) — Ctrl/Cmd+Shift+K"
+            onClick={onOpenKanban}
+            data-testid="header-kanban-btn"
+          >
+            🗒
+            {(kanbanBadge ?? 0) > 0 ? (
+              <span className="header-icon-badge" aria-label={`${kanbanBadge} active tasks`}>
+                {kanbanBadge}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
+        {onOpenSubagents ? (
+          <button
+            className={`header-icon-btn header-icon-btn-with-badge ${subagentsActive ? 'is-active' : ''}`}
+            title="Open subagents panel — Ctrl/Cmd+Shift+B"
+            onClick={onOpenSubagents}
+            data-testid="header-subagents-btn"
+          >
+            🤖
+            {(subagentsBadge ?? 0) > 0 ? (
+              <span className={`header-icon-badge header-icon-badge-pulse ${(subagentsBadge ?? 0) > 0 ? 'is-running' : ''}`} aria-label={`${subagentsBadge} running subagents`}>
+                {subagentsBadge}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
         {/* Theme switch: the icon flips with the current theme, but the actual theming is driven by [data-theme="light"] CSS variable overrides. */}
         <button
           className="header-icon-btn header-theme-toggle"
@@ -238,6 +339,62 @@ export function Header({ onSettingsClick, onSessionPickerClick }: HeaderProps) {
           {theme === 'light' ? '☀' : '☾'}
         </button>
         <button className="header-icon-btn" title="Settings" onClick={onSettingsClick}>⚙</button>
+        {/* R703 (UX-P2-3): notification-history bell.
+            Renders only when there's at least one
+            dismissed / expired notification. The badge
+            shows the count so the user can see at a
+            glance "there are N things I might have
+            missed". Clicking opens a popover listing
+            the most-recent dismissed notifications
+            with title + message + relative time +
+            optional re-trigger of any action buttons.
+            Outside-click closes the popover. The
+            "清除历史" button at the bottom clears the
+            whole history in one click. Hidden when
+            history is empty so the button doesn't
+            take up space when there's nothing to
+            show. */}
+        {notificationHistory.length > 0 ? (
+          <div className="header-icon-history-wrap">
+            <button
+              ref={bellBtnRef}
+              className={`header-icon-btn header-icon-btn-with-badge ${historyOpen ? 'is-active' : ''}`}
+              title={`Notification history (${notificationHistory.length})`}
+              onClick={() => setHistoryOpen((v) => !v)}
+              data-testid="header-notif-history-btn"
+            >
+              🔔
+              <span className="header-icon-badge" aria-label={`${notificationHistory.length} dismissed notifications`}>
+                {notificationHistory.length}
+              </span>
+            </button>
+            {historyOpen ? (
+              <div ref={historyRef} className="header-notif-history" role="dialog" aria-label="Notification history">
+                <div className="header-notif-history-header">
+                  <span>Notification history</span>
+                  <button
+                    className="header-notif-history-clear"
+                    onClick={() => clearNotificationHistory()}
+                    title="Clear all dismissed notifications"
+                  >
+                    清除历史
+                  </button>
+                </div>
+                <ul className="header-notif-history-list">
+                  {notificationHistory.slice().reverse().map((n) => (
+                    <li key={`${n.id}:${n.dismissedAt}`} className={`header-notif-history-item header-notif-history-item-${n.level}`}>
+                      <div className="header-notif-history-item-row">
+                        <span className="header-notif-history-item-title">{n.title}</span>
+                        <span className="header-notif-history-item-ago">{formatAgo(n.dismissedAt)}</span>
+                      </div>
+                      {n.message ? <div className="header-notif-history-item-msg">{n.message}</div> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {/* R347: The Telemetry / Session details / Tools icon buttons
          *  moved to SettingsPanel — the Header now only carries the
          *  five elements above. Their shortcuts (Ctrl+Shift+E /

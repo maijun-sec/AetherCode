@@ -156,6 +156,74 @@
   text-overflow: ellipsis;
 }
 
+/* R703 (UX-P2-2): live streaming preview block.
+   The <details> wrapper gives the user a single-click
+   way to expand the full partialResult while keeping
+   the row tight when collapsed. The `live output`
+   label carries a soft pulsing dot so the user can
+   see "this subagent is actively producing output"
+   even when the engine hasn't shipped a new chunk
+   in a few seconds (the dot pulses at the same
+   cadence as the Header subagent badge for
+   visual consistency). */
+.subagent-panel-row-partial {
+  margin: 4px 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  border-left: 2px solid rgba(99, 179, 237, 0.45);
+  padding-left: 6px;
+}
+.subagent-panel-row-partial > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.subagent-panel-row-partial > summary::-webkit-details-marker { display: none; }
+.subagent-panel-row-partial-label {
+  font-weight: 600;
+  color: rgba(99, 179, 237, 0.95);
+  position: relative;
+  padding-left: 10px;
+}
+.subagent-panel-row-partial-label::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(99, 179, 237, 0.95);
+  animation: subagent-panel-row-partial-pulse 1.6s ease-in-out infinite;
+}
+@keyframes subagent-panel-row-partial-pulse {
+  0%, 100% { opacity: 0.55; transform: translateY(-50%) scale(0.85); }
+  50%      { opacity: 1.0;  transform: translateY(-50%) scale(1.10); }
+}
+.subagent-panel-row-partial-preview {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.subagent-panel-row-partial-body {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  background: var(--bg-input);
+  border-radius: 3px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .subagent-panel-row-actions {
   display: flex;
   justify-content: flex-end;

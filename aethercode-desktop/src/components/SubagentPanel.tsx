@@ -287,6 +287,32 @@ export function SubagentPanel() {
                   {truncate(job.summary, 80)}
                 </div>
               ) : null}
+              {/* R703 (UX-P2-2): live streaming preview.
+                  While the subagent is RUNNING the engine
+                  ships a `partialResult` string with the
+                  latest text delta — we render it inline
+                  so the user can see the job making
+                  progress without opening the transcript.
+                  Cleared on terminal transitions (the
+                  `resultText` field takes over for
+                  COMPLETED rows). Collapsed by default
+                  (only the first 240 chars show) so a
+                  verbose subagent doesn't dominate the
+                  panel; the user can click "展开" to see
+                  the full partialResult. */}
+              {job.status === 'RUNNING' && job.partialResult ? (
+                <details className="subagent-panel-row-partial">
+                  <summary>
+                    <span className="subagent-panel-row-partial-label">live output</span>
+                    <span className="subagent-panel-row-partial-preview">
+                      {truncate(job.partialResult, 120)}
+                    </span>
+                  </summary>
+                  <pre className="subagent-panel-row-partial-body">
+                    {job.partialResult}
+                  </pre>
+                </details>
+              ) : null}
               <div className="subagent-panel-row-actions">
                 {job.status === 'RUNNING' ? (
                   <button
