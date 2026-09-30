@@ -215,9 +215,29 @@ export function MessageInput() {
   // in chat (see agents/mavis/skills/sdd). When on, the next
   // user turn is routed through the SDD skill with an [sdd]
   // trigger prepended so the agent loads the skill bundle.
+  //
+  // R703-rev2 (2026-09-30): the SDD toggle is now a
+  // "trigger the flow" button — clicking it immediately
+  // calls startSsdFlow(intent) instead of just flipping a
+  // state flag the user has to remember to use later. The
+  // intent is taken from the current input box if it has
+  // text; if the input is empty, we focus the textarea and
+  // flash the placeholder so the user knows what to type.
+  // The toggle remains a 2-way switch — clicking it OFF
+  // when a flow is running stops the flow + flips the
+  // toggle back off; clicking it OFF when no flow is
+  // active just flips the toggle. This restores the
+  // pre-R312 affordance where "click SDD button = force
+  // the agent into SDD mode".
   const sddEnabled = useStore((s) => s.sddEnabled);
   const sddActive = useStore((s) => s.sddActive);
   const setSddEnabled = useStore((s) => s.setSddEnabled);
+  const startSsdFlow = useStore((s) => s.startSsdFlow);
+  const stopSsdFlow = useStore((s) => s.stopSsdFlow);
+  // brief flash when the user clicks SDD on an empty input
+  // — visual nudge that the toggle wants an intent before
+  // it can start the flow.
+  const [sddIntentHint, setSddIntentHint] = useState(false);
 
   // refresh the provider list on mount and whenever
   // the connection comes back. The daemon's listProviders
@@ -785,13 +805,51 @@ export function MessageInput() {
           <button
             type="button"
             className={`config-toggle config-toggle-sdd ${sddEnabled ? 'config-toggle-active' : ''}`}
-            onClick={() => setSddEnabled(!sddEnabled)}
-            title={sddEnabled ? '关闭 SDD 模式' : '开启 SDD 模式'}
+            // R703-rev2: click-to-trigger behaviour.
+            // Turning ON with a non-empty input box kicks
+            // off the SDD flow immediately with that text
+            // as the intent. Turning ON with an empty
+            // input box focuses the textarea and flashes
+            // the placeholder for ~1.6s so the user
+            // knows to type the intent. Turning OFF
+            // stops the active flow (if any) and flips
+            // the toggle off — same as before.
+            onClick={() => {
+              if (sddEnabled) {
+                // toggle OFF
+                if (sddActive) {
+                  void stopSsdFlow();
+                }
+                setSddEnabled(false);
+                return;
+              }
+              // toggle ON — try to start the flow immediately
+              const intent = currentInput.trim();
+              if (intent) {
+                setCurrentInput('');
+                void startSsdFlow(intent);
+                return;
+              }
+              // no intent yet — focus the textarea + flash a hint
+              setSddEnabled(true);
+              setSddIntentHint(true);
+              const ta = document.querySelector('.message-input-textarea') as HTMLTextAreaElement | null;
+              ta?.focus();
+              window.setTimeout(() => setSddIntentHint(false), 1600);
+            }}
+            title={sddEnabled
+              ? (sddActive ? '点击取消当前 SDD 流程' : '关闭 SDD 模式')
+              : '点击开启 SDD 模式（先在下方输入项目意图，回车自动启动 8 阶段流程）'}
             aria-pressed={sddEnabled}
             data-testid="message-input-sdd-toggle"
           >
-            📐 SDD
+            📐 SDD{sddActive ? ' · 8 阶段' : ''}
           </button>
+          {sddIntentHint ? (
+            <span className="config-sdd-hint" data-testid="message-input-sdd-hint">
+              ↓ 在下方输入意图然后按 Enter
+            </span>
+          ) : null}
         </div>
         {/* R312: SDD toggle gone. The 4 quality pills
          * (low / medium / high / xhigh) become their own

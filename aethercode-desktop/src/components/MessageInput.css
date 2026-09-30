@@ -269,6 +269,38 @@
   box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.15);
 }
 
+/* R703-rev2: click-to-trigger hint that flashes for
+   ~1.6s next to the SDD toggle when the user clicks
+   it on an empty input box. The hint is rendered
+   inline next to the toggle (below-left of the config
+   row) so the user notices it without taking focus
+   from the textarea they were just focused into. The
+   little ↓ arrow points down at the textarea where the
+   intent should be typed. */
+.config-sdd-hint {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #5b21b6;
+  background: rgba(237, 233, 254, 0.95);
+  border: 1px solid rgba(124, 58, 237, 0.30);
+  border-radius: 4px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  z-index: 10;
+  animation: config-sdd-hint-pulse 1.6s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes config-sdd-hint-pulse {
+  0%   { opacity: 0; transform: translateY(-4px); }
+  20%  { opacity: 1; transform: translateY(0); }
+  80%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(0); }
+}
+
 .cwd-group {
   margin-left: auto;
   /* shrunk from 360px to 220px. legacy the cwd
