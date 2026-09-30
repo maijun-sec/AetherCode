@@ -5131,21 +5131,73 @@ public class AetherCodeMethods {
                 // LeftPanel would show "0 sessions" because
                 // every legacy session has no memory-store
                 // row, and ProjectGroupList groups nothing.
+                //
+                // R704 cwd resolution order:
+                //   1. {@code info.cwd()} from the
+                //      per-daemon SessionStore. This is the
+                //      PRIMARY source — it's updated on every
+                //      message append and every setCwd, and
+                //      it lives in the same directory as the
+                //      session's JSONL file so it cannot
+                //      disagree with where the session was
+                //      actually written. pre-R704 this was
+                //      populated from the SessionStoreSqlite
+                //      metadata but never exposed on the
+                //      SessionInfo record, so listSessions
+                //      had to fall through to the SHARED
+                //      memory store — and that store is
+                //      stale across daemons (every daemon has
+                //      a "default" session, and the last
+                //      writer's cwd wins for the shared
+                //      table). The user-reported symptom was
+                //      "new session in cwd=abc_5 still
+                //      grouped under AetherCode" because
+                //      listSessions returned default.cwd =
+                //      AetherCode (the last memory-store
+                //      update was from a previous daemon).
+                //   2. The per-session `.cwd` sidecar file
+                //      (<sessions-dir>/<id>.cwd). This is the
+                //      legacy pre-R361 path — every fresh
+                //      session writes a sidecar on its first
+                //      createSession(cwd) / setCwd(cwd)
+                //      call. We keep it as a fallback for
+                //      sessions whose SessionStore SQLite
+                //      row was created without a cwd (the
+                //      disk-scan fallback path, or a
+                //      migration from a much older build).
+                //   3. The shared memory store's
+                //      session_info.cwd. PRE-R704 this was
+                //      the primary source. R704 demotes it
+                //      to last-resort because it's stale
+                //      across daemons (see above). We still
+                //      keep it as a final fallback so a
+                //      session imported from another daemon
+                //      — one that wrote the memory store but
+                //      not the per-daemon SessionStore —
+                //      still surfaces a cwd. Without this,
+                //      the desktop's LeftPanel would group
+                //      such sessions under "未关联项目" (the
+                //      unlinked bucket) and lose the user's
+                //      mental model.
                 String cwd = null;
-                java.nio.file.Path sidecar = info.file() != null
-                        ? info.file().getParent().resolve(info.id() + ".cwd")
-                        : null;
-                if (sidecar != null && java.nio.file.Files.exists(sidecar)) {
-                    try {
-                        String content = java.nio.file.Files.readString(sidecar).trim();
-                        if (!content.isEmpty()) cwd = content;
-                    } catch (Exception ignore) { /* fall through to memory store */ }
-                }
-                if (cwd == null && memoryStore != null) {
-                    org.aethercode.memory.SessionMemoryStore.SessionInfo ms =
-                            memoryStore.sessionStore().getSession(info.id());
-                    if (ms != null && ms.cwd() != null && !ms.cwd().isBlank()) {
-                        cwd = ms.cwd();
+                if (info.cwd() != null && !info.cwd().isBlank()) {
+                    cwd = info.cwd();
+                } else {
+                    java.nio.file.Path sidecar = info.file() != null
+                            ? info.file().getParent().resolve(info.id() + ".cwd")
+                            : null;
+                    if (sidecar != null && java.nio.file.Files.exists(sidecar)) {
+                        try {
+                            String content = java.nio.file.Files.readString(sidecar).trim();
+                            if (!content.isEmpty()) cwd = content;
+                        } catch (Exception ignore) { /* fall through to memory store */ }
+                    }
+                    if (cwd == null && memoryStore != null) {
+                        org.aethercode.memory.SessionMemoryStore.SessionInfo ms =
+                                memoryStore.sessionStore().getSession(info.id());
+                        if (ms != null && ms.cwd() != null && !ms.cwd().isBlank()) {
+                            cwd = ms.cwd();
+                        }
                     }
                 }
                 if (cwd != null) {

@@ -108,13 +108,18 @@ public final class SessionStore {
             List<SessionInfo> out = new ArrayList<>(rows.size());
             for (var row : rows) {
                 Path file = Path.of(row.rawPath);
-                out.add(new SessionInfo(row.id, file, row.lastUsedAt, row.sizeBytes));
+                out.add(new SessionInfo(row.id, file, row.lastUsedAt, row.sizeBytes, row.cwd));
             }
             return out;
         } catch (SQLException sqle) {
             // fall back to the directory scan if the DB is
             // unreachable (e.g. read-only mount). The legacy
-            // path is slower but always available.
+            // path is slower but always available. The
+            // disk-scan fallback returns null cwd (the
+            // directory scan has no cwd metadata — only
+            // mtime + size); callers should fall through to
+            // the legacy sidecar / memory store in that
+            // case.
             LOG.warn("SessionStore.list: SQLite read failed, falling back to directory scan: {}",
                     sqle.getMessage());
             return listFromDisk();
@@ -142,7 +147,7 @@ public final class SessionStore {
                       long size = 0;
                       try { mtime = Files.getLastModifiedTime(p).toMillis(); } catch (IOException ignored) {}
                       try { size = Files.size(p); } catch (IOException ignored) {}
-                      out.add(new SessionInfo(id, p, mtime, size));
+                      out.add(new SessionInfo(id, p, mtime, size, null));
                   });
         }
         out.sort(Comparator.comparingLong(SessionInfo::lastModified).reversed());
@@ -393,8 +398,25 @@ public final class SessionStore {
         }
     }
 
-    /** Lightweight handle for the TUI/REPL's /sessions command. */
-    public record SessionInfo(String id, Path file, long lastModified, long sizeBytes) {
+    /** Lightweight handle for the TUI/REPL's /sessions command.
+     *
+     * <p>R704: the record now carries {@code cwd} so callers
+     * (the daemon's {@code listSessions} RPC in particular)
+     * can resolve the per-session cwd without falling back to
+     * the shared {@code ~/.aethercode/sessions.db} memory
+     * store. pre-R704 the record only had id / file /
+     * lastModified / sizeBytes — the cwd was only on the
+     * SQLite {@code Metadata} row, and the only consumer
+     * ({@code AetherCodeMethods.listSessions}) had to fall
+     * through to the SHARED memory store. That fallback is
+     * stale across daemons (one daemon's "default" session
+     * shares an id with another's, so the last writer wins),
+     * which produced the user-reported "new session shows
+     * under AetherCode even though cwd is abc_5" bug.
+     * Putting cwd on this record lets the per-daemon
+     * SessionStore (updated on every message append + every
+     * setCwd) be the primary source. */
+    public record SessionInfo(String id, Path file, long lastModified, long sizeBytes, String cwd) {
         public String shortId() { return id.length() > 16 ? id.substring(0, 16) + "…" : id; }
     }
 }
