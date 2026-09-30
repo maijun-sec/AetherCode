@@ -847,7 +847,7 @@ export function MessageInput() {
             }}
             title={sddEnabled
               ? (sddActive ? '点击取消当前 SDD 流程' : '关闭 SDD 模式')
-              : '点击开启 SDD 模式（先在下方输入项目意图，回车自动启动 8 阶段流程）'}
+              : '点击开启 SDD 模式（先输入项目意图，再点此按钮启动 8 阶段流程；回车依然走普通聊天）'}
             aria-pressed={sddEnabled}
             data-testid="message-input-sdd-toggle"
           >
@@ -855,7 +855,7 @@ export function MessageInput() {
           </button>
           {sddIntentHint ? (
             <span className="config-sdd-hint" data-testid="message-input-sdd-hint">
-              ↓ 在下方输入意图然后按 Enter
+              ↓ 在下方输入项目意图，再点 📐 SDD 按钮启动 8 阶段流程
             </span>
           ) : null}
         </div>
@@ -1283,7 +1283,7 @@ export function MessageInput() {
               : sddActive
               ? 'SDD 进行中 — 输入 ✅ 继续 / ⏭️ 跳过 / 或 phase 反馈'
               : sddEnabled
-              ? 'SDD 模式已开 — 输入项目意图，按 Enter 启动 8 阶段流程'
+              ? '点 📐 SDD 按钮直接启动 8 阶段流程；输入回车依然走普通聊天'
               : 'Type your message…  (Enter to send, Shift+Enter for newline, / for commands)'
           }
           rows={2}
