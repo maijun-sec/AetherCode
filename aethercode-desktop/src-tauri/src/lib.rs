@@ -51,30 +51,23 @@ use tokio_tungstenite::connect_async;
 
 const DAEMON_HEALTH_TIMEOUT_MS: u64 = 15_000;
 const DAEMON_HEALTH_POLL_MS: u64 = 200;
-// R361: removed DEFAULT_DAEMON_PORTS. The pre-R199
-// single-port list was retired when the desktop adopted
-// the `DESKTOP_DAEMON_PORTS` range + cross-port sweep.
-// Sweeping every port in DESKTOP_DAEMON_PORTS (the
-// primary range) is enough to enforce "at most one
-// AetherCode daemon alive at any time".
-const DESKTOP_DAEMON_PORTS: &[u16] = &[17888, 18888, 19888, 20888, 21888, 22888];
+// R705: trimmed to a single port. The pre-R361 design spawned
+// a JVM on every port in `DESKTOP_DAEMON_PORTS` in parallel,
+// kept one alive, and killed the other 5 — pure waste once
+// setCwd became in-place. A single daemon now holds all
+// sessions via `SessionManager.createEngine({sessionId, cwd})`
+// (each engine is cwd-bound) and updates cwd via
+// `bindSessionCwd` / `switchProject` in-place. cwd-switching
+// is now sub-millisecond inside the same JVM, so a 6-port
+// pre-warm pool buys us nothing — only ~1 GB of native RAM
+// on every desktop start. Pick 22888 as the canonical
+// port (was already the highest of the old list).
+const DESKTOP_DAEMON_PORTS: &[u16] = &[22888];
 
-// R333: union of every port range any of our daemon
-// incarnations can listen on. Used by `kill_orphan_daemons`
-// to enforce "at most one AetherCode daemon alive at any
-// time" — the user explicitly asked for this constraint
-// because seeing two daemon processes (one primary, one
-// pre-warm, one orphan-from-previous-session) eat 2-3 GB
-// of native memory each is operationally confusing and
-// wastes RAM.
-//
-// R361: the pre-warm range (xxx89) was retired — setCwd now
-// routes through the daemon's `bindSessionCwd` RPC instead
-// of killing+respawning the daemon. We only sweep the
-// primary range now.
-const ALL_DESKTOP_DAEMON_PORTS: &[u16] = &[
-    17888, 18888, 19888, 20888, 21888, 22888,  // DESKTOP primary range
-];
+// R705: also trimmed the sweep list. Pre-R361 this covered
+// the pre-warm range too; now both lists collapse to the
+// single canonical port.
+const ALL_DESKTOP_DAEMON_PORTS: &[u16] = &[22888];
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
