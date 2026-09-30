@@ -114,41 +114,18 @@ export function PermissionPromptBanner() {
   // (i.e. right after launch before initialize()
   // completes) so we don't flash an empty pill.
   const showStatusStrip = !!engineState?.permissionMode && pendingPermissions.length === 0;
-  if (pendingPermissions.length === 0 && !showStatusStrip) return null;
-
-  // Show the OLDEST pending request first (FIFO). The user
-  // should answer the first one before the model gets
-  // confused. If they want a list view, the right panel still
-  // has the full PermissionList.
-  const p = pendingPermissions[0];
-  const more = pendingPermissions.length - 1;
-  const riskColor = RISK_COLOR[(p.riskLevel || '').toLowerCase()] || 'var(--text-dim)';
-  // current mode label for the chip. Falls
-  // through to '—' if the engine state isn't
-  // loaded yet (e.g. the banner mounted before
-  // initialize() finished). The chip is purely
-  // informational — the user can change the
-  // mode from the MessageInput dropdown and
-  // future prompts will respect the new mode.
-  const currentModeLabel = permissionModeLabel(engineState?.permissionMode);
-
-  const onAllow = () => { void respondPermission(p.requestId, true); };
-  const onDeny = () => { void respondPermission(p.requestId, false); };
-  const onAlways = (scope: 'session' | 'project' | 'user') => {
-    void installPermissionOverride(p.tool, 'allow', targetFromInput(p.input), scope);
-  };
-
-  // R703 (UX-P2-4): when there's no pending request,
-  // render a compact read-only perm status strip
-  // instead of the full banner. The strip shows the
-  // current mode + the two auto-allow flags +
-  // cumulative auto-approved counts so the user can
-  // see at a glance "the perm system is wired up and
-  // here's what it would do right now". Critical
-  // risk (rm -rf, sudo) is never auto-approved
-  // regardless of flags — we surface this in the
-  // tooltip so the user doesn't need to dig through
-  // Settings to confirm.
+  // R703 (UX-P2-4): render the status strip when
+  // there are no pending requests but the engine has
+  // reported a mode. We have to check showStatusStrip
+  // FIRST and return early — otherwise the code below
+  // tries to read `pendingPermissions[0]` (undefined)
+  // and throws "Cannot read properties of undefined
+  // (reading 'riskLevel')", which crashes the React
+  // tree (the desktop renders as a blank white page
+  // because no component below the ErrorBoundary can
+  // mount). The user's first test crashed exactly
+  // there. Status strip lives entirely in this branch
+  // so we never reach the legacy banner code below.
   if (showStatusStrip) {
     const rawMode = engineState?.permissionMode ?? '';
     const modeLabel = permissionModeLabel(rawMode);
@@ -180,6 +157,29 @@ export function PermissionPromptBanner() {
       </div>
     );
   }
+  if (pendingPermissions.length === 0) return null;
+
+  // Show the OLDEST pending request first (FIFO). The user
+  // should answer the first one before the model gets
+  // confused. If they want a list view, the right panel still
+  // has the full PermissionList.
+  const p = pendingPermissions[0];
+  const more = pendingPermissions.length - 1;
+  const riskColor = RISK_COLOR[(p.riskLevel || '').toLowerCase()] || 'var(--text-dim)';
+  // current mode label for the chip. Falls
+  // through to '—' if the engine state isn't
+  // loaded yet (e.g. the banner mounted before
+  // initialize() finished). The chip is purely
+  // informational — the user can change the
+  // mode from the MessageInput dropdown and
+  // future prompts will respect the new mode.
+  const currentModeLabel = permissionModeLabel(engineState?.permissionMode);
+
+  const onAllow = () => { void respondPermission(p.requestId, true); };
+  const onDeny = () => { void respondPermission(p.requestId, false); };
+  const onAlways = (scope: 'session' | 'project' | 'user') => {
+    void installPermissionOverride(p.tool, 'allow', targetFromInput(p.input), scope);
+  };
 
   return (
     <div className="perm-banner" role="alert">
