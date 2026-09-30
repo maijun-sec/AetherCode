@@ -583,51 +583,59 @@ export function MessageInput() {
         // auto-promote to SDD — the user must pick SDD 规范化
         // at session-creation time. We no longer infer SDD
         // intent from chat input keywords.
-        if (sdd.sddEnabled && intent) {
+        //
+        // R703-rev3 (2026-09-30): the Enter gate is now
+        // `sdd.sddActive` (a flow is actually running),
+        // NOT `sdd.sddEnabled` (the toggle is on). The
+        // toggle is just a one-shot trigger that fires
+        // startSsdFlow on click and then becomes a
+        // no-op label; it must not gate every Enter the
+        // user types afterwards — otherwise typing
+        // "make a java maven project" while the toggle
+        // happened to be on silently routes to SDD and
+        // never sends the chat message. sddActive
+        // gates only the phase-keyword path; off-toggle
+        // + no-active-flow Enters always go through
+        // sendMessage as a plain chat turn.
+        if (sdd.sddActive && intent) {
           setCurrentInput('');
           try {
-            if (sdd.sddActive) {
-              // Run in flight — interpret the message as a
-              // phase command.
-              const lower = intent.toLowerCase();
-              // R337: drop the `\b` trailing boundary. The
-              // previous round used `\b`, which is ASCII-only
-              // (`\w` = `[A-Za-z0-9_]`), so it never matched
-              // pure Chinese keywords like "继续" /
-              // "继续下一阶段" / "跳过" — they always fell
-              // through to the modify branch, and the agent
-              // saw them as action=modify feedback instead of
-              // as a phase-advance. Without a trailing
-              // constraint the regex matches any input that
-              // starts with the keyword — the same intent as
-              // R322 ("accept any input starting with the
-              // skip / approve verb, with optional '下一阶段'
-              // / 'next' / 'phase N' / phase-title suffix").
-              //
-              // R322: widened the keyword regex. The
-              // previous round's `^(⏭️|跳过|skip)\s*$` only
-              // matched the bare token — phrases like
-              // "跳过下一阶段" / "跳过 phase 3" / "跳过需求
-              // 澄清" fell through to the modify branch and
-              // the agent re-ran the current phase.
-              if (/^(✅|继续下一阶段|继续|next|ok|advance|go)/i.test(intent)
-                  || lower === '✅' || lower === 'next' || lower === 'ok' || lower === 'go'
-                  || /^(approve|advance|next|continue)/i.test(lower)) {
-                await sdd.sendSsdCommand('approve');
-              } else if (/^(⏭️|跳过|skip)/i.test(intent)
-                  || lower === '⏭️' || lower === 'skip'
-                  || /^(skip|skip[- ]?next)/i.test(lower)) {
+            // Run in flight — interpret the message as a
+            // phase command.
+            const lower = intent.toLowerCase();
+            // R337: drop the `\b` trailing boundary. The
+            // previous round used `\b`, which is ASCII-only
+            // (`\w` = `[A-Za-z0-9_]`), so it never matched
+            // pure Chinese keywords like "继续" /
+            // "继续下一阶段" / "跳过" — they always fell
+            // through to the modify branch, and the agent
+            // saw them as action=modify feedback instead of
+            // as a phase-advance. Without a trailing
+            // constraint the regex matches any input that
+            // starts with the keyword — the same intent as
+            // R322 ("accept any input starting with the
+            // skip / approve verb, with optional '下一阶段'
+            // / 'next' / 'phase N' / phase-title suffix").
+            //
+            // R322: widened the keyword regex. The
+            // previous round's `^(⏭️|跳过|skip)\s*$` only
+            // matched the bare token — phrases like
+            // "跳过下一阶段" / "跳过 phase 3" / "跳过需求
+            // 澄清" fell through to the modify branch and
+            // the agent re-ran the current phase.
+            if (/^(✅|继续下一阶段|继续|next|ok|advance|go)/i.test(intent)
+                || lower === '✅' || lower === 'next' || lower === 'ok' || lower === 'go'
+                || /^(approve|advance|next|continue)/i.test(lower)) {
+              await sdd.sendSsdCommand('approve');
+            } else if (/^(⏭️|跳过|skip)/i.test(intent)
+                || lower === '⏭️' || lower === 'skip'
+                || /^(skip|skip[- ]?next)/i.test(lower)) {
                 await sdd.sendSsdCommand('skip');
               } else {
                 // Treat as ✏️ feedback (whole input is the
                 // user's note on the current phase).
                 await sdd.sendSsdCommand('modify', intent);
               }
-            } else {
-              // Toggle is on but no run yet — this is a new
-              // SDD intent; route via startSsdFlow.
-              await sdd.startSsdFlow(intent);
-            }
           } catch (e) {
             console.warn('[MessageInput] SDD command failed:', e);
           }
