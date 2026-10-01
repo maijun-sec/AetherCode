@@ -8,7 +8,7 @@
  * HTML report (tools/eval_report.py); this panel just surfaces the latest
  * file and per-category roll-up inside the desktop.
  */
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import './EvalPanel.css';
 
 interface CategoryStat {
@@ -71,7 +71,8 @@ export function EvalPanel({ onClose }: EvalPanelProps) {
           try {
             // eslint-disable-next-line no-undef
             const text = await (window as any).__TAURI_INTERNALS__
-              ? await (await import('@tauri-apps/api/fs')).readTextFile(p)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              ? await (await import(/* @vite-ignore */ '@tauri-apps/api/fs' as any)).readTextFile(p)
               : null;
             if (text) {
               data = JSON.parse(text);
