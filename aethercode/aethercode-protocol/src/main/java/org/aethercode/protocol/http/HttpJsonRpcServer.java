@@ -1001,6 +1001,20 @@ public final class HttpJsonRpcServer {
             case "getPermissionModeSuggestion" -> methods.getPermissionModeSuggestion(params);
             case "setSkipConfirmation"     -> methods.setSkipConfirmation(params);
             case "setContinuationStopped"  -> methods.setContinuationStopped(params);
+            // R708 — SDD HTTP path parity. The stdio daemon and the
+            // WebSocket dispatcher pick up sdd.* via
+            // AetherCodeMethods.registerAll(); the HTTP+WS daemon's
+            // /rpc + /jsonrpc paths route through this switch instead,
+            // and without these arms every SDD request returns
+            // METHOD_NOT_FOUND (the desktop's sdd.start hangs in the
+            // renderer with no visible failure because the optimistic
+            // UI is rolled back but the input has already been
+            // cleared). Mirror the dispatcher names verbatim.
+            case "sdd.start"     -> methods.sddStart(params);
+            case "sdd.advance"   -> methods.sddAdvance(params);
+            case "sdd.status"    -> methods.sddStatus(params);
+            case "sdd.abort"     -> methods.sddAbort(params);
+            case "sdd.listRuns"  -> methods.sddListRuns(params);
             default -> throw new JsonRpcProtocolException(
                     "unknown method: " + method,
                     JsonRpcError.of(JsonRpcError.METHOD_NOT_FOUND, method));
