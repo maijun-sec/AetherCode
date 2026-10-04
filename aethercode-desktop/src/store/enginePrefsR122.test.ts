@@ -119,7 +119,11 @@ describe('R122: setModel writes prefs on success', () => {
     // setAutoApproveLowRisk / setLoopDetectorThresholds.
     const block = storeSrc.match(/setModel:\s*async\s*\(model:\s*string\)\s*=>\s*\{[\s\S]*?^\s{4}\}/m);
     expect(block).toBeTruthy();
-    expect(block![0]).toContain('await rpc.setModel(model)');
+    // R707: setModel now passes currentSessionId so the
+    // daemon targets the engine the user is looking at.
+    // Accept either form so this source-pin doesn't
+    // false-positive on the routing fix.
+    expect(block![0]).toMatch(/await rpc\.setModel\(model(?:,\s*\w+)?\)/);
     expect(block![0]).toMatch(/prefs\.model\s*=\s*model/);
     expect(block![0]).toContain('writeEnginePrefs(prefs)');
   });
@@ -448,7 +452,7 @@ describe('R176: initialize() no longer pushes localStorage model to the daemon',
     // 'bypass'.
     expect(storeSrc).toMatch(/if\s*\(prefs\.permissionMode && prefs\.permissionMode !== state\?\.permissionMode\)/);
     expect(storeSrc).toMatch(/const daemonMode = mapUiPermissionToDaemon\(prefs\.permissionMode\)/);
-    expect(storeSrc).toContain('await rpc.setPermissionMode(daemonMode)');
+    expect(storeSrc).toMatch(/await rpc\.setPermissionMode\(daemonMode(?:,\s*\w+)?\)/);
   });
 
   it('initialize() applies prefs.autoApproveLowRisk via rpc.setAutoApproveLowRisk', () => {

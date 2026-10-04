@@ -208,7 +208,10 @@ describe('R203: setPermissionMode action wires the mapping through the RPC', () 
     const block = storeSrc.match(/setPermissionMode:\s*async\s*\(mode:\s*string\)\s*=>\s*\{[\s\S]*?^\s{4}\}/m);
     expect(block).toBeTruthy();
     expect(block![0]).toContain('const daemonMode = mapUiPermissionToDaemon(mode)');
-    expect(block![0]).toContain('await rpc.setPermissionMode(daemonMode)');
+    // R707: setPermissionMode now passes currentSessionId
+    // alongside daemonMode. Accept either form so this
+    // source-pin doesn't false-positive on the routing fix.
+    expect(block![0]).toMatch(/await rpc\.setPermissionMode\(daemonMode(?:,\s*\w+)?\)/);
   });
 
   it('keeps engineState.permissionMode on the canonical enum (for the StatusBar label)', () => {

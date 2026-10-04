@@ -584,24 +584,39 @@ export function MessageInput() {
         // at session-creation time. We no longer infer SDD
         // intent from chat input keywords.
         //
-        // R703-rev3 (2026-09-30): the Enter gate is now
-        // `sdd.sddActive` (a flow is actually running),
-        // NOT `sdd.sddEnabled` (the toggle is on). The
-        // toggle is just a one-shot trigger that fires
-        // startSsdFlow on click and then becomes a
-        // no-op label; it must not gate every Enter the
-        // user types afterwards — otherwise typing
-        // "make a java maven project" while the toggle
-        // happened to be on silently routes to SDD and
-        // never sends the chat message. sddActive
-        // gates only the phase-keyword path; off-toggle
-        // + no-active-flow Enters always go through
-        // sendMessage as a plain chat turn.
-        if (sdd.sddActive && intent) {
+        // R707 (2026-10-04): revert R703-rev3's Enter gate.
+        // The user-facing flow is now:
+        //   • SDD toggle OFF + Enter → plain sendMessage (chat).
+        //   • SDD toggle ON + Enter (no active flow) → startSsdFlow(intent).
+        //   • SDD toggle ON + Enter (active flow) → interpret as
+        //     ✅ / ✏️ / ⏭️ phase command.
+        // Rationale: R703-rev3 made `sddEnabled` a one-shot trigger
+        // that became inert after the first click, so the user's
+        // natural "I clicked SDD, now type my intent and press Enter"
+        // pattern was silently routed back to chat. With this
+        // revert the toggle becomes the user's explicit intent for
+        // every Enter until they turn it off — same model as the
+        // model/perm picker, where the dropdown selection persists
+        // until changed. Users who want chat turn the toggle off.
+        if (sdd.sddEnabled && intent) {
           setCurrentInput('');
+          // Toggle ON but flow NOT yet running → start it
+          // with the typed text as intent. Matches R703-rev2's
+          // "click toggle with non-empty input → start flow"
+          // semantics, but routed through Enter instead of the
+          // button so users who toggle-then-type get the same
+          // outcome as users who type-then-toggle.
+          if (!sdd.sddActive) {
+            try {
+              await sdd.startSsdFlow(intent);
+            } catch (e) {
+              console.warn('[MessageInput] startSsdFlow failed:', e);
+            }
+            return;
+          }
+          // Flow is already active → interpret as a phase
+          // command (✅ / ✏️ / ⏭️ / anything else = modify).
           try {
-            // Run in flight — interpret the message as a
-            // phase command.
             const lower = intent.toLowerCase();
             // R337: drop the `\b` trailing boundary. The
             // previous round used `\b`, which is ASCII-only
@@ -846,8 +861,8 @@ export function MessageInput() {
               window.setTimeout(() => setSddIntentHint(false), 1600);
             }}
             title={sddEnabled
-              ? (sddActive ? '点击取消当前 SDD 流程' : '关闭 SDD 模式')
-              : '点击开启 SDD 模式（先输入项目意图，再点此按钮启动 8 阶段流程；回车依然走普通聊天）'}
+              ? (sddActive ? '点击取消当前 SDD 流程' : '关闭 SDD 模式（关闭后回车恢复普通聊天）')
+              : '开启 SDD 模式（开启后下一条回车自动启动 8 阶段流程；流程进行中回车发送 ✅ / ✏️ / ⏭️ 指令）'}
             aria-pressed={sddEnabled}
             data-testid="message-input-sdd-toggle"
           >
@@ -1283,7 +1298,7 @@ export function MessageInput() {
               : sddActive
               ? 'SDD 进行中 — 输入 ✅ 继续 / ⏭️ 跳过 / 或 phase 反馈'
               : sddEnabled
-              ? '点 📐 SDD 按钮直接启动 8 阶段流程；输入回车依然走普通聊天'
+              ? '📐 SDD 已开启 — 输入项目意图按回车启动 8 阶段流程；想聊普通话题先点 📐 关掉'
               : 'Type your message…  (Enter to send, Shift+Enter for newline, / for commands)'
           }
           rows={2}

@@ -5246,7 +5246,20 @@ export const useStore = create<AppState>((set, get) => {
       // active engine's transcript (the engine the
       // user just left). Best-effort: older daemons
       // without SessionManager ignore setActiveEngine.
-      try { await rpc.setActiveEngine(sessionId); } catch { /* legacy daemon — no-op */ }
+      //
+      // R707: log failures instead of swallowing.
+      // The previous round's silent catch masked
+      // an active-engine desync where the daemon's
+      // SessionManager.active() pointed at "default"
+      // while the desktop's currentSessionId was
+      // the user's actual session, so every
+      // downstream RPC (setPermissionMode /
+      // setModel) routed to the wrong one. Knowing
+      // about the failure is what surfaces the
+      // "perm 主动询问 没询问" bug to the user.
+      try { await rpc.setActiveEngine(sessionId); } catch (e) {
+        console.warn('[store] setActiveEngine(' + sessionId + ') failed:', e instanceof Error ? e.message : String(e));
+      }
       // ask the daemon to swap its in-memory
       // transcript to this session, then back-fill our
       // own `messages` array from the daemon. The
@@ -5555,7 +5568,12 @@ export const useStore = create<AppState>((set, get) => {
             // query() / getState() calls route to it
             // by default (resolveRpcTarget fallback
             // for legacy callers).
-            try { await rpc.setActiveEngine(newId); } catch { /* non-fatal */ }
+            //
+            // R707: log failures (same reasoning as
+            // the session-switch path above).
+            try { await rpc.setActiveEngine(newId); } catch (e) {
+              console.warn('[store] setActiveEngine(' + newId + ') failed:', e instanceof Error ? e.message : String(e));
+            }
           }
         } catch (e) {
           console.warn('[R361] createEngine threw: ' + (e instanceof Error ? e.message : String(e)));
@@ -6506,7 +6524,14 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     setModel: async (model: string) => {
-      await rpc.setModel(model);
+      // R707: pass currentSessionId so the daemon updates the
+      // engine the user is actually looking at, not whatever
+      // engine the daemon happens to consider "active". This
+      // closes the active-engine desync window where the
+      // dropdown change went to a different session than the
+      // one whose perm pill showed up in the header.
+      const sid = get().currentSessionId ?? undefined;
+      await rpc.setModel(model, sid);
       set((s) => ({ engineState: s.engineState ? { ...s.engineState, model } : null, model }));
       // persist the user's choice to
       // localStorage so a reload (or a fresh
@@ -6582,7 +6607,20 @@ export const useStore = create<AppState>((set, get) => {
       // and the user saw the mode "revert" out
       // of nowhere. Pin the local state to the
       // daemon's authoritative value on rejection.
-      const r: any = await rpc.setPermissionMode(daemonMode);
+      //
+      // R707: pass currentSessionId so the perm
+      // change lands on the engine the user is
+      // looking at. Without this the RPC would
+      // route through the daemon's
+      // currentEngine() fallback, which can
+      // disagree with the desktop's
+      // currentSessionId when SessionManager
+      // hasn't been told to switch active
+      // engines (the user's actual session
+      // shows up in the header pill but the
+      // perm change goes to "default").
+      const sid = get().currentSessionId ?? undefined;
+      const r: any = await rpc.setPermissionMode(daemonMode, sid);
       const ok = !r || r.ok !== false;
       // the canonical enum goes into
       // engineState (so the StatusBar /

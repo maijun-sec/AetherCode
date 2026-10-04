@@ -168,7 +168,10 @@ describe('R204 #4: setPermissionMode action surfaces daemon rejection', () => {
     // immediately (not on the 15s refresh tick).
     const block = storeSrc.match(/setPermissionMode:\s*async\s*\(mode:\s*string\)\s*=>\s*\{[\s\S]*?^\s{4}\}/m);
     expect(block).toBeTruthy();
-    expect(block![0]).toMatch(/const r(: any)? = await rpc\.setPermissionMode\(daemonMode\)/);
+    // R707: setPermissionMode now passes currentSessionId
+    // alongside daemonMode so the daemon targets the engine
+    // the user is actually looking at. Accept either form.
+    expect(block![0]).toMatch(/const r(: any)? = await rpc\.setPermissionMode\(daemonMode(?:,\s*\w+)?\)/);
     expect(block![0]).toMatch(/const ok = !r \|\| r\.ok !== false/);
   });
 

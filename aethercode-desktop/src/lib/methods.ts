@@ -645,8 +645,8 @@ export class AetherCodeRpc {
   setAutoApproveMediumHigh(opts: { enabled: boolean }): Promise<{ ok: boolean; enabled: boolean; autoApprovedCount: number; autoApprovedElevatedCount: number }> {
     return this.call('setAutoApproveMediumHigh', opts);
   }
-  setModel(model: string): Promise<{ ok: true; model: string }> { return this.call('setModel', { model }); }
-  setPermissionMode(mode: string): Promise<{ ok: true; mode: string }> { return this.call('setPermissionMode', { mode }); }
+  setModel(model: string, sessionId?: string): Promise<{ ok: true; model: string; sessionId?: string }> { return this.call('setModel', { model, sessionId }); }
+  setPermissionMode(mode: string, sessionId?: string): Promise<{ ok: true; mode: string; sessionId?: string }> { return this.call('setPermissionMode', { mode, sessionId }); }
   setSystemPrompt(prompt: string): Promise<{ ok: true }> { return this.call('setSystemPrompt', { prompt }); }
   query(prompt: string, opts?: { sessionId?: string }): Promise<{ ok: true; messageId: string }> { return this.call('query', { prompt, ...opts }); }
   cancel(): Promise<{ ok: true }> { return this.call('cancel'); }
