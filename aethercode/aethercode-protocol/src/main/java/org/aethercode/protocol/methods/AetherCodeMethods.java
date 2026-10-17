@@ -228,6 +228,17 @@ public class AetherCodeMethods {
         m.put("loadSession",                           new String[]{TAG_READ, TAG_SESSION});
         m.put("createSession",                         new String[]{TAG_WRITE, TAG_SESSION});
         m.put("deleteSession",                         new String[]{TAG_WRITE, TAG_SESSION});
+        // R710: trash surface. The session/trash RPC is a
+        // multi-action endpoint (empty / restoreId / list /
+        // no-args) so it carries the WRITE tag for the
+        // destructive variants and READ for the list/count
+        // variants. Both WRITE and READ is the conservative
+        // choice — over-broad is better than under-broad
+        // (the dispatcher's tag check is just an audit
+        // signal, not a security boundary).
+        m.put("session/softDelete",                    new String[]{TAG_WRITE, TAG_SESSION});
+        m.put("session/restore",                      new String[]{TAG_WRITE, TAG_SESSION});
+        m.put("session/trash",                         new String[]{TAG_WRITE, TAG_READ, TAG_SESSION});
         m.put("listEngines",                           new String[]{TAG_READ, TAG_SESSION});
         m.put("createEngine",                          new String[]{TAG_WRITE, TAG_SESSION});
         m.put("deleteEngine",                          new String[]{TAG_WRITE, TAG_SESSION});
@@ -1614,6 +1625,15 @@ public class AetherCodeMethods {
         // RPCs return ENGINE_ERROR.
         dispatcher.register("createSession",         this::createSession);
         dispatcher.register("deleteSession",         this::deleteSession);
+        // R710: soft-delete / restore / trash-list RPCs.
+        // session/trash is multi-action (empty / restoreId /
+        // list / no-args → count). session/softDelete and
+        // session/restore are dedicated single-purpose methods
+        // for the renderer's Trash tab + the CLI's
+        // `ac session trash` / `ac session restore`.
+        dispatcher.register("session/softDelete",    this::sessionSoftDelete);
+        dispatcher.register("session/restore",      this::sessionRestore);
+        dispatcher.register("session/trash",         this::sessionTrash);
         dispatcher.register("listTasks",             this::listTasks);
         // Kanban-style task CRUD. The renderer's
         // Kanban board creates new tasks, updates their
@@ -5079,12 +5099,18 @@ public class AetherCodeMethods {
         // summary); for a typical 10-50 sessions this is well
         // under 1 ms on a warm page cache.
         boolean withPreview = !Boolean.FALSE.equals(p.get("withPreview"));
+        // R710: trashed filter. Default false → list ACTIVE
+        // sessions only. Pass trashed=true to enumerate the
+        // Trash tab / `ac session trash --list` (sorted by
+        // trashed_at DESC, not last_used_at).
+        boolean trashedOnly = Boolean.TRUE.equals(p.get("trashed"));
         var store = engine.sessionStore();
         if (store == null) {
             return Map.of("sessions", List.of(), "current", engine.appState().sessionId());
         }
         try {
-            List<org.aethercode.core.transcript.SessionStore.SessionInfo> raw = store.list();
+            List<org.aethercode.core.transcript.SessionStore.SessionInfo> raw =
+                    trashedOnly ? store.listTrashed() : store.list();
             List<Map<String, Object>> out = new ArrayList<>(Math.min(raw.size(), limit));
             int count = 0;
             for (var info : raw) {
@@ -5093,6 +5119,11 @@ public class AetherCodeMethods {
                 m.put("id", info.id());
                 m.put("lastUsedAt", info.lastModified());
                 m.put("sizeBytes", info.sizeBytes());
+                // R710: surface trashed_at so the desktop's
+                // Trash tab can render "trashed 3 days ago"
+                // without a follow-up RPC. Zero for active rows
+                // (matches the SessionInfo.isTrashed() predicate).
+                m.put("trashedAt", info.trashedAt());
                 // The file size gives a rough message-count proxy
                 // for the LeftPanel's `n msg` label. A more
                 // accurate count would require reading the JSONL
@@ -5851,6 +5882,195 @@ public class AetherCodeMethods {
         } catch (java.io.IOException e) {
             throw new JsonRpcProtocolException(
                     "deleteSession failed: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // R710: Trash (soft-delete) — list, soft-delete, restore, empty
+    // ------------------------------------------------------------------
+    //
+    // Three sub-actions on one RPC (per SessionTrashParams
+    // schema):
+    //
+    //   { empty: true }                    → emptyTrash() (irreversible)
+    //   { restoreId: "<id>" }              → restore(id) (clear trashed_at)
+    //   { list: true, limit?, offset? }    → listTrashed()
+    //   { }                                → return count for the
+    //                                        "12 items" badge
+    //
+    // Restore is also exposed as its own RPC (session/restore)
+    // for callers that prefer a dedicated endpoint. Both routes
+    // hit the same SessionStore.restore(id) — they just differ
+    // in wire shape.
+
+    public Object sessionTrash(Object params) {
+        Map<String, Object> p = asMap(params);
+        Boolean empty = (Boolean) p.get("empty");
+        String restoreId = (String) p.get("restoreId");
+        Boolean list = (Boolean) p.get("list");
+        Integer limit = p.get("limit") instanceof Number n ? n.intValue() : null;
+        Integer offset = p.get("offset") instanceof Number n ? n.intValue() : null;
+        // Mutually-exclusive: at most one of empty / restoreId / list.
+        int flags = (Boolean.TRUE.equals(empty) ? 1 : 0)
+                + (restoreId != null && !restoreId.isBlank() ? 1 : 0)
+                + (Boolean.TRUE.equals(list) ? 1 : 0);
+        if (flags > 1) {
+            throw new JsonRpcProtocolException(
+                    "session/trash: at most one of {empty, restoreId, list} may be set",
+                    JsonRpcError.of(JsonRpcError.INVALID_PARAMS, "mutually exclusive flags"));
+        }
+        var store = engine.sessionStore();
+        if (store == null) {
+            // No store wired — every action degrades to a no-op
+            // shape. The legacy CLI surfaces this as a "trash not
+            // configured" error; for the desktop we return an empty
+            // list / zero count so the Trash tab renders cleanly
+            // without an error toast.
+            if (Boolean.TRUE.equals(list)) {
+                return Map.of("ok", true, "sessions", List.of(), "count", 0);
+            }
+            if (Boolean.TRUE.equals(empty)) {
+                return Map.of("ok", true, "deleted", 0);
+            }
+            if (restoreId != null && !restoreId.isBlank()) {
+                return Map.of("ok", false, "error", "SessionStore is not wired",
+                        "sessionId", restoreId);
+            }
+            return Map.of("ok", true, "count", 0);
+        }
+        try {
+            if (Boolean.TRUE.equals(empty)) {
+                int deleted = store.emptyTrash();
+                return Map.of("ok", true, "deleted", deleted);
+            }
+            if (restoreId != null && !restoreId.isBlank()) {
+                boolean restored = store.restore(restoreId);
+                if (!restored) {
+                    return Map.of("ok", false,
+                            "error", "session is not trashed or does not exist",
+                            "sessionId", restoreId);
+                }
+                return Map.of("ok", true, "sessionId", restoreId);
+            }
+            if (Boolean.TRUE.equals(list)) {
+                List<org.aethercode.core.transcript.SessionStore.SessionInfo> rows =
+                        store.listTrashed();
+                int lim = limit == null ? 500 : Math.max(1, Math.min(limit, 1000));
+                int off = offset == null ? 0 : Math.max(0, offset);
+                List<Map<String, Object>> out = new ArrayList<>(rows.size());
+                for (int i = off; i < rows.size() && out.size() < lim; i++) {
+                    var info = rows.get(i);
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", info.id());
+                    m.put("trashedAt", info.trashedAt());
+                    m.put("lastUsedAt", info.lastModified());
+                    m.put("sizeBytes", info.sizeBytes());
+                    m.put("cwd", info.cwd());
+                    out.add(m);
+                }
+                return Map.of("ok", true, "sessions", out, "count", rows.size());
+            }
+            // No flags: just the count, for the desktop badge.
+            return Map.of("ok", true, "count", store.countTrashed());
+        } catch (java.io.IOException e) {
+            throw new JsonRpcProtocolException(
+                    "session/trash failed: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+    }
+
+    /**
+     * R710: dedicated restore RPC. Equivalent to
+     * {@code session/trash} with {@code restoreId} but with a
+     * more obvious wire shape ({@code {sessionId: "..."}}).
+     * Prefer this from the desktop — the trash schema is
+     * intentionally overloaded (empty / restore / list) and
+     * a single-purpose method is easier to wire.
+     */
+    public Object sessionRestore(Object params) {
+        Map<String, Object> p = asMap(params);
+        String sessionId = (String) p.get("sessionId");
+        if (sessionId == null) sessionId = (String) p.get("id");
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new JsonRpcProtocolException(
+                    "session/restore: sessionId (or id) is required",
+                    JsonRpcError.of(JsonRpcError.INVALID_PARAMS, "missing sessionId"));
+        }
+        var store = engine.sessionStore();
+        if (store == null) {
+            return Map.of("ok", false, "error", "SessionStore is not wired",
+                    "sessionId", sessionId);
+        }
+        try {
+            boolean restored = store.restore(sessionId);
+            if (!restored) {
+                return Map.of("ok", false,
+                        "error", "session is not trashed or does not exist",
+                        "sessionId", sessionId);
+            }
+            return Map.of("ok", true, "sessionId", sessionId);
+        } catch (java.io.IOException e) {
+            throw new JsonRpcProtocolException(
+                    "session/restore failed: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+    }
+
+    /**
+     * R710: dedicated soft-delete RPC. Separate from
+     * {@code session/trash} because the user-facing verb
+     * ("trash this session") is different from the recovery
+     * actions (restore / list / empty) and overloading all
+     * four under one schema makes the desktop wiring harder.
+     * Single-purpose methods wire cleaner.
+     *
+     * <p>Idempotent: a second call on an already-trashed
+     * session returns {@code ok=true, trashed=false} so the
+     * caller's spinner can stop without an error toast. The
+     * original {@code trashed_at} is preserved (no order
+     * reshuffle in the Trash list on accidental double-click).
+     */
+    public Object sessionSoftDelete(Object params) {
+        Map<String, Object> p = asMap(params);
+        String sessionId = (String) p.get("sessionId");
+        if (sessionId == null) sessionId = (String) p.get("id");
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new JsonRpcProtocolException(
+                    "session/softDelete: sessionId (or id) is required",
+                    JsonRpcError.of(JsonRpcError.INVALID_PARAMS, "missing sessionId"));
+        }
+        var store = engine.sessionStore();
+        if (store == null) {
+            return Map.of("ok", false, "error", "SessionStore is not wired",
+                    "sessionId", sessionId);
+        }
+        try {
+            boolean trashed = store.softDelete(sessionId);
+            if (!trashed) {
+                // session doesn't exist OR was already trashed.
+                // Distinguish: peek the trashed list (the
+                // SessionStore facade exposes listTrashed()
+                // but not list(boolean) — Lesson 934). The
+                // sessionId local above is conditionally
+                // reassigned (sessionId -> id) which makes it
+                // non-final for lambda capture; pin it once
+                // here so the predicate compiles.
+                final String targetId = sessionId;
+                boolean exists = store.listTrashed().stream()
+                        .anyMatch(s -> targetId.equals(s.id()));
+                if (!exists) {
+                    return Map.of("ok", false,
+                            "error", "session does not exist",
+                            "sessionId", sessionId);
+                }
+                return Map.of("ok", true, "sessionId", sessionId, "trashed", false,
+                        "note", "already trashed");
+            }
+            return Map.of("ok", true, "sessionId", sessionId, "trashed", true);
+        } catch (java.io.IOException e) {
+            throw new JsonRpcProtocolException(
+                    "session/softDelete failed: " + e.getMessage(),
                     JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
         }
     }

@@ -108,7 +108,7 @@ public final class SessionStore {
             List<SessionInfo> out = new ArrayList<>(rows.size());
             for (var row : rows) {
                 Path file = Path.of(row.rawPath);
-                out.add(new SessionInfo(row.id, file, row.lastUsedAt, row.sizeBytes, row.cwd));
+                out.add(new SessionInfo(row.id, file, row.lastUsedAt, row.sizeBytes, row.cwd, row.trashedAt));
             }
             return out;
         } catch (SQLException sqle) {
@@ -147,7 +147,7 @@ public final class SessionStore {
                       long size = 0;
                       try { mtime = Files.getLastModifiedTime(p).toMillis(); } catch (IOException ignored) {}
                       try { size = Files.size(p); } catch (IOException ignored) {}
-                      out.add(new SessionInfo(id, p, mtime, size, null));
+                      out.add(new SessionInfo(id, p, mtime, size, null, 0L));
                   });
         }
         out.sort(Comparator.comparingLong(SessionInfo::lastModified).reversed());
@@ -313,6 +313,114 @@ public final class SessionStore {
         return any;
     }
 
+    /**
+     * R710: soft-delete a session. The row stays in the SQLite
+     * index (so {@link #restore} can bring it back), and the
+     * JSONL files stay on disk (no data loss). The session is
+     * hidden from {@link #list()} / {@link #listByCwd(String)}
+     * unless the caller explicitly asks for trashed rows.
+     *
+     * <p>Idempotent: a second call on an already-trashed row
+     * returns {@code false} and the original {@code trashed_at}
+     * is preserved (so the user doesn't see the trash order
+     * reshuffle on every accidental double-click).
+     *
+     * @return true iff this call actually trashed an active row
+     */
+    public boolean softDelete(String sessionId) throws IOException {
+        ensure();
+        try {
+            return meta.softDelete(sessionId);
+        } catch (SQLException sqle) {
+            throw new IOException("SessionStore.softDelete(" + sessionId + ") failed: "
+                    + sqle.getMessage(), sqle);
+        }
+    }
+
+    /**
+     * R710: bring a trashed session back. The row is restored
+     * to active state ({@code trashed_at = NULL}). The JSONL
+     * files are untouched (they were never moved).
+     *
+     * @return true iff this call actually restored a trashed row
+     */
+    public boolean restore(String sessionId) throws IOException {
+        ensure();
+        try {
+            return meta.restore(sessionId);
+        } catch (SQLException sqle) {
+            throw new IOException("SessionStore.restore(" + sessionId + ") failed: "
+                    + sqle.getMessage(), sqle);
+        }
+    }
+
+    /**
+     * R710: list trashed sessions, sorted trashed_at DESC
+     * (most-recently-trashed first). Mirrors the renderer's
+     * Trash tab shape and the CLI's
+     * {@code ac session trash --list} output.
+     */
+    public List<SessionInfo> listTrashed() throws IOException {
+        try {
+            List<SessionStoreSqlite.Metadata> rows = meta.listTrashed();
+            List<SessionInfo> out = new ArrayList<>(rows.size());
+            for (var row : rows) {
+                Path file = Path.of(row.rawPath);
+                out.add(new SessionInfo(row.id, file, row.trashedAt, row.sizeBytes, row.cwd, row.trashedAt));
+            }
+            return out;
+        } catch (SQLException sqle) {
+            LOG.warn("SessionStore.listTrashed: SQLite read failed, falling back to empty: {}",
+                    sqle.getMessage());
+            return List.of();
+        }
+    }
+
+    /** R710: how many trashed sessions are there? Used by
+     *  {@code session/trash} (no flags) to render a
+     *  "12 items in Trash" badge without a follow-up list. */
+    public int countTrashed() throws IOException {
+        try {
+            return meta.countTrashed();
+        } catch (SQLException sqle) {
+            LOG.warn("SessionStore.countTrashed: SQLite read failed: {}", sqle.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * R710: permanently remove every trashed session — drops
+     * the SQLite row, deletes the JSONL files. This is the
+     * terminal step of the trash lifecycle; after emptyTrash()
+     * there's no recovery path. Use {@link #softDelete} +
+     * a future auto-expire (R710-C) for time-bounded trash.
+     *
+     * @return number of sessions permanently deleted
+     */
+    public int emptyTrash() throws IOException {
+        ensure();
+        List<SessionInfo> trashed;
+        try {
+            List<SessionStoreSqlite.Metadata> rows = meta.listTrashed();
+            trashed = new ArrayList<>(rows.size());
+            for (var row : rows) {
+                Path file = Path.of(row.rawPath);
+                trashed.add(new SessionInfo(row.id, file, row.trashedAt, row.sizeBytes, row.cwd, row.trashedAt));
+            }
+        } catch (SQLException sqle) {
+            throw new IOException("SessionStore.emptyTrash: list failed: " + sqle.getMessage(), sqle);
+        }
+        int n = 0;
+        for (SessionInfo info : trashed) {
+            // delete() drops the SQLite row + the JSONL
+            // files. We bypass softDelete() (which would be
+            // a no-op anyway — the row is already trashed)
+            // and call the legacy delete() directly.
+            if (delete(info.id())) n++;
+        }
+        return n;
+    }
+
     /** Path to the raw transcript JSONL. Always present
      *  (the file may not exist yet if the session is
      *  empty / never touched). */
@@ -378,6 +486,14 @@ public final class SessionStore {
                 m.sizeBytes = info.sizeBytes;
                 m.createdAt = info.lastModified > 0 ? info.lastModified : now;
                 m.lastUsedAt = info.lastModified > 0 ? info.lastModified : now;
+                // R710: legacy rows back-fill as active
+                // (trashed_at = 0). The pre-R710 SQLite
+                // schema didn't have trashed_at at all; the
+                // ALTER TABLE migration in ensureSchema
+                // added the column with NULL, which the
+                // COALESCE in upsert() preserves (i.e. NULL
+                // → 0 here, treated as "active").
+                m.trashedAt = 0;
                 meta.upsert(m);
             } catch (SQLException sqle) {
                 LOG.warn("R361 migration: upsert({}) failed: {}", info.id, sqle.getMessage());
@@ -416,7 +532,11 @@ public final class SessionStore {
      * Putting cwd on this record lets the per-daemon
      * SessionStore (updated on every message append + every
      * setCwd) be the primary source. */
-    public record SessionInfo(String id, Path file, long lastModified, long sizeBytes, String cwd) {
+    public record SessionInfo(String id, Path file, long lastModified, long sizeBytes, String cwd, long trashedAt) {
         public String shortId() { return id.length() > 16 ? id.substring(0, 16) + "…" : id; }
+        /** R710: true iff this session has been soft-deleted. The
+         *  JSONL files are still on disk and the row can be
+         *  brought back via {@link #restore(String)}. */
+        public boolean isTrashed() { return trashedAt > 0; }
     }
 }

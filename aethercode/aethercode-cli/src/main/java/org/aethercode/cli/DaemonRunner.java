@@ -612,6 +612,26 @@ final class DaemonRunner {
             LOG.info("R700: SDD orchestrator installed ({} phase refs, {} templates loaded)",
                     bundle.isLoaded() ? 8 : 0,
                     4);
+            // R709-B: re-attach in-memory cwdBySlug from on-disk
+            // phase-state.json files. Without this, every daemon
+            // restart silently drops the cwd → slug backref, and
+            // the next sdd.advance() call would fail with
+            // RUN_NOT_FOUND for any run that was mid-flight when
+            // the daemon went down. Use the engine's appState.cwd
+            // as the source of truth (matches what sdd.start
+            // recorded into phase-state.json).
+            try {
+                java.nio.file.Path cwdPath = engine.appState().cwd();
+                if (cwdPath != null) {
+                    int n = sdd.reloadActiveRuns(cwdPath);
+                    if (n > 0) {
+                        LOG.info("R709-B: re-attached {} active SDD slug(s) from {}",
+                                n, cwdPath);
+                    }
+                }
+            } catch (Exception reloadErr) {
+                LOG.warn("R709-B: reloadActiveRuns failed: {}", reloadErr.getMessage());
+            }
         } catch (Exception sddLoadErr) {
             LOG.warn("R700: SDD bundle load failed — sdd.* RPC surface disabled: {}",
                     sddLoadErr.getMessage());

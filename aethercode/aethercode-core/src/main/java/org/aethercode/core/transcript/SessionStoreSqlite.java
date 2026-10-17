@@ -114,11 +114,38 @@ public final class SessionStoreSqlite {
                 "  compacted_size_bytes INTEGER," +
                 "  compacted_at INTEGER," +
                 "  created_at INTEGER NOT NULL," +
-                "  last_used_at INTEGER NOT NULL" +
+                "  last_used_at INTEGER NOT NULL," +
+                // R710: soft-delete sentinel. NULL = active row.
+                // Non-NULL = trashed at this epoch-ms; the row
+                // stays on disk (and stays in the JSONL files)
+                // so the user can restore via session/restore.
+                // The list()/listByCwd() paths filter on
+                // trashed_at IS NULL by default; listTrashed()
+                // returns rows WHERE trashed_at IS NOT NULL.
+                "  trashed_at INTEGER" +
                 ")"
             );
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd)");
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sessions_last_used ON sessions(last_used_at DESC)");
+            // R710: back-fill the trashed_at column for pre-R710
+            // DBs. CREATE TABLE IF NOT EXISTS doesn't add new
+            // columns to an existing table, so we issue a
+            // conditional ALTER TABLE. The PRAGMA table_info
+            // check is wrapped in a try so a future SQLite
+            // error doesn't take down the whole schema step.
+            try (var rs = st.executeQuery("PRAGMA table_info(sessions)")) {
+                boolean hasTrashedAt = false;
+                while (rs.next()) {
+                    if ("trashed_at".equals(rs.getString("name"))) {
+                        hasTrashedAt = true;
+                        break;
+                    }
+                }
+                if (!hasTrashedAt) {
+                    st.executeUpdate("ALTER TABLE sessions ADD COLUMN trashed_at INTEGER");
+                }
+            }
+            st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sessions_trashed_at ON sessions(trashed_at)");
         }
     }
 
@@ -132,8 +159,8 @@ public final class SessionStoreSqlite {
         try (Connection conn = open();
              PreparedStatement ps = conn.prepareStatement(
                  "INSERT INTO sessions(id, cwd, worktree, model, first_prompt, title, " +
-                 "  raw_path, compacted_path, message_count, size_bytes, created_at, last_used_at) " +
-                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                 "  raw_path, compacted_path, message_count, size_bytes, created_at, last_used_at, trashed_at) " +
+                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                  "ON CONFLICT(id) DO UPDATE SET " +
                  "  cwd = excluded.cwd, " +
                  "  worktree = excluded.worktree, " +
@@ -156,7 +183,24 @@ public final class SessionStoreSqlite {
                  // metadata refresh, not a stats reset.
                  "  message_count = excluded.message_count, " +
                  "  size_bytes = excluded.size_bytes, " +
-                 "  last_used_at = excluded.last_used_at"
+                 "  last_used_at = excluded.last_used_at, " +
+                 // R710: trashed_at semantics — preserve
+                 // any existing soft-delete across
+                 // ordinary touch() / upsert calls. The
+                 // upsert path is the metadata refresh
+                 // (model / cwd / title / firstPrompt),
+                 // not the soft-delete path. If the
+                 // caller passes trashed_at > 0 we honour
+                 // it (e.g. a renderer's first-touch after
+                 // the user trashed a session via RPC);
+                 // if they pass 0 (NULL) we keep the
+                 // existing trashed_at via COALESCE. That
+                 // way a soft-deleted row stays soft-deleted
+                 // even after the renderer refreshes its
+                 // metadata. Use the dedicated
+                 // softDelete()/restore() methods to flip
+                 // the state explicitly.
+                 "  trashed_at = COALESCE(NULLIF(excluded.trashed_at, 0), trashed_at)"
              )) {
             ps.setString(1, m.id);
             if (m.cwd != null) ps.setString(2, m.cwd); else ps.setNull(2, java.sql.Types.VARCHAR);
@@ -170,6 +214,10 @@ public final class SessionStoreSqlite {
             ps.setLong(10, m.sizeBytes);
             ps.setLong(11, m.createdAt);
             ps.setLong(12, m.lastUsedAt);
+            // R710: 0 = "not trashed" (NULL in SQL). The
+            // 0-vs-NULL distinction matters for the
+            // trashed_at IS NULL filter in list().
+            ps.setLong(13, m.trashedAt);
             ps.executeUpdate();
         }
     }
@@ -209,13 +257,16 @@ public final class SessionStoreSqlite {
         }
     }
 
-    /** Fetch a single session's metadata. Returns empty for unknown id. */
+    /** Fetch a single session's metadata. Returns empty for unknown id.
+     *  R710: returns the row regardless of trashed state — callers
+     *  that only want active rows should filter on
+     *  {@code meta.trashedAt == 0} after the optional is unwrapped. */
     public Optional<Metadata> get(String id) throws SQLException {
         try (Connection conn = open();
              PreparedStatement ps = conn.prepareStatement(
                  "SELECT id, cwd, worktree, model, first_prompt, title, " +
                  "  raw_path, compacted_path, message_count, size_bytes, " +
-                 "  compacted_size_bytes, compacted_at, created_at, last_used_at " +
+                 "  compacted_size_bytes, compacted_at, created_at, last_used_at, trashed_at " +
                  "FROM sessions WHERE id = ?"
              )) {
             ps.setString(1, id);
@@ -227,18 +278,39 @@ public final class SessionStoreSqlite {
     }
 
     /**
-     * List every session in {@code last_used_at DESC} order.
-     * Mirrors the legacy {@code SessionStore.list()} contract —
-     * the renderer / TUI use this to populate the sidebar.
+     * List every ACTIVE session (trashed_at = 0) in
+     * {@code last_used_at DESC} order. The renderer / TUI use
+     * this to populate the sidebar — soft-deleted rows are
+     * hidden by default. Use {@link #listTrashed} to enumerate
+     * the trash, or pass {@code trashedOnly=true} to
+     * SessionStore.list(...) for the same effect.
      */
     public List<Metadata> list() throws SQLException {
+        return list(false);
+    }
+
+    /**
+     * R710: list with an explicit trashed-only filter.
+     * <ul>
+     *  <li>{@code trashedOnly = false} → ACTIVE rows (trashed_at = 0)</li>
+     *  <li>{@code trashedOnly = true}  → TRASHED rows (trashed_at > 0)</li>
+     * </ul>
+     * Both return rows in {@code last_used_at DESC} order. The
+     * legacy {@link #list()} call is preserved for source-pin
+     * stability and is equivalent to {@code list(false)}.
+     */
+    public List<Metadata> list(boolean trashedOnly) throws SQLException {
         List<Metadata> out = new ArrayList<>();
         try (Connection conn = open();
              PreparedStatement ps = conn.prepareStatement(
                  "SELECT id, cwd, worktree, model, first_prompt, title, " +
                  "  raw_path, compacted_path, message_count, size_bytes, " +
-                 "  compacted_size_bytes, compacted_at, created_at, last_used_at " +
-                 "FROM sessions ORDER BY last_used_at DESC"
+                 "  compacted_size_bytes, compacted_at, created_at, last_used_at, trashed_at " +
+                 "FROM sessions " +
+                 (trashedOnly
+                         ? "WHERE trashed_at > 0 "
+                         : "WHERE trashed_at = 0 OR trashed_at IS NULL ") +
+                 "ORDER BY " + (trashedOnly ? "trashed_at" : "last_used_at") + " DESC"
              );
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) out.add(read(rs));
@@ -246,15 +318,19 @@ public final class SessionStoreSqlite {
         return out;
     }
 
-    /** List sessions filtered by cwd (used by ProjectGroupList on the renderer). */
+    /** List ACTIVE sessions filtered by cwd (used by ProjectGroupList
+     *  on the renderer). Trashed rows are excluded so the project
+     *  group sidebar never accidentally surfaces a row the user
+     *  explicitly trashed. */
     public List<Metadata> listByCwd(String cwd) throws SQLException {
         List<Metadata> out = new ArrayList<>();
         try (Connection conn = open();
              PreparedStatement ps = conn.prepareStatement(
                  "SELECT id, cwd, worktree, model, first_prompt, title, " +
                  "  raw_path, compacted_path, message_count, size_bytes, " +
-                 "  compacted_size_bytes, compacted_at, created_at, last_used_at " +
-                 "FROM sessions WHERE cwd = ? ORDER BY last_used_at DESC"
+                 "  compacted_size_bytes, compacted_at, created_at, last_used_at, trashed_at " +
+                 "FROM sessions WHERE cwd = ? AND (trashed_at = 0 OR trashed_at IS NULL) " +
+                 "ORDER BY last_used_at DESC"
              )) {
             ps.setString(1, cwd);
             try (ResultSet rs = ps.executeQuery()) {
@@ -262,6 +338,67 @@ public final class SessionStoreSqlite {
             }
         }
         return out;
+    }
+
+    /**
+     * R710: enumerate soft-deleted sessions (trashed_at > 0),
+     * sorted by trashed_at DESC (most recently trashed first).
+     * Mirrors the shape of {@link #list} but only the trashed
+     * subset — the renderer's Trash tab / the CLI's
+     * {@code ac session trash} both call this.
+     */
+    public List<Metadata> listTrashed() throws SQLException {
+        return list(true);
+    }
+
+    /**
+     * R710: soft-delete a session. Sets trashed_at = now on an
+     * active row. Idempotent: calling on an already-trashed
+     * row is a no-op (the second call's timestamp is ignored,
+     * the original trashed_at is preserved). Returns true iff
+     * a row was changed (i.e. the call actually trashed an
+     * active row).
+     */
+    public boolean softDelete(String id) throws SQLException {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                 "UPDATE sessions SET trashed_at = ? " +
+                 "WHERE id = ? AND (trashed_at = 0 OR trashed_at IS NULL)"
+             )) {
+            ps.setLong(1, System.currentTimeMillis());
+            ps.setString(2, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /**
+     * R710: restore a soft-deleted session. Sets trashed_at =
+     * NULL on a trashed row. Idempotent on active rows.
+     * Returns true iff a row was changed.
+     */
+    public boolean restore(String id) throws SQLException {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                 "UPDATE sessions SET trashed_at = NULL " +
+                 "WHERE id = ? AND trashed_at > 0"
+             )) {
+            ps.setString(1, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /** R710: how many trashed rows are there? Used by the
+     *  {@code session/trash} no-args branch to render a
+     *  "12 items in Trash" badge without a follow-up list
+     *  round-trip. */
+    public int countTrashed() throws SQLException {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT COUNT(*) FROM sessions WHERE trashed_at > 0"
+             );
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
     }
 
     /**
@@ -296,6 +433,14 @@ public final class SessionStoreSqlite {
         m.compactedAt = rs.wasNull() ? 0 : ca;
         m.createdAt = rs.getLong("created_at");
         m.lastUsedAt = rs.getLong("last_used_at");
+        // R710: 0L means "not trashed" (matches the upsert
+        // convention where 0 = SQL NULL). The
+        // getLong(...) wasNull() guard handles the case
+        // where the row was inserted before the column
+        // existed (the migration sets the new column
+        // to NULL, not 0).
+        long ta = rs.getLong("trashed_at");
+        m.trashedAt = rs.wasNull() ? 0 : ta;
         return m;
     }
 
@@ -322,5 +467,10 @@ public final class SessionStoreSqlite {
         public long compactedAt;
         public long createdAt;
         public long lastUsedAt;
+        /** R710: epoch-ms when this session was soft-deleted. 0
+         *  (= NULL in SQL) means the session is active. The
+         *  on-disk JSONL files are NOT touched on soft delete;
+         *  restore() clears this back to 0. */
+        public long trashedAt;
     }
 }

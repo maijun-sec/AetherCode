@@ -54,8 +54,20 @@ public final class SddOrchestrator {
     private final SddBundleLoader bundle;
     private final ChatClient chatClient;
     private final List<Tool> toolPool;
-    /** Slug 鈫?cwd for active runs. Cleared on abort / done. */
+    /** Slug → cwd for active runs. Cleared on abort / done. */
     private final Map<String, Path> cwdBySlug = new ConcurrentHashMap<>();
+
+    /**
+     * R709-C: per-phase wall-clock budget. The pre-R709 path blocked
+     * indefinitely on chatClient.stream() if the model hung, leaving
+     * the phase stuck in {@code running} with no way to recover
+     * other than killing the daemon. 10 minutes is a generous
+     * default — model output for the 8 phases varies from a few
+     * seconds (phase 1) to a couple of minutes (phase 7 implementation).
+     * The constant lives on the class so a future "advanced" RPC
+     * can override it per-run; for now it's just a hard cap.
+     */
+    public static final java.time.Duration DEFAULT_PHASE_TIMEOUT = java.time.Duration.ofMinutes(10);
 
     public SddOrchestrator(SddBundleLoader bundle,
                           ChatClient chatClient,
@@ -75,19 +87,35 @@ public final class SddOrchestrator {
         Objects.requireNonNull(intent, "intent");
         Objects.requireNonNull(cwdRoot, "cwd");
         String slug = SlugUtil.derive(intent);
-        Path stateFile = cwdRoot.resolve(".aethercode").resolve("sdd").resolve(slug).resolve("phase-state.json");
-        if (Files.isRegularFile(stateFile)) {
-            throw new SddException(SddException.Code.RUN_NOT_FOUND,
-                    "slug '" + slug + "' already exists at " + stateFile);
-        }
-        SddPhaseState state = SddPhaseState.fresh(slug, intent, cwdRoot.toString());
-        cwdBySlug.put(slug, cwdRoot);
+        Path sddDir = cwdRoot.resolve(".aethercode").resolve("sdd").resolve(slug);
+        // R709-A: atomic claim via CREATE_NEW on a marker file. The
+        // pre-R709 path was `if (stateFile.exists()) throw` then
+        // `Files.createDirectories(...)` — two syscalls with a TOCTOU
+        // race window where two concurrent RPCs could both pass the
+        // check and both `createDirectories`, leaving the second writer
+        // to silently overwrite the first's phase-state.json mid-run.
+        // CREATE_NEW on a sentinel file is atomic on the filesystem
+        // (one writer wins, the other gets FileAlreadyExistsException).
         try {
-            Files.createDirectories(cwdRoot.resolve(".aethercode").resolve("sdd").resolve(slug));
+            Files.createDirectories(sddDir);
         } catch (IOException ioe) {
             throw new SddException(SddException.Code.IO_FAILURE,
                     "could not create sdd dir for slug " + slug, ioe);
         }
+        try {
+            Files.writeString(sddDir.resolve(".sdd-marker"),
+                    Instant.now().toString() + "\n",
+                    java.nio.file.StandardOpenOption.CREATE_NEW);
+        } catch (java.nio.file.FileAlreadyExistsException dup) {
+            throw new SddException(SddException.Code.SLUG_CONFLICT,
+                    "slug '" + slug + "' already exists at " + sddDir
+                            + " — pick a different intent or restore the existing run");
+        } catch (IOException ioe) {
+            throw new SddException(SddException.Code.IO_FAILURE,
+                    "could not claim sdd dir for slug " + slug, ioe);
+        }
+        SddPhaseState state = SddPhaseState.fresh(slug, intent, cwdRoot.toString());
+        cwdBySlug.put(slug, cwdRoot);
         return runPhase(state, 1, null, cwdRoot);
     }
 
@@ -96,20 +124,45 @@ public final class SddOrchestrator {
         Objects.requireNonNull(slug, "slug");
         Objects.requireNonNull(action, "action");
         Path cwdRoot = cwdBySlug.get(slug);
-        if (cwdRoot == null) {
-            throw new SddException(SddException.Code.RUN_NOT_FOUND,
-                    "slug '" + slug + "' is not an active run (no cwd on record)");
-        }
+        // R709-B fallback: if the in-memory map lost the cwd (daemon
+        // restart, setCwd swap, or simply never refreshed), try the
+        // current process's working directory and reload the state
+        // from there. The pre-R709 path threw RUN_NOT_FOUND, which
+        // the desktop surfaced as "not an active run" even when the
+        // run was perfectly recoverable from disk.
         SddPhaseState state;
-        try {
-            state = SddPhaseState.load(cwdRoot, slug);
-        } catch (IOException ioe) {
-            throw new SddException(SddException.Code.STATE_FILE_MISSING,
-                    "phase-state.json missing for slug " + slug, ioe);
+        if (cwdRoot != null) {
+            try {
+                state = SddPhaseState.load(cwdRoot, slug);
+            } catch (IOException ioe) {
+                state = null;
+            }
+        } else {
+            state = null;
+        }
+        if (state == null) {
+            Path probe = Path.of("").toAbsolutePath().resolve(".aethercode")
+                    .resolve("sdd").resolve(slug).resolve("phase-state.json");
+            if (Files.isRegularFile(probe)) {
+                cwdRoot = Path.of("").toAbsolutePath();
+                try {
+                    state = SddPhaseState.load(cwdRoot, slug);
+                } catch (IOException ioe) {
+                    throw new SddException(SddException.Code.STATE_FILE_MISSING,
+                            "phase-state.json unreadable at " + probe, ioe);
+                }
+                cwdBySlug.put(slug, cwdRoot);
+                LOG.info("[sdd] advance: re-attached slug {} from cwd {}",
+                        slug, cwdRoot);
+            } else {
+                throw new SddException(SddException.Code.RUN_NOT_FOUND,
+                        "slug '" + slug + "' is not an active run (no cwd on record, probe "
+                                + probe + " not found)");
+            }
         }
         SddPhaseState.PhaseEntry cur = state.currentPhaseEntry();
         return switch (action.toLowerCase()) {
-            case "approve" -> advanceApprove(state, cur, cwdRoot);
+            case "approve" -> advanceApprove(state, cur, feedback, cwdRoot);
             case "modify"  -> advanceModify(state, cur, feedback, cwdRoot);
             case "skip"    -> advanceSkip(state, cur, cwdRoot);
             case "abort"   -> advanceAbort(state, cwdRoot);
@@ -161,12 +214,64 @@ public final class SddOrchestrator {
         return out;
     }
 
+    /**
+     * R709-B: re-attach in-memory {@code cwdBySlug} entries from
+     * the on-disk phase-state.json files under {@code cwdRoot}. The
+     * pre-R709 cwdBySlug was populated only by {@link #start} and
+     * lost on daemon restart — so a desktop user who started an SDD
+     * run, killed the daemon, and re-launched would hit
+     * {@code RUN_NOT_FOUND} on the next {@code sdd.advance} call
+     * because the in-memory map was empty. This method walks each
+     * per-run directory under {@code <cwd>/.aethercode/sdd/} and
+     * re-attaches any run whose status is {@code running} or
+     * {@code idle} (i.e. a non-terminal phase the user might want
+     * to advance / skip / abort). Terminal runs (done / aborted /
+     * failed) are skipped — the user can still see them via
+     * {@link #listRuns} for history, but they don't need a cwd
+     * backref.
+     *
+     * <p>Idempotent: safe to call on every boot and also on
+     * {@code setCwd} swaps (in case the user changes project
+     * without restarting the daemon).
+     */
+    public int reloadActiveRuns(Path cwdRoot) {
+        Path sddRoot = cwdRoot.resolve(".aethercode").resolve("sdd");
+        if (!Files.isDirectory(sddRoot)) return 0;
+        int reattached = 0;
+        try (Stream<Path> dirs = Files.list(sddRoot)) {
+            List<Path> subdirs = dirs.filter(Files::isDirectory).toList();
+            for (Path d : subdirs) {
+                Path sf = d.resolve("phase-state.json");
+                if (!Files.isRegularFile(sf)) continue;
+                SddPhaseState st;
+                try {
+                    st = SddPhaseState.load(cwdRoot, d.getFileName().toString());
+                } catch (IOException e) {
+                    LOG.warn("[sdd] reload: skipping unreadable {}: {}", sf, e.getMessage());
+                    continue;
+                }
+                if (st.status == SddPhaseState.RunStatus.running
+                        || st.status == SddPhaseState.RunStatus.idle) {
+                    if (cwdBySlug.putIfAbsent(st.slug, cwdRoot) == null) {
+                        reattached++;
+                        LOG.info("[sdd] reload: re-attached slug {} (status={}, currentPhase={})",
+                                st.slug, st.status, st.currentPhase);
+                    }
+                }
+            }
+        } catch (IOException ioe) {
+            LOG.warn("[sdd] reload: failed to list {}: {}", sddRoot, ioe.getMessage());
+        }
+        return reattached;
+    }
+
     // ------------------------------------------------------------------
     // Phase runners
     // ------------------------------------------------------------------
 
     private SddPhaseState advanceApprove(SddPhaseState state,
                                           SddPhaseState.PhaseEntry cur,
+                                          String feedback,
                                           Path cwdRoot) {
         // If the current phase is still running / pending_confirm, the user
         // can't approve it. Surface a clear error rather than silently
@@ -180,6 +285,18 @@ public final class SddOrchestrator {
             throw new SddException(SddException.Code.INVALID_ACTION,
                     "phase " + cur.phaseNumber() + " is in state " + cur.state()
                             + " and cannot be approved");
+        }
+        // R709-D: when the user types a note alongside their approve
+        // (e.g. "approve, but please make sure the next phase also
+        // covers X"), carry the note forward as the feedback slot
+        // for the next phase's prompt. The pre-R709 path silently
+        // dropped feedback on approve, so the user had to switch to
+        // "modify" or send a separate chat message to inject context.
+        // Logging the note here gives us an audit trail in daemon.log
+        // for what the user actually meant when they approved.
+        if (feedback != null && !feedback.isBlank()) {
+            LOG.info("[sdd] advance(approve) {} with feedback: {}",
+                    state.slug, truncate(feedback, 200));
         }
         // Mark current done (if not already)
         SddPhaseState nextState = state.withPhase(
@@ -205,7 +322,11 @@ public final class SddOrchestrator {
                 nextEntry.withState(SddPhaseState.PhaseState.running)
                         .withStartedAt(Instant.now().toString()));
         persist(started, cwdRoot);
-        SddPhaseState ranAdvance = runPhase(started, nextPhaseNum, null, cwdRoot);
+        // R709-D: pass the user's note through to the next phase's
+        // prompt (buildPhasePrompt renders it as "## User feedback
+        // (apply this to the existing artefact)"). Empty/null
+        // feedback is preserved as the no-note path.
+        SddPhaseState ranAdvance = runPhase(started, nextPhaseNum, feedback, cwdRoot);
         return ranAdvance;
     }
 
@@ -292,18 +413,58 @@ public final class SddOrchestrator {
 
         Message user = Message.userText(userPrompt);
         try {
-            // Stream the chat. We collect text deltas to verify the phase-end
-            // tag is present, but the LLM's tool_use block (write_file) is
-            // what actually writes the artefact.
+            // R709-C: run the stream consumption on a background thread
+            // so we can enforce a wall-clock budget. The pre-R709 path
+            // consumed the stream inline, which meant a hung model
+            // (or a chat client that never sent RunEnd) left the
+            // phase stuck in `running` forever — the only escape was
+            // to kill the daemon. We now race the iteration against
+            // DEFAULT_PHASE_TIMEOUT and surface a dedicated
+            // PHASE_TIMEOUT exception so the UI can suggest a
+            // "skip" path instead of a generic error.
+            //
+            // The race is best-effort: cancelling the future interrupts
+            // the consumer thread, but the underlying HTTP/WS socket
+            // may keep streaming until the model finishes or the
+            // provider times out. That's acceptable — at least the
+            // orchestrator returns control to the desktop and the
+            // phase-state.json is marked `failed` with PHASE_TIMEOUT
+            // so the user can advance / abort / skip.
             StringBuilder fullText = new StringBuilder();
-            Stream<StreamEvent> stream = chatClient.stream(List.of(user), systemPrompt, toolPool);
-            for (var ev : (Iterable<StreamEvent>) stream::iterator) {
-                if (ev instanceof StreamEvent.TextDelta td) {
-                    fullText.append(td.text());
-                }
-                // We do not gate on RunEnd here 鈥?the daemon's tool pool runs
-                // write_file / read_file side effects as the model issues them,
-                // so by the time RunEnd fires the artefact should be on disk.
+            java.util.concurrent.CompletableFuture<Void> streamFuture =
+                    java.util.concurrent.CompletableFuture.runAsync(() -> {
+                        Stream<StreamEvent> stream = chatClient.stream(
+                                List.of(user), systemPrompt, toolPool);
+                        for (var ev : (Iterable<StreamEvent>) stream::iterator) {
+                            if (ev instanceof StreamEvent.TextDelta td) {
+                                fullText.append(td.text());
+                            }
+                            // We do not gate on RunEnd here — the
+                            // daemon's tool pool runs write_file /
+                            // read_file side effects as the model
+                            // issues them, so by the time RunEnd
+                            // fires the artefact should be on disk.
+                        }
+                    });
+            try {
+                streamFuture.get(DEFAULT_PHASE_TIMEOUT.toMillis(),
+                        java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                streamFuture.cancel(true);
+                throw new SddException(SddException.Code.PHASE_TIMEOUT,
+                        "phase " + phaseNumber + " (" + phase.id() + ") exceeded "
+                                + DEFAULT_PHASE_TIMEOUT + " (model output ended with: "
+                                + truncate(fullText.toString(), 100) + ")");
+            } catch (java.util.concurrent.ExecutionException ee) {
+                Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+                if (cause instanceof RuntimeException re2) throw re2;
+                throw new SddException(SddException.Code.CHAT_FAILURE,
+                        "phase " + phaseNumber + " stream failed: " + cause.getMessage(), cause);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                streamFuture.cancel(true);
+                throw new SddException(SddException.Code.CHAT_FAILURE,
+                        "phase " + phaseNumber + " interrupted", ie);
             }
             // Verify the artefact exists. If not, treat the phase as failed
             // so the user sees a real error instead of a silent "done".

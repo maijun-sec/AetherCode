@@ -35,6 +35,15 @@ public class SddException extends RuntimeException {
         RUN_NOT_FOUND,
         /** Caller passed an invalid slug (not kebab-case, >10 chars, etc). */
         INVALID_SLUG,
+        /** R709: the derived slug already exists for this cwd. The caller
+         *  should pick a different intent or restore the existing run
+         *  (pre-R709 this used RUN_NOT_FOUND, which made the desktop
+         *  silently retry the start). */
+        SLUG_CONFLICT,
+        /** R709: a phase's wall-clock budget elapsed before the LLM
+         *  produced an artefact. Distinct from CHAT_FAILURE so the
+         *  UI can suggest a "⏭️ skip" instead of an error. */
+        PHASE_TIMEOUT,
         /** LLM call / tool call failed inside the orchestrator. */
         CHAT_FAILURE,
         /** Filesystem write failed. */

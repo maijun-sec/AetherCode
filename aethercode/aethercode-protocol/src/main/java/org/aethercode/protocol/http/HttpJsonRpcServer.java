@@ -886,6 +886,16 @@ public final class HttpJsonRpcServer {
             // AetherCodeMethods.registerAll) serves them fine.
             case "createSession" -> methods.createSession(params);
             case "deleteSession" -> methods.deleteSession(params);
+            // R710: trash surface — see registerAll() in
+            // AetherCodeMethods for the schema rationale. The
+            // multi-action session/trash is one entry here;
+            // the dedicated softDelete / restore are two
+            // more. Without these arms every Trash RPC
+            // returns METHOD_NOT_FOUND even though the
+            // stdio daemon + WS dispatcher serve them fine.
+            case "session/softDelete" -> methods.sessionSoftDelete(params);
+            case "session/restore"   -> methods.sessionRestore(params);
+            case "session/trash"      -> methods.sessionTrash(params);
             // skill registry. The desktop's SkillsPanel
             // fetches the list once on mount, then again on
             // window focus; getSkillBody is the on-demand fetch
