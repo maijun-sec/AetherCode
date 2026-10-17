@@ -69,6 +69,22 @@ public final class SddOrchestrator {
      */
     public static final java.time.Duration DEFAULT_PHASE_TIMEOUT = java.time.Duration.ofMinutes(10);
 
+    /**
+     * R709-E2: minimum acceptable artefact size in bytes. The
+     * pre-E2 path only checked {@code Files.isRegularFile(...)}
+     * which let 0-byte placeholders through to pending_confirm.
+     * 50 bytes ≈ 1-2 lines of markdown — enough to cover
+     * "constitution" phase 1 (which is a one-paragraph
+     * declaration) but not enough to cover "0 bytes" / "stub"
+     * / "tag only" / "I forgot to write_file" cases. Set low
+     * enough to not be a quality gate (the LLM is free to write
+     * 100 bytes of real content); set high enough to catch the
+     * "I gave up" failure mode observed in end-to-end testing
+     * (the model streamed a <think> block then exited without
+     * calling write_file at all).
+     */
+    public static final long MIN_ARTEFACT_BYTES = 50;
+
     public SddOrchestrator(SddBundleLoader bundle,
                           ChatClient chatClient,
                           List<Tool> toolPool) {
@@ -82,8 +98,15 @@ public final class SddOrchestrator {
     // ------------------------------------------------------------------
 
     /** Start a fresh SDD run and immediately execute phase 1.
-     *  Returns the initial state (after phase 1 has run). */
+     *  Returns the initial state (after phase 1 has run).
+     *  No model override — use the 3-arg overload to pin a
+     *  specific model on phase 1 (R709-E5). */
     public SddPhaseState start(String intent, Path cwdRoot) {
+        return start(intent, cwdRoot, null);
+    }
+
+    /** R709-E5: start with an explicit model override on phase 1. */
+    public SddPhaseState start(String intent, Path cwdRoot, String model) {
         Objects.requireNonNull(intent, "intent");
         Objects.requireNonNull(cwdRoot, "cwd");
         String slug = SlugUtil.derive(intent);
@@ -116,11 +139,22 @@ public final class SddOrchestrator {
         }
         SddPhaseState state = SddPhaseState.fresh(slug, intent, cwdRoot.toString());
         cwdBySlug.put(slug, cwdRoot);
-        return runPhase(state, 1, null, cwdRoot);
+        return runPhase(state, 1, null, model, cwdRoot);
     }
 
     /** Continue a run. {@code action} 鈭?{approve, modify, skip, abort}. */
     public SddPhaseState advance(String slug, String action, String feedback) {
+        return advance(slug, action, feedback, null);
+    }
+
+    /**
+     * R709-E5: same as the 3-arg advance() but with an explicit
+     * per-phase model override. The {@code model} is pinned on
+     * the next phase's {@code PhaseEntry.model} field and
+     * persisted so a forensic read after the fact shows which
+     * model the user picked. Null = daemon default.
+     */
+    public SddPhaseState advance(String slug, String action, String feedback, String model) {
         Objects.requireNonNull(slug, "slug");
         Objects.requireNonNull(action, "action");
         Path cwdRoot = cwdBySlug.get(slug);
@@ -162,12 +196,14 @@ public final class SddOrchestrator {
         }
         SddPhaseState.PhaseEntry cur = state.currentPhaseEntry();
         return switch (action.toLowerCase()) {
-            case "approve" -> advanceApprove(state, cur, feedback, cwdRoot);
-            case "modify"  -> advanceModify(state, cur, feedback, cwdRoot);
-            case "skip"    -> advanceSkip(state, cur, cwdRoot);
-            case "abort"   -> advanceAbort(state, cwdRoot);
+            case "approve" -> advanceApprove(state, cur, feedback, model, cwdRoot);
+            case "modify"  -> advanceModify(state, cur, feedback, model, cwdRoot);
+            case "retry"   -> advanceModify(state, cur, null, model, cwdRoot);
+            case "skip"    -> advanceSkip(state, cur, model, cwdRoot);
+            case "force-skip" -> advanceForceSkip(state, cur, model, cwdRoot);
+            case "abort"   -> advanceAbort(state, cwdRoot, feedback);
             default -> throw new SddException(SddException.Code.INVALID_ACTION,
-                    "unknown action '" + action + "' (expected approve|modify|skip|abort)");
+                    "unknown action '" + action + "' (expected approve|modify|retry|skip|force-skip|abort)");
         };
     }
 
@@ -181,11 +217,13 @@ public final class SddOrchestrator {
         }
     }
 
-    /** Abort a run regardless of which phase is active. */
-    public SddPhaseState abort(String slug, Path cwdRoot) {
+    /** Abort a run regardless of which phase is active. The
+     *  feedback (R709-E3) is the user-supplied reason and is
+     *  pinned to the run for future readers. */
+    public SddPhaseState abort(String slug, Path cwdRoot, String feedback) {
         try {
             SddPhaseState state = SddPhaseState.load(cwdRoot, slug);
-            return advanceAbort(state, cwdRoot);
+            return advanceAbort(state, cwdRoot, feedback);
         } catch (IOException ioe) {
             throw new SddException(SddException.Code.STATE_FILE_MISSING,
                     "phase-state.json missing for slug " + slug, ioe);
@@ -272,6 +310,7 @@ public final class SddOrchestrator {
     private SddPhaseState advanceApprove(SddPhaseState state,
                                           SddPhaseState.PhaseEntry cur,
                                           String feedback,
+                                          String model,
                                           Path cwdRoot) {
         // If the current phase is still running / pending_confirm, the user
         // can't approve it. Surface a clear error rather than silently
@@ -326,18 +365,24 @@ public final class SddOrchestrator {
         // prompt (buildPhasePrompt renders it as "## User feedback
         // (apply this to the existing artefact)"). Empty/null
         // feedback is preserved as the no-note path.
-        SddPhaseState ranAdvance = runPhase(started, nextPhaseNum, feedback, cwdRoot);
+        SddPhaseState ranAdvance = runPhase(started, nextPhaseNum, feedback, model, cwdRoot);
         return ranAdvance;
     }
 
     private SddPhaseState advanceModify(SddPhaseState state,
                                          SddPhaseState.PhaseEntry cur,
                                          String feedback,
+                                         String model,
                                          Path cwdRoot) {
-        if (feedback == null || feedback.isBlank()) {
-            throw new SddException(SddException.Code.INVALID_ACTION,
-                    "modify requires non-empty feedback");
-        }
+        // R709-E1: empty / null feedback is now allowed — it
+        // becomes a bare retry. The pre-R709 path required
+        // non-empty feedback, so a user who wanted to "just retry
+        // this phase" had to type a placeholder. The retry path
+        // is useful for: (a) PHASE_TIMEOUT recovery, (b) CHAT_FAILURE
+        // recovery, (c) user just wants the LLM to re-think the
+        // same prompt. The user-facing verb split is at the
+        // switch level — "modify" still wants a note, "retry" is
+        // the bare no-note path.
         // Re-run the current phase.
         SddPhaseState reset = state.withPhase(
                 cur.phaseNumber(),
@@ -345,12 +390,13 @@ public final class SddOrchestrator {
                         .withStartedAt(Instant.now().toString())
                         .withEndedAt(null));
         persist(reset, cwdRoot);
-        SddPhaseState ranModify = runPhase(reset, cur.phaseNumber(), feedback, cwdRoot);
+        SddPhaseState ranModify = runPhase(reset, cur.phaseNumber(), feedback, model, cwdRoot);
         return ranModify;
     }
 
     private SddPhaseState advanceSkip(SddPhaseState state,
                                        SddPhaseState.PhaseEntry cur,
+                                       String model,
                                        Path cwdRoot) {
         if (!cur.optional()) {
             throw new SddException(SddException.Code.SKIP_REQUIRED_PHASE,
@@ -377,13 +423,77 @@ public final class SddOrchestrator {
                 nextEntry.withState(SddPhaseState.PhaseState.running)
                         .withStartedAt(Instant.now().toString()));
         persist(started, cwdRoot);
-        SddPhaseState ranSkip = runPhase(started, nextPhaseNum, null, cwdRoot);
+        SddPhaseState ranSkip = runPhase(started, nextPhaseNum, null, model, cwdRoot);
         return ranSkip;
     }
 
-    private SddPhaseState advanceAbort(SddPhaseState state, Path cwdRoot) {
+    private SddPhaseState advanceForceSkip(SddPhaseState state,
+                                            SddPhaseState.PhaseEntry cur,
+                                            String model,
+                                            Path cwdRoot) {
+        // R709-E1: user-facing recovery action when a phase is
+        // stuck in failed / pending_confirm / done (any state
+        // except running). The pre-R709 advanceSkip() rejected
+        // required phases and required the phase to be in a
+        // confirmable state, so the user had no path forward
+        // except abort. With force-skip, the user explicitly
+        // opts to skip a phase that the SDD bundle says is
+        // required — risky, so we log loudly and write a
+        // distinguishable sentinel so future readers can tell
+        // this skip was forced (vs. the user agreeing a phase
+        // was optional).
+        if (cur.state() == SddPhaseState.PhaseState.running) {
+            throw new SddException(SddException.Code.INVALID_ACTION,
+                    "phase " + cur.phaseNumber() + " is still running; "
+                            + "wait for pause before force-skipping");
+        }
+        LOG.warn("[sdd] advance(force-skip) {} phase {} ({}) — REQUIRED phase "
+                        + "skipped, user explicitly overrode optional flag",
+                state.slug, cur.phaseNumber(), cur.id());
+        SddPhaseState.PhaseEntry skipped = cur.withState(SddPhaseState.PhaseState.skipped)
+                .withEndedAt(Instant.now().toString());
+        // Sentinel is identical to advanceSkip's so downstream
+        // phases don't have to special-case force-skip — they
+        // just see a regular skip-sentinel artefact. The audit
+        // trail lives in daemon.log (the WARN line above) and
+        // the user's next sdd.status response.
+        writeSkipSentinel(cwdRoot, state.slug, cur);
+        SddPhaseState next = state.withPhase(cur.phaseNumber(), skipped);
+        Integer nextPhaseNum = findNextPhaseNumber(next);
+        if (nextPhaseNum == null) {
+            SddPhaseState finalState = next.withStatus(SddPhaseState.RunStatus.done)
+                    .withCurrentPhase(null);
+            persist(finalState, cwdRoot);
+            cwdBySlug.remove(state.slug);
+            return finalState;
+        }
+        SddPhaseState advanced = next.withCurrentPhase(nextPhaseNum);
+        SddPhaseState.PhaseEntry nextEntry = advanced.phaseByNumber(nextPhaseNum);
+        SddPhaseState started = advanced.withPhase(
+                nextPhaseNum,
+                nextEntry.withState(SddPhaseState.PhaseState.running)
+                        .withStartedAt(Instant.now().toString()));
+        persist(started, cwdRoot);
+        SddPhaseState ranForceSkip = runPhase(started, nextPhaseNum, null, model, cwdRoot);
+        return ranForceSkip;
+    }
+
+    private SddPhaseState advanceAbort(SddPhaseState state, Path cwdRoot, String feedback) {
+        // R709-E3: pin the user's reason on the run so a future
+        // `sdd.status` (or the JSON on disk) can show why the run
+        // was abandoned. Empty / null feedback is a no-op reason —
+        // the user just wants out without leaving a note. The
+        // withAbortReason builder is idempotent (Lesson 950-style:
+        // a second abort on an already-aborted run keeps the
+        // FIRST reason so a fast double-click doesn't accidentally
+        // overwrite a thoughtful message with a confused one).
+        if (feedback != null && !feedback.isBlank()) {
+            LOG.info("[sdd] advance(abort) {} with reason: {}",
+                    state.slug, truncate(feedback, 200));
+        }
         SddPhaseState aborted = state.withStatus(SddPhaseState.RunStatus.aborted)
-                .withCurrentPhase(null);
+                .withCurrentPhase(null)
+                .withAbortReason(feedback);
         persist(aborted, cwdRoot);
         cwdBySlug.remove(state.slug);
         return aborted;
@@ -396,8 +506,20 @@ public final class SddOrchestrator {
     /** Run the given phase via ChatClient. Updates state on disk twice:
      *  (1) mark phase running before the call, (2) mark pending_confirm
      *  after the artefact lands. */
-    private SddPhaseState runPhase(SddPhaseState state, int phaseNumber, String feedback, Path cwdRoot) {
+    private SddPhaseState runPhase(SddPhaseState state, int phaseNumber, String feedback, String model, Path cwdRoot) {
         SddPhaseState.PhaseEntry phase = state.phaseByNumber(phaseNumber);
+        // R709-E5: pin the user's model on this phase so the
+        // JSON on disk records which model the user picked for
+        // this phase. The orchestrator does not switch the
+        // ChatClient itself (the engine holds the routing
+        // table) — the engine reads phase.model and routes
+        // stream() accordingly. We also pass the model into
+        // buildPhasePrompt so the LLM is aware (e.g. "you are
+        // running on opus-4, be thorough").
+        if (model != null) {
+            phase = phase.withModel(model);
+            state = state.withPhase(phaseNumber, phase);
+        }
         Path artefactPath = cwdRoot.resolve(".aethercode").resolve("sdd").resolve(state.slug)
                 .resolve(SddPhaseSpec.OUTPUT_FILES.get(phase.id()));
 
@@ -473,6 +595,60 @@ public final class SddOrchestrator {
                         "phase " + phaseNumber + " (" + phase.id() + ") finished without writing "
                                 + artefactPath + " (model output ended with: "
                                 + truncate(fullText.toString(), 100) + ")");
+            }
+            // R709-E2: integrity check. The pre-E2 path stopped
+            // at "file exists" which let zero-byte placeholders
+            // (model said "I'll write it" + returned without
+            // calling write_file) and "I wrote the tag but not
+            // the body" cases slip through to pending_confirm.
+            // The user then approves a 0-byte artefact and the
+            // next phase reads garbage. Two checks:
+            //   1. Size >= MIN_ARTEFACT_BYTES — a 0-byte file or
+            //      a stub can't be real content.
+            //   2. Contains the sentinel tag the prompt told
+            //      the model to emit (<!-- sdd-phase-end-N -->)
+            //      so a model that forgot to actually finish
+            //      gets caught. The model is supposed to emit
+            //      this tag at the END of its final message.
+            //      We don't require it to be the *only* content
+            //      of the artefact, just present somewhere.
+            // Failure here raises ARTEFACT_INCOMPLETE (not
+            // CHAT_FAILURE) so the UI can suggest a one-click
+            // retry (R709-E1) — the model's connection was
+            // fine, the artefact just isn't usable yet.
+            // The Files.size + readString are wrapped in a
+            // try/catch(IOException) because they throw checked
+            // IOException but the outer catch only handles
+            // RuntimeException; an IO error here is genuinely
+            // exceptional (the file was just created by the
+            // model's write_file tool) and should surface as
+            // IO_FAILURE rather than propagate as a raw
+            // checked exception out of the orchestrator.
+            long size;
+            String artefactBody;
+            try {
+                size = Files.size(artefactPath);
+                artefactBody = Files.readString(artefactPath);
+            } catch (java.io.IOException ioe) {
+                throw new SddException(SddException.Code.IO_FAILURE,
+                        "could not read artefact at " + artefactPath
+                                + " for integrity check", ioe);
+            }
+            if (size < MIN_ARTEFACT_BYTES) {
+                throw new SddException(SddException.Code.ARTEFACT_INCOMPLETE,
+                        "phase " + phaseNumber + " (" + phase.id() + ") wrote only "
+                                + size + " bytes to " + artefactPath
+                                + " (min " + MIN_ARTEFACT_BYTES + "); "
+                                + "model output ended with: "
+                                + truncate(fullText.toString(), 100));
+            }
+            String expectedTag = "<!-- sdd-phase-end-" + phaseNumber + " -->";
+            if (!artefactBody.contains(expectedTag)) {
+                throw new SddException(SddException.Code.ARTEFACT_INCOMPLETE,
+                        "phase " + phaseNumber + " (" + phase.id() + ") wrote "
+                                + size + " bytes but is missing the required sentinel tag '"
+                                + expectedTag + "'; model output ended with: "
+                                + truncate(fullText.toString(), 100));
             }
             SddPhaseState done = state.withPhase(
                     phaseNumber,

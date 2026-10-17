@@ -1158,6 +1158,12 @@ public class AetherCodeMethods {
         m.put("currentPhase", state.currentPhase);
         m.put("startedAt", state.startedAt);
         m.put("lastUpdatedAt", state.lastUpdatedAt);
+        // R709-E3: emit abortReason in the wire shape so the
+        // desktop / TUI can show "why was this run abandoned?"
+        // without re-reading phase-state.json from disk. Null
+        // for active runs (NON_NULL serialization kept the
+        // on-disk file clean for pre-E3 readers).
+        m.put("abortReason", state.abortReason);
         List<Map<String, Object>> ph = new ArrayList<>();
         for (var p : state.phases) {
             Map<String, Object> e = new LinkedHashMap<>();
@@ -1169,6 +1175,10 @@ public class AetherCodeMethods {
             e.put("endedAt", p.endedAt());
             e.put("path", p.path());
             e.put("optional", p.optional());
+            // R709-E5: per-phase model override. Emitted as
+            // null when the phase used the daemon default —
+            // pre-E5 desktop readers see no diff.
+            e.put("model", p.model());
             ph.add(e);
         }
         m.put("phases", ph);
@@ -1178,7 +1188,8 @@ public class AetherCodeMethods {
     /** {@code sdd.start} — create a new SDD run for {@code intent}
      *  under {@code cwd}. Returns the initial state (after phase 1
      *  has run and the artefact is on disk).
-     *  Params: {@code {intent: "...", cwd: "..."}}. */
+     *  Params: {@code {intent: "...", cwd: "...", model?: "..."}}.
+     *  The optional {@code model} (R709-E5) pins a model on phase 1. */
     public Object sddStart(Object params) {
         Map<String, Object> r = new LinkedHashMap<>();
         if (!(params instanceof Map<?, ?> m)) {
@@ -1186,11 +1197,12 @@ public class AetherCodeMethods {
         }
         String intent = strField(m, "intent");
         String cwd = strField(m, "cwd");
+        String model = strField(m, "model");
         if (intent == null || intent.isBlank() || cwd == null || cwd.isBlank()) {
             r.put("ok", false); r.put("error", "intent and cwd are required"); return r;
         }
         try {
-            SddPhaseState state = requireSdd().start(intent, java.nio.file.Path.of(cwd));
+            SddPhaseState state = requireSdd().start(intent, java.nio.file.Path.of(cwd), model);
             r.put("ok", true);
             r.put("state", sddStateToMap(state));
             return r;
@@ -1203,7 +1215,12 @@ public class AetherCodeMethods {
     }
 
     /** {@code sdd.advance} — continue an active run.
-     *  Params: {@code {slug: "...", action: "approve|modify|skip|abort", feedback?: "..."}}. */
+     *  Params: {@code {slug: "...", action: "approve|modify|retry|skip|force-skip|abort",
+     *                    feedback?: "...", model?: "..."}}.
+     *  The optional {@code model} (R709-E5) pins a model on the
+     *  next phase. Has no effect on the current phase (the user
+     *  is approving / modifying / etc. the artefact that's
+     *  already on disk). */
     public Object sddAdvance(Object params) {
         Map<String, Object> r = new LinkedHashMap<>();
         if (!(params instanceof Map<?, ?> m)) {
@@ -1212,11 +1229,12 @@ public class AetherCodeMethods {
         String slug = strField(m, "slug");
         String action = strField(m, "action");
         String feedback = strField(m, "feedback");
+        String model = strField(m, "model");
         if (slug == null || action == null) {
             r.put("ok", false); r.put("error", "slug and action are required"); return r;
         }
         try {
-            SddPhaseState state = requireSdd().advance(slug, action, feedback);
+            SddPhaseState state = requireSdd().advance(slug, action, feedback, model);
             r.put("ok", true);
             r.put("state", sddStateToMap(state));
             return r;
@@ -1254,7 +1272,9 @@ public class AetherCodeMethods {
     }
 
     /** {@code sdd.abort} — abort a run regardless of phase.
-     *  Params: {@code {slug: "...", cwd: "..."}}. */
+     *  Params: {@code {slug: "...", cwd: "...", reason?: "..."}}.
+     *  The optional {@code reason} (R709-E3) is the user-supplied
+     *  explanation pinned to the run for future readers. */
     public Object sddAbort(Object params) {
         Map<String, Object> r = new LinkedHashMap<>();
         if (!(params instanceof Map<?, ?> m)) {
@@ -1262,11 +1282,12 @@ public class AetherCodeMethods {
         }
         String slug = strField(m, "slug");
         String cwd = strField(m, "cwd");
+        String reason = strField(m, "reason");
         if (slug == null || cwd == null) {
             r.put("ok", false); r.put("error", "slug and cwd are required"); return r;
         }
         try {
-            SddPhaseState state = requireSdd().abort(slug, java.nio.file.Path.of(cwd));
+            SddPhaseState state = requireSdd().abort(slug, java.nio.file.Path.of(cwd), reason);
             r.put("ok", true);
             r.put("state", sddStateToMap(state));
             return r;

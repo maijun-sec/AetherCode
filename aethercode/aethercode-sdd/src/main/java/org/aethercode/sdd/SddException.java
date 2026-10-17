@@ -44,10 +44,24 @@ public class SddException extends RuntimeException {
          *  produced an artefact. Distinct from CHAT_FAILURE so the
          *  UI can suggest a "⏭️ skip" instead of an error. */
         PHASE_TIMEOUT,
+        /** R709-E1: a phase is in {@code failed} state. Distinct
+         *  from PHASE_TIMEOUT so the UI can render different
+         *  recovery actions (retry vs. skip). The pre-R709 path
+         *  returned CHAT_FAILURE for both, making the recovery
+         *  UX identical and unhelpful. */
+        PHASE_FAILED,
         /** LLM call / tool call failed inside the orchestrator. */
         CHAT_FAILURE,
         /** Filesystem write failed. */
         IO_FAILURE,
+        /** R709-E2: the LLM finished without writing a usable
+         *  artefact — file exists but is too small (< MIN_BYTES)
+         *  or doesn't include the required
+         *  {@code <!-- sdd-phase-end-N -->} sentinel. Distinct
+         *  from CHAT_FAILURE so the UI can suggest a one-click
+         *  retry (R709-E1) instead of treating it as a generic
+         *  model error. */
+        ARTEFACT_INCOMPLETE,
         /** Generic fallback for anything not classified above. */
         INTERNAL;
     }

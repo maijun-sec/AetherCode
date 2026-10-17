@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * R700 — End-to-end smoke test for {@link SddOrchestrator}.
@@ -168,7 +169,7 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
     @Test
     void abort_marks_run_aborted_and_clears_current() throws IOException {
         SddPhaseState after = orchestrator.start("Build a sorting library", tmpRoot);
-        SddPhaseState aborted = orchestrator.abort(after.slug, tmpRoot);
+        SddPhaseState aborted = orchestrator.abort(after.slug, tmpRoot, null);
         assertThat(aborted.status).isEqualTo(SddPhaseState.RunStatus.aborted);
         assertThat(aborted.currentPhase).isNull();
     }
@@ -199,7 +200,7 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
                     .isEqualTo(SddException.Code.SLUG_CONFLICT);
         }
         // Cleanup: abort the first run so the tempdir teardown is clean.
-        orchestrator.abort(first.slug, tmpRoot);
+        orchestrator.abort(first.slug, tmpRoot, null);
     }
 
     /**
@@ -248,7 +249,7 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
         assertThat(advanced.phaseByNumber(1).state())
                 .isEqualTo(SddPhaseState.PhaseState.done);
         // Cleanup: abort the run via the original orchestrator (still has cwdBySlug).
-        orchestrator.abort(started.slug, tmpRoot);
+        orchestrator.abort(started.slug, tmpRoot, null);
     }
 
     /**
@@ -298,7 +299,7 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
             }
         } finally {
             // Cleanup: abort via the original orchestrator.
-            orchestrator.abort(started.slug, tmpRoot);
+            orchestrator.abort(started.slug, tmpRoot, null);
         }
     }
 
@@ -327,11 +328,25 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
         org.aethercode.core.llm.ChatClient recording = new org.aethercode.core.llm.ChatClient() {
             @Override
             public Stream<StreamEvent> stream(List<Message> messages, String systemPrompt, List<Tool> tools) {
-                prompts.add(messages.get(messages.size() - 1).textContent());
-                // Reuse the existing artefact-writing logic.
-                String body = fakeChat.nextWriteBody;
+                String promptText = messages.get(messages.size() - 1).textContent();
+                prompts.add(promptText);
+                // Write a substantial body + the phase-end tag so the
+                // R709-E2 integrity check passes. The body is
+                // deliberately long enough (>50 bytes) and includes
+                // <!-- sdd-phase-end-N --> matching the prompt's
+                // "[sdd-task: ..., phase: N, ...]" header.
+                int phaseNumber = extractPhaseNumberFromPromptForTest(promptText);
+                String path = extractArtefactPathForTest(promptText);
+                String body = """
+                        Recorded artefact for phase %d.
+
+                        Substantial body that satisfies the R709-E2
+                        MIN_ARTEFACT_BYTES threshold and includes
+                        the required sentinel tag.
+
+                        <!-- sdd-phase-end-%d -->
+                        """.formatted(phaseNumber, phaseNumber);
                 try {
-                    String path = extractArtefactPathForTest(messages.get(messages.size() - 1).textContent());
                     Files.createDirectories(Path.of(path).getParent());
                     Files.writeString(Path.of(path), body);
                 } catch (IOException ioe) {
@@ -350,7 +365,7 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
         // second-call prompt (the one for phase 2).
         orch.advance(started.slug, "approve", "please emphasize edge cases");
         // Cleanup
-        orch.abort(started.slug, tmpRoot);
+        orch.abort(started.slug, tmpRoot, null);
         // We should have received exactly 2 prompts: phase 1 (start)
         // and phase 2 (advance's auto-run of next phase).
         assertThat(prompts).hasSizeGreaterThanOrEqualTo(2);
@@ -373,6 +388,26 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
         return userPrompt.substring(start + 1, end);
     }
 
+    /** Pull the phase number from the orchestrator's prompt header
+     *  "[sdd-task: <slug>, phase: <N>, action: ...]". Used by
+     *  anonymous test clients that need to write the
+     *  phase-end tag with the right number (R709-E2). */
+    private static int extractPhaseNumberFromPromptForTest(String userPrompt) {
+        int marker = userPrompt.indexOf("phase: ");
+        if (marker < 0) return 1;
+        int start = marker + "phase: ".length();
+        int end = start;
+        while (end < userPrompt.length() && Character.isDigit(userPrompt.charAt(end))) {
+            end++;
+        }
+        if (end == start) return 1;
+        try {
+            return Integer.parseInt(userPrompt.substring(start, end));
+        } catch (NumberFormatException nfe) {
+            return 1;
+        }
+    }
+
     /**
      * R709-C: the {@link SddOrchestrator#DEFAULT_PHASE_TIMEOUT}
      * constant must be a positive {@link java.time.Duration}.
@@ -388,30 +423,446 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
                 .isEqualTo(java.time.Duration.ofMinutes(10));
     }
 
+    /**
+     * R709-E3: when the user aborts with a reason, the reason must
+     * land in {@code phase-state.json} so a future session (or
+     * a forensic grep through abandoned runs) can see why the
+     * run was abandoned without going to daemon logs.
+     */
+    @Test
+    void r709_e3_abort_with_reason_persists_to_phase_state_json() throws IOException {
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started = orch.start("Build a calculator", tmpRoot);
+        SddPhaseState aborted = orch.abort(
+                started.slug, tmpRoot, "decided to use a library instead");
+        assertThat(aborted.status).isEqualTo(SddPhaseState.RunStatus.aborted);
+        assertThat(aborted.abortReason)
+                .isEqualTo("decided to use a library instead");
+        // Reload from disk to confirm the reason actually persisted,
+        // not just sat on the in-memory state.
+        SddPhaseState reloaded = SddPhaseState.load(tmpRoot, started.slug);
+        assertThat(reloaded.abortReason)
+                .as("R709-E3: the reason must round-trip through the JSON file")
+                .isEqualTo("decided to use a library instead");
+    }
+
+    /**
+     * R709-E3: a second abort on an already-aborted run is a
+     * no-op for the reason field — the first reason wins, so a
+     * confused double-click doesn't overwrite a thoughtful note.
+     * Empty / null feedback keeps the existing reason (also null).
+     */
+    @Test
+    void r709_e3_abort_idempotent_reason_does_not_overwrite() throws IOException {
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started = orch.start("Build a todo app", tmpRoot);
+        SddPhaseState first = orch.abort(started.slug, tmpRoot, "first reason");
+        assertThat(first.abortReason).isEqualTo("first reason");
+        // Second abort with a different reason: orchestrator.abort reloads
+        // the state from disk inside the helper, so it sees the existing
+        // reason and ignores the new one (advanceAbort calls
+        // withAbortReason which is no-op when abortReason is already set).
+        SddPhaseState second = orch.abort(started.slug, tmpRoot, "second reason — overwrite attempt");
+        assertThat(second.abortReason)
+                .as("R709-E3: the first reason must survive a second abort")
+                .isEqualTo("first reason");
+        // And a no-reason abort on a no-reason run keeps abortReason null.
+        SddOrchestrator orch2 = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started2 = orch2.start("Build a chat app", tmpRoot);
+        SddPhaseState noReason = orch2.abort(started2.slug, tmpRoot, null);
+        assertThat(noReason.abortReason).isNull();
+        SddPhaseState noReason2 = orch2.abort(started2.slug, tmpRoot, null);
+        assertThat(noReason2.abortReason).isNull();
+    }
+
+    /**
+     * R709-E1: {@code advance("retry", null)} is a bare retry —
+     * re-runs the current phase with no note. Used to recover
+     * from PHASE_TIMEOUT / CHAT_FAILURE without forcing the user
+     * to type a placeholder message into {@code modify}.
+     */
+    @Test
+    void r709_e1_retry_reruns_current_phase_with_null_feedback() throws IOException {
+        // Use the FakeChatClient (writes nextWriteBody + " [call N]")
+        // so the second attempt's body differs from the first.
+        FakeChatClient flaky = new FakeChatClient();
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), flaky, List.of());
+        SddPhaseState started = orch.start("retry me", tmpRoot);
+        // start() already fired call 1 and wrote "Generated artefact body [call 1]".
+        // retry should fire call 2 and overwrite with "[call 2]".
+        SddPhaseState retried = orch.advance(started.slug, "retry", null);
+        assertThat(retried.currentPhase)
+                .as("after retry, current phase must still be 1 (the retried one)")
+                .isEqualTo(1);
+        assertThat(flaky.calls.get())
+                .as("start + retry should fire the chat client twice")
+                .isEqualTo(2);
+        // The retry ran a fresh chat call so the on-disk artefact
+        // should now reflect the second attempt.
+        Path artefactPath = Path.of(tmpRoot.toString(), ".aethercode", "sdd",
+                started.slug, "constitution.md");
+        String artefactBody = Files.readString(artefactPath);
+        assertThat(artefactBody)
+                .as("retry should have overwritten the artefact with the second attempt's body")
+                .contains("call 2");
+        orch.abort(started.slug, tmpRoot, null);
+    }
+
+    /**
+     * R709-E1: {@code advance("force-skip")} on a required phase
+     * is allowed (the user explicitly opts out). The phase is
+     * marked skipped, a sentinel artefact is written, and the
+     * orchestrator advances to the next phase. Pre-R709-E1 the
+     * regular {@code skip} path rejected required phases with
+     * SKIP_REQUIRED_PHASE — the user had no way forward.
+     */
+    @Test
+    void r709_e1_force_skip_on_required_phase_writes_sentinel_and_advances() throws IOException {
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started = orch.start("force-skip required", tmpRoot);
+        // Phase 1 is REQUIRED. force-skip should not throw.
+        SddPhaseState forceSkipped = orch.advance(
+                started.slug, "force-skip", null);
+        assertThat(forceSkipped.phaseByNumber(1).state())
+                .as("force-skipped required phase should land in skipped state")
+                .isEqualTo(SddPhaseState.PhaseState.skipped);
+        // currentPhase should advance to phase 2.
+        assertThat(forceSkipped.currentPhase)
+                .as("force-skip should advance to the next phase")
+                .isEqualTo(2);
+        // Skip-sentinel artefact must exist so phase 2 can read it.
+        Path sentinel = Path.of(tmpRoot.toString(), ".aethercode", "sdd",
+                started.slug, "constitution.md");
+        assertThat(Files.isRegularFile(sentinel))
+                .as("force-skip must write the same skip-sentinel artefact as the regular skip path")
+                .isTrue();
+        orch.abort(forceSkipped.slug, tmpRoot, null);
+    }
+
+    /**
+     * R709-E1: {@code force-skip} on a phase in {@code failed}
+     * state (recover from a chat failure) is the primary
+     * recovery flow. The phase is marked skipped, a sentinel is
+     * written, and the orchestrator advances. Pre-R709-E1 the
+     * user had to abort the entire run when a single phase
+     * failed — the run was unrecoverable.
+     */
+    @Test
+    void r709_e1_force_skip_on_failed_phase_recovers_run() throws IOException {
+        // Chat client that throws on phase 1, succeeds on phase 2+.
+        // Anonymous class (not lambda) because ChatClient has 2
+        // abstract methods (stream + modelId) — not a functional
+        // interface.
+        AtomicInteger callNo = new AtomicInteger();
+        ChatClient failsOnFirst = new ChatClient() {
+            @Override
+            public Stream<StreamEvent> stream(List<Message> messages, String systemPrompt, List<Tool> tools) {
+                int n = callNo.incrementAndGet();
+                if (n == 1) {
+                    throw new RuntimeException("simulated chat failure");
+                }
+                String promptText = messages.get(messages.size() - 1).textContent();
+                String artefactPath = extractArtefactPathForTest(promptText);
+                int phaseNumber = extractPhaseNumberFromPromptForTest(promptText);
+                // Substantial body + tag so the R709-E2 integrity
+                // check passes. The test is about recovery, not
+                // about artefact rejection, so we want the
+                // post-retry phase to land in pending_confirm.
+                String body = """
+                        Phase %d artefact (call %d).
+
+                        Substantial body to pass the R709-E2
+                        integrity check (>= MIN_ARTEFACT_BYTES
+                        and includes the required tag).
+
+                        <!-- sdd-phase-end-%d -->
+                        """.formatted(phaseNumber, n, phaseNumber);
+                try {
+                    Files.createDirectories(Path.of(artefactPath).getParent());
+                    Files.writeString(Path.of(artefactPath), body);
+                } catch (IOException e) { throw new RuntimeException(e); }
+                return Stream.of(new StreamEvent.RunEnd("end_turn", List.of()));
+            }
+            @Override
+            public String modelId() { return "fake-fails-on-first"; }
+        };
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), failsOnFirst, List.of());
+        // Start triggers phase 1, which throws RuntimeException.
+        // SddOrchestrator.runPhase catches it and re-throws as
+        // SddException(CHAT_FAILURE) after persisting the failed
+        // state to disk.
+        SddException thrown = assertThrows(SddException.class,
+                () -> orch.start("recover me", tmpRoot));
+        assertThat(thrown.code())
+                .as("start() failure should surface as CHAT_FAILURE")
+                .isEqualTo(SddException.Code.CHAT_FAILURE);
+        // Reload from disk — the failed state was persisted before
+        // the throw. Slug derivation: "recover me" → "recover-me"
+        // (9 chars, fits within the 10-char limit).
+        SddPhaseState reloaded = SddPhaseState.load(tmpRoot, "recover-me");
+        assertThat(reloaded.phaseByNumber(1).state())
+                .as("phase 1 should be in failed state after start()")
+                .isEqualTo(SddPhaseState.PhaseState.failed);
+        // force-skip should advance past the failed phase.
+        SddPhaseState forceSkipped = orch.advance(
+                reloaded.slug, "force-skip", null);
+        assertThat(forceSkipped.phaseByNumber(1).state())
+                .as("force-skip should land failed phase in skipped state")
+                .isEqualTo(SddPhaseState.PhaseState.skipped);
+        assertThat(forceSkipped.currentPhase)
+                .as("force-skip should advance past the failed phase")
+                .isEqualTo(2);
+        orch.abort(forceSkipped.slug, tmpRoot, null);
+    }
+
+    /**
+     * R709-E2: a 0-byte artefact (model "wrote" the file but
+     * filled it with nothing) must trip the integrity check,
+     * not be allowed to land in pending_confirm. The orchestrator
+     * should surface this as ARTEFACT_INCOMPLETE so the UI can
+     * suggest a one-click retry (R709-E1) — the model's
+     * connection was fine, the artefact just isn't usable.
+     */
+    @Test
+    void r709_e2_artefact_below_min_bytes_throws_artefact_incomplete() throws IOException {
+        // Chat client writes 30 bytes (below MIN_ARTEFACT_BYTES=50)
+        // but includes the tag. Pre-E2 this would pass; post-E2
+        // it must fail on the size check first.
+        ChatClient tiny = new ChatClient() {
+            @Override
+            public Stream<StreamEvent> stream(List<Message> messages, String systemPrompt, List<Tool> tools) {
+                String path = extractArtefactPathForTest(
+                        messages.get(messages.size() - 1).textContent());
+                try {
+                    Files.createDirectories(Path.of(path).getParent());
+                    Files.writeString(Path.of(path),
+                            "<!-- sdd-phase-end-1 -->");  // 25 bytes
+                } catch (IOException e) { throw new RuntimeException(e); }
+                return Stream.of(new StreamEvent.RunEnd("end_turn", List.of()));
+            }
+            @Override
+            public String modelId() { return "fake-tiny"; }
+        };
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), tiny, List.of());
+        SddException thrown = assertThrows(SddException.class,
+                () -> orch.start("tiny artefact", tmpRoot));
+        assertThat(thrown.code())
+                .as("0-byte / too-small artefact must surface as ARTEFACT_INCOMPLETE, "
+                        + "not CHAT_FAILURE — the chat connection was fine")
+                .isEqualTo(SddException.Code.ARTEFACT_INCOMPLETE);
+        assertThat(thrown.getMessage())
+                .as("the error must name the actual byte count for debuggability")
+                .contains("24 bytes");
+        assertThat(thrown.getMessage())
+                .as("the error must name MIN_ARTEFACT_BYTES so the user knows the bar")
+                .contains("min 50");
+    }
+
+    /**
+     * R709-E2: a body large enough but missing the
+     * {@code <!-- sdd-phase-end-N -->} sentinel must trip the
+     * integrity check. This catches the "model wrote a real
+     * body but forgot to end with the phase-end tag" failure
+     * mode — a model that's still mid-thought or that uses
+     * a different tag form. Pre-E2 the body was accepted and
+     * the next phase would see content without knowing which
+     * phase it belonged to.
+     */
+    @Test
+    void r709_e2_artefact_missing_sentinel_tag_throws_artefact_incomplete() throws IOException {
+        // 200 bytes of "real-looking" content but no tag.
+        ChatClient noTag = new ChatClient() {
+            @Override
+            public Stream<StreamEvent> stream(List<Message> messages, String systemPrompt, List<Tool> tools) {
+                String path = extractArtefactPathForTest(
+                        messages.get(messages.size() - 1).textContent());
+                String body = "This is a substantial body that exceeds "
+                        + "the size threshold but deliberately omits the "
+                        + "sentinel tag. The integrity check should catch "
+                        + "this case and report ARTEFACT_INCOMPLETE so the "
+                        + "user retries instead of approving garbage.";
+                try {
+                    Files.createDirectories(Path.of(path).getParent());
+                    Files.writeString(Path.of(path), body);
+                } catch (IOException e) { throw new RuntimeException(e); }
+                return Stream.of(new StreamEvent.RunEnd("end_turn", List.of()));
+            }
+            @Override
+            public String modelId() { return "fake-no-tag"; }
+        };
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), noTag, List.of());
+        SddException thrown = assertThrows(SddException.class,
+                () -> orch.start("no tag here", tmpRoot));
+        assertThat(thrown.code())
+                .as("missing sentinel must surface as ARTEFACT_INCOMPLETE")
+                .isEqualTo(SddException.Code.ARTEFACT_INCOMPLETE);
+        assertThat(thrown.getMessage())
+                .as("the error must name the missing tag so the user knows what to add")
+                .contains("<!-- sdd-phase-end-1 -->");
+    }
+
+    /**
+     * R709-E2 (sanity): the integrity check is not so strict
+     * that it rejects a well-formed artefact. A body that's
+     * both > MIN_ARTEFACT_BYTES AND contains the sentinel
+     * tag should pass through to pending_confirm normally.
+     */
+    @Test
+    void r709_e2_well_formed_artefact_passes_integrity_check() throws IOException {
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        // FakeChatClient's body is ~250 bytes + tag → should pass.
+        SddPhaseState started = orch.start("well formed", tmpRoot);
+        assertThat(started.phaseByNumber(1).state())
+                .as("a well-formed artefact must land in pending_confirm, "
+                        + "not be rejected by the integrity check")
+                .isEqualTo(SddPhaseState.PhaseState.pending_confirm);
+        orch.abort(started.slug, tmpRoot, null);
+    }
+
+    /**
+     * R709-E5: when the user calls
+     * {@code start(intent, cwd, model="opus-4")}, phase 1's
+     * {@code PhaseEntry.model} is pinned to "opus-4" in the
+     * persisted {@code phase-state.json} — a forensic read
+     * after the fact shows which model the user picked. The
+     * orchestrator does not switch ChatClient itself (the
+     * engine holds the routing table) but the wire shape is
+     * ready.
+     */
+    @Test
+    void r709_e5_start_with_model_pins_model_on_phase1() throws IOException {
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started = orch.start("model override", tmpRoot, "opus-4");
+        assertThat(started.phaseByNumber(1).model())
+                .as("R709-E5: phase 1's model must be the user-supplied override")
+                .isEqualTo("opus-4");
+        // And the model must round-trip through the JSON file.
+        SddPhaseState reloaded = SddPhaseState.load(tmpRoot, started.slug);
+        assertThat(reloaded.phaseByNumber(1).model())
+                .as("R709-E5: the model override must persist to phase-state.json")
+                .isEqualTo("opus-4");
+        // Other phases still have model = null (daemon default).
+        assertThat(reloaded.phaseByNumber(2).model())
+                .as("R709-E5: only phase 1 was overridden, phase 2 keeps daemon default")
+                .isNull();
+        orch.abort(started.slug, tmpRoot, null);
+    }
+
+    /**
+     * R709-E5: the 4-arg {@code advance(slug, action, feedback, model)}
+     * overload pins the model on the NEXT phase (not the current
+     * one being approved). The pre-E5 3-arg overload keeps
+     * working unchanged for callers that don't care about
+     * per-phase model — a backward-compat sanity check.
+     */
+    @Test
+    void r709_e5_advance_with_model_pins_model_on_next_phase() throws IOException {
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started = orch.start("phase 1 then override", tmpRoot);
+        assertThat(started.phaseByNumber(1).model())
+                .as("pre-E5: phase 1's model is null (daemon default)")
+                .isNull();
+        // Approve phase 1 with a model override for phase 2.
+        SddPhaseState advanced = orch.advance(
+                started.slug, "approve", null, "sonnet");
+        // The current (just-completed) phase 1 keeps its null model —
+        // the user is approving the artefact, not retroactively
+        // picking a model for a phase that already ran.
+        assertThat(advanced.phaseByNumber(1).model())
+                .as("R709-E5: approve doesn't retroactively change the current phase's model")
+                .isNull();
+        // The next phase (2) carries the override.
+        assertThat(advanced.phaseByNumber(2).model())
+                .as("R709-E5: phase 2 must carry the user's model override")
+                .isEqualTo("sonnet");
+        // And the 3-arg overload still works (backward compat).
+        SddOrchestrator orch2 = new SddOrchestrator(
+                FakeBundleLoader.canned(), new FakeChatClient(), List.of());
+        SddPhaseState started2 = orch2.start("backward compat", tmpRoot);
+        SddPhaseState advanced2 = orch2.advance(started2.slug, "approve", null);
+        assertThat(advanced2.phaseByNumber(2).model())
+                .as("the 3-arg advance() overload must keep the daemon default for the next phase")
+                .isNull();
+        orch.abort(advanced.slug, tmpRoot, null);
+        orch2.abort(started2.slug, tmpRoot, null);
+    }
+
     // -------- fakes --------
 
     /** Minimal ChatClient that pretends to be the model. The orchestrator
      *  uses {@link StreamEvent.RunEnd} as the loop's natural terminator;
      *  the fake also writes the expected artefact file under
      *  {@code <cwd>/.aethercode/sdd/<slug>/<phase-output>} so the
-     *  orchestrator's "artefact must exist" post-condition holds. */
+     *  orchestrator's "artefact must exist" post-condition holds.
+     *  <p>R709-E2: the body must be >= MIN_ARTEFACT_BYTES and must
+     *  include the {@code <!-- sdd-phase-end-N -->} tag, otherwise
+     *  runPhase throws ARTEFACT_INCOMPLETE. The fake's text-block
+     *  body is ~250 bytes per call and includes the tag. The tag's
+     *  phase number is extracted from the prompt (the prompt always
+     *  starts with "[sdd-task: <slug>, phase: <N>, ...]") so the
+     *  tag matches the phase runPhase is checking against, even on
+     *  a retry or modify that re-runs the same phase N.
+     *  <p>The {@code nextWriteBody} field lets individual tests
+     *  override the default body — useful for verifying that a
+     *  modify / retry actually overwrote the artefact with new
+     *  content. The overridden body must still meet the
+     *  R709-E2 integrity requirements (size + tag) or the
+     *  orchestrator will reject it. The default body wraps the
+     *  override with the integrity-compliant boilerplate so
+     *  tests that just want "a working artefact" can ignore
+     *  the integrity details. */
     static final class FakeChatClient implements ChatClient {
-        String nextWriteBody = "Generated artefact body\n";
+        String nextWriteBody = null;
         final AtomicInteger calls = new AtomicInteger();
 
         @Override
         public Stream<StreamEvent> stream(List<Message> messages, String systemPrompt, List<Tool> tools) {
             int callNo = calls.incrementAndGet();
-            // Find the artefact path from the user prompt (it always includes
-            // "Output (the ONLY file you may write this phase)" + the path).
-            String path = extractArtefactPath(messages.get(messages.size() - 1).textContent());
+            String promptText = messages.get(messages.size() - 1).textContent();
+            String path = extractArtefactPath(promptText);
+            int phaseNumber = extractPhaseNumberFromPrompt(promptText);
             // Write the artefact synchronously — the real LLM does this via
             // a tool_use block, but the orchestrator's contract is just
             // "the file exists on disk by the time we return", which the
             // fake satisfies here.
+            String body;
+            if (nextWriteBody != null) {
+                // Test supplied a custom body. Wrap it with the
+                // integrity-compliant boilerplate so even short
+                // custom bodies (e.g. "MODIFIED version") pass
+                // the size + tag check.
+                body = """
+                        %s
+
+                        (FakeChatClient call %d, phase %d)
+
+                        <!-- sdd-phase-end-%d -->
+                        """.formatted(nextWriteBody, callNo, phaseNumber, phaseNumber);
+            } else {
+                body = """
+                        Generated artefact for phase %d (call %d).
+
+                        This body exceeds the R709-E2 MIN_ARTEFACT_BYTES (50 bytes)
+                        threshold and includes the required sentinel tag below so
+                        the integrity check passes.
+
+                        <!-- sdd-phase-end-%d -->
+                        """.formatted(phaseNumber, callNo, phaseNumber);
+            }
             try {
                 Files.createDirectories(Path.of(path).getParent());
-                Files.writeString(Path.of(path), nextWriteBody + " [call " + callNo + "]");
+                Files.writeString(Path.of(path), body);
             } catch (IOException ioe) {
                 throw new RuntimeException("fake write failed", ioe);
             }
@@ -422,6 +873,27 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
 
         @Override
         public String modelId() { return "fake-model"; }
+
+        /** Extract the phase number from the orchestrator's prompt
+         *  header "[sdd-task: <slug>, phase: <N>, action: ...]".
+         *  Returns 1 as a safe fallback so a test that forgets to
+         *  populate the prompt header still works. */
+        private static int extractPhaseNumberFromPrompt(String userPrompt) {
+            int marker = userPrompt.indexOf("phase: ");
+            if (marker < 0) return 1;
+            int start = marker + "phase: ".length();
+            int end = start;
+            while (end < userPrompt.length()
+                    && Character.isDigit(userPrompt.charAt(end))) {
+                end++;
+            }
+            if (end == start) return 1;
+            try {
+                return Integer.parseInt(userPrompt.substring(start, end));
+            } catch (NumberFormatException nfe) {
+                return 1;
+            }
+        }
 
         private static String extractArtefactPath(String userPrompt) {
             // The orchestrator's prompt always ends the artefact section

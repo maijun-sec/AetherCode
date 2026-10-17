@@ -72,26 +72,56 @@ public final class SddPhaseState {
             String startedAt,    // ISO-8601; nullable when never started
             String endedAt,      // ISO-8601; nullable when not yet ended
             String path,         // absolute path to artefact; nullable
-            boolean optional) {
+            boolean optional,
+            /**
+             * R709-E5: per-phase model override. The user
+             * supplies this on the {@code sdd.advance(...)}
+             * call (or {@code sdd.start(...)} for phase 1) and
+             * the orchestrator pins it on the phase entry so a
+             * future engine-side chat client can route the
+             * actual stream() call to the right provider /
+             * model. The orchestrator itself does not switch
+             * ChatClient — that's a daemon-side concern (the
+             * engine holds the routing table) — but the wire
+             * shape is ready: every phase carries its model
+             * intent, and {@code phase-state.json} records
+             * which model was used for which phase so a
+             * forensic read after the fact shows the
+             * "opus-4 wrote the constitution, sonnet wrote
+             * the implementation" split the user asked for.
+             * Null = the daemon's default model.
+             */
+            String model) {
 
         public PhaseEntry withState(PhaseState newState) {
             return new PhaseEntry(id, title, phaseNumber, newState,
-                    startedAt, endedAt, path, optional);
+                    startedAt, endedAt, path, optional, model);
         }
 
         public PhaseEntry withStartedAt(String iso) {
             return new PhaseEntry(id, title, phaseNumber, state,
-                    iso, endedAt, path, optional);
+                    iso, endedAt, path, optional, model);
         }
 
         public PhaseEntry withEndedAt(String iso) {
             return new PhaseEntry(id, title, phaseNumber, state,
-                    startedAt, iso, path, optional);
+                    startedAt, iso, path, optional, model);
         }
 
         public PhaseEntry withPath(String p) {
             return new PhaseEntry(id, title, phaseNumber, state,
-                    startedAt, endedAt, p, optional);
+                    startedAt, endedAt, p, optional, model);
+        }
+
+        /** R709-E5: pin a model on the entry. Null clears it
+         *  (falls back to the daemon default). The model is
+         *  captured at the moment the user submits
+         *  {@code advance(...)} so even if the daemon
+         *  default changes mid-run, this phase keeps the
+         *  user's explicit choice. */
+        public PhaseEntry withModel(String m) {
+            return new PhaseEntry(id, title, phaseNumber, state,
+                    startedAt, endedAt, path, optional, m);
         }
     }
 
@@ -105,6 +135,15 @@ public final class SddPhaseState {
     public final List<PhaseEntry> phases;
     public final String startedAt;
     public final String lastUpdatedAt;
+    /**
+     * R709-E3: the user-supplied reason at the moment the run was
+     * aborted. Persisted so future sessions reading {@code
+     * phase-state.json} can see why a run was abandoned without
+     * having to grep daemon logs. {@code null} while the run is
+     * still active; once written, never overwritten (a second
+     * abort on an already-aborted run is a no-op).
+     */
+    public final String abortReason;
 
     private SddPhaseState(String slug,
                           String intent,
@@ -113,7 +152,8 @@ public final class SddPhaseState {
                           Integer currentPhase,
                           List<PhaseEntry> phases,
                           String startedAt,
-                          String lastUpdatedAt) {
+                          String lastUpdatedAt,
+                          String abortReason) {
         this.slug = slug;
         this.intent = intent;
         this.cwd = cwd;
@@ -122,6 +162,7 @@ public final class SddPhaseState {
         this.phases = List.copyOf(phases);
         this.startedAt = startedAt;
         this.lastUpdatedAt = lastUpdatedAt;
+        this.abortReason = abortReason;
     }
 
     // -------- factory + builders --------
@@ -144,7 +185,8 @@ public final class SddPhaseState {
                     n == 1 ? Instant.now().toString() : null,
                     null,
                     null,
-                    SddPhaseSpec.OPTIONAL.contains(id)));
+                    SddPhaseSpec.OPTIONAL.contains(id),
+                    null));  // R709-E5: model = null = daemon default
         }
         return new SddPhaseState(
                 slug, intent, cwd,
@@ -152,15 +194,16 @@ public final class SddPhaseState {
                 1,
                 entries,
                 Instant.now().toString(),
-                Instant.now().toString());
+                Instant.now().toString(),
+                null);
     }
 
     public SddPhaseState withCurrentPhase(Integer n) {
-        return new SddPhaseState(slug, intent, cwd, status, n, phases, startedAt, Instant.now().toString());
+        return new SddPhaseState(slug, intent, cwd, status, n, phases, startedAt, Instant.now().toString(), abortReason);
     }
 
     public SddPhaseState withStatus(RunStatus s) {
-        return new SddPhaseState(slug, intent, cwd, s, currentPhase, phases, startedAt, Instant.now().toString());
+        return new SddPhaseState(slug, intent, cwd, s, currentPhase, phases, startedAt, Instant.now().toString(), abortReason);
     }
 
     public SddPhaseState withPhase(int phaseNumber, PhaseEntry entry) {
@@ -168,7 +211,20 @@ public final class SddPhaseState {
         for (var p : phases) {
             next.add(p.phaseNumber() == phaseNumber ? entry : p);
         }
-        return new SddPhaseState(slug, intent, cwd, status, currentPhase, next, startedAt, Instant.now().toString());
+        return new SddPhaseState(slug, intent, cwd, status, currentPhase, next, startedAt, Instant.now().toString(), abortReason);
+    }
+
+    /**
+     * R709-E3: pin a non-null reason on the run's terminal state.
+     * Subsequent withXxx() calls preserve this value, so an
+     * abort-then-mutate sequence still carries the original reason.
+     * Idempotent: a second call with a different reason on an
+     * already-aborted run keeps the FIRST reason (the user can
+     * always re-abort with a different intent to override).
+     */
+    public SddPhaseState withAbortReason(String reason) {
+        if (abortReason != null) return this;
+        return new SddPhaseState(slug, intent, cwd, status, currentPhase, phases, startedAt, Instant.now().toString(), reason);
     }
 
     public PhaseEntry phaseByNumber(int n) {
@@ -231,6 +287,11 @@ public final class SddPhaseState {
         m.put("currentPhase", currentPhase);
         m.put("startedAt", startedAt);
         m.put("lastUpdatedAt", lastUpdatedAt);
+        // R709-E3: include abortReason in the JSON shape so desktop /
+        // TUI consumers can show "why was this run abandoned?".
+        // NON_NULL inclusion (see MAPPER config) skips this key when
+        // the run is still active, so existing readers see no diff.
+        m.put("abortReason", abortReason);
         List<Map<String, Object>> ph = new ArrayList<>();
         for (var p : phases) {
             Map<String, Object> e = new LinkedHashMap<>();
@@ -242,6 +303,10 @@ public final class SddPhaseState {
             e.put("endedAt", p.endedAt);
             e.put("path", p.path);
             e.put("optional", p.optional);
+            // R709-E5: per-phase model override. NON_NULL inclusion
+            // (MAPPER config) skips this key when the phase used
+            // the daemon default — pre-E5 readers see no diff.
+            e.put("model", p.model);
             ph.add(e);
         }
         m.put("phases", ph);
@@ -267,11 +332,13 @@ public final class SddPhaseState {
                     (String) e.get("startedAt"),
                     (String) e.get("endedAt"),
                     (String) e.get("path"),
-                    Boolean.TRUE.equals(e.get("optional"))));
+                    Boolean.TRUE.equals(e.get("optional")),
+                    (String) e.get("model")));  // R709-E5
         }
         return new SddPhaseState(
                 slug, intent, cwd, status, currentPhase, entries,
                 (String) root.get("startedAt"),
-                (String) root.get("lastUpdatedAt"));
+                (String) root.get("lastUpdatedAt"),
+                (String) root.get("abortReason"));
     }
 }
