@@ -162,9 +162,29 @@ export interface SessionListProps {
    *  "+ New Session" button stays — it's the per-group create
    *  action. */
   hideSectionHeader?: boolean;
+  /** R710-B (2026-10-17): trash mode. When true, the
+   *  per-row delete button is replaced with a restore
+   *  button (calls `onRestore`) and the row is shown in
+   *  a "soft-deleted" visual style (subdued color +
+   *  "trashed <relative time>" subtitle). The default
+   *  is false — the active list uses the legacy hard-
+   *  delete button. The flat list path uses the
+   *  onRestore/onSoftDelete pair; the per-row
+   *  ProjectGroupList path is unchanged because
+   *  trash rows never appear under a project group. */
+  trashMode?: boolean;
+  /** R710-B: restore handler for trash-mode rows.
+   *  Brings the session back to the active list. */
+  onRestore?: (sessionId: string) => void | Promise<void>;
+  /** R710-B: per-row soft-delete handler for the
+   *  active list. When set, replaces the legacy
+   *  hard-delete button with a "trash" button so the
+   *  user picks between recoverable (trash) and
+   *  irreversible (delete) explicitly. */
+  onSoftDelete?: (sessionId: string) => void | Promise<void>;
 }
 
-export function SessionList({ items: propItems, height, emptyMessage, onNewSession, newSessionLabel, hideSectionHeader = false }: SessionListProps = {}) {
+export function SessionList({ items: propItems, height, emptyMessage, onNewSession, newSessionLabel, hideSectionHeader = false, trashMode = false, onRestore, onSoftDelete }: SessionListProps = {}) {
   const {
     sessions,
     currentSessionId,
@@ -258,6 +278,33 @@ export function SessionList({ items: propItems, height, emptyMessage, onNewSessi
     await deleteSession(id);
   };
 
+  // R710-B: per-row soft-delete (recoverable). Confirms
+  // with a softer prompt than the hard delete — the user
+  // can always recover from the Trash tab. The button is
+  // only rendered when the parent passes `onSoftDelete`
+  // (the ProjectGroup path is unchanged because it
+  // doesn't opt into R710-B yet — see TODO at the call
+  // site in LeftPanel).
+  const handleSoftDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (id === currentSessionId) {
+      window.alert('当前会话先切换再 trash。Trash 之后从 Trash tab 恢复。');
+      return;
+    }
+    if (!window.confirm(`Trash session ${id.slice(-8)}? It's recoverable from the Trash tab.`)) return;
+    if (onSoftDelete) await onSoftDelete(id);
+  };
+
+  // R710-B: per-row restore. Only fires from the trash
+  // tab — `trashMode` is the gate. The user doesn't get a
+  // confirm prompt because restore is the safe, idempotent
+  // direction (calling it on an already-active session is
+  // a daemon-side no-op that returns ok:true).
+  const handleRestore = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onRestore) await onRestore(id);
+  };
+
   // Build a single list of "rows" — the actual sessions
   // plus a synthetic "broken entry" row when the daemon
   // returns an entry without an id (R113 defensive
@@ -348,14 +395,56 @@ export function SessionList({ items: propItems, height, emptyMessage, onNewSessi
                 )}
               </div>
             </div>
-            {!isCurrent && (
+            {!isCurrent && (trashMode ? (
+              // R710-B: trash tab row. The action flips
+              // from "delete" to "restore" because the row
+              // is already soft-deleted. We also expose
+              // the hard-delete escape hatch for users
+              // who want the trash gone for good without
+              // opening the bulk "Empty trash" modal.
+              <>
+                <button
+                  className="session-restore-btn"
+                  title="Restore this session"
+                  onClick={(e) => handleRestore(s.id, e)}
+                  aria-label={`Restore session ${sessionLabel(s)}`}
+                >↩</button>
+                <button
+                  className="session-delete-btn"
+                  title="Permanently delete this session"
+                  onClick={(e) => handleDelete(s.id, e)}
+                  aria-label={`Delete session ${sessionLabel(s)}`}
+                >×</button>
+              </>
+            ) : onSoftDelete ? (
+              // R710-B: per-row soft-delete when the
+              // parent opted in. Soft delete is the
+              // recommended path — recoverable from the
+              // Trash tab. The hard delete remains as
+              // the escape hatch for users who know they
+              // want it gone for good.
+              <>
+                <button
+                  className="session-trash-btn"
+                  title="Trash this session (recoverable from Trash tab)"
+                  onClick={(e) => handleSoftDelete(s.id, e)}
+                  aria-label={`Trash session ${sessionLabel(s)}`}
+                >🗑</button>
+                <button
+                  className="session-delete-btn"
+                  title="Permanently delete this session"
+                  onClick={(e) => handleDelete(s.id, e)}
+                  aria-label={`Delete session ${sessionLabel(s)}`}
+                >×</button>
+              </>
+            ) : (
               <button
                 className="session-delete-btn"
                 title="删除这个 session"
                 onClick={(e) => handleDelete(s.id, e)}
                 aria-label={`Delete session ${sessionLabel(s)}`}
               >×</button>
-            )}
+            ))}
           </li>
         );
       }}
@@ -426,7 +515,40 @@ export function SessionList({ items: propItems, height, emptyMessage, onNewSessi
                 )}
               </div>
             </div>
-            {!isCurrent && (
+            {!isCurrent && (trashMode ? (
+              // R710-B: trash tab row (non-virtual fallback path).
+              <>
+                <button
+                  className="session-restore-btn"
+                  title="Restore this session"
+                  onClick={(e) => handleRestore(s.id, e)}
+                  aria-label={`Restore session ${sessionLabel(s)}`}
+                >↩</button>
+                <button
+                  className="session-delete-btn"
+                  title="Permanently delete this session"
+                  onClick={(e) => handleDelete(s.id, e)}
+                  aria-label={`Delete session ${sessionLabel(s)}`}
+                >×</button>
+              </>
+            ) : onSoftDelete ? (
+              // R710-B: per-row soft-delete (recoverable)
+              // when the parent opted in.
+              <>
+                <button
+                  className="session-trash-btn"
+                  title="Trash this session (recoverable from Trash tab)"
+                  onClick={(e) => handleSoftDelete(s.id, e)}
+                  aria-label={`Trash session ${sessionLabel(s)}`}
+                >🗑</button>
+                <button
+                  className="session-delete-btn"
+                  title="Permanently delete this session"
+                  onClick={(e) => handleDelete(s.id, e)}
+                  aria-label={`Delete session ${sessionLabel(s)}`}
+                >×</button>
+              </>
+            ) : (
               <button
                 className="session-delete-btn"
                 title="删除这个 session"
@@ -435,7 +557,7 @@ export function SessionList({ items: propItems, height, emptyMessage, onNewSessi
               >
                 ×
               </button>
-            )}
+            ))}
           </li>
         );
       })}

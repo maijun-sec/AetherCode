@@ -482,3 +482,61 @@
   display: flex;
   flex-direction: column;
 }
+
+/* R710-B: Active / Trash tab strip. Sits above the
+ * session filter so the user always knows which list
+ * they're looking at. The active tab gets a bottom
+ * border + accent color; the count badge fades in only
+ * when there's something to count. */
+.left-session-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 6px 12px;
+  border-bottom: 1px solid var(--left-border, rgba(255,255,255,0.06));
+  margin-bottom: 6px;
+}
+.left-session-tab {
+  background: transparent;
+  border: none;
+  color: var(--left-muted, rgba(255,255,255,0.5));
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 80ms ease, background-color 80ms ease;
+}
+.left-session-tab:hover { color: var(--left-fg, rgba(255,255,255,0.9)); }
+.left-session-tab.is-active {
+  color: var(--left-accent, #4dabf7);
+  background: var(--left-accent-soft, rgba(77,171,247,0.08));
+}
+.left-session-tab-count {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-left: 2px;
+}
+
+/* R710-B: bulk "Empty trash" bar. Only renders on the
+ * Trash tab when there's at least one row. The button
+ * is intentionally low-prominence (outline, not filled)
+ * because it's a destructive action that the user
+ * shouldn't trip over while scanning. */
+.left-trash-bar {
+  padding: 0 12px 8px 12px;
+}
+.left-trash-bar-btn {
+  background: transparent;
+  border: 1px solid var(--left-border, rgba(255,255,255,0.18));
+  color: var(--left-fg, rgba(255,255,255,0.85));
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 80ms ease, color 80ms ease;
+}
+.left-trash-bar-btn:hover {
+  border-color: var(--left-danger, #fa5252);
+  color: var(--left-danger, #fa5252);
+}

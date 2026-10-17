@@ -104,7 +104,20 @@ export function LeftPanel() {
   // the same shape (`SessionInfo` includes `cwd` per
   // prior round) and is the single source of truth.
   const all = useStore((s) => s.sessions);
-  const filtered = useMemo(() => applyFilter(all, filter), [all, filter]);
+  // R710-B: separate the active list from the trash list.
+  // The two are kept distinct in the store so the LeftPanel
+  // can switch between them without mixing the rows. The
+  // sessionView flag decides which one the SessionList
+  // below renders. Switching to 'trashed' lazily loads the
+  // trash list (see setSessionView in the store).
+  const trashed = useStore((s) => s.trashedSessions);
+  const sessionView = useStore((s) => s.sessionView);
+  const setSessionView = useStore((s) => s.setSessionView);
+  const softDeleteSession = useStore((s) => s.softDeleteSession);
+  const restoreSession = useStore((s) => s.restoreSession);
+  const emptyTrash = useStore((s) => s.emptyTrash);
+  const visibleSessions = sessionView === 'active' ? all : trashed;
+  const filtered = useMemo(() => applyFilter(visibleSessions, filter), [visibleSessions, filter]);
   const currentSessionId = useStore((s) => s.currentSessionId);
   // handler for the project group's "+" button.
   // - cwd !== null: create a new session bound to that
@@ -160,10 +173,59 @@ export function LeftPanel() {
        *  to 2, and the project → session hierarchy has no
        *  intermediate "sessions" group. */}
       <section className="left-section left-mid">
+        {/* R710-B: Active / Trash tab strip. The default
+         *  view is 'active'; the trash tab is the recovery
+         *  surface for soft-deleted sessions. The tab
+         *  counts show "(N trashed)" hint so the user
+         *  notices new trashed sessions without having to
+         *  click the tab. */}
+        <div className="left-session-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sessionView === 'active'}
+            className={'left-session-tab' + (sessionView === 'active' ? ' is-active' : '')}
+            onClick={() => setSessionView('active')}
+          >
+            Active
+            {all.length > 0 && <span className="left-session-tab-count"> ({all.length})</span>}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sessionView === 'trashed'}
+            className={'left-session-tab' + (sessionView === 'trashed' ? ' is-active' : '')}
+            onClick={() => setSessionView('trashed')}
+          >
+            Trash
+            {trashed.length > 0 && <span className="left-session-tab-count"> ({trashed.length})</span>}
+          </button>
+        </div>
+        {sessionView === 'trashed' && trashed.length > 0 && (
+          // Bulk action bar: appears only on the trash tab
+          // and only when there's at least one trashed
+          // session. Confirms before permanently removing
+          // — once the JSONL transcripts are gone, the
+          // user can't undo "Empty trash".
+          <div className="left-trash-bar">
+            <button
+              type="button"
+              className="left-trash-bar-btn"
+              onClick={() => {
+                const ok = window.confirm(
+                  `Empty Trash? This permanently removes ${trashed.length} session(s) and their transcripts. This cannot be undone.`
+                );
+                if (ok) void emptyTrash();
+              }}
+            >
+              Empty trash
+            </button>
+          </div>
+        )}
         <SessionListFilter
           value={filter}
           onChange={onFilterChange}
-          totalCount={all.length}
+          totalCount={visibleSessions.length}
           visibleCount={filtered.length}
         />
         <div ref={listRef} className="left-section-list-host">
@@ -175,17 +237,39 @@ export function LeftPanel() {
                 items={filtered}
                 height={listHeight}
                 emptyMessage="No sessions match the filter"
+                // R710-B: the trash tab swaps the row
+                // action — restore instead of load. The
+                // SessionList component reads this prop
+                // to render the per-row button.
+                trashMode={sessionView === 'trashed'}
+                onRestore={restoreSession}
+                onSoftDelete={softDeleteSession}
+              />
+            </div>
+          ) : sessionView === 'trashed' ? (
+            // Trash tab without filter: flat list (no
+            // project grouping — the trash is a global
+            // recovery surface, not a per-project view).
+            <div className="left-flat-list">
+              <SessionList
+                items={trashed}
+                height={listHeight}
+                emptyMessage="Trash is empty"
+                trashMode={true}
+                onRestore={restoreSession}
+                onSoftDelete={softDeleteSession}
               />
             </div>
           ) : (
-            // no filter — group sessions by cwd
-            // (project folder). Each group is collapsible
-            // with a "+" to mint a new session in that
-            // project.
+            // Active tab without filter: group sessions
+            // by cwd (project folder). Each group is
+            // collapsible with a "+" to mint a new
+            // session in that project.
             <ProjectGroupList
               sessions={all}
               currentSessionId={currentSessionId}
               onNewSession={onNewSessionInCwd}
+              onSoftDelete={softDeleteSession}
             />
           )}
         </div>

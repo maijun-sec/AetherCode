@@ -1474,6 +1474,18 @@ interface AppState {
   // flash "skip: 0/0" before the first getState resolves.
   skipStats: { consumed: number; armed: number; prompts: number; adoption: number };
   sessions: SessionInfo[];
+  /** R710-B (2026-10-17): the trash list — soft-deleted
+   *  sessions hidden from the default listSessions call.
+   *  Distinct from `sessions` so the LeftPanel can show
+   *  the two as separate tabs (Active / Trash) without
+   *  mixing them. Sorted by trashedAt descending so the
+   *  most recently trashed session sits at the top. */
+  trashedSessions: SessionInfo[];
+  /** R710-B: which view the LeftPanel is currently
+   *  showing. 'active' is the default. 'trashed' shows
+   *  the soft-deleted list with restore / empty-trash
+   *  actions. */
+  sessionView: 'active' | 'trashed';
   currentSessionId: string | null;
   tasks: TaskInfo[];
   currentTaskId: string | null;
@@ -1858,6 +1870,25 @@ interface AppState {
    *  IllegalStateException; the surface message explains
    *  the user must switch first). */
   deleteSession: (sessionId: string) => Promise<void>;
+  /** R710-B: soft-delete (recoverable). Hides the session
+   *  from the default listSessions call but preserves the
+   *  JSONL transcript + DB row. The user can restore via
+   *  `restoreSession(id)` from the trash view. Distinct
+   *  from `deleteSession` (irreversible) — the user has
+   *  to explicitly pick "trash" vs "delete" in the UI. */
+  softDeleteSession: (sessionId: string) => Promise<void>;
+  /** R710-B: bring a soft-deleted session back. */
+  restoreSession: (sessionId: string) => Promise<void>;
+  /** R710-B: switch the LeftPanel view between the
+   *  active list and the trash list. */
+  setSessionView: (view: 'active' | 'trashed') => void;
+  /** R710-B: pull the latest soft-deleted list. Refreshed
+   *  on view-switch + after softDelete / restore. */
+  loadTrashedSessions: () => Promise<void>;
+  /** R710-B: permanently remove all soft-deleted
+   *  sessions. The user has to confirm before this runs
+   *  — the UI shows a modal with the count first. */
+  emptyTrash: () => Promise<{ trashed: number } | undefined>;
   refreshSessions: () => Promise<void>;
   refreshTasks: () => Promise<void>;
   /** pull the latest 3-layer memory state from the
@@ -4097,7 +4128,7 @@ export const useStore = create<AppState>((set, get) => {
 
   return {
     daemonInfo: null, isConnected: false, connectionState: 'idle', initError: null,
-    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], currentSessionId: null, rpcMethods: [], rpcMethodInfos: [],
+    engineState: null, tools: [], toolActions: [], toolsRefreshedAt: 0, engineStateRefreshedAt: 0, recentRpcEvents: [], autoApproveLowRisk: true, autoApproveMediumHigh: false, autoApprovedCount: 0, autoApprovedElevatedCount: 0, recentAutoApproved: [], skipStats: { consumed: 0, armed: 0, prompts: 0, adoption: 0 }, sessions: [], trashedSessions: [], sessionView: 'active', currentSessionId: null, rpcMethods: [], rpcMethodInfos: [],
     // supervisor auto-restart cached
     // flag. Default false (matches the
     // daemon-side default; opt-in via Settings
@@ -5658,6 +5689,175 @@ export const useStore = create<AppState>((set, get) => {
             timestamp: Date.now(), isError: true,
           }],
         }));
+      }
+    },
+
+    // -------- R710-B: session trash (softDelete / restore / empty) --------
+
+    softDeleteSession: async (sessionId: string) => {
+      if (!sessionId) return;
+      try {
+        const r = await rpc.softDeleteSession(sessionId);
+        if (r && r.ok) {
+          // Move the row from the active list to the
+          // trash list without re-fetching — the daemon's
+          // response doesn't include the full SessionInfo
+          // so we synthesise one from the row we already
+          // had (R710-A's NON_NULL serialization includes
+          // trashedAt in the response, so we know the
+          // new value here too).
+          const row = get().sessions.find((s) => s.id === sessionId);
+          const trashedAt = (r as { trashedAt?: number }).trashedAt ?? Date.now();
+          if (row) {
+            const trashedRow: SessionInfo = { ...row, trashedAt };
+            set((s) => ({
+              sessions: s.sessions.filter((x) => x.id !== sessionId),
+              trashedSessions: [trashedRow, ...s.trashedSessions],
+            }));
+            // System toast so the user knows the action
+            // succeeded without staring at the list. The
+            // "restore?" hint nudges them to the trash tab.
+            set((s) => ({
+              messages: [...s.messages, {
+                id: newId('system'), role: 'system',
+                content: `[Session trashed] "${row.name || sessionId}" is now in Trash. Open the Trash tab to restore.`,
+                timestamp: Date.now(),
+              }],
+            }));
+          } else {
+            // Row wasn't in the active list — fall back
+            // to a full refresh so the cache matches
+            // the daemon's authoritative list.
+            await get().refreshSessions();
+            await get().loadTrashedSessions();
+          }
+        } else if (r && r.error) {
+          set((s) => ({
+            messages: [...s.messages, {
+              id: newId('system'), role: 'system',
+              content: `[Soft-delete failed] ${r.error}`,
+              timestamp: Date.now(), isError: true,
+            }],
+          }));
+        }
+      } catch (e: any) {
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system',
+            content: `[Soft-delete failed] ${e?.message ?? String(e)}`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+      }
+    },
+
+    restoreSession: async (sessionId: string) => {
+      if (!sessionId) return;
+      try {
+        const r = await rpc.restoreSession(sessionId);
+        if (r && r.ok) {
+          // Move the row from the trash list back to the
+          // active list. trashedAt is reset to 0 (the
+          // NON_NULL serialization drops it from the
+          // wire shape, so the synthesised row matches
+          // a fresh active row).
+          const row = get().trashedSessions.find((s) => s.id === sessionId);
+          if (row) {
+            const restoredRow: SessionInfo = { ...row, trashedAt: undefined };
+            set((s) => ({
+              sessions: [restoredRow, ...s.sessions],
+              trashedSessions: s.trashedSessions.filter((x) => x.id !== sessionId),
+            }));
+            set((s) => ({
+              messages: [...s.messages, {
+                id: newId('system'), role: 'system',
+                content: `[Session restored] "${row.name || sessionId}" is back in the active list.`,
+                timestamp: Date.now(),
+              }],
+            }));
+          } else {
+            await get().refreshSessions();
+            await get().loadTrashedSessions();
+          }
+        } else if (r && r.error) {
+          set((s) => ({
+            messages: [...s.messages, {
+              id: newId('system'), role: 'system',
+              content: `[Restore failed] ${r.error}`,
+              timestamp: Date.now(), isError: true,
+            }],
+          }));
+        }
+      } catch (e: any) {
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system',
+            content: `[Restore failed] ${e?.message ?? String(e)}`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+      }
+    },
+
+    setSessionView: (view: 'active' | 'trashed') => {
+      set({ sessionView: view });
+      // Lazy-load the trash list on first switch so
+      // the default loadSessions() flow stays
+      // unchanged. The user only pays the extra RPC
+      // when they actually open the trash tab.
+      if (view === 'trashed' && get().trashedSessions.length === 0) {
+        void get().loadTrashedSessions();
+      }
+    },
+
+    loadTrashedSessions: async () => {
+      try {
+        const r = await rpc.listTrashedSessions();
+        const list = r.sessions ?? [];
+        // Sort trashedAt descending — most recently
+        // trashed at the top. The daemon returns
+        // trashedAt as unix-ms so a simple numeric
+        // sort is correct.
+        list.sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0));
+        set({ trashedSessions: list });
+      } catch (e: any) {
+        // Silent failure — the trash view is a nice-to-have
+        // and a network blip shouldn't break the active tab.
+        // The user can re-open the tab to retry.
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system',
+            content: `[Load trash failed] ${e?.message ?? String(e)}`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+      }
+    },
+
+    emptyTrash: async () => {
+      try {
+        const r = await rpc.emptyTrash();
+        if (r && r.ok) {
+          set({ trashedSessions: [] });
+          set((s) => ({
+            messages: [...s.messages, {
+              id: newId('system'), role: 'system',
+              content: `[Trash emptied] ${r.trashed ?? 0} session(s) permanently removed.`,
+              timestamp: Date.now(),
+            }],
+          }));
+          return { trashed: r.trashed ?? 0 };
+        }
+        return undefined;
+      } catch (e: any) {
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system',
+            content: `[Empty trash failed] ${e?.message ?? String(e)}`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+        return undefined;
       }
     },
 

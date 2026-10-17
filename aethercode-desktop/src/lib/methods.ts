@@ -230,6 +230,15 @@ export interface SessionInfo {
   createdAt?: number;
   lastUsedAt?: number;
   messageCount?: number;
+  /** R710-A (2026-10-17): unix-ms timestamp at which the
+   *  session was soft-deleted (0 = active). Populated
+   *  by the daemon's listSessions when caller passes
+   *  { trashed: true } — the default listSessions call
+   *  omits the field for active sessions (NON_NULL
+   *  serialization). The trash list view (R710-B)
+   *  sorts by this field descending so the most
+   *  recently trashed session sits at the top. */
+  trashedAt?: number;
   // optional preview text (first
   // user message, capped at 200 chars).
   // Populated when the caller passes
@@ -658,8 +667,37 @@ export class AetherCodeRpc {
   // each session's JSONL transcript (4 KB
   // cap, regex-only) so the TUI's session
   // picker can render one-line titles.
-  listSessions(opts?: { limit?: number; withPreview?: boolean }): Promise<{ sessions: SessionInfo[]; current: string; total?: number; returned?: number; error?: string }> {
+  listSessions(opts?: { limit?: number; withPreview?: boolean; trashed?: boolean }): Promise<{ sessions: SessionInfo[]; current: string; total?: number; returned?: number; error?: string }> {
     return this.call('listSessions', opts ?? null);
+  }
+  /** R710-A: soft-delete a session. The session is
+   *  hidden from the default listSessions call but
+   *  the JSONL transcript + DB row are preserved so
+   *  `restoreSession(id)` brings it back. Idempotent:
+   *  a second call returns `trashed: false` rather
+   *  than an error so the caller's spinner can stop
+   *  without a toast. */
+  softDeleteSession(sessionId: string): Promise<{ ok: boolean; sessionId: string; trashed?: boolean; note?: string; error?: string }> {
+    return this.call('session/softDelete', { sessionId });
+  }
+  /** R710-A: restore a soft-deleted session. Returns
+   *  it to the default listSessions call. */
+  restoreSession(sessionId: string): Promise<{ ok: boolean; sessionId: string; error?: string }> {
+    return this.call('session/restore', { sessionId });
+  }
+  /** R710-A: list soft-deleted sessions (for the trash
+   *  view). Equivalent to listSessions({ trashed: true })
+   *  but more discoverable from the desktop. */
+  listTrashedSessions(): Promise<{ sessions: SessionInfo[]; total?: number; returned?: number; error?: string }> {
+    return this.call('listSessions', { trashed: true });
+  }
+  /** R710-A: permanently remove all soft-deleted
+   *  sessions from the SQLite row + JSONL transcript.
+   *  Distinct from softDelete (recoverable) — the user
+   *  has to explicitly say "yes, empty the trash"
+   *  before the data is gone. */
+  emptyTrash(opts?: { restoreId?: string }): Promise<{ ok: boolean; trashed?: number; restored?: boolean; sessionId?: string; error?: string }> {
+    return this.call('session/trash', opts ?? null);
   }
   loadSession(sessionId: string): Promise<{ ok: true; sessionId: string; messageCount: number }> { return this.call('loadSession', { sessionId }); }
   /** mint a fresh session id on the daemon and start an

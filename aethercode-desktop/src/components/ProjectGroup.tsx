@@ -32,9 +32,12 @@ interface ProjectGroupProps {
   sessions: SessionInfo[];
   defaultOpen: boolean;
   onNewSession: (cwd: string | null) => void;
+  /** R710-B: forwarded to the inner SessionList. See
+   *  ProjectGroupListProps for the full rationale. */
+  onSoftDelete?: (sessionId: string) => void | Promise<void>;
 }
 
-export function ProjectGroup({ cwd, sessions, defaultOpen, onNewSession }: ProjectGroupProps) {
+export function ProjectGroup({ cwd, sessions, defaultOpen, onNewSession, onSoftDelete }: ProjectGroupProps) {
   // collapse state is local (we use the native
   // <details> element so the open/close is browser-managed
   // and survives re-renders). defaultOpen=true means the
@@ -105,6 +108,12 @@ export function ProjectGroup({ cwd, sessions, defaultOpen, onNewSession }: Proje
             // scope the new session will belong to.
             onNewSession={() => onNewSession(cwd)}
             newSessionLabel={cwd ? cwdToProjectName(cwd) : '无 cwd'}
+            // R710-B: forward the parent's optional
+            // soft-delete handler to the inner SessionList.
+            // When the LeftPanel doesn't pass `onSoftDelete`
+            // (legacy callers), the SessionList falls back
+            // to the hard-delete-only rendering.
+            onSoftDelete={onSoftDelete}
           />
         )}
       </div>
@@ -116,6 +125,16 @@ interface ProjectGroupListProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   onNewSession: (cwd: string | null) => void;
+  /** R710-B (2026-10-17): optional per-row soft-delete
+   *  handler. When set, the inner SessionList is
+   *  rendered with `onSoftDelete` so each row gets a
+   *  trash button alongside the legacy hard-delete
+   *  button. When omitted (default), the legacy hard-
+   *  delete-only path is preserved — the LeftPanel's
+   *  project-grouping view doesn't yet opt in to the
+   *  recoverable-by-default behaviour. Future round
+   *  can flip the default to required. */
+  onSoftDelete?: (sessionId: string) => void | Promise<void>;
 }
 
 /**
@@ -125,7 +144,7 @@ interface ProjectGroupListProps {
  * that project. A session with no cwd is grouped under
  * "Unlinked Project".
  */
-export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId, onNewSession }: ProjectGroupListProps) {
+export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId, onNewSession, onSoftDelete }: ProjectGroupListProps) {
   // Group sessions by cwd. We use a Map to preserve
   // insertion order (the daemon returns sessions
   // most-recently-used first, so the groups appear in
@@ -161,6 +180,7 @@ export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId
           sessions={list}
           defaultOpen={idx === 0}
           onNewSession={onNewSession}
+          onSoftDelete={onSoftDelete}
         />
       ))}
     </div>
