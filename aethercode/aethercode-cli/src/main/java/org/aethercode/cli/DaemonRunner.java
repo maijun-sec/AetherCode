@@ -607,7 +607,20 @@ final class DaemonRunner {
         try {
             SddBundleLoader bundle = SddBundleLoader.load();
             org.aethercode.core.llm.ChatClient chatForSdd = engine.chatClient();
-            SddOrchestrator sdd = new SddOrchestrator(bundle, chatForSdd, List.of());
+            // R709-E5 engine-side: the orchestrator's
+            // model-routing factory. The default
+            // `m -> chatForSdd` returns the same client
+            // regardless of model, so per-phase model
+            // overrides are recorded on phase-state.json
+            // but the actual stream() call still goes
+            // through the engine's default client. A
+            // future engine patch can supply a routing-
+            // aware factory here so the model override
+            // actually picks a different provider.
+            java.util.function.Function<String, org.aethercode.core.llm.ChatClient> chatForSddModel
+                    = m -> chatForSdd;
+            SddOrchestrator sdd = new SddOrchestrator(
+                    bundle, chatForSdd, List.of(), chatForSddModel);
             http.methods().setSddOrchestrator(sdd);
             LOG.info("R700: SDD orchestrator installed ({} phase refs, {} templates loaded)",
                     bundle.isLoaded() ? 8 : 0,

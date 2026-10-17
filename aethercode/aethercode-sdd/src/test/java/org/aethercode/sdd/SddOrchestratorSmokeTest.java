@@ -798,6 +798,97 @@ orchestrator.advance(slug, "approve", null);   // 1 → 2 pending_confirm
         orch2.abort(started2.slug, tmpRoot, null);
     }
 
+    /**
+     * R709-E5 engine-side: when the user pins a model on a
+     * phase, the orchestrator's model-routing factory must be
+     * called with that model id so the engine can return a
+     * different ChatClient per model. The default factory
+     * returns the same client regardless of model, so the
+     * test injects a tracking factory that records which
+     * model the orchestrator asked for and returns a
+     * dedicated (per-model) ChatClient.
+     */
+    @Test
+    void r709_e5_factory_called_with_per_phase_model_override() throws IOException {
+        java.util.List<String> requestedModels = new java.util.ArrayList<>();
+        // Per-model client that records which model it was
+        // instantiated for. The orchestrator asks the factory
+        // for each model; the factory hands back a fresh
+        // FakeChatClient per call. The per-model client's
+        // body still passes the integrity check.
+        ChatClient modelAClient = new ChatClient() {
+            @Override
+            public Stream<StreamEvent> stream(List<Message> m, String s, List<Tool> t) {
+                String path = extractArtefactPathForTest(
+                        m.get(m.size() - 1).textContent());
+                int pn = extractPhaseNumberFromPromptForTest(
+                        m.get(m.size() - 1).textContent());
+                String body = "modelA body for phase " + pn
+                        + " (size>50 + tag below)\n\n"
+                        + "<!-- sdd-phase-end-" + pn + " -->";
+                try {
+                    Files.createDirectories(Path.of(path).getParent());
+                    Files.writeString(Path.of(path), body);
+                } catch (IOException e) { throw new RuntimeException(e); }
+                return Stream.of(new StreamEvent.RunEnd("end_turn", List.of()));
+            }
+            @Override public String modelId() { return "modelA"; }
+        };
+        ChatClient modelBClient = new ChatClient() {
+            @Override
+            public Stream<StreamEvent> stream(List<Message> m, String s, List<Tool> t) {
+                String path = extractArtefactPathForTest(
+                        m.get(m.size() - 1).textContent());
+                int pn = extractPhaseNumberFromPromptForTest(
+                        m.get(m.size() - 1).textContent());
+                String body = "modelB body for phase " + pn
+                        + " (size>50 + tag below)\n\n"
+                        + "<!-- sdd-phase-end-" + pn + " -->";
+                try {
+                    Files.createDirectories(Path.of(path).getParent());
+                    Files.writeString(Path.of(path), body);
+                } catch (IOException e) { throw new RuntimeException(e); }
+                return Stream.of(new StreamEvent.RunEnd("end_turn", List.of()));
+            }
+            @Override public String modelId() { return "modelB"; }
+        };
+        // The factory asks for the model, records it, and
+        // returns the per-model client. We pass modelAClient
+        // as the "default" so the unused-arg check at the
+        // orchestrator's 4-arg ctor is satisfied.
+        java.util.function.Function<String, ChatClient> factory = m -> {
+            requestedModels.add(m);
+            if ("modelA".equals(m)) return modelAClient;
+            if ("modelB".equals(m)) return modelBClient;
+            return modelAClient;
+        };
+        SddOrchestrator orch = new SddOrchestrator(
+                FakeBundleLoader.canned(), modelAClient, List.of(), factory);
+        // Phase 1 with model=modelA.
+        SddPhaseState started = orch.start("e5 factory test", tmpRoot, "modelA");
+        // Approve and pin model=modelB on phase 2.
+        SddPhaseState advanced = orch.advance(
+                started.slug, "approve", null, "modelB");
+        // The factory was consulted for both phases with the
+        // right model ids.
+        assertThat(requestedModels)
+                .as("R709-E5: the factory must be called per phase with the user-pinned model")
+                .containsExactly("modelA", "modelB");
+        // The actual stream() call went to the right per-model
+        // client (verified via the body each model writes).
+        Path phase1 = Path.of(tmpRoot.toString(), ".aethercode", "sdd",
+                started.slug, "constitution.md");
+        Path phase2 = Path.of(tmpRoot.toString(), ".aethercode", "sdd",
+                started.slug, "spec.md");
+        assertThat(Files.readString(phase1))
+                .as("phase 1 was routed to modelA's client")
+                .contains("modelA body");
+        assertThat(Files.readString(phase2))
+                .as("phase 2 was routed to modelB's client (per R709-E5 advance override)")
+                .contains("modelB body");
+        orch.abort(advanced.slug, tmpRoot, null);
+    }
+
     // -------- fakes --------
 
     /** Minimal ChatClient that pretends to be the model. The orchestrator

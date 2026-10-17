@@ -54,6 +54,20 @@ public final class SddOrchestrator {
     private final SddBundleLoader bundle;
     private final ChatClient chatClient;
     private final List<Tool> toolPool;
+    /**
+     * R709-E5 engine-side: factory that returns the
+     * {@link ChatClient} for a given model id. The default
+     * factory returns the orchestrator's primary client
+     * regardless of model (so {@code model} is recorded on
+     * the phase but the actual stream() call goes through
+     * the same client). A future engine patch can inject a
+     * routing-aware factory here so per-phase model
+     * overrides actually pick a different provider / model.
+     * The 3-arg constructor sets this to
+     * {@code m -> chatClient}; the 4-arg constructor
+     * accepts a custom factory.
+     */
+    private final java.util.function.Function<String, ChatClient> chatClientForModel;
     /** Slug → cwd for active runs. Cleared on abort / done. */
     private final Map<String, Path> cwdBySlug = new ConcurrentHashMap<>();
 
@@ -88,9 +102,27 @@ public final class SddOrchestrator {
     public SddOrchestrator(SddBundleLoader bundle,
                           ChatClient chatClient,
                           List<Tool> toolPool) {
+        this(bundle, chatClient, toolPool, m -> chatClient);
+    }
+
+    /**
+     * R709-E5 engine-side: same as the 3-arg ctor but with
+     * a model-routing factory. The factory is called per
+     * phase with the user-supplied model id (or null when
+     * the user didn't override). A future engine patch
+     * supplies a routing-aware factory so "opus-4" picks
+     * the opus client and "sonnet" picks the sonnet client.
+     */
+    public SddOrchestrator(SddBundleLoader bundle,
+                          ChatClient chatClient,
+                          List<Tool> toolPool,
+                          java.util.function.Function<String, ChatClient> chatClientForModel) {
         this.bundle = Objects.requireNonNull(bundle);
         this.chatClient = Objects.requireNonNull(chatClient);
         this.toolPool = toolPool == null ? List.of() : List.copyOf(toolPool);
+        this.chatClientForModel = chatClientForModel == null
+                ? m -> chatClient
+                : chatClientForModel;
     }
 
     // ------------------------------------------------------------------
@@ -553,9 +585,21 @@ public final class SddOrchestrator {
             // phase-state.json is marked `failed` with PHASE_TIMEOUT
             // so the user can advance / abort / skip.
             StringBuilder fullText = new StringBuilder();
+            // R709-E5 engine-side: when the user pinned a model
+            // on this phase, ask the routing factory for the
+            // matching ChatClient. Default factory returns the
+            // same client regardless of model, so a daemon
+            // without a routing-aware engine still works
+            // (model recorded on the phase, but stream() goes
+            // through the same client — pre-engine-support
+            // behaviour). Future engine patch can supply a
+            // factory that maps "opus-4" → opusClient etc.
+            ChatClient activeClient = (model != null)
+                    ? chatClientForModel.apply(model)
+                    : chatClient;
             java.util.concurrent.CompletableFuture<Void> streamFuture =
                     java.util.concurrent.CompletableFuture.runAsync(() -> {
-                        Stream<StreamEvent> stream = chatClient.stream(
+                        Stream<StreamEvent> stream = activeClient.stream(
                                 List.of(user), systemPrompt, toolPool);
                         for (var ev : (Iterable<StreamEvent>) stream::iterator) {
                             if (ev instanceof StreamEvent.TextDelta td) {
