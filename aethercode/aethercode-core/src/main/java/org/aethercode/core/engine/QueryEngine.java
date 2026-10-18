@@ -11,8 +11,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -720,6 +722,270 @@ public class QueryEngine {
      *  compactor uses. The estimate is for the
      *  pre-flight gate only; the compactor's own
      *  {@code shouldCompact} is the source of truth. */
+    /**
+     * R716: strip orphan tool results from a transcript before
+     * handing it to a chat client. Some providers (notably
+     * MiniMax-M3's OpenAI-compat endpoint) strictly validate that
+     * every {@code role=TOOL_RESULT} message carries a
+     * {@code tool_call_id} that appears in a prior assistant
+     * message's {@code tool_calls}. The on-disk transcript can
+     * drift out of sync with that invariant (e.g. an assistant
+     * message's content blocks are truncated during schema-migration
+     * recovery, or a session is restored after a content-block type
+     * was renamed), at which point the LLM API returns
+     * {@code 400 "tool result's tool id(call_X) not found"}.
+     *
+     * <p>This helper is intentionally a pure filter over the input
+     * list — it does NOT mutate {@code appState.transcript()}. The
+     * returned list is a new {@code ArrayList} when any orphan
+     * entries are dropped, or the same {@code List} reference when
+     * the transcript is already clean (the common case), so the
+     * engine's snapshot / recovery / compaction paths see the
+     * authoritative view.
+     *
+     * <p>An entry is "orphan" when:
+     * <ul>
+     *   <li>it is a {@code TOOL_RESULT} message, AND</li>
+     *   <li>its {@code tool_use_id} (taken from
+     *       {@code metadata.tool_use_id} for the {@code Message}
+     *       side, or the {@code toolUseId} field of any
+     *       {@code ToolResultBlock} content) is not present in the
+     *       set of {@code id} fields from any assistant
+     *       {@code ToolUseBlock} seen earlier in the same list.</li>
+     * </ul>
+     *
+     * <p>Plain {@code user}/{@code assistant}/{@code system}
+     * messages always pass through. The set of {@code tool_use_id}s
+     * is built up scan-order, so a tool_use followed by a tool_result
+     * is matched correctly, and a tool_result whose tool_use appears
+     * later in the list is dropped (the API will reject the latter
+     * case too — it requires strict ordering).
+     */
+    public static List<Message> stripOrphanToolResults(List<Message> transcript) {
+        if (transcript == null || transcript.isEmpty()) return transcript;
+        Set<String> knownToolUseIds = new HashSet<>();
+        List<Message> cleaned = null; // lazily allocated on first drop
+        for (int i = 0; i < transcript.size(); i++) {
+            Message m = transcript.get(i);
+            if (m == null) continue;
+            // Collect every tool_use id from assistant messages as we go.
+            // ToolUseBlock can be embedded in an assistant message
+            // either as a single block or alongside text blocks, so
+            // we scan the whole content array.
+            if (m.role() == Role.ASSISTANT) {
+                for (ContentBlock b : m.content()) {
+                    if (b instanceof ContentBlock.ToolUseBlock tu) {
+                        if (tu.id() != null && !tu.id().isBlank()) {
+                            knownToolUseIds.add(tu.id());
+                        }
+                    }
+                }
+            }
+            // Decide whether this message must be dropped.
+            boolean drop = false;
+            String orphanToolUseId = null; // captured here so the warn below has it
+            if (m.role() == Role.TOOL_RESULT) {
+                String toolUseId = null;
+                // Prefer the metadata field (canonical) — fall back to
+                // the ToolResultBlock's toolUseId for messages that
+                // built the tool_use_id differently.
+                if (m.metadata() != null && m.metadata().get("tool_use_id") instanceof String s) {
+                    toolUseId = s;
+                }
+                if (toolUseId == null || toolUseId.isBlank()) {
+                    for (ContentBlock b : m.content()) {
+                        if (b instanceof ContentBlock.ToolResultBlock tr) {
+                            toolUseId = tr.toolUseId();
+                            if (toolUseId != null && !toolUseId.isBlank()) break;
+                        }
+                    }
+                }
+                if (toolUseId == null || !knownToolUseIds.contains(toolUseId)) {
+                    drop = true;
+                    orphanToolUseId = toolUseId;
+                }
+            }
+            if (drop) {
+                if (cleaned == null) {
+                    cleaned = new ArrayList<>(transcript.size() - 1);
+                    for (int j = 0; j < i; j++) cleaned.add(transcript.get(j));
+                }
+                // log once per drop so a transcript with N orphans
+                // doesn't spam N log lines (the per-message reason
+                // is in the count below).
+                LOG.warn("R716: dropping orphan tool result message at index {} "
+                        + "(tool_use_id={} not present in any prior tool_use block); "
+                        + "this is a transcript-recovery path for transcripts that drifted "
+                        + "out of sync with the strict tool_call_id ordering some providers require",
+                        i, orphanToolUseId);
+            } else if (cleaned != null) {
+                cleaned.add(m);
+            }
+        }
+        if (cleaned == null) return transcript; // fast path: no orphans
+        if (LOG.isInfoEnabled() && cleaned.size() < transcript.size()) {
+            LOG.info("R716: stripOrphanToolResults dropped {} orphan tool result(s) from transcript of {} messages",
+                    transcript.size() - cleaned.size(), transcript.size());
+        }
+        return cleaned;
+    }
+
+    /**
+     * R716 final: hard-cap the transcript so a long-running session
+     * can't blow the model's per-call input limit (MiniMax-M3 in
+     * particular rejects with {@code 400 "invalid params, context
+     * window exceeds limit (2013)"} when system + tools + transcript
+     * exceed its actual ceiling — which is well below the 1M tokens
+     * the model declares in {@code providers.yaml}). The on-disk
+     * transcript is NOT mutated; only the wire-side copy is trimmed.
+     *
+     * <p>Strategy: count the raw {@link Message} count + the sum of
+     * text characters across TextBlock / ToolResultBlock content. If
+     * either exceeds the cap, drop messages from the HEAD of the
+     * list — never from the tail — so the most-recent context
+     * (which the user actually cares about) survives intact. If
+     * anything was dropped, prepend a single synthetic
+     * {@code role=USER} note that explains what happened, so the
+     * model doesn't silently lose the tail-anchored prefix.
+     *
+     * <p>Pure filter: returns the same {@code List} reference when
+     * the transcript is already within bounds (the common case), or
+     * a new {@code ArrayList} when a trim fires. Safe to call from
+     * the engine loop without coordination.
+     *
+     * <p>Defaults (caller pass-through to the static fields):
+     * {@link #DEFAULT_MAX_TRANSCRIPT_MESSAGES} = 300 messages,
+     * {@link #DEFAULT_MAX_TRANSCRIPT_CHARS} = 800_000 characters
+     * (~ 200K tokens at 4 chars/token, well under MiniMax-M3's
+     * actual ceiling once you add system prompt + 35 tool defs).
+     * Override with the
+     * {@code AETHERCODE_R716_MAX_MSGS} / {@code AETHERCODE_R716_MAX_CHARS}
+     * env vars for tighter or looser limits in field tests.
+     */
+    public static final int DEFAULT_MAX_TRANSCRIPT_MESSAGES = 300;
+    public static final int DEFAULT_MAX_TRANSCRIPT_CHARS = 800_000;
+
+    public static List<Message> trimHeadIfOversized(
+            List<Message> transcript,
+            int maxMessages,
+            int maxChars) {
+        if (transcript == null || transcript.isEmpty()) return transcript;
+        // Resolve env-overrides once per call. The helper is invoked
+        // per turn from stream(...), so the cost is negligible — and
+        // reading env vars here means a daemon restart isn't needed
+        // to pick up a field-test override.
+        int envMsgMax = readIntEnv("AETHERCODE_R716_MAX_MSGS", -1);
+        int envCharMax = readIntEnv("AETHERCODE_R716_MAX_CHARS", -1);
+        if (envMsgMax > 0) maxMessages = envMsgMax;
+        if (envCharMax > 0) maxChars = envCharMax;
+
+        if (transcript.size() <= maxMessages) {
+            // still possible to be char-oversized even when count is
+            // small (one big tool_result block). Compute the total
+            // only on this path so healthy transcripts stay fast.
+            long totalChars = 0;
+            for (Message m : transcript) {
+                totalChars += messageCharLength(m);
+            }
+            if (totalChars <= maxChars) return transcript;
+        }
+
+        // Walk from the tail backwards, accumulating the most-recent
+        // messages that fit inside the cap. Stop either when we hit
+        // a message count ceiling OR a char ceiling — whichever
+        // triggers first. We always preserve at least
+        // preserveFloor (25) messages so the model has enough
+        // back-and-forth to make sense of the latest user turn.
+        int preserveFloor = Math.min(25, maxMessages);
+        List<Message> tail = new ArrayList<>(Math.min(maxMessages, transcript.size()));
+        int kept = 0;
+        long chars = 0;
+        int droppedFromHead = 0;
+        for (int i = transcript.size() - 1; i >= 0; i--) {
+            Message m = transcript.get(i);
+            int msgChars = messageCharLength(m);
+            boolean overCap = tail.size() >= maxMessages
+                    || (chars + msgChars > maxChars && tail.size() >= preserveFloor);
+            if (overCap) {
+                // everything earlier than this index is going to be
+                // dropped (i.e. transcript[0..i] inclusive is the
+                // head). count the leftovers and break.
+                droppedFromHead = i + 1;
+                break;
+            }
+            tail.add(m);
+            chars += msgChars;
+        }
+        if (droppedFromHead == 0) {
+            // We never tripped the cap — usually because tail.size()
+            // ran out before hitting maxMessages AND every message
+            // fit under char-max. Return same reference (fast path).
+            return transcript;
+        }
+        // Reverse tail so the surviving subset reads in original
+        // order. Then prepend a synthetic note.
+        java.util.Collections.reverse(tail);
+        Message trimNote = new Message(
+                "r716-trim-" + System.currentTimeMillis(),
+                Role.USER,
+                List.of(new ContentBlock.TextBlock(
+                        "[R716 transcript trim] Earlier messages in this session were dropped to "
+                                + "fit the model's per-call context limit. "
+                                + droppedFromHead + " of " + transcript.size()
+                                + " messages were trimmed from the head (preserved the most-recent "
+                                + tail.size() + "). "
+                                + "Continue the conversation from where the user left off; "
+                                + "do NOT comment on the trim itself.")),
+                null,
+                java.util.Map.of("kind", "transcript-trim-side-note", "trimmed", droppedFromHead));
+        tail.add(0, trimNote);
+        LOG.warn("R716: trimHeadIfOversized dropped {} head message(s) of {} (kept {}, "
+                        + "maxMessages={}, maxChars={})",
+                droppedFromHead, transcript.size(), tail.size() - 1, // -1 for the trim note
+                maxMessages, maxChars);
+        return tail;
+    }
+
+    /** Env-reader helper that returns the parsed int or the default
+     *  when the env var is unset, blank, or unparseable. Kept
+     *  package-private so unit tests can shadow the env via a
+     *  ProcessBuilder / test harness if needed. */
+    static int readIntEnv(String key, int defaultValue) {
+        String raw;
+        try {
+            raw = System.getenv(key);
+        } catch (SecurityException ignored) {
+            return defaultValue;
+        }
+        if (raw == null || raw.isBlank()) return defaultValue;
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    /** Sum of {@code text} / {@code stringified tool-result content}
+     *  across every ContentBlock of a single message. We don't try
+     *  to be exact about tool-result JSON: a rough char count is
+     *  good enough as a per-call budget gate, and the model isn't
+     *  sensitive to off-by-one on this number. */
+    private static int messageCharLength(Message m) {
+        int total = 0;
+        for (ContentBlock b : m.content()) {
+            if (b instanceof ContentBlock.TextBlock t) {
+                total += t.text().length();
+            } else if (b instanceof ContentBlock.ToolResultBlock r) {
+                if (r.content() instanceof String s) total += s.length();
+                else total += String.valueOf(r.content()).length();
+            } else if (b instanceof ContentBlock.ToolUseBlock tu) {
+                if (tu.name() != null) total += tu.name().length();
+                if (tu.input() != null) total += String.valueOf(tu.input()).length();
+            }
+        }
+        return Math.max(total, 1);
+    }
+
     private long estimateTranscriptTokens() {
         long total = 0;
         for (Message m : appState.transcript()) {
@@ -1206,8 +1472,50 @@ public class QueryEngine {
                     // the live field; we temporarily swap it in via a
                     // local-only path here.
                     String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix);
+                    // R716: filter orphan tool results before handing
+                    // the transcript to the chat client. Some providers
+                    // (notably MiniMax-M3's OpenAI-compat endpoint) strictly
+                    // validate that every role=TOOL_RESULT message carries
+                    // a tool_use_id that appears in a prior assistant
+                    // message's tool_calls. The on-disk transcript can
+                    // drift out of sync with that invariant when a
+                    // content block is truncated during recovery or when
+                    // a session is restored across a schema migration —
+                    // the result is a 400 with the cryptic error code
+                    // 2013 "tool result's tool id(call_X) not found".
+                    // Stripping the orphan entries before the wire call
+                    // is a no-op for healthy transcripts (every
+                    // tool_result has a matching tool_use) and a recovery
+                    // path for the drifted ones. The transcript itself
+                    // is NOT mutated — only the wire-side copy.
+                    List<Message> cleanedTranscript = appState.transcript();
+                    // R716 final: trim the head of the transcript
+                    // FIRST. AutoCompact's shouldCompact gates on
+                    // the model's declared 1M-token window in
+                    // providers.yaml — but MiniMax-M3 in practice
+                    // rejects a much smaller payload with "context
+                    // window exceeds limit (2013)" 400. The trim
+                    // caps BOTH message count AND total char count
+                    // to fix that. Trimming first matters for the
+                    // next step: a tool_result deep in the
+                    // surviving tail may reference a tool_use_id
+                    // whose tool_use was dropped from the head;
+                    // running stripOrphanToolResults AFTER the
+                    // trim catches those orphans, not before.
+                    cleanedTranscript = trimHeadIfOversized(
+                            cleanedTranscript,
+                            DEFAULT_MAX_TRANSCRIPT_MESSAGES,
+                            DEFAULT_MAX_TRANSCRIPT_CHARS);
+                    // R716: filter orphan tool results AFTER the
+                    // trim. The trim can leave tail tool_results
+                    // whose matching tool_use was dropped from
+                    // the head — running stripOrphanToolResults
+                    // here drops those. The transcript itself is
+                    // NOT mutated — only the wire-side copy. Pure
+                    // filter, same-reference fast path.
+                    cleanedTranscript = stripOrphanToolResults(cleanedTranscript);
                     currentLlmStream = effectiveChatClient.stream(
-                            new ArrayList<>(appState.transcript()), turnSystem, appState.toolPool());
+                            cleanedTranscript, turnSystem, appState.toolPool());
                     currentLlmIt = currentLlmStream.iterator();
                     pending = new ArrayList<>();
                     stopReason = "end_turn";
