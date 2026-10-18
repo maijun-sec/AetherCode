@@ -1489,17 +1489,28 @@ public class QueryEngine {
                     // path for the drifted ones. The transcript itself
                     // is NOT mutated — only the wire-side copy.
                     List<Message> cleanedTranscript = appState.transcript();
-                    // R717-L4: strip-oldest rescue. Cheaper than
+                    // R718-L3: transcript-level tool-result dedup.
+                    // Runs BEFORE the strip-oldest pass so a
+                    // transcript with 4 identical file_reads of
+                    // the same file gets collapsed to 1, leaving
+                    // the strip with less work to do. Pure filter,
+                    // same-reference fast path when no dupes
+                    // exist. Zero API cost. Mirrors the Claude
+                    // Code "duplicate tool_result collapse" layer.
+                    cleanedTranscript = TranscriptPruner.dedupeToolResults(cleanedTranscript, metricsCollector);
+                    // R718-L4: strip-oldest rescue. Cheaper than
                     // the R716 hard cap, runs BEFORE the LLM call
                     // as a "your transcript is over the per-call
                     // limit, drop oldest" guard. Default cap is
-                    // 200K chars (~50K tokens — the user's
+                    // 150K chars (~37K tokens — the user's
                     // chosen sweet spot below the declared 1M
-                    // window). Tunable via
+                    // window, lowered from R717's 200K per the
+                    // "more frequent compression" directive).
+                    // Tunable via
                     // AETHERCODE_R717_PRE_CALL_MAX_CHARS.
                     // Same-reference fast path when under cap.
                     // Pure filter, transcript on disk is NOT
-                    // mutated. R717-L4 fires here BEFORE the R716
+                    // mutated. R718-L4 fires here BEFORE the R716
                     // hard cap so a 1700-message transcript gets
                     // reduced to "last 16 tail" with a synthetic
                     // note rather than a blunt "keep last 300"
@@ -1510,7 +1521,8 @@ public class QueryEngine {
                             cleanedTranscript,
                             TranscriptPruner.DEFAULT_PRE_CALL_MAX_CHARS,
                             TranscriptPruner.DEFAULT_MIN_KEEP,
-                            TranscriptPruner.DEFAULT_TRUNCATE_TO_CHARS);
+                            TranscriptPruner.DEFAULT_TRUNCATE_TO_CHARS,
+                            metricsCollector);
                     // R716 final: trim the head of the transcript
                     // when it exceeds the hard cap. Default 300
                     // messages / 800K chars. Acts as a defence

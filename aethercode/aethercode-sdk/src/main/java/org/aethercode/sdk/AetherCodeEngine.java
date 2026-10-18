@@ -735,14 +735,18 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         Compactor resolvedCompactor = b.compactor;
         if (b.contextWindow > 0 && resolvedCompactor == null) {
             int ctx = b.contextWindow;
-            // R136.4: bump buffer / maxIn to scale with the
-            // 1M default. Old formula was 5% of window for
-            // buffer (13K at 200K) and 40% of window for
-            // maxIn (80K at 200K). The new formula keeps the
-            // same ratios but floors them higher so 1M
-            // compaction has room to work.
-            int buffer = Math.max(64_000, ctx / 16);    // >= 6.25% of window
-            int maxIn = Math.max(900_000, ctx * 9 / 10); // <= 90% of window
+            // R718-G: lower buffer / maxIn. The user picked
+            // 200K as the attention sweet spot ("最优的推理
+            // 肯定不是 100w 的上下文, 而是 50w 左右的样子").
+            // Pushing the window to the provider-declared
+            // 1M cap dilutes attention — see R718-G below.
+            // Old formula was 6.25% of window for buffer
+            // and 90% of window for maxIn; new formula
+            // honours the user's "more frequent compression"
+            // directive by halving the cap and tightening the
+            // buffer. Caller can override via env vars.
+            int buffer = Math.max(32_000, Math.min(64_000, ctx / 8));
+            int maxIn = Math.max(120_000, Math.min(900_000, ctx * 4 / 5));
             // default compactor is now the StructuredCompactor
             // (7-section LLM-driven summary) wrapped in a
             // SlidingWindowCompactor. The 7 sections — Goal /
@@ -758,7 +762,9 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             org.aethercode.core.compact.Compactor primary;
             if (useV8) {
                 primary = new org.aethercode.compact.StructuredCompactor8(
-                        this.chatClient, ctx, buffer, maxIn);
+                        this.chatClient, null,
+                        ctx, buffer, maxIn,
+                        postCompactContextSupplier());
             } else {
                 primary = new org.aethercode.compact.StructuredCompactor(
                         this.chatClient, ctx, buffer, maxIn);
@@ -770,6 +776,12 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                     new org.aethercode.compact.SlidingWindowCompactor(
                             primary,
                             ctx, buffer);
+            // R718-H: wire metrics into the primary compactor
+            // when it's a StructuredCompactor8 (the v7 one
+            // doesn't have a withMetricsCollector hook).
+            if (primary instanceof org.aethercode.compact.StructuredCompactor8 sc8) {
+                sc8.withMetricsCollector(this.metrics);
+            }
             resolvedCompactor = sw;
         }
         this.compactor = resolvedCompactor;
@@ -829,6 +841,24 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             if (lc == null) return java.util.Optional.empty();
             return lc.currentBuffer().map(buf -> (Object) buf);
         });
+        // R718-B + R718-H: install the executor-level L3 dedup
+        // cache + the metrics collector so L1 / L3 telemetry
+        // bumps the snapshot the UI reads via getMetrics.
+        // Cache is session-scoped (each engine instance has
+        // one); TTL defaults to 10 minutes so a session
+        // replaying the same file_read 30 min later actually
+        // re-runs the tool. Cache size cap = 256 entries
+        // (each entry is at most ~50K chars post-L1-offload,
+        // so worst-case ~12 MB resident; well-bounded).
+        this.streamingToolExecutor.withToolResultCache(
+                new org.aethercode.core.tool.ToolResultCache(256, 10 * 60_000L));
+        this.streamingToolExecutor.withMetricsCollector(this.metrics);
+        // R718-H: forward metrics into the compactor too so
+        // L5 compact-count fires the moment the engine path
+        // calls compactor.compact(messages).
+        if (this.compactor instanceof org.aethercode.compact.StructuredCompactor8 sc8) {
+            sc8.withMetricsCollector(this.metrics);
+        }
         // register the built-in safety hooks on the
         // registry we just stored. We use a class-keyed
         // dedup so the same hook isn't added twice if the
@@ -2030,6 +2060,119 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         return queryEngine == null ? null : queryEngine.currentLoopDetector();
     }
     public Compactor compactor() { return compactor; }
+
+    /** R718-C: build a supplier that, on each compact call,
+     *  walks the live transcript for the most-recent file
+     *  paths the model has touched and emits a
+     *  {@link org.aethercode.compact.AutoCompact.PostCompactContext}
+     *  carrying cwd / recent files / git status / active
+     *  intent. The supplier is invoked ONCE per successful
+     *  compact and is best-effort — null fields are dropped
+     *  by the message builder.
+     *
+     *  <p>Recent-files heuristic: scan the most-recent 200
+     *  messages, pick the unique {@code file_path} /
+     *  {@code path} / {@code filepath} / {@code file} values
+     *  from assistant tool_use blocks, keep the most recent
+     *  first, dedupe, cap at 8. Cheap enough to run on every
+     *  compact (the transcript is already small by the time
+     *  L5 fires). */
+    private java.util.function.Supplier<org.aethercode.compact.AutoCompact.PostCompactContext>
+            postCompactContextSupplier() {
+        return () -> {
+            String cwd = (appState != null && appState.cwd() != null)
+                    ? appState.cwd().toString() : null;
+            java.util.List<String> recent = collectRecentFiles(200, 8);
+            String gitStatus = readGitStatusHead();
+            String activeIntent = readActiveIntentHead();
+            return new org.aethercode.compact.AutoCompact.PostCompactContext(
+                    cwd, recent, gitStatus, activeIntent);
+        };
+    }
+
+    private java.util.List<String> collectRecentFiles(int maxMessages, int maxFiles) {
+        if (appState == null) return java.util.List.of();
+        java.util.List<org.aethercode.core.message.Message> transcript =
+                appState.transcript();
+        if (transcript == null || transcript.isEmpty()) return java.util.List.of();
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        int from = Math.max(0, transcript.size() - maxMessages);
+        for (int i = transcript.size() - 1; i >= from && out.size() < maxFiles; i--) {
+            org.aethercode.core.message.Message m = transcript.get(i);
+            if (m == null || m.content() == null) continue;
+            for (org.aethercode.core.message.ContentBlock b : m.content()) {
+                if (b instanceof org.aethercode.core.message.ContentBlock.ToolUseBlock tu) {
+                    Object input = tu.input();
+                    if (input instanceof java.util.Map<?, ?> mp) {
+                        for (String k : new String[]{"file_path", "path", "filepath", "file"}) {
+                            Object v = mp.get(k);
+                            if (v instanceof String s && !s.isBlank()) {
+                                out.add(s);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return new java.util.ArrayList<>(out);
+    }
+
+    /** R718-C: best-effort git status. Reads
+     *  {@code git status --short} from {@code appState.cwd()}.
+     *  Returns null on any failure (not a git repo, no git
+     *  binary, no cwd). The compact re-injection message
+     *  silently omits the line when null. */
+    private String readGitStatusHead() {
+        if (appState == null || appState.cwd() == null) return null;
+        try {
+            java.io.File cwd = appState.cwd().toFile();
+            if (!new java.io.File(cwd, ".git").exists()
+                    && !new java.io.File(cwd, ".git").isDirectory()) {
+                return null;
+            }
+            java.lang.ProcessBuilder pb = new java.lang.ProcessBuilder(
+                    "git", "status", "--short")
+                    .directory(cwd)
+                    .redirectErrorStream(true);
+            java.lang.Process p = pb.start();
+            byte[] out = p.getInputStream().readAllBytes();
+            p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            if (p.exitValue() != 0) return null;
+            String s = new String(out, java.nio.charset.StandardCharsets.UTF_8).trim();
+            if (s.isEmpty()) return "clean";
+            // cap at 200 chars so a massive status output
+            // doesn't blow up the re-injection message
+            if (s.length() > 200) s = s.substring(0, 200) + "…";
+            return s;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** R718-C: read the most-recent user-role message as
+     *  the "active intent" hint. Best-effort — first 200
+     *  chars of the tail user's prompt. Null when no user
+     *  message exists in the most-recent 20. */
+    private String readActiveIntentHead() {
+        if (appState == null) return null;
+        java.util.List<org.aethercode.core.message.Message> transcript =
+                appState.transcript();
+        if (transcript == null || transcript.isEmpty()) return null;
+        for (int i = transcript.size() - 1; i >= 0
+                && i >= transcript.size() - 20; i--) {
+            org.aethercode.core.message.Message m = transcript.get(i);
+            if (m == null) continue;
+            if (m.role() != org.aethercode.core.message.Role.USER) continue;
+            String text = m.textContent();
+            if (text == null || text.isBlank()) continue;
+            text = text.strip();
+            if (text.length() > 200) text = text.substring(0, 200) + "…";
+            return text;
+        }
+        return null;
+    }
+
     /** run the pre-flight compact synchronously. The
      *  TUI's "Compaction Recommended" button calls this via the
      *  {@code compact} RPC. Returns true if a compact

@@ -41,6 +41,43 @@ public final class MetricsCollector {
     /** cumulative output tokens. */
     private final AtomicLong outputTokens   = new AtomicLong();
 
+    // R718: 5-layer transcript-pruning pipeline telemetry.
+    // Each event is bumped exactly once per pipeline firing so the
+    // UI / dashboards can see "compression actually happens" —
+    // a session that never trips any layer is over-budget and
+    // should show a warning.
+    /** R718-L1: how many tool results were offloaded to disk and
+     *  replaced with a preview stub. Fires in
+     *  StreamingToolExecutor.runOneBackpressured. */
+    private final AtomicLong l1Offloads            = new AtomicLong();
+    /** R718-L1: chars saved on the wire by L1 offloads. */
+    private final AtomicLong l1CharsSaved          = new AtomicLong();
+    /** R718-L2: how many messages were microcompacted (collapsed
+     *  duplicate lines / trimmed trailing whitespace / shortened
+     *  paths) inside the wire-side transcript. Fires in
+     *  TranscriptPruner.stripOldestToFit. */
+    private final AtomicLong l2Microcompacted      = new AtomicLong();
+    /** R718-L2: chars saved by L2 microcompact. */
+    private final AtomicLong l2CharsSaved          = new AtomicLong();
+    /** R718-L3: how many tool calls were deduped at the executor
+     *  level (same tool + same args hit within TTL). */
+    private final AtomicLong l3DedupHits           = new AtomicLong();
+    /** R718-L3: how many duplicate tool_results were collapsed
+     *  inside the transcript by the transcript-level dedup pass. */
+    private final AtomicLong l3TranscriptDedupHits = new AtomicLong();
+    /** R718-L4: how many strip-oldest rescues fired. */
+    private final AtomicLong l4Strips              = new AtomicLong();
+    /** R718-L4: messages dropped by L4 in total. */
+    private final AtomicLong l4Dropped             = new AtomicLong();
+    /** R718-L5: how many LLM-driven summarisations actually ran. */
+    private final AtomicLong l5Compacts            = new AtomicLong();
+    /** R718-L5: tokens the last compaction produced (input tokens
+     *  to the summarise call). 0 when no compact has run. */
+    private final AtomicLong lastCompactionTokens  = new AtomicLong();
+    /** R718-L5: how many consecutive summarisation failures have
+     *  tripped the circuit breaker. 0 when healthy. */
+    private final AtomicLong compactFailures       = new AtomicLong();
+
     // Cost is tracked as a double because cents precision isn't needed.
     private final java.util.concurrent.atomic.AtomicReference<Double> costUsd =
         new java.util.concurrent.atomic.AtomicReference<>(0.0);
@@ -57,6 +94,36 @@ public final class MetricsCollector {
     public void incPermissionDeny() { permissionDenies.incrementAndGet(); }
     public void incCacheHit()      { cacheHits.incrementAndGet(); }
     public void incCacheMiss()     { cacheMisses.incrementAndGet(); }
+
+    // R718: 5-layer compression telemetry. The UI's
+    // "transcript compression events" log reads these from
+    // getMetrics() to show "L1 offload saved 12K chars" /
+    // "L4 stripped 200 oldest" / "L5 summarised at 140K tokens".
+    // All counters are cumulative across the session lifetime —
+    // never reset, even after compaction (so the user can see
+    // "this session has been compressed 7 times so far").
+    public void incL1Offload(long charsSaved) {
+        if (charsSaved < 0) charsSaved = 0;
+        l1Offloads.incrementAndGet();
+        l1CharsSaved.addAndGet(charsSaved);
+    }
+    public void incL2Microcompact(long charsSaved) {
+        if (charsSaved < 0) charsSaved = 0;
+        l2Microcompacted.incrementAndGet();
+        l2CharsSaved.addAndGet(charsSaved);
+    }
+    public void incL3DedupHit()           { l3DedupHits.incrementAndGet(); }
+    public void incL3TranscriptDedupHit() { l3TranscriptDedupHits.incrementAndGet(); }
+    public void incL4Strip(int dropped) {
+        if (dropped < 0) dropped = 0;
+        l4Strips.incrementAndGet();
+        l4Dropped.addAndGet(dropped);
+    }
+    public void incL5Compact(long summaryInputTokens) {
+        l5Compacts.incrementAndGet();
+        if (summaryInputTokens > 0) lastCompactionTokens.set(summaryInputTokens);
+    }
+    public void incCompactFailure()       { compactFailures.incrementAndGet(); }
 
     /** record per-call token usage from the chat client. Negative
      *  values are clamped to 0. */
@@ -102,6 +169,22 @@ public final class MetricsCollector {
         // StatusBar show "—" for these counters even after a run.
         m.put("totalQueries",      turnsStarted.get());
         m.put("totalToolCalls",    toolCalls.get());
+        // R718: 5-layer compression telemetry. Surfaced under
+        // the same snapshot so the UI's TokenUsage panel /
+        // SessionBar can render "L1×3, L4×1, L5×1" without a
+        // second RPC. Names mirror the layer convention so the
+        // UI doesn't have to know internal details.
+        m.put("l1Offloads",            l1Offloads.get());
+        m.put("l1CharsSaved",          l1CharsSaved.get());
+        m.put("l2Microcompacted",      l2Microcompacted.get());
+        m.put("l2CharsSaved",          l2CharsSaved.get());
+        m.put("l3DedupHits",           l3DedupHits.get());
+        m.put("l3TranscriptDedupHits", l3TranscriptDedupHits.get());
+        m.put("l4Strips",              l4Strips.get());
+        m.put("l4Dropped",             l4Dropped.get());
+        m.put("l5Compacts",            l5Compacts.get());
+        m.put("lastCompactionTokens",  lastCompactionTokens.get());
+        m.put("compactFailures",       compactFailures.get());
         return m;
     }
 

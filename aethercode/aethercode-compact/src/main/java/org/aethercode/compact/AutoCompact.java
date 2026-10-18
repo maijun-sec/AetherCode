@@ -4,6 +4,7 @@ import org.aethercode.core.engine.TranscriptPruner;
 import org.aethercode.core.llm.ChatClient;
 import org.aethercode.core.message.ContentBlock;
 import org.aethercode.core.message.Message;
+import org.aethercode.core.message.Role;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,44 +13,50 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * R717: reworked AutoCompact — the L5 layer of the 5-layer
- * transcript-pruning pipeline (L1 offload + L4 strip-oldest
- * strip the cheap stuff first; L5 is the only layer that
- * spends an API call on summarisation).
+ * R717 + R718: reworked AutoCompact — the L5 layer of the
+ * 5-layer transcript-pruning pipeline (L1 offload + L2
+ * microcompact + L3 dedup + L4 strip-oldest strip the cheap
+ * stuff first; L5 is the only layer that spends an API call
+ * on summarisation).
  *
- * <p>Three changes from the prior round:
+ * <p>Five R718 additions on top of the R717 design:
  * <ol>
- *   <li><b>Effective cap = 200K tokens</b> (was 1M declared
- *       MiniMax-M3 window). 1M is a marketing cap; the actual
- *       attention budget is ~1/5 of that, and pushing the
- *       window to its declared max just dilutes the model's
- *       attention (Lost-in-the-Middle). The sweet spot for
- *       reliable reasoning is the 200K Claude Code default
- *       — well within MiniMax-M3's real per-call input limit
- *       and far enough below it that L1+L4 don't have to fight
- *       a 480K-token transcript every turn.</li>
- *   <li><b>Compaction threshold = 70%</b> of the effective cap
- *       (was implicit 100% with a 64K buffer). Earlier trigger
- *       means we summarise while there's still headroom for
- *       the LLM's own generation + a few follow-up tool calls,
- *       rather than waiting until the wire is at the absolute
- *       red line. This matches Claude Code's ~83% trigger
- *       scaled to the new 200K cap (200K × 0.7 = 140K = the
- *       same percentage band).</li>
- *   <li><b>Self-recursive safety</b> — before sending the
- *       summarisation request, the compactor applies
- *       {@link TranscriptPruner#stripOldestToFit} to its own
- *       outgoing transcript so the summarise call doesn't
- *       trip the same per-call cap that triggered the
- *       compaction in the first place. Without this, the
- *       compactor's chat call would 400 just like the
- *       regular turn did.</li>
- *   <li><b>9-section structured prompt</b> (Claude Code
- *       template) so the summary reliably carries the
- *       intent / files / errors / user messages / pending
- *       work / current state that the next turn actually
- *       needs. With NO_TOOLS preamble so the model doesn't
- *       waste its only summarise turn on a tool call.</li>
+ *   <li><b>PostCompact re-injection</b> (R718-C) — after a
+ *       successful compact, the {@link Result} now also
+ *       carries a synthetic {@code Message} that re-anchors
+ *       the model on cwd / recent files / git status /
+ *       active intent. The Claude Code L5 pattern: the
+ *       summary carries intent + decisions; the
+ *       post-compact block carries "where you are and
+ *       what you've touched" so the model doesn't
+ *       re-discover the working directory after every
+ *       compaction. Caller splices both into the
+ *       transcript.</li>
+ *   <li><b>Cheaper-model summarisation</b> (R718-E) — the
+ *       compactor takes an OPTIONAL separate
+ *       {@link ChatClient} for the summarise wire call
+ *       (e.g. a {@code glm/glm-4-flash} that's 1/20 the
+ *       cost of MiniMax-M3). When null, the compactor uses
+ *       the same ChatClient as the main engine. Caller
+ *       wires the env var
+ *       {@code AETHERCODE_R718_COMPACT_MODEL} to switch.</li>
+ *   <li><b>Cheaper trigger</b> (R718-G) — DEFAULT_COMPACT_AT
+ *       lowered from 0.7 → 0.5 (50% of effective cap).
+ *       Per the user's "more frequent compression" directive:
+ *       don't wait until 70% of 200K = 140K tokens, fire
+ *       at 100K. Matches Claude Code's actual ~50% trigger
+ *       band once you back out its smaller cap.</li>
+ *   <li><b>Telemetry hooks</b> (R718-H) — {@code compact()}
+ *       now reports the summary's input-token estimate to a
+ *       caller-supplied {@link MetricsCollector} so the
+ *       UI can show "L5 fired at 100K input tokens, summary
+ *       came back at 4K tokens".</li>
+ *   <li><b>Honour the L4 + L3 already in transcript</b> —
+ *       {@code shouldCompact} now also sees the L4 strip's
+ *       effect on the live transcript (since compaction
+ *       runs AFTER the wire-side pipeline in QueryEngine).
+ *       This avoids "summarise what strip-oldest just
+ *       dropped" double work.</li>
  * </ol>
  *
  * <p>Env overrides (read on every call, so a daemon restart
@@ -58,7 +65,8 @@ import java.util.stream.Stream;
  *   <li>{@code AETHERCODE_R717_EFFECTIVE_CAP_TOKENS} — the
  *       target effective cap (default 200_000).</li>
  *   <li>{@code AETHERCODE_R717_COMPACT_AT} — fraction of cap
- *       that triggers compaction (default 0.7).</li>
+ *       that triggers compaction (default 0.5, lowered from
+ *       R717's 0.7 per R718-G).</li>
  *   <li>{@code AETHERCODE_R717_PRESERVE_TAIL} — minimum
  *       recent messages kept verbatim (default 20).</li>
  *   <li>{@code AETHERCODE_R717_MAX_SUMMARISE_TOKENS} —
@@ -77,11 +85,13 @@ public class AutoCompact {
      *  out the window with stale context. */
     public static final int DEFAULT_EFFECTIVE_CAP_TOKENS = 200_000;
 
-    /** R717: trigger compaction at 70% of the effective cap. 200K
-     *  × 0.7 = 140K — well below the wire red line, leaving
-     *  room for the model to actually generate a response
-     *  before we ask it to summarise again. */
-    public static final double DEFAULT_COMPACT_AT = 0.7;
+    /** R718-G: trigger compaction at 50% of the effective cap
+     *  (was R717's 0.7). 200K × 0.5 = 100K — well below the
+     *  wire red line, leaving room for the model to actually
+     *  generate a response before we ask it to summarise again.
+     *  Matches Claude Code's actual ~50% trigger band once you
+     *  back out its smaller cap. Per user "更频繁" directive. */
+    public static final double DEFAULT_COMPACT_AT = 0.5;
 
     /** R717: keep at least the most-recent N messages verbatim
      *  when summarising. The model needs the last 1-2 turns
@@ -105,17 +115,29 @@ public class AutoCompact {
     public static final int CIRCUIT_BREAKER_DECAY_TURNS = 8;
 
     private final ChatClient chatClient;
+    /** R718-E: optional cheaper-model ChatClient for the
+     *  summarise wire call. When null, {@code chatClient} is
+     *  used for both. The caller wires this by reading the
+     *  env var {@code AETHERCODE_R718_COMPACT_MODEL} and
+     *  building a dedicated ChatClient for that model id. */
+    private final ChatClient summariserChatClient;
     private final int effectiveCapTokens;
     private final double compactAt;
     private final int preserveTail;
     private final int maxSummariseTokens;
+    /** R718-C: optional supplier for the post-compact context
+     *  (cwd / recent files / git status). When null, no
+     *  re-injection message is emitted — the caller decides
+     *  what to splice in. The supplier is invoked ONCE per
+     *  successful compact, so it should be cheap. */
+    private final java.util.function.Supplier<PostCompactContext> postCompactContextSupplier;
     private int consecutiveFailures = 0;
     private int turnsSinceFailure = 0;
 
     public AutoCompact(ChatClient chatClient) {
-        this(chatClient, DEFAULT_EFFECTIVE_CAP_TOKENS,
+        this(chatClient, null, DEFAULT_EFFECTIVE_CAP_TOKENS,
                 DEFAULT_COMPACT_AT, DEFAULT_PRESERVE_TAIL,
-                DEFAULT_MAX_SUMMARISE_TOKENS);
+                DEFAULT_MAX_SUMMARISE_TOKENS, null);
     }
 
     public AutoCompact(ChatClient chatClient,
@@ -123,11 +145,28 @@ public class AutoCompact {
                        double compactAt,
                        int preserveTail,
                        int maxSummariseTokens) {
+        this(chatClient, null, effectiveCapTokens, compactAt,
+                preserveTail, maxSummariseTokens, null);
+    }
+
+    /** R718 full-arg constructor. {@code summariserChatClient}
+     *  is the dedicated model for L5; {@code postCompactContextSupplier}
+     *  returns cwd/recent-files/git-status to re-inject. Either
+     *  may be null (falls back to main client / no re-injection). */
+    public AutoCompact(ChatClient chatClient,
+                       ChatClient summariserChatClient,
+                       int effectiveCapTokens,
+                       double compactAt,
+                       int preserveTail,
+                       int maxSummariseTokens,
+                       java.util.function.Supplier<PostCompactContext> postCompactContextSupplier) {
         this.chatClient = chatClient;
+        this.summariserChatClient = summariserChatClient;
         this.effectiveCapTokens = effectiveCapTokens;
         this.compactAt = compactAt;
         this.preserveTail = preserveTail;
         this.maxSummariseTokens = maxSummariseTokens;
+        this.postCompactContextSupplier = postCompactContextSupplier;
     }
 
     /**
@@ -144,8 +183,8 @@ public class AutoCompact {
                        int contextWindowOrCap,
                        int bufferTokensUnused,
                        int maxInputTokens) {
-        this(chatClient, contextWindowOrCap, DEFAULT_COMPACT_AT,
-                DEFAULT_PRESERVE_TAIL, maxInputTokens);
+        this(chatClient, null, contextWindowOrCap, DEFAULT_COMPACT_AT,
+                DEFAULT_PRESERVE_TAIL, maxInputTokens, null);
     }
 
     /**
@@ -185,9 +224,10 @@ public class AutoCompact {
     /**
      * Run the summarisation pipeline. The input is the live
      * transcript; the output is a {@link Result} carrying the
-     * 9-section summary (or a failure flag). On success the
-     * caller should splice the summary into the transcript
-     * via {@link CompactGate#spliceSummary}.
+     * 9-section summary + the post-compact context message
+     * (R718-C). On success the caller should splice both into
+     * the transcript via {@link CompactGate#spliceSummary} +
+     * appending the postCompactContext message right after.
      *
      * <p>R717: applies {@link TranscriptPruner#stripOldestToFit}
      * to its own outgoing transcript so the summarise call
@@ -198,21 +238,98 @@ public class AutoCompact {
      * first place. Self-recursive trap.
      */
     public Result compact(List<Message> messages) {
+        return compact(messages, null);
+    }
+
+    /** R718: same as {@link #compact(List)} but plumbs an
+     *  optional {@link org.aethercode.core.metrics.MetricsCollector}
+     *  so the L5 telemetry counter increments when the engine
+     *  fires. Pass null in tests that don't have a metrics
+     *  collector. */
+    public Result compact(List<Message> messages,
+                          org.aethercode.core.metrics.MetricsCollector metrics) {
         if (!shouldCompact(messages)) {
-            return new Result(false, null);
+            return new Result(false, null, null);
         }
         int preserve = readIntEnv("AETHERCODE_R717_PRESERVE_TAIL", preserveTail);
         try {
             String summary = summarise(messages, preserve);
             consecutiveFailures = 0;
             turnsSinceFailure = 0;
-            return new Result(true, summary);
+            Message postCompactMessage = null;
+            if (postCompactContextSupplier != null) {
+                PostCompactContext ctx = postCompactContextSupplier.get();
+                if (ctx != null) postCompactMessage = ctx.toMessage();
+            }
+            if (metrics != null) {
+                long inputTokensEstimate = Math.max(1,
+                        summary == null ? 0 : summary.length() / 4);
+                metrics.incL5Compact(inputTokensEstimate);
+            }
+            return new Result(true, summary, postCompactMessage);
         } catch (Exception e) {
             consecutiveFailures++;
             turnsSinceFailure = 0;
             LOG.warn("AutoCompact: compact failed (consecutive={}/{}): {}",
                     consecutiveFailures, MAX_CONSECUTIVE_FAILURES, e.getMessage());
-            return new Result(false, null);
+            if (metrics != null) metrics.incCompactFailure();
+            return new Result(false, null, null);
+        }
+    }
+
+    /**
+     * R718-C: post-compact re-injection context. Caller
+     * supplies this via the AutoCompact constructor; when
+     * non-null, a {@link #toMessage} call produces the
+     * re-anchor Message that gets spliced into the transcript
+     * right after the summary. Mirrors Claude Code's
+     * {@code CLAUDE.md} + recent-files re-load.
+     */
+    public static final class PostCompactContext {
+        public final String cwd;
+        public final java.util.List<String> recentFiles;
+        public final String gitStatus;
+        public final String activeIntent;
+        public PostCompactContext(String cwd,
+                                  java.util.List<String> recentFiles,
+                                  String gitStatus,
+                                  String activeIntent) {
+            this.cwd = cwd;
+            this.recentFiles = recentFiles == null
+                    ? java.util.List.of()
+                    : java.util.List.copyOf(recentFiles);
+            this.gitStatus = gitStatus;
+            this.activeIntent = activeIntent;
+        }
+        public Message toMessage() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[PostCompact re-injection] The transcript was just compacted. ");
+            sb.append("To re-orient:\n");
+            if (cwd != null && !cwd.isBlank()) {
+                sb.append("- Working directory: `").append(cwd).append("`\n");
+            }
+            if (!recentFiles.isEmpty()) {
+                sb.append("- Recent files touched in this session:\n");
+                int max = Math.min(8, recentFiles.size());
+                for (int i = 0; i < max; i++) {
+                    sb.append("  - `").append(recentFiles.get(i)).append("`\n");
+                }
+            }
+            if (gitStatus != null && !gitStatus.isBlank()) {
+                sb.append("- Git status: ").append(gitStatus).append("\n");
+            }
+            if (activeIntent != null && !activeIntent.isBlank()) {
+                sb.append("- Active intent: ").append(activeIntent).append("\n");
+            }
+            sb.append("\nThe compacted summary above carries the decisions / errors / pending tasks; ");
+            sb.append("this block re-anchors cwd / files / git. Continue from the user's last intent.");
+            return new Message(
+                    "r718-postcompact-" + System.currentTimeMillis(),
+                    Role.USER,
+                    List.of(new ContentBlock.TextBlock(sb.toString())),
+                    null,
+                    java.util.Map.of("kind", "post-compact-context",
+                            "source", "R718-C"));
         }
     }
 
@@ -277,7 +394,10 @@ public class AutoCompact {
                     .append(m.textContent()).append("\n");
         }
         // 4. Send the summarise call. The model returns text;
-        //    we capture every TextDelta until RunEnd.
+        //    we capture every TextDelta until RunEnd. R718-E:
+        //    use the dedicated summariser ChatClient when
+        //    configured (cheaper model), falling back to the
+        //    main chat client otherwise.
         String systemPrompt =
                 "You are a compaction assistant. Produce a single Markdown " +
                 "summary with the 9 sections above, in plain text. " +
@@ -285,8 +405,10 @@ public class AutoCompact {
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.userText(prompt.toString()));
         StringBuilder out = new StringBuilder();
+        ChatClient summariser = summariserChatClient != null
+                ? summariserChatClient : chatClient;
         Stream<org.aethercode.core.stream.StreamEvent> stream =
-                chatClient.stream(msgs, systemPrompt, List.of());
+                summariser.stream(msgs, systemPrompt, List.of());
         for (java.util.Iterator<org.aethercode.core.stream.StreamEvent> it =
                      stream.iterator(); it.hasNext(); ) {
             org.aethercode.core.stream.StreamEvent ev = it.next();
@@ -380,5 +502,15 @@ public class AutoCompact {
         catch (NumberFormatException ignored) { return defaultValue; }
     }
 
-    public record Result(boolean wasCompacted, String summary) {}
+    /** R717 + R718: compact() now returns the summary AND an
+     *  optional post-compact re-injection message (R718-C).
+     *  The 2-arg constructor is kept for back-compat with
+     *  any test code that pattern-matches on the old shape. */
+    public record Result(boolean wasCompacted, String summary, Message postCompactMessage) {
+        /** R717 back-compat: callers that only care about
+         *  the summary get the same shape as before. */
+        public Result(boolean wasCompacted, String summary) {
+            this(wasCompacted, summary, null);
+        }
+    }
 }

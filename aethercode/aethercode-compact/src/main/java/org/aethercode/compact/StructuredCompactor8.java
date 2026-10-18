@@ -78,31 +78,71 @@ import java.util.stream.Stream;
  * compaction pass can tell the two formats apart and
  * chain them appropriately.
  *
- * <p>Token budget (R136.4):
+ * <p>Token budget (R136.4 + R718-G):
  * <ul>
- *   <li>Default context window: 1_000_000 (matches
- *       MiniMax M3, Gemini 2.5 Pro)</li>
- *   <li>Default buffer: 64_000 (room for the summary
- *       call's response to be near-full 512K
- *       output)</li>
- *   <li>Default max input tokens: 900_000 (compact
- *       from a near-full transcript in one pass)</li>
+ *   <li>Default context window: <b>200_000</b> (R718-G: lowered
+ *       from 1_000_000 per user directive "最优的推理肯定不是
+ *       100w 的上下文，而是 50w 左右的样子". 1M is a marketing
+ *       cap; the real attention budget is ~1/5 of that. Even
+ *       though the underlying provider declares 1M, pushing the
+ *       transcript near the cap dilutes the model's attention
+ *       and causes Lost-in-the-Middle noise.)</li>
+ *   <li>Default buffer: <b>32_000</b> (R718-G: lowered from 64K
+ *       so compaction fires earlier; the user's "压缩可以更
+ *       频繁一点儿" directive).</li>
+ *   <li>Default max input tokens: <b>160_000</b> (R718-G:
+ *       lowered from 900K; the summarise wire call should
+ *       itself fit inside the 200K cap, so the model's
+ *       output gets ~40K of headroom).</li>
  * </ul>
+ *
+ * <p>R718 additions on top of the R136.5 design:
+ * <ol>
+ *   <li><b>PostCompact re-injection</b> — when a
+ *       {@code postCompactContextSupplier} is wired, a
+ *       second message carrying cwd / recent files /
+ *       git status is spliced right after the summary so
+ *       the next turn re-orients without re-discovering
+ *       the working directory.</li>
+ *   <li><b>Cheaper-model summarisation</b> — when a
+ *       dedicated {@code summariserChatClient} is wired,
+ *       the LLM summarise call goes through it instead
+ *       of the main chat client. Engine resolves this
+ *       from {@code AETHERCODE_R718_COMPACT_MODEL}.</li>
+ *   <li><b>Metrics</b> — optional
+ *       {@code MetricsCollector} wires L5 telemetry
+ *       (compact count + last input tokens).</li>
+ * </ol>
  */
 public final class StructuredCompactor8 implements Compactor {
 
     private static final Logger LOG = LoggerFactory.getLogger(StructuredCompactor8.class);
 
-    /** R136.5: default context window 1M. */
-    public static final int DEFAULT_CONTEXT_WINDOW = 1_000_000;
-    /** R136.5: default buffer 64K. */
-    public static final int DEFAULT_BUFFER = 64_000;
-    /** R136.5: default max input 900K. */
-    public static final int DEFAULT_MAX_INPUT_TOKENS = 900_000;
+    /** R718-G: effective cap = 200K (the user's chosen
+     *  sweet spot, not the declared 1M marketing cap).
+     *  Pushing the window to its declared max just
+     *  dilutes attention. */
+    public static final int DEFAULT_CONTEXT_WINDOW = 200_000;
+    /** R718-G: buffer 32K (was 64K). Smaller buffer means
+     *  the trigger fires earlier — "more frequent
+     *  compression". */
+    public static final int DEFAULT_BUFFER = 32_000;
+    /** R718-G: max input 160K (was 900K). The summarise
+     *  wire call should itself fit inside the 200K cap. */
+    public static final int DEFAULT_MAX_INPUT_TOKENS = 160_000;
     /** Circuit breaker: 3 consecutive failures stops compacting. */
     public static final int MAX_CONSECUTIVE_FAILURES = 3;
 
     private final ChatClient chatClient;
+    /** R718-E: optional cheaper-model ChatClient for the
+     *  summarise wire call. */
+    private final ChatClient summariserChatClient;
+    /** R718-C: optional cwd / files / git supplier for
+     *  post-compact re-injection. */
+    private final java.util.function.Supplier<AutoCompact.PostCompactContext> postCompactContextSupplier;
+    /** R718-H: optional metrics collector for L5
+     *  telemetry. */
+    private org.aethercode.core.metrics.MetricsCollector metricsCollector;
     private final int contextWindow;
     private final int bufferTokens;
     private final int maxInputTokens;
@@ -114,11 +154,29 @@ public final class StructuredCompactor8 implements Compactor {
 
     public StructuredCompactor8(ChatClient chatClient, int contextWindow,
                                 int bufferTokens, int maxInputTokens) {
+        this(chatClient, null, contextWindow, bufferTokens, maxInputTokens, null);
+    }
+
+    /** R718 full-arg constructor. */
+    public StructuredCompactor8(ChatClient chatClient,
+                                ChatClient summariserChatClient,
+                                int contextWindow,
+                                int bufferTokens,
+                                int maxInputTokens,
+                                java.util.function.Supplier<AutoCompact.PostCompactContext> postCompactContextSupplier) {
         if (chatClient == null) throw new IllegalArgumentException("chatClient");
         this.chatClient = chatClient;
+        this.summariserChatClient = summariserChatClient;
         this.contextWindow = contextWindow;
         this.bufferTokens = bufferTokens;
         this.maxInputTokens = maxInputTokens;
+        this.postCompactContextSupplier = postCompactContextSupplier;
+    }
+
+    /** R718-H: optional metrics collector. The engine wires
+     *  this from AetherCodeEngine; tests can leave null. */
+    public void withMetricsCollector(org.aethercode.core.metrics.MetricsCollector mc) {
+        this.metricsCollector = mc;
     }
 
     @Override
@@ -141,11 +199,29 @@ public final class StructuredCompactor8 implements Compactor {
                     List.of(new ContentBlock.TextBlock(summary)),
                     null,
                     java.util.Map.of("kind", "structured-summary-8"));
+            // R718-C: post-compact re-injection message
+            // (cwd / recent files / git status). When the
+            // supplier is wired, append after the summary so
+            // the model sees both blocks together next turn.
+            Message postCompact = null;
+            if (postCompactContextSupplier != null) {
+                AutoCompact.PostCompactContext ctx =
+                        postCompactContextSupplier.get();
+                if (ctx != null) postCompact = ctx.toMessage();
+            }
+            // R718-H: bump the L5 metric with the
+            // summary's input-token estimate (length/4).
+            if (metricsCollector != null) {
+                long inputTokensEstimate = Math.max(1, summary.length() / 4);
+                metricsCollector.incL5Compact(inputTokensEstimate);
+            }
+            if (postCompact != null) return List.of(summaryMsg, postCompact);
             return List.of(summaryMsg);
         } catch (Exception e) {
             consecutiveFailures++;
-            LOG.warn("R136.5 8-section compact failed (consecutive={}): {}",
+            LOG.warn("R718 8-section compact failed (consecutive={}): {}",
                     consecutiveFailures, e.getMessage());
+            if (metricsCollector != null) metricsCollector.incCompactFailure();
             return null;
         }
     }
@@ -196,7 +272,12 @@ public final class StructuredCompactor8 implements Compactor {
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.userText(prompt.toString()));
         StringBuilder out = new StringBuilder();
-        Stream<StreamEvent> stream = chatClient.stream(msgs, systemPrompt, List.of());
+        // R718-E: use the dedicated summariser ChatClient
+        // when configured (cheaper model), falling back to
+        // the main chat client otherwise.
+        ChatClient summariser = summariserChatClient != null
+                ? summariserChatClient : chatClient;
+        Stream<StreamEvent> stream = summariser.stream(msgs, systemPrompt, List.of());
         for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
             StreamEvent ev = it.next();
             if (ev instanceof StreamEvent.TextDelta td) {

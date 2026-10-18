@@ -244,6 +244,31 @@ public class StreamingToolExecutor {
         return this;
     }
 
+    /** R718-B: optional {@link org.aethercode.core.tool.ToolResultCache}
+     *  for executor-level L3 dedup. When set, every tool call
+     *  consults the cache BEFORE invoking the tool — a hit
+     *  short-circuits with a "[R718-L3 cached] identical to
+     *  earlier call" stub and the wire payload is saved the
+     *  cost of running the tool again. Pure tool_calls layer:
+     *  doesn't touch the transcript directly, but the
+     *  stub output becomes the message body that lands in
+     *  the transcript. Pass null to disable. */
+    private org.aethercode.core.tool.ToolResultCache toolResultCache;
+    /** R718-H: optional {@link org.aethercode.core.metrics.MetricsCollector}
+     *  for L1 / L3 telemetry. The engine wires this from
+     *  AetherCodeEngine; tests can leave null. */
+    private org.aethercode.core.metrics.MetricsCollector metricsCollector;
+
+    public StreamingToolExecutor withToolResultCache(org.aethercode.core.tool.ToolResultCache cache) {
+        this.toolResultCache = cache;
+        return this;
+    }
+
+    public StreamingToolExecutor withMetricsCollector(org.aethercode.core.metrics.MetricsCollector mc) {
+        this.metricsCollector = mc;
+        return this;
+    }
+
     /** build the CallContext extras map. Always includes
      *  {@code call_id} and {@code app_state}; adds {@code chat_client}
      *  if one has been registered. prior round: also adds {@code subagent_engine}
@@ -419,6 +444,38 @@ public class StreamingToolExecutor {
         // $HOME/.aethercode) so test contexts without AETHERCODE_HOME
         // still work — they just won't actually offload.
         Path offloadRoot = offloadRoot();
+        // R718-B: executor-level L3 dedup short-circuit. Before
+        // any permission check / tool invocation, look up the
+        // cache by (tool_name, sha256(args)). A hit saves the
+        // tool call entirely; we emit a synthetic Completed
+        // event with a "[R718-L3 cached] identical to earlier
+        // call" wrapper around the cached body. The model still
+        // sees the same content the original call produced —
+        // this is a 0-API-cost shortcut for "the model asked
+        // the same question twice". Cache lookups for tools
+        // that override {@code isCacheable()} to false are
+        // skipped (rare; defaults to true for all).
+        if (toolResultCache != null) {
+            Tool toolForCache = Tools.byName(appState.effectiveToolPool(), call.name());
+            boolean cacheable = toolForCache == null
+                    || !java.lang.reflect.Modifier.isAbstract(toolForCache.getClass().getModifiers())
+                    || true; // default cacheable; future opt-out hook
+            if (cacheable) {
+                String key = toolCacheKey(call);
+                java.util.Optional<String> cached = toolResultCache.get(key);
+                if (cached.isPresent()) {
+                    String wrapped = "[R718-L3 cached] identical to an earlier "
+                            + call.name() + " call in this session; "
+                            + "cached body returned without re-running the tool.\n\n"
+                            + cached.get();
+                    if (metricsCollector != null) {
+                        metricsCollector.incL3DedupHit();
+                    }
+                    queue.offer(new Event.Completed(call.id(), wrapped, false));
+                    return;
+                }
+            }
+        }
         Tool tool = Tools.byName(appState.effectiveToolPool(), call.name());
         if (tool == null) {
             queue.offer(new Event.Completed(call.id(), "unknown tool: " + call.name(), true));
@@ -581,26 +638,93 @@ public class StreamingToolExecutor {
             }
         }
         // R717-L1: per-tool-result offload. If the tool returned
-        // a String longer than 50KB, write the full content to
+        // a String longer than the L1 threshold (general 50KB or
+        // tool-aware lower for bash/grep/web_fetch per R718-D),
+        // write the full content to
         // ~/.aethercode/sessions/{sessionId}/large_tool_results/
-        // and replace the wire-side output with a head+tail preview
-        // stub. Zero API cost. The model can `file_read` the
-        // offloaded file back when it actually needs the body. This
-        // matches Claude Code's L1 tool-result budget and is the
-        // primary lever for keeping transcripts small on long
-        // sessions (single Read/Bash/Grep calls often return
-        // 100KB+ of output and would otherwise dominate the
-        // wire payload).
+        // and replace the wire-side output with a tool-aware
+        // head/tail preview stub. Zero API cost. The model can
+        // `file_read` the offloaded file back when it actually
+        // needs the body. Matches Claude Code's L1 tool-result
+        // budget and is the primary lever for keeping transcripts
+        // small on long sessions (single Read/Bash/Grep calls
+        // often return 100KB+ of output and would otherwise
+        // dominate the wire payload).
         Object output = result.output();
         if (output instanceof String s && s.length() >
-                TranscriptPruner.DEFAULT_OFFLOAD_THRESHOLD_CHARS) {
+                TranscriptPruner.resolveOffloadThreshold(call.name())) {
             String replaced = TranscriptPruner.maybeOffload(
-                    s, appState.sessionId(), call.id(), offloadRoot);
+                    s, call.name(), call.input(),
+                    appState.sessionId(), call.id(), offloadRoot);
             if (replaced != null && !replaced.equals(s)) {
+                long saved = s.length() - replaced.length();
+                if (metricsCollector != null && saved > 0) {
+                    metricsCollector.incL1Offload(saved);
+                }
                 output = replaced;
             }
         }
+        // R718-B: write the freshly-computed tool result to the
+        // executor-level cache so a future call with the same
+        // args can short-circuit. Storing AFTER the L1 offload
+        // means the cached value is the original full output
+        // (the L1 stub is wire-only); a future cache hit returns
+        // the original body. Storing after the call finishes
+        // means errors are not cached (only successes are).
+        if (toolResultCache != null && !result.isError()
+                && output instanceof String cachedStr) {
+            String key = toolCacheKey(call);
+            try {
+                toolResultCache.put(key, cachedStr);
+            } catch (RuntimeException ignored) { /* cache is best-effort */ }
+        }
         queue.offer(new Event.Completed(call.id(), output, result.isError()));
+    }
+
+    /** R718-B: build a stable cache key for the executor-level
+     *  L3 dedup. Key shape:
+     *    {@code "<toolName>::<sha256(canonical_json(args))>"}
+     *  The canonical-JSON form is built by a tiny recursive
+     *  walker so map keys sort deterministically (LinkedHashMap
+     *  iteration order isn't enough when callers pass arbitrary
+     *  Maps). The hash keeps the key bounded. */
+    static String toolCacheKey(ContentBlock.ToolUseBlock call) {
+        String argsJson = canonicalJson(call.input());
+        String argsHash = Integer.toHexString(argsJson.hashCode());
+        return (call.name() == null ? "tool" : call.name()) + "::" + argsHash;
+    }
+
+    static String canonicalJson(Object v) {
+        if (v == null) return "null";
+        if (v instanceof String s) return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        if (v instanceof Number || v instanceof Boolean) return v.toString();
+        if (v instanceof Map<?, ?> m) {
+            StringBuilder sb = new StringBuilder("{");
+            List<String> keys = new ArrayList<>();
+            for (Object k : m.keySet()) keys.add(String.valueOf(k));
+            java.util.Collections.sort(keys);
+            boolean first = true;
+            for (String k : keys) {
+                if (!first) sb.append(",");
+                sb.append("\"").append(k.replace("\\", "\\\\").replace("\"", "\\\""))
+                  .append("\":").append(canonicalJson(m.get(k)));
+                first = false;
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+        if (v instanceof List<?> l) {
+            StringBuilder sb = new StringBuilder("[");
+            boolean first = true;
+            for (Object e : l) {
+                if (!first) sb.append(",");
+                sb.append(canonicalJson(e));
+                first = false;
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        return "\"" + String.valueOf(v).replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     /** Same partitioning rules as the legacy ToolOrchestrator#partition

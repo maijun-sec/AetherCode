@@ -55,6 +55,17 @@ public final class AutoCompactAdapter implements Compactor {
                 null, Role.USER,
                 List.of(new ContentBlock.TextBlock(wrapped)),
                 null, Map.of());
+        // R718-C: splice the post-compact re-injection message
+        // AFTER the summary so the model sees cwd / recent files
+        // / git status right next to "what we decided". Without
+        // this, the next turn after a compaction often has to
+        // re-discover the working directory (a real cost on long
+        // sessions).
+        if (r.postCompactMessage() != null) {
+            LOG.debug("compaction produced {} chars of summary + postCompact re-injection",
+                    r.summary().length());
+            return List.of(m, r.postCompactMessage());
+        }
         // also tag the message with a content attribute so the engine /
         // TUI can flag it as a compaction result. The Message.content()
         // shape doesn't have a dedicated marker; we use Role.USER with a

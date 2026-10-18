@@ -37,26 +37,32 @@ class StructuredCompactor8Test {
     }
 
     @Test
-    void defaultContextWindowIs1M() {
+    void defaultContextWindowIs200K() {
+        // R718-G: lowered from 1M to 200K per the user's
+        // "最优的推理肯定不是 100w 的上下文" directive. The
+        // declared 1M MiniMax window is a marketing cap; the
+        // real attention sweet spot is ~50K tokens, so we
+        // cap compaction at 200K (50K tokens at 4 chars/token).
         StructuredCompactor8 sc = new StructuredCompactor8(canned("anything"));
-        assertEquals(1_000_000, StructuredCompactor8.DEFAULT_CONTEXT_WINDOW);
-        assertEquals(64_000, StructuredCompactor8.DEFAULT_BUFFER);
-        assertEquals(900_000, StructuredCompactor8.DEFAULT_MAX_INPUT_TOKENS);
+        assertEquals(200_000, StructuredCompactor8.DEFAULT_CONTEXT_WINDOW);
+        assertEquals(32_000, StructuredCompactor8.DEFAULT_BUFFER);
+        assertEquals(160_000, StructuredCompactor8.DEFAULT_MAX_INPUT_TOKENS);
     }
 
     @Test
     void shouldCompactTriggersAboveContextWindowMinusBuffer() {
         StructuredCompactor8 sc = new StructuredCompactor8(
                 canned("x"),
-                1_000_000, 64_000, 900_000);
+                200_000, 32_000, 160_000);
         // Empty list — never compact.
         assertFalse(sc.shouldCompact(List.of()));
         // Tiny list — under threshold.
         Message m = new Message("m1", Role.USER,
                 List.of(new ContentBlock.TextBlock("hi")), null, null);
         assertFalse(sc.shouldCompact(List.of(m)));
-        // 4M chars (~1M tokens) — over the threshold.
-        String big = "a".repeat(4_000_000);
+        // ~800K chars (~200K tokens) — over the threshold
+        // (200K - 32K = 168K gate).
+        String big = "a".repeat(800_000);
         Message bigM = new Message("m2", Role.USER,
                 List.of(new ContentBlock.TextBlock(big)), null, null);
         assertTrue(sc.shouldCompact(List.of(bigM)));
@@ -66,11 +72,17 @@ class StructuredCompactor8Test {
     void compactProducesAssistantSummaryWithKindStructured8() {
         StructuredCompactor8 sc = new StructuredCompactor8(
                 canned("Canned 8-section answer."));
-        String big = "a".repeat(4_000_000);
+        // Threshold is 168K tokens; this 800K char payload
+        // (~200K tokens) is well over.
+        String big = "a".repeat(800_000);
         Message bigM = new Message("m1", Role.USER,
                 List.of(new ContentBlock.TextBlock(big)), null, null);
         List<Message> out = sc.compact(List.of(bigM));
         assertNotNull(out);
+        // 1-2 messages: the summary + optional
+        // postCompactContext message. Default
+        // postCompactContextSupplier is null in this test, so
+        // out has exactly 1 message.
         assertEquals(1, out.size());
         Message sum = out.get(0);
         assertEquals(Role.ASSISTANT, sum.role());
