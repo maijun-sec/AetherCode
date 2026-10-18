@@ -1489,25 +1489,42 @@ public class QueryEngine {
                     // path for the drifted ones. The transcript itself
                     // is NOT mutated — only the wire-side copy.
                     List<Message> cleanedTranscript = appState.transcript();
+                    // R717-L4: strip-oldest rescue. Cheaper than
+                    // the R716 hard cap, runs BEFORE the LLM call
+                    // as a "your transcript is over the per-call
+                    // limit, drop oldest" guard. Default cap is
+                    // 200K chars (~50K tokens — the user's
+                    // chosen sweet spot below the declared 1M
+                    // window). Tunable via
+                    // AETHERCODE_R717_PRE_CALL_MAX_CHARS.
+                    // Same-reference fast path when under cap.
+                    // Pure filter, transcript on disk is NOT
+                    // mutated. R717-L4 fires here BEFORE the R716
+                    // hard cap so a 1700-message transcript gets
+                    // reduced to "last 16 tail" with a synthetic
+                    // note rather than a blunt "keep last 300"
+                    // — the user can see the L4 note in the
+                    // transcript, the renderer can attach a
+                    // "View original" affordance.
+                    cleanedTranscript = TranscriptPruner.stripOldestToFit(
+                            cleanedTranscript,
+                            TranscriptPruner.DEFAULT_PRE_CALL_MAX_CHARS,
+                            TranscriptPruner.DEFAULT_MIN_KEEP,
+                            TranscriptPruner.DEFAULT_TRUNCATE_TO_CHARS);
                     // R716 final: trim the head of the transcript
-                    // FIRST. AutoCompact's shouldCompact gates on
-                    // the model's declared 1M-token window in
-                    // providers.yaml — but MiniMax-M3 in practice
-                    // rejects a much smaller payload with "context
-                    // window exceeds limit (2013)" 400. The trim
-                    // caps BOTH message count AND total char count
-                    // to fix that. Trimming first matters for the
-                    // next step: a tool_result deep in the
-                    // surviving tail may reference a tool_use_id
-                    // whose tool_use was dropped from the head;
-                    // running stripOrphanToolResults AFTER the
-                    // trim catches those orphans, not before.
+                    // when it exceeds the hard cap. Default 300
+                    // messages / 800K chars. Acts as a defence
+                    // in depth behind R717-L4 — R717 keeps the
+                    // transcript under the per-call cap; R716
+                    // makes sure even the L4 survivor list never
+                    // exceeds a single hard wall. The on-disk
+                    // transcript is NOT mutated.
                     cleanedTranscript = trimHeadIfOversized(
                             cleanedTranscript,
                             DEFAULT_MAX_TRANSCRIPT_MESSAGES,
                             DEFAULT_MAX_TRANSCRIPT_CHARS);
                     // R716: filter orphan tool results AFTER the
-                    // trim. The trim can leave tail tool_results
+                    // trims. Both trims can leave tail tool_results
                     // whose matching tool_use was dropped from
                     // the head — running stripOrphanToolResults
                     // here drops those. The transcript itself is

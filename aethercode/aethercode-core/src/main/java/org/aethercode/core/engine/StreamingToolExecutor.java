@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.nio.file.Path;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -48,6 +49,28 @@ import java.util.stream.StreamSupport;
 public class StreamingToolExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(StreamingToolExecutor.class);
+
+    /**
+     * R717-L1: where per-tool-result offload files land. The
+     * helper writes large tool bodies to
+     * {@code {offloadRoot}/{sessionId}/large_tool_results/{toolCallId}}
+     * and replaces the wire-side output with a head+tail preview
+     * stub so the model can {@code file_read} the full body back
+     * on demand. Resolved lazily from {@code AETHERCODE_HOME} env
+     * with a fallback to {@code $HOME/.aethercode} so test contexts
+     * without {@code AETHERCODE_HOME} still work — they just won't
+     * actually offload (the helper returns the original content
+     * when {@link #offloadRoot()} returns null).
+     */
+    private static Path offloadRoot() {
+        String home = System.getenv("AETHERCODE_HOME");
+        if (home == null || home.isBlank()) {
+            String userHome = System.getProperty("user.home");
+            if (userHome == null || userHome.isBlank()) return null;
+            home = userHome + "/.aethercode";
+        }
+        return java.nio.file.Paths.get(home, "sessions");
+    }
 
     /**
      * the permission policy is now a mutable
@@ -235,6 +258,11 @@ public class StreamingToolExecutor {
         if (chatClient != null) extras.put("chat_client", chatClient);
         if (subagentEngine != null) extras.put("subagent_engine", subagentEngine);
         if (currentSubTaskId != null) extras.put("subTaskId", currentSubTaskId);
+        // R717-L1: where the per-tool-result offload files
+        // land. Off by default — only the wire-side output is
+        // rewritten, the original result is in appState already
+        // if anything ever wants to read the full body.
+        extras.put("offload_root", offloadRoot());
         // R362: agent registry so spawn_agent(agent_name=...) can
         // resolve custom agents registered under ~/.aethercode/agents/.
         // Null is fine — the tool falls back to SubagentRole builtin.
@@ -385,6 +413,12 @@ public class StreamingToolExecutor {
     private void runOneBackpressured(ContentBlock.ToolUseBlock call, AppState appState,
                                       java.util.concurrent.BlockingQueue<Event> queue,
                                       java.util.concurrent.atomic.AtomicBoolean batchAbort) {
+        // R717-L1: resolve the offload root once per call so the
+        // large_tool_results/ directory ends up under the right
+        // session folder. Resolved lazily (env-based fallback to
+        // $HOME/.aethercode) so test contexts without AETHERCODE_HOME
+        // still work — they just won't actually offload.
+        Path offloadRoot = offloadRoot();
         Tool tool = Tools.byName(appState.effectiveToolPool(), call.name());
         if (tool == null) {
             queue.offer(new Event.Completed(call.id(), "unknown tool: " + call.name(), true));
@@ -546,7 +580,27 @@ public class StreamingToolExecutor {
                 LOG.debug("toolCallObserver threw for {}: {}", tool.name(), t.toString());
             }
         }
-        queue.offer(new Event.Completed(call.id(), result.output(), result.isError()));
+        // R717-L1: per-tool-result offload. If the tool returned
+        // a String longer than 50KB, write the full content to
+        // ~/.aethercode/sessions/{sessionId}/large_tool_results/
+        // and replace the wire-side output with a head+tail preview
+        // stub. Zero API cost. The model can `file_read` the
+        // offloaded file back when it actually needs the body. This
+        // matches Claude Code's L1 tool-result budget and is the
+        // primary lever for keeping transcripts small on long
+        // sessions (single Read/Bash/Grep calls often return
+        // 100KB+ of output and would otherwise dominate the
+        // wire payload).
+        Object output = result.output();
+        if (output instanceof String s && s.length() >
+                TranscriptPruner.DEFAULT_OFFLOAD_THRESHOLD_CHARS) {
+            String replaced = TranscriptPruner.maybeOffload(
+                    s, appState.sessionId(), call.id(), offloadRoot);
+            if (replaced != null && !replaced.equals(s)) {
+                output = replaced;
+            }
+        }
+        queue.offer(new Event.Completed(call.id(), output, result.isError()));
     }
 
     /** Same partitioning rules as the legacy ToolOrchestrator#partition
