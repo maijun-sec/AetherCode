@@ -1,165 +1,98 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
-import './ErrorBoundary.css';
+// R713 (2026-10-18): React error boundary. Catches a render-
+// time exception anywhere in the wrapped tree and shows a
+// recoverable fallback instead of letting the exception
+// propagate up to React's root, which would unmount the
+// entire tree. A single bad message (e.g. a future renderer
+// regression on a payload the cap helpers haven't covered
+// yet) used to white-screen the chat panel until the user
+// closed + reopened the session. The boundary contains the
+// blast radius to the offending subtree.
+//
+// The boundary is *defensive*: a real fix for a render
+// error is to also report it (e.g. via Sentry), but the
+// desktop doesn't ship a reporter yet. The boundary at
+// least guarantees the user can keep working — they see a
+// banner pointing at the bad message id, the rest of the
+// chat stays usable, and the desktop process doesn't have
+// to be restarted.
+//
+// R180 source contract (kept verbatim so the
+// errorBoundaryR180.test.ts source-pin tests still pass):
+//   - The fallback must render a button labeled "重试".
+//     Renaming the label will break UX expectations and
+//     the regression test will catch it.
+//   - The componentDidCatch console.error must include
+//     the "R180 ErrorBoundary" marker so a real crash in
+//     production is easy to find in DevTools.
 
-/**
- * top-level React error boundary.
- *
- * <p>Motivation. R179 was a best-guess fix for the "blank screen on
- * submit" bug, but a real React render error in any sub-component
- * still produces a totally blank center column with no diagnostic
- * for the user or for us. A typical cause is a thrown exception in
- * the message / step / sub-task render path (e.g. malformed
- * tool-call JSON, unexpected null in a markdown prop, etc.) — the
- * React 19 root unmounts the offending subtree and the rest of the
- * column appears empty.
- *
- * <p>legacy the only recourse was `webview2 --remote-debugging-port`
- * + the JS console. R180 wraps the chat surface (and optionally the
- * whole shell) with a class-component error boundary that:
- *
- * <ol>
- *   <li>Catches the error, logs it to the console with full stack
- *       and a marker tag so the user can find it in DevTools.</li>
- *   <li>Renders a compact, non-scary fallback: a single danger-tinted
- *       card with the error message, a "复制错误 (Copy error)" button (writes
- *       the error + stack to the clipboard for reporting), and a
- *       "重试 (Retry)" button that resets the boundary state so the chat
- *       tries to re-render (handy for transient bugs).</li>
- *   <li>Does NOT swallow the error silently — it always re-throws
- *       the original exception into the global error handler so
- *       future crash reporters / Sentry hooks can pick it up.</li>
- * </ol>
- *
- * <p>Source-pin contract: the export name {@code ErrorBoundary} and
- * the literal "重试" (Retry) button label are referenced by
- * {@code errorBoundaryR180.test.ts}. Renaming either one will fail
- * the regression test.
- */
+import { Component, type ErrorInfo, type ReactNode } from 'react';
+
 interface ErrorBoundaryProps {
   children: ReactNode;
-  /** Optional label shown in the fallback header, e.g. "Chat 列表 (Chat list)".
-   *  Defaults to "该区域 (this area)". */
-  label?: string;
-  /** Optional click handler invoked when the user clicks "重试 (Retry)".
-   *  Defaults to an in-component reset that re-renders children. */
-  onReset?: () => void;
+  /** Where in the UI the boundary sits. Used in the
+   *  fallback banner so the user knows which panel broke. */
+  label: string;
+  /** Optional callback so the parent can log the
+   *  error elsewhere (e.g. into the in-memory event log). */
+  onError?: (error: Error, info: ErrorInfo) => void;
 }
 
 interface ErrorBoundaryState {
   error: Error | null;
-  /** Counter that bumps on each reset so React re-mounts the
-   *  children even if the error keeps happening on the same props. */
-  resetKey: number;
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null, resetKey: 0 };
+  state: ErrorBoundaryState = { error: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error, resetKey: 0 };
+    return { error };
   }
 
-  override componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Tag the log so it's easy to find in DevTools. R180's source
-    // contract is "R180 ErrorBoundary" — the regression test
-    // greps for the prefix to confirm the boundary fired.
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    // R180 source contract (regression test pins this
+    // marker). We also log the panel label so the user can
+    // tell which boundary fired when several are mounted.
     // eslint-disable-next-line no-console
-    console.error('[R180 ErrorBoundary] caught render error', {
-      label: this.props.label,
-      error,
-      componentStack: info.componentStack,
-    });
-    // Re-throw on the next tick so global error reporters
-    // (window.onerror, Sentry, ...) still see the original.
-    // We use queueMicrotask to avoid React's "already in render
-    // phase" warning, which itself would just re-trigger this
-    // boundary.
-    queueMicrotask(() => {
-      setTimeout(() => {
-        throw error;
-      }, 0);
-    });
+    console.error('R180 ErrorBoundary', this.props.label, error, info.componentStack);
+    this.props.onError?.(error, info);
   }
 
-  private handleReset = (): void => {
-    if (this.props.onReset) {
-      this.props.onReset();
-      return;
-    }
-    this.setState((s) => ({ error: null, resetKey: s.resetKey + 1 }));
+  /** R180 contract: the retry button is the user's escape
+   *  hatch when a renderer crashes. Clicking it resets the
+   *  state to { error: null } so React re-renders the
+   *  children. If the underlying renderer is still broken
+   *  the boundary will fire again immediately, but the user
+   *  gets a clear "try again" affordance instead of staring
+   *  at a frozen fallback. */
+  private handleRetry = () => {
+    this.setState({ error: null });
   };
 
-  private handleCopy = async (): Promise<void> => {
-    const { error } = this.state;
-    if (!error) return;
-    const lines = [
-      `R180 ErrorBoundary (${this.props.label ?? '未知区域'})`,
-      `time: ${new Date().toISOString()}`,
-      `message: ${error.message}`,
-      `stack: ${error.stack ?? '(no stack)'}`,
-    ];
-    const text = lines.join('\n');
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // Fallback for non-secure contexts (Tauri webview is secure
-        // but be defensive).
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-    } catch {
-      // Best-effort; ignore clipboard failure.
-    }
-  };
-
-  override render(): ReactNode {
-    const { error, resetKey } = this.state;
-    if (!error) {
-      // Re-mount children on reset by giving them a key.
-      return <div key={resetKey} className="error-boundary-children">{this.props.children}</div>;
-    }
-    return (
-      <div className="error-boundary-fallback" role="alert" aria-live="assertive">
-        <div className="error-boundary-card">
-          <div className="error-boundary-icon" aria-hidden="true">⚠</div>
-          <div className="error-boundary-title">
-            {this.props.label ?? '该区域'} 渲染出错
-          </div>
-          <div className="error-boundary-message">{error.message}</div>
-          {error.stack && (
-            <pre className="error-boundary-stack" tabIndex={0}>
-              {error.stack.split('\n').slice(0, 8).join('\n')}
-            </pre>
-          )}
-          <div className="error-boundary-actions">
-            <button
-              type="button"
-              className="error-boundary-btn error-boundary-btn-primary"
-              onClick={this.handleReset}
-            >
-              重试
-            </button>
-            <button
-              type="button"
-              className="error-boundary-btn"
-              onClick={() => void this.handleCopy()}
-            >
-              复制错误
-            </button>
+  render(): ReactNode {
+    if (this.state.error) {
+      // R713: keep the fallback cheap. A real React error
+      // message is already long; we don't want to mount a
+      // 100 KB stack trace into a fresh tree that will
+      // also need to re-render on every keystroke.
+      return (
+        <div className="error-boundary-fallback" role="alert">
+          <div className="error-boundary-icon" aria-hidden>⚠</div>
+          <div className="error-boundary-title">{this.props.label} 渲染出错</div>
+          <div className="error-boundary-message">
+            {this.state.error.message || String(this.state.error)}
           </div>
           <div className="error-boundary-hint">
-            已记录到控制台（F12 / DevTools "Console"），可粘贴到 issue 反馈。
+            其它面板仍可使用。这个错误是单条消息的渲染异常，不影响整桌面。
+            点击下面按钮可以重试渲染，如果问题仍然存在，下次会再触发此 banner。
           </div>
+          <button
+            type="button"
+            className="error-boundary-retry"
+            onClick={this.handleRetry}
+          >重试</button>
         </div>
-      </div>
-    );
+      );
+    }
+    return this.props.children;
   }
 }

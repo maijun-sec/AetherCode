@@ -66,7 +66,12 @@ describe('对应历史 round: chat is a flat markdown stream', () => {
     // (the sub-task name), `### Steps` (wraps think + tool
     // calls, collapsible), `### Results` (wraps the summary).
     expect(mlSrc).toMatch(/stepsToMarkdown\(/);
-    expect(mlSrc).toMatch(/## \$\{subTask\.content\}/);
+    // R713: the sub-task title is now wrapped in capForTitle()
+    // (defensive 200-char cap) before becoming a markdown
+    // heading. The source-pin test still verifies the
+    // heading pattern is present, just that the title
+    // value goes through the cap helper first.
+    expect(mlSrc).toMatch(/## \$\{capForTitle\(subTask\.content, 200\)\}/);
     // explicit sub-headings so markdown viewers (and
     // the user when they paste the doc out) can collapse
     // just the execution body.

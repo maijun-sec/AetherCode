@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useStore, ChatMessage, ChatStep, ChatSubTask, scanLatestSddPhaseInMessages, SDD_PHASE_DONE_RE, SDD_PHASE_SKIP_RE } from '../store';
@@ -6,7 +6,19 @@ import { subscribeKind } from '../rpc/events';
 import { SubagentSpawnCard } from './chat/SubagentSpawnCard';
 import { StreamingIndicator } from './StreamingIndicator';
 import { SnapshotModal } from './SnapshotModal';
+// R713: centralized LLM content defense. Every untrusted
+// string that reaches React must go through one of these
+// helpers first. See lib/llmContent.ts for the rationale
+// (R712 root cause: a 286 KB unfiltered tool_result pinned
+// the WebView2 renderer to 100% CPU for 11 hours).
+import { capForBody, capForInline, capForTitle, capForInput, titleAttr } from '../lib/llmContent';
+// R713: a render-time error in the message list should not
+// white-screen the entire chat. The boundary contains the
+// blast radius to a single subtree and shows a recoverable
+// banner instead.
+import { ErrorBoundary } from './ErrorBoundary';
 import './MessageList.css';
+import './ErrorBoundary.css';
 
 // 3-level hierarchy: Task > SubTask > Step.
 //   Task    = one user query (one round trip in the engine).
@@ -132,43 +144,21 @@ const TOOL_OUTPUT_PREVIEW = 4000;
 // full error is still in the transcript for debugging.
 const TOOL_ERROR_PREVIEW = 200;
 
-// R712 (2026-10-18): hard upper bound for the raw tool-output
-// string BEFORE it ever reaches react-markdown / remark-gfm.
-// The existing TOOL_OUTPUT_PREVIEW / TOOL_ERROR_PREVIEW caps
-// only trimmed the markdown *preview*; the in-memory
-// `ev.output` was passed untouched into `body` and then
-// `ReactMarkdown` parsed it. With a multi-hundred-KB body
-// (e.g. a model that ran `cat default.jsonl` and got a
-// 286 KB tool_result back), the gfm autolink-literal pass +
-// React's reconciler both devolved to O(n²) on the full
-// string, the WebView2 renderer spun to 30+ core-equivalent
-// CPU for 11 hours, and the desktop UI stopped responding
-// even though the daemon was fine. The HARD cap is the
-// *defensive* line: no matter what the daemon / transcript
-// sends, the renderer refuses to push a >50 KB markdown
-// blob into react-markdown. 50 KB is still ~12x the normal
-// preview cap and enough to show almost any real tool
-// output (a long `find` listing tops out at ~10 KB). The
-// full content is still on disk in the transcript for any
-// user who needs the raw text — they can re-open the JSONL
-// directly. Anything over 50 KB is a sign of a self-
-// referencing tool loop (cat of a transcript that includes
-// itself) and the user benefits more from a clear "truncated
-// to keep the UI responsive" banner than from 286 KB of
-// recursive noise.
-const HARD_MAX_OUTPUT_CHARS = 50_000;
+// R713: keep these for back-compat, but the actual caps now
+// live in lib/llmContent.ts (HARD_MAX_BODY_CHARS, etc.) and
+// truncateOutput is a thin wrapper. The constants below are
+// still referenced by call sites that need the *preview*
+// max; the defensive HARD cap is applied inside
+// capForInline() so any future entry point that forgets to
+// use the helper is still caught by the wrapper below.
 
 function truncateOutput(s: string, max: number = TOOL_OUTPUT_PREVIEW): string {
-  if (!s) return '';
-  // R712: clamp to the hard ceiling first, so a runaway
-  // transcript line never gets fed into react-markdown at
-  // all. The 4 KB / 200 KB preview caps are still applied on
-  // top for the normal readable preview.
-  if (s.length > HARD_MAX_OUTPUT_CHARS) {
-    return s.slice(0, HARD_MAX_OUTPUT_CHARS)
-      + `\n\n[...R712: output truncated from ${s.length} to ${HARD_MAX_OUTPUT_CHARS} chars to keep the chat responsive. The full content is in the raw transcript at .aethercode/sessions/default.jsonl if you need it.]`;
-  }
-  return s.length > max ? s.slice(0, max) + '\n...(truncated)' : s;
+  // R713: delegate to the centralized helper. The helper
+  // applies the hard body cap (50 KB) first, then the per-
+  // tool preview cap. Callers that pass `max` get the
+  // preview-truncation marker; callers that pass nothing
+  // default to TOOL_OUTPUT_PREVIEW.
+  return capForInline(s, max, 'tool output');
 }
 
 // a per-tool fallback for "(no input)". The model
@@ -385,9 +375,20 @@ export function summarizeDiff(diff: string): DiffSegment[] {
 export function buildEditSnippetFromInput(input: unknown): string | null {
   if (!input || typeof input !== 'object') return null;
   const obj = input as Record<string, unknown>;
-  const oldStr = typeof obj.old_string === 'string' ? obj.old_string : null;
-  const newStr = typeof obj.new_string === 'string' ? obj.new_string : null;
-  const path = typeof obj.file_path === 'string' ? obj.file_path : null;
+  // R713: cap the raw file_edit input BEFORE building the
+  // diff. A self-referencing tool loop (model reads its own
+  // transcript, then pastes the content as the next
+  // edit's old_string / new_string) would otherwise produce
+  // a 286 KB diff that, when fed to DiffSnippetView, gives
+  // the WebView2 renderer 286 KB of one <div class="diff-
+  // snippet-line"> per line. The cap mirrors the 32 KB
+  // HARD_MAX_INPUT_CHARS ceiling from llmContent.
+  const oldStr = typeof obj.old_string === 'string'
+    ? capForInput(obj.old_string, undefined, 'file_edit old_string') : null;
+  const newStr = typeof obj.new_string === 'string'
+    ? capForInput(obj.new_string, undefined, 'file_edit new_string') : null;
+  const path = typeof obj.file_path === 'string'
+    ? capForTitle(obj.file_path, 200) : null;
   if (oldStr == null || newStr == null) return null;
   const oldLines = oldStr.split(/\r?\n/);
   const newLines = newStr.split(/\r?\n/);
@@ -445,8 +446,12 @@ export function stepsToMarkdown(steps: ChatStep[], subTask?: ChatSubTask, isLive
   // and finally a summary at the end." This structure answers that —
   // the `## content` is the "what needs to be done", `### Steps` is
   // the "execution", `### Result` is the "summary".
+  // R713: cap the sub-task title before it becomes a markdown
+  // header. The model emits a sub-task title via todo_write's
+  // `content` field; a runaway tool loop could feed a huge
+  // string here.
   if (subTask?.content) {
-    md += `## ${subTask.content}\n\n`;
+    md += `## ${capForTitle(subTask.content, 200)}\n\n`;
     md += `### 步骤\n\n`;
   }
   for (const step of steps) {
@@ -527,18 +532,24 @@ export function AgentSectionView({
     : '点击折叠 / 展开';
   if (section.kind === 'h2') {
     if (!section.body) {
-      return <h2 className="agent-h2">{section.title}</h2>;
+      return <h2 className="agent-h2">{capForTitle(section.title, 200)}</h2>;
     }
+    // R713: cap the section body before react-markdown.
+    // AgentSectionView is rendered inside AgentMarkdownMessage
+    // (legacy), but the same O(n^2) gfm autolink-literal
+    // hazard applies — a long sub-task body in the legacy
+    // path can be just as long as a tool output.
+    const cappedBody = capForBody(section.body, 'agent section');
     return (
       <details open className="agent-section agent-section-h2">
-        <summary className="agent-section-summary" title={tooltip}>
+        <summary className="agent-section-summary" title={titleAttr(tooltip)}>
           <span className="agent-section-marker">##</span>
-          <span className="agent-section-title">{section.title}</span>
+          <span className="agent-section-title">{capForTitle(section.title, 200)}</span>
           <span className="agent-section-hint">点击折叠</span>
         </summary>
         <div className="agent-section-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {stripHtmlComments(section.body)}
+            {stripHtmlComments(cappedBody)}
           </ReactMarkdown>
         </div>
       </details>
@@ -546,15 +557,16 @@ export function AgentSectionView({
   }
   return (
     <details open={defaultOpen} className="agent-section agent-section-h3">
-      <summary className="agent-section-summary" title={tooltip}>
+      <summary className="agent-section-summary" title={titleAttr(tooltip)}>
         <span className="agent-section-marker">###</span>
-        <span className="agent-section-title">{section.title}</span>
+        <span className="agent-section-title">{capForTitle(section.title, 200)}</span>
         <span className="agent-section-hint">点击折叠</span>
       </summary>
       <div className="agent-section-body">
         {section.body ? (
+          // R713: cap the h3 body the same way as h2.
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {stripHtmlComments(section.body)}
+            {stripHtmlComments(capForBody(section.body, 'agent section h3'))}
           </ReactMarkdown>
         ) : null}
       </div>
@@ -605,7 +617,11 @@ function buildBlocks(steps: ChatStep[], subTask?: ChatSubTask): Block[] {
   // the ## content header is its own block so it
   // can be folded independently of the steps.
   if (subTask?.content) {
-    out.push({ kind: 'header', id: `hdr-${subTask.id}`, title: subTask.content });
+    // R713: the sub-task title becomes a `<h2>` header in
+    // the rendered message. Cap it to the same 200-char
+    // title ceiling so a runaway title doesn't break the
+    // markdown header parse or the layout.
+    out.push({ kind: 'header', id: `hdr-${subTask.id}`, title: capForTitle(subTask.content, 200) });
   }
   // emit one block per (think text, tool event),
   // preserving the model's interleaved order. Previously
@@ -681,7 +697,15 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
     return <h2 className="agent-h2 agent-block-header">{block.title}</h2>;
   }
   if (block.kind === 'think') {
-    const trimmed = block.md.trim();
+    // R713: cap the think body BEFORE the ReactMarkdown
+    // pass. A self-referencing tool loop can also produce a
+    // 286 KB think (the model echoes its previous turn
+    // back as a think block), and the markdown parser
+    // pays the same O(n^2) cost. The HARD cap is inside
+    // capForBody so any future helper that forgets to
+    // use it is still caught.
+    const cappedMd = capForBody(block.md, 'think');
+    const trimmed = cappedMd.trim();
     if (!trimmed) return null;
     // R276 (2026-09-16): collapse by default; only open when
     // `defaultOpen` is true (final think OR streaming tail). The
@@ -693,13 +717,13 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
     const summary = trimmed.replace(/^#+\s*/gm, '').replace(/[*_`>]/g, '').replace(/\s+/g, ' ').slice(0, PREAMBLE_SUMMARY_CHARS) + '...';
     return (
       <details open={defaultOpen} className="agent-block agent-block-think">
-        <summary className="agent-block-summary" title={summary}>
+        <summary className="agent-block-summary" title={titleAttr(summary)}>
           <span className="agent-block-chevron">{'\u25be'}</span>
           <span className="agent-block-title">思考 · {summary}</span>
         </summary>
         <div className="agent-block-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {stripHtmlComments(block.md)}
+            {stripHtmlComments(cappedMd)}
           </ReactMarkdown>
         </div>
       </details>
@@ -715,7 +739,11 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
     const ev = block.ev;
     const isError = !!ev.isError;
     const ok = isError ? 'X' : '-';
-    const summary = ev.inputSummary || missingInputHint(ev.name);
+    // R713: cap the input summary (the 1-line hover title)
+    // so a self-referencing tool loop's tool name + input
+    // doesn't paint a 286 KB tooltip. The full input is
+    // still in the transcript for anyone who needs it.
+    const summary = capForTitle(ev.inputSummary || missingInputHint(ev.name));
     const output = ev.output ?? '';
     const trimmed = truncateOutput(output, isError ? TOOL_ERROR_PREVIEW : TOOL_OUTPUT_PREVIEW);
     let body: ReactElement | string | null = '';
@@ -750,7 +778,7 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
     }
     return (
       <details open={defaultOpen} className={`agent-block agent-block-tool ${isError ? 'is-error' : ''}`}>
-        <summary className="agent-block-summary" title={`${ev.name} · ${summary}`}>
+        <summary className="agent-block-summary" title={titleAttr(`${ev.name} · ${summary}`)}>
           <span className="agent-block-chevron">{'\u25be'}</span>
           <span className="agent-block-status">{ok}</span>
           <span className="agent-block-title">{ev.name}</span>
@@ -772,16 +800,20 @@ function BlockView({ block, defaultOpen }: { block: Block; defaultOpen: boolean 
     );
   }
   if (block.kind === 'result') {
+    // R713: cap the result summary body before ReactMarkdown.
+    // A sub-task's final summary is a markdown doc and can
+    // be hijacked the same way think / tool output can.
+    const cappedSummary = capForBody(block.summary, 'sub-task result');
     return (
       <details open className="agent-block agent-block-result">
-        <summary className="agent-block-summary" title={`结果 · ${block.status}`}>
+        <summary className="agent-block-summary" title={titleAttr(`结果 · ${block.status}`)}>
           <span className="agent-block-chevron">{'\u25be'}</span>
           <span className="agent-block-title">结果</span>
-          <span className="agent-block-status">{block.status}</span>
+          <span className="agent-block-status">{capForTitle(block.status)}</span>
         </summary>
         <div className="agent-block-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {stripHtmlComments(`> **${block.status}**: ${block.summary}`)}
+            {stripHtmlComments(`> **${block.status}**: ${cappedSummary}`)}
           </ReactMarkdown>
         </div>
       </details>
@@ -945,16 +977,18 @@ function LegacyMessage({ m }: { m: ChatMessage }) {
     // a muted system-style pill with a "[引擎]" label instead of
     // the blue "YOU" user bubble.
     if (isEnginePromptUserMessage(m.content)) {
-      const summary = m.content.trim().split('\n').slice(0, 3).join(' ').slice(0, 240);
+      // R713: cap the body (286 KB echo case) before mount.
+      const capped = capForBody(m.content, 'user engine-hint');
+      const summary = capped.trim().split('\n').slice(0, 3).join(' ').slice(0, 240);
       return (
         <details className="message message-engine-hint">
-          <summary className="message-engine-hint-summary" title={m.content}>
+          <summary className="message-engine-hint-summary" title={titleAttr(capped, 200)}>
             <span className="message-engine-hint-icon" aria-hidden>⤵</span>
             <span className="message-engine-hint-label">[引擎]</span>
             <span className="message-engine-hint-text">{summary}</span>
             <span className="message-engine-hint-time">{fmtTime(m.timestamp)}</span>
           </summary>
-          <div className="message-content">{m.content}</div>
+          <div className="message-content">{capped}</div>
         </details>
       );
     }
@@ -973,6 +1007,13 @@ function collapseHiddenSdd(content: string): { visible: string; isSdd: boolean }
 }
 
 const { visible: visibleContent, isSdd } = collapseHiddenSdd(m.content);
+// R713: cap the user-message body before mounting. The
+// visibleContent above has already had the SDD hidden block
+// stripped, so a typical "you" bubble is short — but a
+// self-referencing transcript echo can be 286 KB even
+// after the SDD collapse. capForBody adds the truncation
+// banner if needed.
+const cappedVisible = capForBody(visibleContent, 'user');
 return (
       <div className="message message-user">
         <div className="message-meta">
@@ -980,7 +1021,7 @@ return (
           <span className="message-time">{fmtTime(m.timestamp)}</span>
           {isSdd && <span className="message-sdd-badge" title="SDD 模式下，agent 收到了完整 phase 指令">📐 SDD</span>}
         </div>
-        <div className="message-content">{visibleContent}</div>
+        <div className="message-content">{cappedVisible}</div>
       </div>
     );
   }
@@ -994,10 +1035,13 @@ return (
     // would be more confusing than helpful. (R312:
     // SDD-specific markdown rendering removed with the
     // SDD flow itself — see doc/user-guide/SDD.md.)
+    // R713: cap the system-message body so a runaway
+    // error log doesn't paint a 286 KB text node.
+    const capped = capForBody(m.content, 'system');
     return (
       <div className={`message message-system${errorClass}`}>
         <div className="message-content">
-          {m.content}
+          {capped}
         </div>
       </div>
     );
@@ -1007,6 +1051,19 @@ return (
 
 export function MessageList() {
   const { messages, isStreaming, steps, subTasks, currentSubTaskId, currentSessionId } = useStore();
+  // R713: defer the messages list so the input / scroll
+  // position updates don't have to wait for the markdown
+  // renderer to finish. Without this, every keystroke in
+  // the input box triggers a re-render that walks the
+  // whole messages array and re-runs every <ReactMarkdown>
+  // — which on a 180-message session with one big think
+  // takes 200+ ms per keystroke and the input feels
+  // laggy. useDeferredValue lets React keep the input
+  // update at the high-priority lane and the message list
+  // on the deferred lane; the user sees their keystroke
+  // instantly, the message list catches up on the next
+  // paint.
+  const deferredMessages = useDeferredValue(messages);
   const bottomRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -1248,7 +1305,14 @@ export function MessageList() {
   const timeline = useMemo<TimelineEvent[]>(() => {
     const events: TimelineEvent[] = [];
     // 1. User + system messages use their own timestamp.
-    for (const m of messages) {
+    // R713: iterate over the deferred messages list so a
+    // 1-line text input update doesn't rebuild the
+    // 180-message timeline every keystroke. The cost of
+    // useDeferredValue is the timeline will lag the
+    // input by one paint, but for a 180-message session
+    // that's invisible (1 paint ≈ 16 ms) and the input
+    // feels instant.
+    for (const m of deferredMessages) {
       if (m.role === 'user') events.push({ kind: 'user', ts: m.timestamp, message: m });
       else if (m.role === 'system') events.push({ kind: 'system', ts: m.timestamp, message: m });
     }
@@ -1316,106 +1380,115 @@ export function MessageList() {
   }, [messages, steps, subTasks, currentSubTaskId, isStreaming]);
 
   return (
-    <div className="message-list" ref={listRef}>
-      {timeline.length === 0 ? (
-        isStreaming ? (
-          // R269: just-submitted-but-no-events-yet — show a
-          // centred, prominent streaming placeholder so the
-          // user sees "the engine is alive" right between
-          // the empty chat and the input box. Matches what
-          // typical AI agent tools do (Cursor, Claude Code).
-          <StreamingIndicator variant="empty" forceWhenEmpty />
+    // R713: wrap the whole message-list in an error boundary
+    // so a single bad message (e.g. a future renderer
+    // regression on a payload the cap helpers haven't covered
+    // yet) doesn't white-screen the chat. The boundary
+    // catches render-time errors anywhere in the subtree,
+    // shows a recoverable banner, and the rest of the
+    // desktop (input box, sidebar, tabs) keeps working.
+    <ErrorBoundary label="消息列表">
+      <div className="message-list" ref={listRef}>
+        {timeline.length === 0 ? (
+          isStreaming ? (
+            // R269: just-submitted-but-no-events-yet — show a
+            // centred, prominent streaming placeholder so the
+            // user sees "the engine is alive" right between
+            // the empty chat and the input box. Matches what
+            // typical AI agent tools do (Cursor, Claude Code).
+            <StreamingIndicator variant="empty" forceWhenEmpty />
+          ) : (
+            <div className="message-list-empty">Start a conversation</div>
+          )
         ) : (
-          <div className="message-list-empty">Start a conversation</div>
-        )
-      ) : (
-        <>
-          {timeline.map((ev) => {
-            if (ev.kind === 'user') {
-              // R284: route compaction-summary messages to
-              // the dedicated row so the user gets the
-              // "View original" affordance. The legacy
-              // path stays for plain user bubbles.
-              if (isCompactionSummary(ev.message)) {
+          <>
+            {timeline.map((ev) => {
+              if (ev.kind === 'user') {
+                // R284: route compaction-summary messages to
+                // the dedicated row so the user gets the
+                // "View original" affordance. The legacy
+                // path stays for plain user bubbles.
+                if (isCompactionSummary(ev.message)) {
+                  return (
+                    <CompactionSummaryMessage
+                      key={`c-${ev.message.id}`}
+                      m={ev.message}
+                      sessionId={currentSessionId}
+                    />
+                  );
+                }
+                return <LegacyMessage key={`u-${ev.message.id}`} m={ev.message} />;
+              }
+              if (ev.kind === 'system') {
+                return <LegacyMessage key={`s-${ev.message.id}`} m={ev.message} />;
+              }
+              if (ev.kind === 'preamble') {
                 return (
-                  <CompactionSummaryMessage
-                    key={`c-${ev.message.id}`}
-                    m={ev.message}
-                    sessionId={currentSessionId}
+                  <AgentMarkdownMessage
+                    key={`p-${ev.steps[0]?.id ?? 'pre'}`}
+                    steps={ev.steps}
+                    isLive={ev.isLive}
                   />
                 );
               }
-              return <LegacyMessage key={`u-${ev.message.id}`} m={ev.message} />;
-            }
-            if (ev.kind === 'system') {
-              return <LegacyMessage key={`s-${ev.message.id}`} m={ev.message} />;
-            }
-            if (ev.kind === 'preamble') {
               return (
                 <AgentMarkdownMessage
-                  key={`p-${ev.steps[0]?.id ?? 'pre'}`}
+                  key={`t-${ev.subTask.id}`}
                   steps={ev.steps}
+                  subTask={ev.subTask}
                   isLive={ev.isLive}
                 />
               );
-            }
-            return (
-              <AgentMarkdownMessage
-                key={`t-${ev.subTask.id}`}
-                steps={ev.steps}
-                subTask={ev.subTask}
-                isLive={ev.isLive}
+            })}
+            {/* R269: persistent streaming footer. When at least
+             *  one event has streamed in but the run is still
+             *  in flight, show a compact pulsing indicator just
+             *  below the last message and above the MessageInput.
+             *  Before R269 the chat panel went silent between
+             *  the first event and run_end — the user couldn't
+             *  tell whether the engine was hung or still working. */}
+            {isStreaming && <StreamingIndicator variant="footer" />}
+            <div ref={bottomRef} />
+            {/* inline subagent spawn cards. The user
+                can expand / dismiss each card; the
+                "View subagent →" link switches the active
+                session to the subagent's transcript so the
+                user can read what the worker is doing. */}
+            {spawnCards.map((c) => (
+              <SubagentSpawnCard
+                key={c.eventId}
+                event={{
+                  id: c.eventId,
+                  type: 'subagent_spawn',
+                  ts: c.ts,
+                  subagentId: c.subagentId,
+                  data: { role: c.role, description: c.description, status: c.status },
+                }}
+                onOpen={viewSpawnCard}
+                onDismiss={dismissSpawnCard}
               />
-            );
-          })}
-          {/* R269: persistent streaming footer. When at least
-           *  one event has streamed in but the run is still
-           *  in flight, show a compact pulsing indicator just
-           *  below the last message and above the MessageInput.
-           *  Before R269 the chat panel went silent between
-           *  the first event and run_end — the user couldn't
-           *  tell whether the engine was hung or still working. */}
-          {isStreaming && <StreamingIndicator variant="footer" />}
-          <div ref={bottomRef} />
-          {/* inline subagent spawn cards. The user
-              can expand / dismiss each card; the
-              "View subagent →" link switches the active
-              session to the subagent's transcript so the
-              user can read what the worker is doing. */}
-          {spawnCards.map((c) => (
-            <SubagentSpawnCard
-              key={c.eventId}
-              event={{
-                id: c.eventId,
-                type: 'subagent_spawn',
-                ts: c.ts,
-                subagentId: c.subagentId,
-                data: { role: c.role, description: c.description, status: c.status },
-              }}
-              onOpen={viewSpawnCard}
-              onDismiss={dismissSpawnCard}
-            />
-          ))}
-        </>
-      )}
-      {unseenCount > 0 && !pinned && (
-        <button
-          className="jump-to-bottom"
-          onClick={jumpToBottom}
-          title="Scroll to bottom and resume auto-scroll"
-        >
-          {unseenCount} new
-        </button>
-      )}
-      {!unseenCount && !pinned && isStreaming && (
-        <button
-          className="jump-to-bottom jump-to-bottom-streaming"
-          onClick={jumpToBottom}
-          title="Scroll to bottom (streaming in progress)"
-        >
-          generating...
-        </button>
-      )}
-    </div>
+            ))}
+          </>
+        )}
+        {unseenCount > 0 && !pinned && (
+          <button
+            className="jump-to-bottom"
+            onClick={jumpToBottom}
+            title="Scroll to bottom and resume auto-scroll"
+          >
+            {unseenCount} new
+          </button>
+        )}
+        {!unseenCount && !pinned && isStreaming && (
+          <button
+            className="jump-to-bottom jump-to-bottom-streaming"
+            onClick={jumpToBottom}
+            title="Scroll to bottom (streaming in progress)"
+          >
+            generating...
+          </button>
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }

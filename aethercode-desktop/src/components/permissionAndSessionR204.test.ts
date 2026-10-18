@@ -147,7 +147,7 @@ describe('R204 #3: SessionListRow titles use preview, fall back to <未命名>',
     // last-active timestamp. Dropping the visible
     // id-suffix doesn't lose the audit trail — it's
     // one hover away.
-    expect(rowSrc).toMatch(/title=\{`\$\{session\.id\}\\n\$\{session\.cwd \?\? ''\}\\nlast active \$\{lastActive\}`\}/);
+    expect(rowSrc).toMatch(/title=\{`\$\{session\.id\}\\n\$\{session\.cwd \?\? ''\}\\nstate: \$\{stateLabel\.text\}\\nlast active \$\{lastActive\}`\}/);
   });
 });
 
