@@ -132,8 +132,42 @@ const TOOL_OUTPUT_PREVIEW = 4000;
 // full error is still in the transcript for debugging.
 const TOOL_ERROR_PREVIEW = 200;
 
+// R712 (2026-10-18): hard upper bound for the raw tool-output
+// string BEFORE it ever reaches react-markdown / remark-gfm.
+// The existing TOOL_OUTPUT_PREVIEW / TOOL_ERROR_PREVIEW caps
+// only trimmed the markdown *preview*; the in-memory
+// `ev.output` was passed untouched into `body` and then
+// `ReactMarkdown` parsed it. With a multi-hundred-KB body
+// (e.g. a model that ran `cat default.jsonl` and got a
+// 286 KB tool_result back), the gfm autolink-literal pass +
+// React's reconciler both devolved to O(n²) on the full
+// string, the WebView2 renderer spun to 30+ core-equivalent
+// CPU for 11 hours, and the desktop UI stopped responding
+// even though the daemon was fine. The HARD cap is the
+// *defensive* line: no matter what the daemon / transcript
+// sends, the renderer refuses to push a >50 KB markdown
+// blob into react-markdown. 50 KB is still ~12x the normal
+// preview cap and enough to show almost any real tool
+// output (a long `find` listing tops out at ~10 KB). The
+// full content is still on disk in the transcript for any
+// user who needs the raw text — they can re-open the JSONL
+// directly. Anything over 50 KB is a sign of a self-
+// referencing tool loop (cat of a transcript that includes
+// itself) and the user benefits more from a clear "truncated
+// to keep the UI responsive" banner than from 286 KB of
+// recursive noise.
+const HARD_MAX_OUTPUT_CHARS = 50_000;
+
 function truncateOutput(s: string, max: number = TOOL_OUTPUT_PREVIEW): string {
   if (!s) return '';
+  // R712: clamp to the hard ceiling first, so a runaway
+  // transcript line never gets fed into react-markdown at
+  // all. The 4 KB / 200 KB preview caps are still applied on
+  // top for the normal readable preview.
+  if (s.length > HARD_MAX_OUTPUT_CHARS) {
+    return s.slice(0, HARD_MAX_OUTPUT_CHARS)
+      + `\n\n[...R712: output truncated from ${s.length} to ${HARD_MAX_OUTPUT_CHARS} chars to keep the chat responsive. The full content is in the raw transcript at .aethercode/sessions/default.jsonl if you need it.]`;
+  }
   return s.length > max ? s.slice(0, max) + '\n...(truncated)' : s;
 }
 
