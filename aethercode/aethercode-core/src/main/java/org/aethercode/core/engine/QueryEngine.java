@@ -1698,7 +1698,8 @@ public class QueryEngine {
                     action.accept(new StreamEvent.AwaitUserDecision(
                             au.summary(),
                             todoController.currentTodoStepCount(),
-                            todoController.softThreshold()));
+                            todoController.softThreshold(),
+                            TodoRunController.defaultDecisionOptions()));
                     pendingAwaitSummary = au.summary();
                     awaitingUserDecision = true;
                     action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));

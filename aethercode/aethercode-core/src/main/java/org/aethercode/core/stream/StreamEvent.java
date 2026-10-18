@@ -64,8 +64,45 @@ public sealed interface StreamEvent {
      * message will be treated as a continuation decision. This is
      * <em>not</em> a terminal {@code RunEnd} — the query hasn't
      * finished, the engine is just waiting.
+     *
+     * <p>{@code options} is the structured menu of choices the
+     * user can pick from (e.g. A/B/C/D for the default
+     * "mark complete / revise plan / acknowledge / abort"
+     * menu produced by {@code TodoRunController}). Each option
+     * carries a short letter, label, and description so the UI
+     * can render clickable cards without parsing the
+     * {@code summary} text. Older engine builds don't emit
+     * {@code options}; clients should fall back to parsing the
+     * {@code summary} (or to a hard-coded default menu) when the
+     * field is missing.
      */
-    record AwaitUserDecision(String summary, int currentTodoSteps, int currentSoftThreshold) implements StreamEvent {}
+    record AwaitUserDecision(
+            String summary,
+            int currentTodoSteps,
+            int currentSoftThreshold,
+            List<DecisionOption> options
+    ) implements StreamEvent {}
+
+    /**
+     * one structured choice inside an {@code AwaitUserDecision}.
+     * The renderer maps this to a clickable card; clicking
+     * injects the matching continuation text into the input box
+     * (or sends it directly if the engine accepts a
+     * pre-canned response).
+     *
+     * <ul>
+     *   <li>{@code letter} — short identifier such as {@code "A"}
+     *       (single capital) the user types in their reply.
+     *       Stable across engine versions so the LLM still
+     *       recognises the user's choice.</li>
+     *   <li>{@code label} — short human-readable verb the UI
+     *       shows on the card button (e.g. "Mark complete").</li>
+     *   <li>{@code description} — one-sentence rationale the UI
+     *       shows as a tooltip / sub-text. Helps the user pick
+     *       without opening the markdown summary.</li>
+     * </ul>
+     */
+    record DecisionOption(String letter, String label, String description) {}
 
     /**
      * per-call token usage emitted by the chat client. The

@@ -19,6 +19,42 @@ import {
 // import it from the store (matches the pattern
 // for ChatMessage / ChatStep / ChatSubTask).
 export type { TaskInfo } from '../lib/methods';
+
+// R714: structured menu for the "awaiting user decision" banner.
+// The engine emits this as `AwaitUserDecision.options` so the
+// banner can render clickable cards instead of asking the user
+// to type (A)/(B)/(C)/(D) by hand. Mirror of the engine's
+// `org.aethercode.core.stream.StreamEvent.DecisionOption`;
+// keep these two in sync when the menu changes.
+export interface DecisionOption {
+  letter: string;
+  label: string;
+  description: string;
+}
+export interface AwaitingUserDecision {
+  summary: string;
+  todoSteps: number;
+  softThreshold: number;
+  options: DecisionOption[];
+}
+/**
+ * Fallback menu used when the engine build is too old to emit
+ * `AwaitUserDecision.options` (pre-R714). Matches the engine's
+ * `TodoRunController.defaultDecisionOptions()` A/B/C/D. Without
+ * this fallback the banner would have nothing to render and the
+ * user would still be stuck on "what do I do?" — same symptom
+ * that drove R714 in the first place.
+ */
+export const DEFAULT_DECISION_OPTIONS: DecisionOption[] = [
+  { letter: 'A', label: 'Mark complete',
+    description: "Mark this todo complete (or move on) if it's actually done." },
+  { letter: 'B', label: 'Revise plan',
+    description: "Revise the todo list via todo_write to break this work into smaller items." },
+  { letter: 'C', label: 'Acknowledge',
+    description: "Acknowledge in plain text that the current strategy is correct and the extra steps are needed; the engine will then continue with the bumped threshold." },
+  { letter: 'D', label: 'Abort',
+    description: "Abort the rest of the plan if the goal is unachievable." },
+];
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 // the RpcEvent type. Imported from methods.ts
 // so the type flows from the rpc emission through
@@ -1639,8 +1675,14 @@ interface AppState {
    *  max-bumps limit, the run pauses with stop reason
    *  "awaiting_user_decision" and we surface a special input
    *  prompt. The next `query()` is treated as the user's
-   *  continuation decision. */
-  awaitingUserDecision: { summary: string; todoSteps: number; softThreshold: number } | null;
+   *  continuation decision.
+   *
+   *  R714: `options` carries the structured A/B/C/D menu so
+   *  the banner can render clickable cards. Older engine
+   *  builds omit the field; the store fills it in with
+   *  {@link DEFAULT_DECISION_OPTIONS} so the UI is never
+   *  empty. */
+  awaitingUserDecision: AwaitingUserDecision | null;
   /** R83 Issue #1+2+4: the current user query is the de-facto
    *  "active task" in the UI sense, even though the engine's
    *  {@code tasks} list only carries Subagent tasks. The Header
@@ -3333,12 +3375,20 @@ export const useStore = create<AppState>((set, get) => {
       case 'await_user_decision': {
         // per-todo controller hit max bumps. Pause the input
         // box and surface a decision prompt. The summary tells the
-        // user what happened.
+        // user what happened. R714: also pull the structured
+        // options menu (A/B/C/D) so the banner can render
+        // clickable cards. Pre-R714 engine builds don't emit
+        // `options`; fall back to DEFAULT_DECISION_OPTIONS so
+        // the UI is never empty.
+        const opts = (ev as any).options;
         set({
           awaitingUserDecision: {
             summary: (ev as any).summary ?? 'Task needs a decision',
             todoSteps: (ev as any).currentTodoSteps ?? 0,
             softThreshold: (ev as any).currentSoftThreshold ?? 0,
+            options: Array.isArray(opts) && opts.length > 0
+                ? opts as DecisionOption[]
+                : DEFAULT_DECISION_OPTIONS,
           },
         });
         break;

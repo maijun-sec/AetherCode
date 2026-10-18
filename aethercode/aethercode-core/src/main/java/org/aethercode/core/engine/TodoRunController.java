@@ -2,6 +2,7 @@ package org.aethercode.core.engine;
 
 import org.aethercode.core.app.AppState;
 import org.aethercode.core.message.ContentBlock;
+import org.aethercode.core.stream.StreamEvent.DecisionOption;
 
 import java.util.List;
 import java.util.Map;
@@ -204,12 +205,46 @@ public final class TodoRunController {
         sb.append("(previous soft threshold was ").append(oldThreshold)
           .append(", bumped to ").append(newThreshold).append(").\n\n");
         sb.append("Decide what to do — pick ONE and act on it this turn:\n");
-        sb.append("  (A) Mark this todo complete (or move on) if it's actually done.\n");
-        sb.append("  (B) Revise the todo list via todo_write to break this work into smaller items.\n");
-        sb.append("  (C) Acknowledge in plain text that the current strategy is correct and the\n");
-        sb.append("      extra steps are needed; the engine will then continue with the bumped threshold.\n");
-        sb.append("  (D) Abort the rest of the plan if the goal is unachievable.\n");
+        // Render the same options that {@link #defaultDecisionOptions()}
+        // exposes to the UI, so LLM and user see identical wording
+        // (single source of truth — no drift between the two views).
+        List<DecisionOption> options = defaultDecisionOptions();
+        for (DecisionOption o : options) {
+            sb.append("  (").append(o.letter()).append(") ").append(o.label()).append(".\n");
+        }
         return sb.toString();
+    }
+
+    /**
+     * The default A/B/C/D decision menu surfaced to the user when
+     * the per-todo controller hits its max bumps limit. Exposed
+     * as a public static constant so:
+     * <ul>
+     *   <li>{@link StreamEvent.AwaitUserDecision} can carry the
+     *       structured list to the UI for clickable cards.</li>
+     *   <li>{@link #buildAskLlmPrompt} can render the same wording
+     *       in the synthetic user message — single source of truth
+     *       so the LLM and the user see identical option text.</li>
+     *   <li>Tests can pin the menu shape (e.g. letter must stay
+     *       {@code A}/{@code B}/{@code C}/{@code D} so old
+     *       transcripts remain parseable).</li>
+     * </ul>
+     * The letters are part of the wire contract with the LLM;
+     * changing them would invalidate every prior transcript that
+     * references the option. Don't rename without a versioned
+     * migration.
+     */
+    public static List<DecisionOption> defaultDecisionOptions() {
+        return List.of(
+                new DecisionOption("A", "Mark complete",
+                        "Mark this todo complete (or move on) if it's actually done."),
+                new DecisionOption("B", "Revise plan",
+                        "Revise the todo list via todo_write to break this work into smaller items."),
+                new DecisionOption("C", "Acknowledge",
+                        "Acknowledge in plain text that the current strategy is correct and the extra steps are needed; the engine will then continue with the bumped threshold."),
+                new DecisionOption("D", "Abort",
+                        "Abort the rest of the plan if the goal is unachievable.")
+        );
     }
 
     /** Build the summary string for {@link Verdict.AskLlm#summary()}

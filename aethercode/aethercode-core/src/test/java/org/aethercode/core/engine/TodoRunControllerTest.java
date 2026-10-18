@@ -2,6 +2,7 @@ package org.aethercode.core.engine;
 
 import org.aethercode.core.app.AppState;
 import org.aethercode.core.message.ContentBlock;
+import org.aethercode.core.stream.StreamEvent;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -174,6 +175,47 @@ class TodoRunControllerTest {
         assertTrue(prompt.contains("(B)"));
         assertTrue(prompt.contains("(C)"));
         assertTrue(prompt.contains("(D)"));
+    }
+
+    @Test
+    void defaultDecisionOptionsExposesFullMenu() {
+        // R714: the engine sends this menu to the desktop as
+        // structured AwaitUserDecision.options. The UI renders
+        // it as clickable cards. Pinning the shape here so the
+        // wire contract (letter/label/description) doesn't drift.
+        List<org.aethercode.core.stream.StreamEvent.DecisionOption> opts =
+                TodoRunController.defaultDecisionOptions();
+        assertEquals(4, opts.size(), "default menu has 4 options");
+
+        // Letters A-D — keep stable so old transcripts that
+        // reference "(A)" / "(B)" / "(C)" / "(D)" still parse.
+        assertEquals("A", opts.get(0).letter());
+        assertEquals("B", opts.get(1).letter());
+        assertEquals("C", opts.get(2).letter());
+        assertEquals("D", opts.get(3).letter());
+
+        // Labels & descriptions non-empty so the UI card has
+        // something to show.
+        for (var o : opts) {
+            assertNotNull(o.label());
+            assertFalse(o.label().isBlank(), "label must be non-blank");
+            assertNotNull(o.description());
+            assertFalse(o.description().isBlank(), "description must be non-blank");
+        }
+    }
+
+    @Test
+    void askLlmPromptUsesSameMenuLabels() {
+        // Single source of truth: the prompt the LLM sees and
+        // the menu the UI sees share the same labels. If this
+        // test ever fails, the wire contract is drifting — LLM
+        // and user no longer agree on what the options mean.
+        String prompt = TodoRunController.buildAskLlmPrompt(
+                "any todo", 10, 5, 15);
+        for (var o : TodoRunController.defaultDecisionOptions()) {
+            assertTrue(prompt.contains(o.label()),
+                    "ask-llm prompt must mention label \"" + o.label() + "\" for option " + o.letter());
+        }
     }
 
     @Test

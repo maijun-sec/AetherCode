@@ -1,12 +1,17 @@
 /* decision-prompt banner shown when the per-todo controller
-   has hit its max LLM bumps. Stays above the message list. */
+   has hit its max LLM bumps. Stays above the message list.
+   R714: expanded to host a row of clickable option cards
+   (A/B/C/D etc.) sourced from the engine's structured menu,
+   plus the legacy quick-action row (Continue / Change / Abort).
+   Vertical stack on narrow viewports — the option row wraps
+   to keep the layout readable on smaller chat windows. */
 
 .awaiting-banner {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 10px;
   margin: 8px 24px 0 24px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   border: 1px solid rgba(240, 185, 90, 0.4);
   background: rgba(240, 185, 90, 0.08);
   border-radius: 6px;
@@ -15,11 +20,10 @@
 }
 
 .awaiting-text {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .awaiting-title {
@@ -38,10 +42,93 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* R714: option-card row. Each card is a clickable button —
+   the letter badge is a colored chip on the left, the right
+   side holds the label + description. Hover/focus surfaces
+   the card for keyboard users; clicking fires the option. */
+.awaiting-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.awaiting-option-card {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.awaiting-option-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.awaiting-option-card:active {
+  transform: scale(0.98);
+}
+.awaiting-option-card:focus-visible {
+  outline: 2px solid rgba(108, 194, 139, 0.6);
+  outline-offset: 1px;
+}
+
+/* letter chip. The colour matches the semantic of the option:
+   A=blue (mark complete), B=purple (revise), C=green (ack),
+   D=red (abort). The chip colour is the same as the card's
+   border on hover so the user instantly sees what they
+   picked. */
+.awaiting-option-letter {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: rgba(120, 144, 200, 0.25);
+  color: #92a8d0;
+  border: 1px solid rgba(120, 144, 200, 0.4);
+}
+.awaiting-option-a .awaiting-option-letter { background: rgba(120, 144, 200, 0.25); color: #92a8d0; border-color: rgba(120, 144, 200, 0.4); }
+.awaiting-option-b .awaiting-option-letter { background: rgba(160, 120, 200, 0.25); color: #b58fd1; border-color: rgba(160, 120, 200, 0.4); }
+.awaiting-option-c .awaiting-option-letter { background: rgba(108, 194, 139, 0.25); color: #6cc28b; border-color: rgba(108, 194, 139, 0.4); }
+.awaiting-option-d .awaiting-option-letter { background: rgba(244, 135, 113, 0.25); color: #f48771; border-color: rgba(244, 135, 113, 0.4); }
+
+.awaiting-option-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.awaiting-option-label {
+  font-weight: 600;
+  font-size: 12px;
+}
+.awaiting-option-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+/* legacy quick-action row. Kept identical to the pre-R714
+   banner so muscle memory survives. */
 .awaiting-actions {
   display: flex;
   gap: 6px;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
 }
 
 .awaiting-btn {
