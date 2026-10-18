@@ -229,16 +229,17 @@ public class AetherCodeMethods {
         m.put("createSession",                         new String[]{TAG_WRITE, TAG_SESSION});
         m.put("deleteSession",                         new String[]{TAG_WRITE, TAG_SESSION});
         // R710: trash surface. The session/trash RPC is a
-        // multi-action endpoint (empty / restoreId / list /
-        // no-args) so it carries the WRITE tag for the
-        // destructive variants and READ for the list/count
-        // variants. Both WRITE and READ is the conservative
-        // choice — over-broad is better than under-broad
-        // (the dispatcher's tag check is just an audit
-        // signal, not a security boundary).
+        // multi-action endpoint (empty / restoreId / count);
+        // the read-only "list trashed" path is no longer
+        // routed through here — desktop uses
+        // listSessions({ trashed: true }) (READ), which is
+        // the more discoverable path. Tagging session/trash
+        // as WRITE keeps R124's read/write mutual-exclusivity
+        // contract intact and surfaces the destructive
+        // intent in the RPC palette filter.
         m.put("session/softDelete",                    new String[]{TAG_WRITE, TAG_SESSION});
         m.put("session/restore",                      new String[]{TAG_WRITE, TAG_SESSION});
-        m.put("session/trash",                         new String[]{TAG_WRITE, TAG_READ, TAG_SESSION});
+        m.put("session/trash",                         new String[]{TAG_WRITE, TAG_SESSION});
         m.put("listEngines",                           new String[]{TAG_READ, TAG_SESSION});
         m.put("createEngine",                          new String[]{TAG_WRITE, TAG_SESSION});
         m.put("deleteEngine",                          new String[]{TAG_WRITE, TAG_SESSION});
@@ -2431,14 +2432,41 @@ public class AetherCodeMethods {
         // turns, and a 5-minute idle is unusual but not
         // necessarily broken.
         boolean healthy = idleForMs < 0 || idleForMs < 5 * 60_000L;
+        // R715: report the ACTIVE engine's permMode / sessionId
+        // / model, not the legacy default `engine` field's.
+        // Pre-R715 the StatusBar always showed the constructor
+        // engine's permMode — which stayed at BYPASS_PERMISSIONS
+        // even after the user flipped the dropdown to
+        // ASK_BEFORE_TOOL on a multi-session daemon. The user
+        // saw the dropdown change momentarily then snap back on
+        // the next 15s `refreshEngineState` tick (which called
+        // `getState` and correctly read the active engine, but
+        // the StatusBar continued to render the stale
+        // engineHealth snapshot). The fix: route permMode /
+        // sessionId / model through `currentEngine()` so the
+        // four "what session is the user looking at" RPCs
+        // (engineHealth, getState, getPermissionModeSuggestion,
+        // setPermissionMode) all agree on the answer.
+        //
+        // Stats + ping still consult the constructor `engine`
+        // field — that signal is the "daemon is alive" liveness
+        // probe, which is process-scoped, not session-scoped.
+        AetherCodeEngine active = currentEngine();
+        AetherCodeEngine reported = active != null ? active : engine;
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ok", true);
         r.put("healthy", healthy);
         r.put("version", org.aethercode.sdk.AetherCodeEngine.class.getPackage().getImplementationVersion());
         r.put("uptimeMs", now - startMs);
-        r.put("model", engine.appState().mainLoopModel());
-        r.put("sessionId", engine.appState().sessionId());
-        r.put("permissionMode", engine.appState().permissionMode().name());
+        r.put("model", reported.appState().mainLoopModel());
+        r.put("sessionId", reported.appState().sessionId());
+        r.put("permissionMode", reported.appState().permissionMode().name());
+        // explicit `currentSessionId` so the renderer can
+        // distinguish "which session are we reporting on"
+        // (active) from the constructor engine's sessionId
+        // (legacy). The two are usually identical for
+        // single-session daemons and diverge for multi-session.
+        r.put("currentSessionId", active != null ? active.appState().sessionId() : null);
         r.put("state", stats.state());
         r.put("lastError", stats.lastError());
         r.put("lastErrorAtMs", stats.lastErrorAtMs());
