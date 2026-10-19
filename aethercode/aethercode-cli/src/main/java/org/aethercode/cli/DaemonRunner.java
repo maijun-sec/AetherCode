@@ -2,6 +2,7 @@ package org.aethercode.cli;
 
 import org.aethercode.protocol.jsonrpc.JsonRpcNotification;
 import org.aethercode.protocol.methods.AetherCodeMethods;
+import org.aethercode.protocol.methods.MemoryMethods;
 import org.aethercode.protocol.server.JsonRpcDispatcher;
 import org.aethercode.protocol.server.JsonRpcServer;
 import org.aethercode.orchestration.papercompat.PaperCompatRpc;
@@ -236,6 +237,24 @@ final class DaemonRunner {
                         System.getProperty("user.home")).resolve(".aethercode"));
         methods.setMemoryStore(memoryStore);
         LOG.info("R127: 3-layer memory store installed (USER / PROJECT / SESSION)");
+        // R720: register the memory/* RPC surface on the stdio
+        // dispatcher. Prior to this round the {@code MemoryMethods}
+        // class was on the classpath (aethercode-protocol) and the
+        // {@code AetherCodeMethods} tag table had a TAG_MEMORY
+        // entry, but the dispatcher had never actually been told
+        // about the 9 memory/{get, list, appendProjectChange,
+        // appendSessionFact, appendSessionChange, setProjectInfo,
+        // readProjectMemory, compact, switchProject} methods —
+        // every one of them returned -32601 method-not-found,
+        // even though the engine had a fully-wired
+        // LayeredMemoryStore attached to {@code methods}. R720
+        // closes the gap so the TUI's memory panel / the
+        // desktop's memory inspector can list, read, and
+        // append at runtime.
+        org.aethercode.protocol.methods.MemoryMethods memoryRpcs =
+                new org.aethercode.protocol.methods.MemoryMethods(memoryStore);
+        memoryRpcs.registerAll(server.dispatcher());
+        LOG.info("R720: memory/* RPCs registered on stdio dispatcher (9 methods)");
 
         // wire the MemoryLifecycle orchestrator. The
         // engine's query() flow now calls onQueryStart / onQueryEnd
@@ -520,6 +539,18 @@ final class DaemonRunner {
                             java.nio.file.Path.of(System.getProperty("user.home"))
                                     .resolve(".aethercode"));
             http.methods().setMemoryStore(httpMemoryStore);
+            // R720: install the matching MemoryMethods on the HTTP
+            // server so the hand-rolled dispatch switch can route
+            // memory/* RPCs. Without this the HTTP+WS daemon returns
+            // METHOD_NOT_FOUND for the entire memory/* namespace
+            // even though AetherCodeMethods has a fully-wired
+            // LayeredMemoryStore attached (the stdio daemon's
+            // dispatcher picks it up automatically via
+            // MemoryMethods.registerAll(); the HTTP path needs the
+            // explicit setMemoryMethods call because its dispatcher
+            // is replaced with a hand-rolled switch).
+            http.setMemoryMethods(new MemoryMethods(httpMemoryStore));
+            LOG.info("R720: memory/* RPCs registered on http path (9 methods)");
         } catch (Exception memEx) {
             LOG.warn("R266d: memory store install failed on http path: {}",
                     memEx.getMessage());

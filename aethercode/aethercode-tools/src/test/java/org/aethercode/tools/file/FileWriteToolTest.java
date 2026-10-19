@@ -11,6 +11,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
+import java.util.LinkedHashMap;
+
 /**
  * regression test for the Windows case-insensitive path sandbox.
  *
@@ -139,5 +141,109 @@ class FileWriteToolTest {
             if (originalCwd == null) System.clearProperty("aethercode.cwd");
             else System.setProperty("aethercode.cwd", originalCwd);
         }
+    }
+
+    // -----------------------------------------------------------------
+    //  R720-B1: mode parameter + large-file truncate guard
+    //
+    //  Tests cover the four behaviours the Q19 RAG incident
+    //  surfaced:
+    //    1. mode="append" preserves existing content (Q19 actual fix)
+    //    2. mode omitted on a fresh/small file behaves like the
+    //       legacy default (truncate + write) — backward compat
+    //    3. mode omitted on a large existing file is REFUSED with
+    //       a structured message so the model picks the right mode
+    //    4. mode="overwrite" explicit override bypasses the refusal
+    // -----------------------------------------------------------------
+
+    @Test
+    void appendModePreservesExistingContent(@TempDir Path tmp) throws Exception {
+        // The R19 incident shape: a 6 KB progress.md already exists
+        // with cumulative history, the model wants to "add a new
+        // bullet", and without mode=append file_write silently
+        // truncated the history. With R720, mode=append appends in
+        // place — verification reads back the original bytes + the
+        // appended content.
+        String original = "x".repeat((int) (FileWriteTool.LARGE_FILE_THRESHOLD_BYTES + 1024));
+        Path target = tmp.resolve("history.log");
+        Files.writeString(target, original);
+        long sizeBefore = Files.size(target);
+
+        Tool t = FileWriteTool.build();
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("file_path", target.toString());
+        input.put("content", "\nNEW ENTRY\n");
+        input.put("mode", "append");
+        Tool.ToolResult res = t.call(input, Tool.CallContext.of("s")).join();
+
+        assertThat(res.isError()).as("append should succeed: %s", res.output()).isFalse();
+        String readBack = Files.readString(target);
+        assertThat(readBack).startsWith(original);
+        assertThat(readBack).endsWith("\nNEW ENTRY\n");
+        assertThat(Files.size(target)).isEqualTo(sizeBefore + "\nNEW ENTRY\n".length());
+    }
+
+    @Test
+    void defaultModeOnSmallFreshFileOverwrites(@TempDir Path tmp) throws Exception {
+        // Backward compat: a small / non-existing file with no
+        // mode argument should still write normally. The R720
+        // guard is scoped to "existing + large", not "every
+        // write".
+        Path target = tmp.resolve("fresh.txt");
+        Tool t = FileWriteTool.build();
+        Tool.ToolResult res = t.call(Map.of(
+                "file_path", target.toString(),
+                "content", "hello"
+        ), Tool.CallContext.of("s")).join();
+        assertThat(res.isError()).isFalse();
+        assertThat(Files.readString(target)).isEqualTo("hello");
+    }
+
+    @Test
+    void defaultModeOnLargeExistingFileRefusesWithRecoveryHint(@TempDir Path tmp) throws Exception {
+        // The headline R720-B1 fix: when a model writes to a
+        // history-shaped file (size > 5 KB) without passing mode,
+        // the tool refuses rather than truncates. The error
+        // message must include the recovery hint so the model can
+        // pick the right mode on its next call.
+        String existing = "y".repeat((int) (FileWriteTool.LARGE_FILE_THRESHOLD_BYTES + 4096));
+        Path target = tmp.resolve("history.log");
+        Files.writeString(target, existing);
+        long sizeBefore = Files.size(target);
+
+        Tool t = FileWriteTool.build();
+        Tool.ToolResult res = t.call(Map.of(
+                "file_path", target.toString(),
+                "content", "DROP EVERYTHING"
+        ), Tool.CallContext.of("s")).join();
+
+        assertThat(res.isError()).as("default-mode overwrite of large file should be refused").isTrue();
+        assertThat(res.output().toString())
+                .contains("mode=\"append\"")
+                .contains("mode=\"overwrite\"")
+                .contains("file_edit");
+        // and — critically — the on-disk file is unchanged
+        assertThat(Files.readString(target)).isEqualTo(existing);
+        assertThat(Files.size(target)).isEqualTo(sizeBefore);
+    }
+
+    @Test
+    void explicitOverwriteModeBypassesRefusal(@TempDir Path tmp) throws Exception {
+        // Once the model has read the file (or otherwise decided
+        // it really meant overwrite), passing mode="overwrite"
+        // explicitly skips the guard and writes the new content.
+        String existing = "z".repeat((int) (FileWriteTool.LARGE_FILE_THRESHOLD_BYTES + 4096));
+        Path target = tmp.resolve("history.log");
+        Files.writeString(target, existing);
+
+        Tool t = FileWriteTool.build();
+        Tool.ToolResult res = t.call(Map.of(
+                "file_path", target.toString(),
+                "content", "REPLACED",
+                "mode", "overwrite"
+        ), Tool.CallContext.of("s")).join();
+
+        assertThat(res.isError()).as("explicit overwrite should succeed: %s", res.output()).isFalse();
+        assertThat(Files.readString(target)).isEqualTo("REPLACED");
     }
 }

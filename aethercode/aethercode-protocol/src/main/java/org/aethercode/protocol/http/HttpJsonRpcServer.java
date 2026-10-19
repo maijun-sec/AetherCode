@@ -130,6 +130,27 @@ public final class HttpJsonRpcServer {
     public void setShutdownToken(String v) { this.shutdownToken = v; }
     public String shutdownToken() { return shutdownToken; }
 
+    /** R720: optional {@link org.aethercode.protocol.methods.MemoryMethods}
+     *  instance for routing the memory/* namespace over the HTTP
+     *  path. The stdio daemon picks memoryMethods up via the
+     *  dispatcher (it has a registerAll hook); the HTTP+WS daemon
+     *  uses a hand-rolled switch (see {@link #dispatch}) and so
+     *  has to be told about MemoryMethods explicitly via this
+     *  setter. Null until {@code DaemonRunner} wires one in. The
+     *  9 memory/* cases in {@link #dispatch} consult this field
+     *  and return a structured "memory not configured" envelope
+     *  when it's null so callers get a clear "memory not
+     *  configured" reply instead of a silent NoSuchMethod. */
+    private volatile org.aethercode.protocol.methods.MemoryMethods memoryMethods;
+
+    public void setMemoryMethods(org.aethercode.protocol.methods.MemoryMethods mm) {
+        this.memoryMethods = mm;
+    }
+
+    public org.aethercode.protocol.methods.MemoryMethods memoryMethods() {
+        return memoryMethods;
+    }
+
     private final Consumer<JsonRpcNotification> broadcastNotifier = notif -> {
         // R83 fix: Javalin 5.6.3's WsContext#send(String) drops
         // messages when called from a thread other than the WS
@@ -1025,10 +1046,50 @@ public final class HttpJsonRpcServer {
             case "sdd.status"    -> methods.sddStatus(params);
             case "sdd.abort"     -> methods.sddAbort(params);
             case "sdd.listRuns"  -> methods.sddListRuns(params);
+            // R720: HTTP path parity for the memory/* surface.
+            // The stdio dispatcher (aethercode-cli DaemonRunner)
+            // picks these up via MemoryMethods.registerAll(...).
+            // The HTTP+WS daemon uses this hand-rolled switch
+            // and so without these arms every desktop / tauri
+            // call to memory/{get, list, appendProjectChange,
+            // appendSessionFact, appendSessionChange,
+            // setProjectInfo, readProjectMemory, compact,
+            // switchProject} returns METHOD_NOT_FOUND even
+            // though a LayeredMemoryStore is attached. Routes
+            // to the memoryMethods instance the daemon wires
+            // via setMemoryMethods(); null falls through to
+            // a structured "memory not configured" reply
+            // (matches the pattern used by sdd.* when the
+            // orchestrator isn't installed).
+            case "memory/get"                    -> routeMemory(m -> m.get(params));
+            case "memory/list"                   -> routeMemory(m -> m.list(params));
+            case "memory/appendProjectChange"    -> routeMemory(m -> m.appendProjectChange(params));
+            case "memory/appendSessionFact"      -> routeMemory(m -> m.appendSessionFact(params));
+            case "memory/appendSessionChange"    -> routeMemory(m -> m.appendSessionChange(params));
+            case "memory/setProjectInfo"         -> routeMemory(m -> m.setProjectInfo(params));
+            case "memory/readProjectMemory"      -> routeMemory(m -> m.readProjectMemory(params));
+            case "memory/compact"                -> routeMemory(m -> m.compact(params));
+            case "memory/switchProject"          -> routeMemory(m -> m.switchProject(params));
             default -> throw new JsonRpcProtocolException(
                     "unknown method: " + method,
                     JsonRpcError.of(JsonRpcError.METHOD_NOT_FOUND, method));
         };
+    }
+
+    /** Helper that routes a memory/* RPC to the wired
+     *  MemoryMethods instance, returning a structured
+     *  "memory not configured" envelope (matching the
+     *  stdio daemon's behaviour) when the daemon never
+     *  installed one. Keeps the {@link #dispatch}
+     *  switch readable. */
+    private Map<String, Object> routeMemory(
+            java.util.function.Function<
+                    org.aethercode.protocol.methods.MemoryMethods,
+                    Map<String, Object>> handler) {
+        if (memoryMethods == null) {
+            return Map.of("ok", false, "reason", "memory not configured");
+        }
+        return handler.apply(memoryMethods);
     }
 
     private Map<String, Object> engineInfo() {

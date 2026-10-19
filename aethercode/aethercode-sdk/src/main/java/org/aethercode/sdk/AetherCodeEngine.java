@@ -733,8 +733,36 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // field and the compiler rejects the two-step assignment pattern
         // (this.compactor = b.compactor; if (null) this.compactor = ...).
         Compactor resolvedCompactor = b.compactor;
-        if (b.contextWindow > 0 && resolvedCompactor == null) {
-            int ctx = b.contextWindow;
+        // R720-A3: the pre-R720 condition skipped building
+        // a default compactor when the caller didn't pass
+        // a non-zero contextWindow. The boot path (CLI
+        // Main.java) only sets contextWindow from
+        // --context-window (default 0 = "use AutoCompact's
+        // 200K default"), so the typical daemon-launched
+        // engine has contextWindow=0 and therefore no
+        // compactor at all. The chain that followed: empty
+        // compactor → runPreFlightCompact returns at the
+        // {@code if (compactor == null) return;} guard →
+        // QueryEngine.runPreFlightCompact never invokes
+        // AutoCompact.shouldCompact → l5Compacts stays at 0
+        // across every run. Fix: drop the
+        // {@code b.contextWindow > 0} half of the original
+        // guard so the default-build block runs whenever
+        // the caller didn't pass an explicit compactor.
+        // The {@code ctx} variable below falls back to 200K
+        // (= AutoCompact.DEFAULT_EFFECTIVE_CAP_TOKENS) when
+        // the boot path left contextWindow=0, matching
+        // resolveCompactConfig's same fallback so the
+        // engine's effective cap agrees with the pre-flight
+        // gate's effective cap.
+        if (resolvedCompactor == null) {
+            java.util.logging.Logger.getLogger(AetherCodeEngine.class.getName())
+                    .info("R720-A3: no caller-supplied compactor and "
+                            + "contextWindow=" + b.contextWindow
+                            + " — building default StructuredCompactor8+SlidingWindow");
+            int ctx = b.contextWindow > 0
+                    ? b.contextWindow
+                    : 200_000; // matches AutoCompact.DEFAULT_EFFECTIVE_CAP_TOKENS
             // R718-G: lower buffer / maxIn. The user picked
             // 200K as the attention sweet spot ("最优的推理
             // 肯定不是 100w 的上下文, 而是 50w 左右的样子").
@@ -783,6 +811,18 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 sc8.withMetricsCollector(this.metrics);
             }
             resolvedCompactor = sw;
+        }
+        if (resolvedCompactor == null) {
+            // belt-and-braces: in case the outer if branch
+            // didn't engage (b.contextWindow > 0 but caller
+            // passed an explicit compactor that turned out
+            // null on the way in), still leave it null —
+            // the caller's contract is honoured and L5
+            // simply stays dormant. The R720-A3 log line
+            // above is the diagnostic.
+            java.util.logging.Logger.getLogger(AetherCodeEngine.class.getName())
+                    .warning("R720-A3: compactor is null after default-build "
+                            + "attempt — L5 will stay dormant");
         }
         this.compactor = resolvedCompactor;
         // build the MemoryRecall. Use the caller's instance if
@@ -2179,6 +2219,11 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *  actually ran, false if it was a no-op (e.g.
      *  transcript is already under the threshold). */
     public boolean runPreFlightCompact() {
+        // R720-trace: forced stderr. Same lesson as QueryEngine.
+        System.err.println("R720-trace: AetherCodeEngine.runPreFlightCompact enter: "
+                + "queryEngine=" + (queryEngine == null ? "null" : queryEngine.getClass().getSimpleName())
+                + ", appState=" + (appState == null ? "null" : appState.sessionId())
+                + ", transcriptSize=" + (appState == null ? 0 : appState.transcript().size()));
         if (queryEngine == null) return false;
         int before = appState == null ? 0 : appState.transcript().size();
         try {
@@ -2189,6 +2234,8 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             return false;
         }
         int after = appState == null ? 0 : appState.transcript().size();
+        System.err.println("R720-trace: AetherCodeEngine.runPreFlightCompact exit: "
+                + "before=" + before + ", after=" + after + ", didCompact=" + (after < before));
         return after < before;
     }
     /** per-process metrics collector. Returns counters and

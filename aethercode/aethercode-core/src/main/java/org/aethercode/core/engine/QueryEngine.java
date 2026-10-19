@@ -517,12 +517,34 @@ public class QueryEngine {
             }
         }
         // legacy boot path — fall back to the
-        // --context-window flag value.
+        // --context-window flag value. R720-A2:
+        // pre-R720 this returned null when the boot
+        // path didn't set a window, which short-
+        // circuited runPreFlightCompact() to a
+        // silent no-op. The result: l5Compacts
+        // stayed at 0 across every observed run
+        // (RAG Day 1-3, ~663M input tokens, 0
+        // L5 fires) — every other L1-L4 layer
+        // was doing work, but L5 was completely
+        // dormant because the gate config itself
+        // was never resolved. Fall back to
+        // AutoCompact.DEFAULT_EFFECTIVE_CAP_TOKENS
+        // (200K) when the boot path didn't set
+        // anything, so a vanilla daemon still
+        // engages L5 at the default 0.4 fraction
+        // (= 80K tokens). The matching log line
+        // helps debugging: a "ctx=0" line on
+        // every compact would otherwise be a
+        // mystery.
         int ctx = appState.contextWindow();
         if (ctx > 0) {
             return org.aethercode.core.compact.CompactConfig.forContextWindow(ctx);
         }
-        return null;
+        LOG.info("R720-A2: appState.contextWindow()=0 — falling back to "
+                + "AutoCompact.DEFAULT_EFFECTIVE_CAP_TOKENS=200_000. "
+                + "Set a per-model contextWindow on the boot path (CLI "
+                + "AETHERCODE_MAX_CONTEXT_TOKENS) to override.");
+        return org.aethercode.core.compact.CompactConfig.forContextWindow(200_000);
     }
 
 /** pre-flight auto-compact. Run BEFORE the
@@ -561,37 +583,98 @@ public class QueryEngine {
      *  </ul>
      */
     public void runPreFlightCompact() {
+        // R720-trace: forced stderr log so we can confirm the
+        // hot path is reached regardless of the daemon's
+        // SLF4J / JUL config. Stays in production — the
+        // R720 / R719 lesson is that silent no-ops here are
+        // the single biggest reason {@code l5Compacts} stays
+        // at 0. The line is one tag + three fields, ~120
+        // chars, well under any reasonable log-rate cap.
+        System.err.println("R720-trace: runPreFlightCompact enter: "
+                + "compactor=" + (compactor == null ? "null" : compactor.getClass().getSimpleName())
+                + ", appState.contextWindow=" + appState.contextWindow()
+                + ", transcriptSize=" + appState.transcript().size());
         if (compactor == null) return;
         // R283: pull the per-model config. Falls back to
         // appState.contextWindow() (legacy boot path) when
         // the engine has no provider registry wired.
         org.aethercode.core.compact.CompactConfig cfg =
                 resolveCompactConfig();
-        if (cfg == null) return;
+        if (cfg == null) {
+            LOG.warn("R720-debug: runPreFlightCompact: cfg=null "
+                    + "(provider=" + currentProviderName + ", model="
+                    + currentModelId + ", appState.contextWindow="
+                    + appState.contextWindow() + ", transcriptSize="
+                    + appState.transcript().size() + ") — gate not engaged");
+            return;
+        }
         int ctxWindow = cfg.contextWindow();
-        if (ctxWindow <= 0) return;
-        // R283: gate uses the model's own compactAt by
-        // default (absolute token count), with an
-        // optional AETHERCODE_COMPACT_THRESHOLD
-        // fraction override (e.g. 0.7 = compact at
-        // 70% of contextWindow for early compaction).
-        // When the env var is unset, treat the model's
-        // compactAt as the gate — matching the per-model
-        // declaration rather than the legacy 90%
-        // default.
+        if (ctxWindow <= 0) {
+            LOG.warn("R720-debug: runPreFlightCompact: cfg.contextWindow="
+                    + ctxWindow + " (provider=" + currentProviderName
+                    + ", model=" + currentModelId + ") — gate not engaged");
+            return;
+        }
+        // R720-A1: wire-side pre-flight gate UNIFICATION with
+        // {@link org.aethercode.compact.AutoCompact#shouldCompact()}.
+        //
+        // Prior to this round, the pre-flight gate used the absolute
+        // value {@code cfg.compactAt()} (default 184_000 tokens =
+        // 92% of a 200K context window) while {@code AutoCompact}
+        // used {@code effectiveCap * compactAtFraction} (R719
+        // DEFAULT_COMPACT_AT = 0.4 → 80_000 tokens on a 200K window).
+        // The two trigger bands were ~2.3x apart, and {@code
+        // l5Compacts} stayed at 0 across 17 RAG-Day-2 turns even
+        // though every turn was well past the intended 80K-token gate:
+        // the pre-flight gate always returned false before the
+        // compactor's own threshold had a chance to fire.
+        //
+        // Default fraction = 0.4 (200K * 0.4 = 80K tokens). Env
+        // overrides (set before daemon boot):
+        //   AETHERCODE_COMPACT_THRESHOLD        — full fraction override
+        //                                         (e.g. 0.5 for "compact
+        //                                         at 50% of context window")
+        //   AETHERCODE_R720_COMPACT_FRACTION   — same shape, R720 explicit
+        //                                         (so a future R-number
+        //                                         can change defaults
+        //                                         without breaking R283's
+        //                                         contract)
+        //   AETHERCODE_R720_USE_ABSOLUTE_GATE=1
+        //                                       — legacy behaviour
+        //                                         (use cfg.compactAt()
+        //                                         directly). Off by
+        //                                         default; flip on if
+        //                                         a provider.yaml
+        //                                         declares an
+        //                                         off-band compactAt
+        //                                         the user wants
+        //                                         honoured as-is.
         long gate;
-        String env = System.getenv("AETHERCODE_COMPACT_THRESHOLD");
-        if (env != null && !env.isBlank()) {
+        String envThreshold = System.getenv("AETHERCODE_COMPACT_THRESHOLD");
+        String envFraction = System.getenv("AETHERCODE_R720_COMPACT_FRACTION");
+        String useAbsolute = System.getenv("AETHERCODE_R720_USE_ABSOLUTE_GATE");
+        if ("1".equals(useAbsolute)) {
+            gate = cfg.compactAt();
+        } else if (envThreshold != null && !envThreshold.isBlank()) {
             double threshold;
-            try { threshold = Double.parseDouble(env.trim()); }
+            try { threshold = Double.parseDouble(envThreshold.trim()); }
             catch (NumberFormatException ignored) { threshold = -1; }
             if (threshold > 0) {
                 gate = (long) (ctxWindow * threshold);
             } else {
-                gate = cfg.compactAt();
+                gate = (long) (ctxWindow * 0.4);
             }
+        } else if (envFraction != null && !envFraction.isBlank()) {
+            double fraction;
+            try { fraction = Double.parseDouble(envFraction.trim()); }
+            catch (NumberFormatException ignored) { fraction = 0.4; }
+            if (fraction <= 0) fraction = 0.4;
+            gate = (long) (ctxWindow * fraction);
         } else {
-            gate = cfg.compactAt();
+            // R720: default 0.4 = 80K tokens on a 200K window —
+            // matches AutoCompact.DEFAULT_COMPACT_AT (R719). Both
+            // backends fire at the same point now.
+            gate = (long) (ctxWindow * 0.4);
         }
         long current = estimateTranscriptTokens();
         if (current < gate) return;
