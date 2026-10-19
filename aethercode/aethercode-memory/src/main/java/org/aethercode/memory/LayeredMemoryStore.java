@@ -221,10 +221,42 @@ public final class LayeredMemoryStore {
     }
 
     /** Read the full PROJECT_MEMORY.md contents. Empty when the
-     *  project has no project memory yet. */
+     *  project has no project memory yet.
+     *
+     *  <p>R724: this method now MERGES the R280 ProjectMemoryStore
+     *  body with the legacy FileBackedMemory
+     *  ({@code projectStore(cwd).all()}) change log. Pre-R724
+     *  the two stores were disjoint — R280 introduced
+     *  PROJECT_MEMORY.md as the canonical store and routed
+     *  {@link #writeProjectInfo} / {@link #appendSessionChange}
+     *  through it, but {@link #appendProjectChange} (the
+     *  pre-R280 entry point) kept writing to MEMORY.md via
+     *  FileBackedMemory. The result: a session that called
+     *  {@code appendProjectChange} and then
+     *  {@code readProjectMemory} saw an empty body. Cross-session
+     *  contract tests caught this in R724; the fix is to
+     *  union both sources here. The two stores are formatted
+     *  differently ({@code [<iso8601>] <content>} for
+     *  FileBackedMemory vs. {@code ## Session changes} section
+     *  for ProjectMemoryStore) so we concatenate them with a
+     *  divider rather than try to merge line-by-line. */
     public String readProjectMemory(String cwd) {
         if (cwd == null) return "";
-        return projectMemoryStore(cwd).readAll();
+        String r280 = projectMemoryStore(cwd).readAll();
+        // legacy: pick up the FileBackedMemory change log so a
+        // pre-R280 appendProjectChange entry isn't invisible to
+        // readProjectMemory. Format the FileBackedMemory items
+        // into a "## Legacy change log (R127)" markdown section.
+        StringBuilder legacy = new StringBuilder();
+        java.util.List<FileBackedMemory.MemoryItem> items = projectStore(cwd).all();
+        if (!items.isEmpty()) {
+            legacy.append("\n\n## Legacy change log (R127, pre-R280)\n\n");
+            for (FileBackedMemory.MemoryItem item : items) {
+                legacy.append("- ").append(item.content() == null ? "" : item.content())
+                        .append("\n");
+            }
+        }
+        return r280 + legacy;
     }
 
     /** Read PROJECT_MEMORY.md with all session-change lines belonging

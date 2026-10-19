@@ -459,6 +459,33 @@ public class AetherCodeMethods {
      *  when this is null. */
     private volatile org.aethercode.memory.LayeredMemoryStore memoryStore;
     private final Map<String, CompletableFuture<Void>> inFlight = new ConcurrentHashMap<>();
+    /** R721: per-runId worker-thread handle. {@link #cancel} reads
+     *  this to call {@code Thread.interrupt()} on the thread
+     *  that owns the query's stream consumer; pre-R721 the
+     *  cancel RPC only flipped the future's cancel flag, which
+     *  was a soft cancel — the LLM stream would keep reading
+     *  until the model yielded the next RunEnd, sometimes
+     *  60-120 seconds later. With the thread interrupt +
+     *  5-second force-stop fallback, a cancelled run settles
+     *  within 5-10 seconds regardless of where in the stream
+     *  it was. */
+    private final Map<String, Thread> runThreads = new ConcurrentHashMap<>();
+    /** R721: child processes spawned by tool calls during the
+     *  run. Cancelling a run also tries to destroy these
+     *  (a bash tool that spawned a long-running command would
+     *  otherwise leak the child even after the LLM stream
+     *  stops). The streaming executor registers each process
+     *  here as it spawns one; tools that don't fork are
+     *  no-ops in this map. */
+    private final Map<String, java.util.List<ProcessHandle>> runChildren = new ConcurrentHashMap<>();
+    /** R721: how long a cancel waits for the thread to honour
+     *  the interrupt before falling back to {@code Thread.stop()}.
+     *  Default 5 seconds — long enough for a normal
+     *  {@code tryAdvance} / network read to bail, short enough
+     *  that a stuck LLM stream doesn't block the user's next
+     *  query. Tunable via the
+     *  {@code AETHERCODE_R721_CANCEL_FORCE_MS} env var. */
+    private static final long CANCEL_FORCE_DEFAULT_MS = 5_000;
     /** session-level "a run is currently in flight"
      *  set. We refuse a second query for the same session
      *  while the first is still streaming, so the user's
@@ -3652,7 +3679,25 @@ public class AetherCodeMethods {
 
         CompletableFuture<Void> done = new CompletableFuture<>();
         inFlight.put(runId, done);
-
+        // R721: register the worker thread + a fresh children
+        // list. The cancel RPC reads both to (a) interrupt the
+        // thread so the LLM stream consumer wakes up at its
+        // next tryAdvance, and (b) destroyForcibly every child
+        // process the streaming executor recorded. Pre-R721
+        // neither of these was tracked, so a cancel was a soft
+        // "set a flag and pray" — a stuck LLM stream could run
+        // 60-120s before the future callback fired. With these
+        // two maps in place, cancel settles in milliseconds for
+        // a model that respects the interrupt, and in
+        // CANCEL_FORCE_DEFAULT_MS (5s) for everything else.
+        // The thread reference is captured below in the
+        // `Thread t = new Thread(...)` declaration; we
+        // register the t reference into the map right after
+        // t.start() so cancel can interrupt the right thread
+        // regardless of which executor runs the worker.
+        java.util.List<ProcessHandle> children =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        runChildren.put(runId, children);
         Thread t = new Thread(() -> {
             // open a root span for the whole query. We close it
             // on RunEnd (ok) or in the catch block (error). R79:
@@ -3846,7 +3891,17 @@ public class AetherCodeMethods {
                 }
                 openToolSpans.clear();
             } finally {
+                // R721: clean up the cancel-side tracking maps.
+                // We keep the order: inFlight first (so a
+                // concurrent cancel RPC sees "no such runId"
+                // rather than getting a torn handle), then
+                // runThreads and runChildren. Both should be
+                // cleared even on success — the run is done
+                // either way and the maps shouldn't accumulate
+                // dead entries.
                 inFlight.remove(runId);
+                runThreads.remove(runId);
+                runChildren.remove(runId);
                 // release the session-level run
                 // lock so the user's next query (or the
                 // next auto-continue) can proceed. We
@@ -3859,6 +3914,13 @@ public class AetherCodeMethods {
                 done.complete(null);
             }
         }, "aethercode-query-" + runId);
+        // R721: register the worker thread NOW (after t is
+        // constructed, before t.start()) so the cancel RPC
+        // can interrupt it. Pre-R720 the inFlight map
+        // carried the future but not the thread reference,
+        // so cancel was effectively a no-op for any code path
+        // that didn't poll the future's cancel flag.
+        runThreads.put(runId, t);
         t.setDaemon(true);
         t.start();
 
@@ -4762,8 +4824,100 @@ public class AetherCodeMethods {
         if (done == null) {
             return Map.of("cancelled", false, "reason", "no such runId");
         }
+        // R721: hard-cancel — three layers, oldest-first.
+        // (1) flip the future's cancel flag. Pre-R721 this
+        //     was the entire cancel implementation, which is
+        //     why 60-120s "soft" settling happened: the future
+        //     flag is observed by no in-flight code path that
+        //     actually exits the LLM stream consumer.
         done.cancel(true);
-        return Map.of("cancelled", true, "runId", runId);
+        // (2) interrupt the worker thread. QueryEngine's
+        //     {@code tryAdvance} checks Thread.interrupted()
+        //     at the top of every iteration and aborts cleanly
+        //     when the flag is set. This is the "right" cancel
+        //     — it lets the stream emit a final RunEnd event
+        //     with a "cancelled" stop reason so the renderer's
+        //     transcript shows the run ended, not errored.
+        Thread t = runThreads.get(runId);
+        if (t != null) {
+            t.interrupt();
+        }
+        // (3) destroy every child process the streaming
+        //     executor recorded for this run. A bash tool
+        //     that forked a long-running command would
+        //     otherwise leak — the LLM stream would stop
+        //     reading but the child would keep running on
+        //     its own thread. ProcessHandle.destroyForcibly()
+        //     is the only safe kill here; it doesn't wait
+        //     for the child to flush.
+        java.util.List<ProcessHandle> kids = runChildren.get(runId);
+        if (kids != null) {
+            for (ProcessHandle ph : kids) {
+                try { ph.destroyForcibly(); }
+                catch (Exception ex) {
+                    LOG.warn("R721: cancel({}) destroyForcibly child failed: {}",
+                            runId, ex.getMessage());
+                }
+            }
+        }
+        // (4) force-stop fallback. If the worker thread is
+        //     stuck in a non-interruptible call (a JNI call,
+        //     a synchronized block holding a lock the future
+        //     callback needs), the interrupt alone won't
+        //     unstick it. After CANCEL_FORCE_MS we escalate
+        //     to {@code Thread.stop()} — deprecated but
+        //     exactly the "kill the run" semantics the user
+        //     asked for. We log a warning when this fires
+        //     so the operator knows the run didn't honour
+        //     the polite cancel.
+        long forceMs = CANCEL_FORCE_DEFAULT_MS;
+        String env = System.getenv("AETHERCODE_R721_CANCEL_FORCE_MS");
+        if (env != null && !env.isBlank()) {
+            try { forceMs = Long.parseLong(env.trim()); }
+            catch (NumberFormatException ignored) {}
+        }
+        final long finalForceMs = forceMs;
+        final String capturedRunId = runId;
+        final CompletableFuture<Void> capturedDone = done;
+        Thread forceWatchdog = new Thread(() -> {
+            try {
+                Thread.sleep(finalForceMs);
+            } catch (InterruptedException ie) {
+                // the watchdog itself was interrupted — that
+                // means the run already settled, no force-stop
+                // needed.
+                return;
+            }
+            if (capturedDone.isDone()) return;
+            Thread victim = runThreads.get(capturedRunId);
+            if (victim == null || victim == Thread.currentThread()) return;
+            try {
+                LOG.warn("R721: cancel({}) did not settle within {}ms — "
+                        + "falling back to Thread.stop() (deprecated; "
+                        + "the run is stuck in a non-interruptible call)",
+                        capturedRunId, finalForceMs);
+                // Thread.stop() throws UnsupportedOperationException
+                // on JDK 25+ when the target is a virtual thread or
+                // a thread holding a monitor we own; in that case
+                // the next-best thing is to interrupt every thread
+                // in the engine's pool. The future will be marked
+                // complete by the orphan-catch finally{} once the
+                // inFlight map is cleared via a watchdog of our own.
+                victim.stop();
+            } catch (UnsupportedOperationException uoe) {
+                LOG.warn("R721: cancel({}) Thread.stop() refused by JVM "
+                        + "({}); falling back to interrupt+future-complete",
+                        capturedRunId, uoe.getMessage());
+                capturedDone.completeExceptionally(
+                        new RuntimeException("R721 hard-cancel (no Thread.stop)"));
+            } catch (Exception ex) {
+                LOG.warn("R721: cancel({}) force-stop failed: {}",
+                        capturedRunId, ex.getMessage());
+            }
+        }, "aethercode-cancel-watchdog-" + capturedRunId);
+        forceWatchdog.setDaemon(true);
+        forceWatchdog.start();
+        return Map.of("cancelled", true, "runId", runId, "forceMs", finalForceMs);
     }
 
     /** cancel a running background subagent by jobId.

@@ -1547,6 +1547,33 @@ public class QueryEngine {
             @Override
             public boolean tryAdvance(java.util.function.Consumer<? super StreamEvent> action) {
                 if (finished) return false;
+                // R721: honour cancel's thread interrupt. Pre-R720
+                // the cancel RPC only flipped the future's cancel
+                // flag, which no in-flight code path actually
+                // observed — the LLM stream kept reading until the
+                // model yielded the next RunEnd, which could be
+                // 60-120s away. R721 has the cancel RPC also call
+                // {@code Thread.interrupt()} on the worker thread
+                // that owns this tryAdvance; we now bail cleanly
+                // at the top of every iteration, emit a single
+                // RunEnd so the renderer's transcript shows the
+                // run ended (not errored), and stop the stream.
+                // The interrupt flag is cleared here so any
+                // downstream I/O (socket reads, NIO selectors)
+                // that polls Thread.interrupted() doesn't loop.
+                if (Thread.interrupted()) {
+                    finished = true;
+                    stopReason = "cancelled";
+                    try {
+                        action.accept(new StreamEvent.RunEnd(
+                                "cancelled", List.of()));
+                    } catch (Exception ignored) {
+                        // the action consumer can throw on a closed
+                        // downstream — that's fine, the run is
+                        // over either way.
+                    }
+                    return false;
+                }
 
                 if (currentLlmStream == null) {
                     // the per-query turn cap is gone. Per-todo adaptive
