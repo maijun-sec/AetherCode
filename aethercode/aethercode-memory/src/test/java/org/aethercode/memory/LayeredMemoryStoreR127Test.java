@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -84,6 +85,10 @@ class LayeredMemoryStoreR127Test {
 
     @Test
     void projectStore_isCwdIsolated(@TempDir Path tmp) throws Exception {
+        // R728: appendProjectChange now writes to PROJECT_MEMORY.md
+        // (ProjectMemoryStore), not MEMORY.md (FileBackedMemory).
+        // Read back via countProjectChanges / readProjectMemory
+        // so the test asserts cwd isolation on the canonical store.
         Handle h = build(tmp, "p-agent");
         try {
             Path projA = tmp.resolve("A");
@@ -92,28 +97,37 @@ class LayeredMemoryStoreR127Test {
             java.nio.file.Files.createDirectories(projB);
             h.store().appendProjectChange(projA.toString(), "edit in A");
             h.store().appendProjectChange(projB.toString(), "edit in B");
-            var aList = h.store().listProject(projA.toString());
-            var bList = h.store().listProject(projB.toString());
-            assertEquals(1, aList.size());
-            assertEquals(1, bList.size());
-            assertTrue(aList.get(0).content().contains("edit in A"));
-            assertTrue(bList.get(0).content().contains("edit in B"));
+            assertEquals(1, h.store().countProjectChanges(projA.toString()),
+                    "project A's PROJECT_MEMORY.md must hold 1 entry");
+            assertEquals(1, h.store().countProjectChanges(projB.toString()),
+                    "project B's PROJECT_MEMORY.md must hold 1 entry");
+            String aBody = h.store().readProjectMemory(projA.toString());
+            String bBody = h.store().readProjectMemory(projB.toString());
+            assertTrue(aBody.contains("edit in A"), "A body must contain A's edit: " + aBody);
+            assertTrue(bBody.contains("edit in B"), "B body must contain B's edit: " + bBody);
+            assertFalse(aBody.contains("edit in B"), "A body must NOT contain B's edit (cwd isolation)");
+            assertFalse(bBody.contains("edit in A"), "B body must NOT contain A's edit (cwd isolation)");
         } finally { h.session().close(); }
     }
 
     @Test
     void invalidateProject_dropsCacheAndReloadsFromDisk(@TempDir Path tmp) {
+        // R728: invalidate must clear both the legacy FileBackedMemory
+        // cache and the R280 ProjectMemoryStore cache for this cwd.
         Handle h = build(tmp, "p-agent");
         try {
             h.store().appendProjectChange(tmp.toString(), "first");
             h.store().invalidateProject(tmp.toString());
-            var list = h.store().listProject(tmp.toString());
-            assertEquals(1, list.size());
+            assertEquals(1, h.store().countProjectChanges(tmp.toString()),
+                    "invalidate must NOT drop the entry from disk; the next read re-loads 1 change");
         } finally { h.session().close(); }
     }
 
     @Test
     void invalidateAllProjects_dropsEveryCwdCache(@TempDir Path tmp) throws Exception {
+        // R728: invalidateAllProjects clears both legacy + R280
+        // caches for every cwd. After a fresh read, both project
+        // memories still hold their entries (they're on disk).
         Handle h = build(tmp, "p-agent");
         try {
             Path projA = tmp.resolve("A");
@@ -123,8 +137,10 @@ class LayeredMemoryStoreR127Test {
             h.store().appendProjectChange(projA.toString(), "A1");
             h.store().appendProjectChange(projB.toString(), "B1");
             h.store().invalidateAllProjects();
-            assertEquals(1, h.store().listProject(projA.toString()).size());
-            assertEquals(1, h.store().listProject(projB.toString()).size());
+            assertEquals(1, h.store().countProjectChanges(projA.toString()),
+                    "A's PROJECT_MEMORY.md must still hold 1 entry after invalidate");
+            assertEquals(1, h.store().countProjectChanges(projB.toString()),
+                    "B's PROJECT_MEMORY.md must still hold 1 entry after invalidate");
         } finally { h.session().close(); }
     }
 
@@ -151,30 +167,35 @@ class LayeredMemoryStoreR127Test {
 
     @Test
     void autoCompress_triggersWhenThresholdExceeded(@TempDir Path tmp) {
-        // threshold=5, keepRecent=2. 6 entries triggers compression.
+        // R728: appendProjectChange writes to ProjectMemoryStore;
+        // compression fires inside appendSessionChange when the
+        // entry count exceeds the threshold. We assert <= 6 to
+        // allow the compressor to either win the lock or be
+        // skipped (race tolerance).
         Handle h = build(tmp, "p-agent", 5, 2, true);
         try {
             for (int i = 0; i < 6; i++) {
                 h.store().appendProjectChange(tmp.toString(), "change " + i);
             }
-            var list = h.store().listProject(tmp.toString());
-            // After compression: 1 summary line + 2 most-recent.
-            // We assert <= 6 to allow the compressor to either
-            // win the lock or be skipped (race tolerance).
-            assertTrue(list.size() <= 6, "unexpected entry count: " + list.size());
+            int countAfter = h.store().countProjectChanges(tmp.toString());
+            assertTrue(countAfter <= 6,
+                    "compression must keep PROJECT_MEMORY.md change-count at or below threshold+1, got: " + countAfter);
         } finally { h.session().close(); }
     }
 
     @Test
     void autoCompress_disabledDoesNothing(@TempDir Path tmp) {
-        // threshold=1, keepRecent=1, autoCompress=false.
+        // R728: appendProjectChange writes to ProjectMemoryStore;
+        // compression is conditional on autoCompress=true at the
+        // LayeredMemoryStore level (the inner ProjectMemoryStore
+        // checks its own flag against threshold).
         Handle h = build(tmp, "p-agent", 1, 1, false);
         try {
             for (int i = 0; i < 10; i++) {
                 h.store().appendProjectChange(tmp.toString(), "change " + i);
             }
-            // 10 raw entries, no compression.
-            assertEquals(10, h.store().listProject(tmp.toString()).size());
+            assertEquals(10, h.store().countProjectChanges(tmp.toString()),
+                    "10 appends with autoCompress=false must leave PROJECT_MEMORY.md untouched by compression");
         } finally { h.session().close(); }
     }
 

@@ -10,6 +10,7 @@ import org.aethercode.core.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -2298,11 +2299,11 @@ public class QueryEngine {
                 .append(" / ").append(stride).append("-stride.\n");
 
         // cwd
+        Path cwdPath = null;
         try {
-            Object cwdObj = appState.cwd();
-            String cwd = cwdObj == null ? null : cwdObj.toString();
-            if (cwd != null && !cwd.isBlank()) {
-                body.append("cwd: ").append(cwd).append('\n');
+            cwdPath = appState.cwd();
+            if (cwdPath != null) {
+                body.append("cwd: ").append(cwdPath).append('\n');
             }
         } catch (Throwable ignored) {}
 
@@ -2345,17 +2346,198 @@ public class QueryEngine {
         if (seen.isEmpty()) body.append("  (none yet)\n");
         else for (String p : seen) body.append("  - ").append(p).append('\n');
 
+        // R726: list on-disk doc files (plan.md / progress.md /
+        // design.md / R###-*.md / q##-*.md / docs/* / .aethercode/*)
+        // so the model can read them when it loses the original
+        // prompt from the head of the transcript. This is the
+        // concrete answer to "if you cannot see it, read
+        // on-disk plan/progress docs" hint below.
+        int cwdDocCap = readCwdDocCapEnv();
+        java.util.List<String> cwdDocs = scanCwdContextDocs(cwdPath, cwdDocCap);
+        body.append("\nOn-disk context files (read these to recover state):\n");
+        if (cwdDocs.isEmpty()) {
+            body.append("  (no plan/progress/design/R-doc/q-prompt files found in cwd)\n");
+        } else {
+            for (String p : cwdDocs) body.append("  - ").append(p).append('\n');
+        }
+
         // current intent
         body.append("\nCurrent intent: continue the long-running task. The original user ");
         body.append("prompt was at the head of this transcript; if you cannot see it, ");
-        body.append("read on-disk plan/progress docs to recover state.\n");
+        body.append("read one of the on-disk context files listed above.\n");
 
         Message anchor = TranscriptPruner.anchorMessage(body.toString());
         if (metricsCollector != null) {
             metricsCollector.incAnchorInjection();
         }
-        LOG.info("R719: emitted session-anchor at turn {} (stride={})", currentTurn, stride);
+        LOG.info("R719/R726: emitted session-anchor at turn {} (stride={}, cwdDocs={})",
+                currentTurn, stride, cwdDocs.size());
         return anchor;
+    }
+
+    // -----------------------------------------------------------------
+    //  R726: on-disk context-doc scanner.
+    // -----------------------------------------------------------------
+    //
+    //  maybeEmitSessionAnchor() used to say "if you cannot see it,
+    //  read on-disk plan/progress docs to recover state" without
+    //  telling the model WHICH files actually exist. R726 fixes
+    //  that by scanning cwd + docs/ + .aethercode/memory/ for
+    //  known long-task doc filenames and listing the discovered
+    //  paths in the anchor body. The model can then `cat` /
+    //  `read_file` the right file instead of guessing.
+    //
+    //  Pattern coverage:
+    //    - top-level: plan.md / progress.md / design.md /
+    //      tasks.md / TODO.md / README.md / AGENTS.md
+    //    - top-level: R###-*.md (R-numbered design docs)
+    //    - top-level: r###-*.md / q##-*.md / q##-*.json (Q-prompt docs)
+    //    - docs/*.{md,markdown,json,txt}
+    //    - .aethercode/{memory,sessions,sdd}/*.{md,markdown,json,txt}
+    //
+    //  Limit: top CAP entries (default 10). Sort name DESC so the
+    //  most recent R-numbered docs appear first. All subdir scans
+    //  swallow IOException (a missing or unreadable dir is fine).
+
+    /** R726: max entries to include in the on-disk context-files
+     *  hint. Tunable via {@code AETHERCODE_R726_CWD_DOC_CAP} (default
+     *  {@link #DEFAULT_CWD_DOC_CAP}). */
+    public static final int DEFAULT_CWD_DOC_CAP = 10;
+
+    /** R726: known top-level long-task doc filenames (case
+     *  insensitive). Anything not on this list and not matching
+     *  the R### / q## patterns is filtered out at the top level —
+     *  we don't want to dump thousands of unrelated source files
+     *  into the anchor. */
+    private static final java.util.Set<String> CWD_KNOWN_TOP_NAMES;
+    static {
+        java.util.Set<String> s = new java.util.HashSet<>(java.util.Arrays.asList(
+                "plan.md", "plan.markdown",
+                "progress.md", "progress.markdown",
+                "design.md", "design.markdown",
+                "task.md", "tasks.md", "todo.md",
+                "readme.md", "agents.md"));
+        CWD_KNOWN_TOP_NAMES = java.util.Collections.unmodifiableSet(s);
+    }
+    /** R726: top-level filename matchers for R-numbered design
+     *  docs and Q-prompt docs. */
+    private static final java.util.regex.Pattern R726_R_PATTERN =
+            java.util.regex.Pattern.compile("^[Rr]\\d{3}.*\\.(md|markdown)$");
+    private static final java.util.regex.Pattern R726_Q_PATTERN =
+            java.util.regex.Pattern.compile("^q\\d{2}[a-z_-]*\\.(md|markdown|json|txt)$");
+    /** R726: subdir filename matchers. */
+    private static final java.util.regex.Pattern R726_SUBDIR_SUFFIX =
+            java.util.regex.Pattern.compile(".*\\.(md|markdown|json|txt)$");
+    /** R726: subdir relpaths to scan (relative to cwd, depth-1).
+     *  The {@code .aethercode} entry covers project-level memory
+     *  files (AGENTS.md at the aethercode root, etc.) that the
+     *  fixed memory/sessions/sdd subdirs would otherwise miss. */
+    private static final String[] R726_SUBDIRS = new String[] {
+            "docs",
+            ".aethercode",
+            ".aethercode/memory",
+            ".aethercode/sessions",
+            ".aethercode/sdd"
+    };
+
+    /** R726: scan {@code cwd} for known long-task doc files.
+     *  Returns up to {@code cap} absolute path strings, sorted by
+     *  filename descending so most-recent R-numbered docs surface
+     *  first. Returns an empty list when cwd is null, does not
+     *  exist, is unreadable, or contains no matching files.
+     *
+     *  <p>Visible for testing — package-private. */
+    static java.util.List<String> scanCwdContextDocs(Path cwd, int cap) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (cwd == null || cap <= 0) return out;
+        Path root;
+        try {
+            root = cwd.toAbsolutePath().normalize();
+            if (!java.nio.file.Files.isDirectory(root)) return out;
+        } catch (Exception ignored) {
+            return out;
+        }
+
+        // top level
+        try (java.util.stream.Stream<Path> stream = java.nio.file.Files.list(root)) {
+            java.util.List<Path> topHits = new java.util.ArrayList<>();
+            java.util.Iterator<Path> it = stream.iterator();
+            while (it.hasNext()) {
+                Path p = it.next();
+                String fn;
+                try {
+                    fn = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                } catch (Exception ignored) { continue; }
+                if (CWD_KNOWN_TOP_NAMES.contains(fn)
+                        || R726_R_PATTERN.matcher(fn).matches()
+                        || R726_Q_PATTERN.matcher(fn).matches()) {
+                    topHits.add(p);
+                }
+            }
+            // sort by filename string DESC so newest R-numbered files come first
+            topHits.sort((a, b) -> {
+                String an, bn;
+                try {
+                    an = a.getFileName().toString();
+                    bn = b.getFileName().toString();
+                } catch (Exception e) { return 0; }
+                return bn.compareTo(an);
+            });
+            for (Path p : topHits) {
+                if (out.size() >= cap) break;
+                out.add(p.toString());
+            }
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // unreadable top-level — fall through to subdir scan
+        }
+
+        // subdirs
+        for (String rel : R726_SUBDIRS) {
+            if (out.size() >= cap) break;
+            Path d;
+            try { d = root.resolve(rel); }
+            catch (Exception ignored) { continue; }
+            if (!java.nio.file.Files.isDirectory(d)) continue;
+            java.util.List<Path> sub;
+            try (java.util.stream.Stream<Path> stream = java.nio.file.Files.list(d)) {
+                sub = new java.util.ArrayList<>();
+                java.util.Iterator<Path> it = stream.iterator();
+                while (it.hasNext()) {
+                    Path p = it.next();
+                    String fn;
+                    try { fn = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT); }
+                    catch (Exception ignoredInner) { continue; }
+                    if (R726_SUBDIR_SUFFIX.matcher(fn).matches()) {
+                        sub.add(p);
+                    }
+                }
+            } catch (java.io.IOException | RuntimeException ignored) {
+                continue;
+            }
+            sub.sort((a, b) -> {
+                String an, bn;
+                try { an = a.getFileName().toString(); bn = b.getFileName().toString(); }
+                catch (Exception e) { return 0; }
+                return bn.compareTo(an);
+            });
+            for (Path p : sub) {
+                if (out.size() >= cap) break;
+                out.add(p.toString());
+            }
+        }
+
+        return out;
+    }
+
+    /** R726: read {@code AETHERCODE_R726_CWD_DOC_CAP}. Default
+     *  {@link #DEFAULT_CWD_DOC_CAP}. */
+    private static int readCwdDocCapEnv() {
+        String raw;
+        try { raw = System.getenv("AETHERCODE_R726_CWD_DOC_CAP"); }
+        catch (SecurityException ignored) { return DEFAULT_CWD_DOC_CAP; }
+        if (raw == null || raw.isBlank()) return DEFAULT_CWD_DOC_CAP;
+        try { int v = Integer.parseInt(raw.trim()); return v > 0 ? v : DEFAULT_CWD_DOC_CAP; }
+        catch (NumberFormatException ignored) { return DEFAULT_CWD_DOC_CAP; }
     }
 
     /** R719: read AETHERCODE_R719_ANCHOR_STRIDE env, default 5. */

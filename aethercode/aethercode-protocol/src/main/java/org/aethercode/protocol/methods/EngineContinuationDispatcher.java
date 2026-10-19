@@ -125,9 +125,16 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                 String lastStopReason = "end_turn";
                 engine.metrics().incTurnStarted();
                 java.util.Iterator<StreamEvent> it = stream.iterator();
+                // R727: tracks whether this continuation
+                // emitted at least one tool_use_start. The
+                // idle-turn detector only fires when
+                // sawToolUse==false AND final assistant
+                // message is empty/whitespace.
+                boolean[] sawToolUse = { false };
                 while (it.hasNext()) {
                     StreamEvent ev = it.next();
                     if (ev instanceof StreamEvent.ToolUseStart tu) {
+                        sawToolUse[0] = true;
                         engine.metrics().incToolCall();
                         String toolTraceId = engine.traces().startChildSpan(
                                 queryTraceId,
@@ -152,6 +159,17 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                             engine.traces().endSpan(leftover, "error");
                         }
                         openToolSpans.clear();
+                        // R727: detect "idle turn" on continuations
+                        // too. The RAG Day 2 build's hardest symptom
+                        // was an auto-continuation that fired but the
+                        // model emitted nothing — the user had to
+                        // type another message to nudge it. Counter
+                        // surfaces in getMetrics; LOG.warn keeps a
+                        // trail in the daemon log for postmortem.
+                        engine.metrics().recordIdleTurnIfApplicable(
+                                newRunId, sawToolUse[0],
+                                re.stopReason(),
+                                re.finalBlocks());
                     }
                     notifyStreamEvent(newRunId, ev, sessionId);
                 }

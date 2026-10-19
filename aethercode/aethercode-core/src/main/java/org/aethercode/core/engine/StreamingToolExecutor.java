@@ -552,6 +552,22 @@ public class StreamingToolExecutor {
                     "tool requires user input (ask not supported in streaming executor)", true));
             return;
         }
+        // R729: every Allow that reaches this branch is an
+        // auto-approve (BYPASS_PERMISSIONS / ACCEPT_TASK /
+        // ACCEPT_EDITS / user-defined allow rule / safe-by-default
+        // tool). The streaming executor never receives an Allow
+        // that came from a user click — user-driven allow/deny
+        // answers happen inside the UI layer before the tool call
+        // is re-dispatched. So bumping the metric here is
+        // exhaustive for "tools that ran without a confirmation
+        // prompt".
+        if (metricsCollector != null) {
+            metricsCollector.incPermissionAutoApprove();
+        }
+        LOG.info("R729: permission auto-approve (tool={}, id={}, mode={})",
+                call.name(), call.id(),
+                appState != null && appState.permissionMode() != null
+                        ? appState.permissionMode().name() : "?");
         Map<String, Object> finalInput = ((PermissionResult.Allow) pr).updatedInput();
         // R266h: early-reject when the model emitted a tool_use
         // with missing required parameters. Prior round the
@@ -823,6 +839,16 @@ public class StreamingToolExecutor {
                     "tool requires user input (ask not supported in streaming executor)", true));
             return;
         }
+        // R729: see the queue-based path above for the rationale.
+        // Same auto-approve audit on the newer sink-based path
+        // so both observation modes feed the metric.
+        if (metricsCollector != null) {
+            metricsCollector.incPermissionAutoApprove();
+        }
+        LOG.info("R729: permission auto-approve (sink path; tool={}, id={}, mode={})",
+                call.name(), call.id(),
+                appState != null && appState.permissionMode() != null
+                        ? appState.permissionMode().name() : "?");
         Map<String, Object> finalInput = ((org.aethercode.core.permission.PermissionResult.Allow) pr).updatedInput();
         // R266h: see the early-reject comment in the parallel
         // branch above. The sink-based path is the newer

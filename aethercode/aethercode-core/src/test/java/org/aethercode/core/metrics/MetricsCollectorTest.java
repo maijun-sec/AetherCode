@@ -68,6 +68,33 @@ class MetricsCollectorTest {
     }
 
     @Test
+    void freshCollector_exposesR729_autoApprove_andR727_idleTurns_atZero() {
+        // R729 + R727: the new metrics must be present in the
+        // snapshot even at zero so the UI's TokenUsage panel
+        // can render the fields without "—" placeholders.
+        MetricsCollector c = new MetricsCollector();
+        var snap = c.snapshot();
+        assertNotNull(snap.get("permissionAutoApprovals"),
+                "R729: fresh snapshot must expose permissionAutoApprovals at 0");
+        assertEquals(0L, snap.get("permissionAutoApprovals"));
+        assertNotNull(snap.get("idleTurnsDetected"),
+                "R727: fresh snapshot must expose idleTurnsDetected at 0");
+        assertEquals(0L, snap.get("idleTurnsDetected"));
+    }
+
+    @Test
+    void incPermissionAutoApprove_accumulatesAcrossRuns() {
+        // R729: the StreamingToolExecutor bumps this counter
+        // once per Allow it consumes. Verify the simple
+        // counter behaviour (the wire-up is exercised by the
+        // StreamingToolExecutor tests in this module).
+        MetricsCollector c = new MetricsCollector();
+        for (int i = 0; i < 7; i++) c.incPermissionAutoApprove();
+        assertEquals(7L, c.permissionAutoApprovals());
+        assertEquals(7L, c.snapshot().get("permissionAutoApprovals"));
+    }
+
+    @Test
     void resetClearsTokens() {
         MetricsCollector c = new MetricsCollector();
         c.addTokens(100, 200);

@@ -3720,6 +3720,14 @@ public class AetherCodeMethods {
             // refuses to continue on suspicious stop reasons like
             // "error" / "loop_detected" so this matters.
             final String[] lastStopReason = { "end_turn" };
+            // R727: tracks whether this run emitted at least one
+            // tool_use_start. The idle-turn detector only fires
+            // when sawToolUse==false AND the final assistant
+            // message is empty/whitespace. Without this flag,
+            // a run that called any tool would still be
+            // classified idle if the assistant's final message
+            // was truncated.
+            final boolean[] sawToolUse = { false };
             try {
                 // increment the metrics collector as events flow
                 // through. The collector is per-engine; the TUI
@@ -3728,6 +3736,7 @@ public class AetherCodeMethods {
                 target.query(prompt).forEach(ev -> {
                     // count tool calls + errors as they happen.
                     if (ev instanceof org.aethercode.core.stream.StreamEvent.ToolUseStart tu) {
+                        sawToolUse[0] = true;  // R727: track that this run emitted at least one tool call so the idle-detector doesn't false-positive
                         target.metrics().incToolCall();
                         // open a child tool span; close on
                         // the matching tool_result event. R79: the
@@ -3766,6 +3775,18 @@ public class AetherCodeMethods {
                         if (re.stopReason() != null && re.stopReason().startsWith("loop")) {
                             target.metrics().incLoopStop();
                         }
+                        // R727: detect "idle turn" — end with no
+                        // tool calls and no assistant text. This
+                        // is the RAG Day 2 auto-continue no-op
+                        // pattern: model decides to stop without
+                        // producing anything, user has to send
+                        // another prompt to nudge. Counter
+                        // surfaces in getMetrics so the UI can
+                        // show "idle turns: N".
+                        target.metrics().recordIdleTurnIfApplicable(
+                                runId, sawToolUse[0],
+                                re.stopReason(),
+                                re.finalBlocks());
                         // capture the actual last stop reason
                         // for the SESSION_IDLE event below.
                         if (re.stopReason() != null && !re.stopReason().isBlank()) {

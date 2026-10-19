@@ -138,32 +138,62 @@ public final class LayeredMemoryStore {
     }
 
     /**
-     * Append a change-log entry to the project's MEMORY.md and
-     * fire a compression pass if the threshold is exceeded.
+     * Append a change-log entry to the project's PROJECT_MEMORY.md
+     * (NOT MEMORY.md — that file is no longer the canonical store
+     * for project changes; see R728).
      *
-     * <p>The entry is written as a JSON line so a downstream
-     * compressor can parse the file back into structured entries.
-     * The entry's content is the raw text the model / user
-     * wrote (typically a one-line summary like
-     * "added 3 file_writes to src/abc_rag/types.py").
+     * <p><b>R728: this entry-point used to write to the legacy
+     * {@link FileBackedMemory} backed by {@code MEMORY.md}.</b>
+     * R280 introduced {@link ProjectMemoryStore} backed by
+     * {@code PROJECT_MEMORY.md} and routed {@link #writeProjectInfo}
+     * / {@link #appendSessionChange} through it, but left
+     * {@code appendProjectChange} on the legacy file. R724 caught
+     * the resulting cross-store split ({@code appendProjectChange}
+     * wrote MEMORY.md; {@link #readProjectMemory} read
+     * PROJECT_MEMORY.md — so a session that wrote a change
+     * saw an empty body on read). R724 fixed read by merging
+     * both sources under a "## Legacy change log (R127,
+     * pre-R280)" section. R728 closes the loop by writing ALL
+     * new entries to {@link ProjectMemoryStore}; the merge
+     * code stays in {@link #readProjectMemory} only so any
+     * pre-R728 content on disk remains visible.
+     *
+     * <p>The {@code sessionId} recorded in PROJECT_MEMORY.md is
+     * the literal {@code "legacy"} so a downstream
+     * consumer can recognise these entries as project-change
+     * (vs. session-change) entries appended through this
+     * legacy entry-point. The {@code description} is the raw
+     * text the model wrote (typically a one-line summary like
+     * "added 3 file_writes to src/abc_rag/types.py"); the
+     * ProjectMemoryStore embeds a timestamp inside each line
+     * (the {@code [<sessionId> <iso8601>]} prefix).
+     *
+     * <p>Returns a synthetic {@link FileBackedMemory.MemoryItem}
+     * (id + content + timestamps) so callers using the
+     * {@code MemoryItem} contract — most notably
+     * {@code Memory/appendProjectChange} RPC — keep working
+     * unchanged.
      */
     public FileBackedMemory.MemoryItem appendProjectChange(String cwd, String content) {
-        FileBackedMemory store = projectStore(cwd);
-        // Format: "[<iso8601>] <content>" so each line is
-        // self-describing (no separate index needed for
-        // LLM summarisation). The LLM sees the whole file.
-        String line = "[" + java.time.Instant.now() + "] " + content;
-        FileBackedMemory.MemoryItem item = store.add(line, "project-change", List.of());
-        if (autoCompress && store.size() > projectCompressThreshold) {
-            // Fire-and-forget. The compressor takes the
-            // write lock on the FileBackedMemory so a
-            // concurrent append waits until it returns.
-            compressor.maybeCompress(
-                    MemoryPaths.entrypoint(MemoryPaths.agentMemoryDir(agentType, MemoryScope.PROJECT, java.nio.file.Path.of(cwd))),
-                    projectCompressThreshold,
-                    keepRecent);
-        }
-        return item;
+        if (cwd == null || content == null) return null;
+        // R728: write to ProjectMemoryStore (canonical), NOT the
+        // legacy FileBackedMemory. Half-migrating the API is worse
+        // than not migrating — see the R724 split-store bug
+        // history. Pre-R728 entries on disk are still surfaced by
+        // readProjectMemory's legacy-merge section, so no content
+        // is dropped from the user's view.
+        projectMemoryStore(cwd).appendSessionChange("legacy", content);
+        // Build a synthetic MemoryItem so the existing RPC contract
+        // (id + content + ts) is preserved.
+        java.time.Instant now = java.time.Instant.now();
+        String line = "[" + now + "] " + content;
+        return new FileBackedMemory.MemoryItem(
+                java.util.UUID.randomUUID().toString(),
+                line,
+                "project-change",
+                List.of(),
+                now,
+                now);
     }
 
     public boolean deleteProject(String cwd, String id) {
@@ -195,7 +225,15 @@ public final class LayeredMemoryStore {
     /** Per-cwd ProjectMemoryStore. Lazy + cached, same pattern as
      *  {@link #projectStore}. The compressor + threshold + keepRecent
      *  come from THIS LayeredMemoryStore so the production defaults
-     *  propagate uniformly. */
+     *  propagate uniformly.
+     *
+     *  <p>R728: when {@link #autoCompress} is {@code false}, the
+     *  compressor is passed as {@code null} so the inner
+     *  {@link ProjectMemoryStore#appendSessionChange} skips
+     *  compression entirely. This preserves the contract the
+     *  R127 tests pinned (autoCompress=false ⇒ raw entries
+     *  accumulate; autoCompress=true ⇒ threshold-trip fires
+     *  compression). */
     public ProjectMemoryStore projectMemoryStore(String cwd) {
         if (cwd == null) return null;
         return projectMemoryStores
@@ -205,7 +243,7 @@ public final class LayeredMemoryStore {
                     try { Files.createDirectories(dir); } catch (IOException ignore) {}
                     return new ProjectMemoryStore(
                             dir.resolve(ProjectMemoryStore.FILENAME),
-                            compressor,
+                            autoCompress ? compressor : null,
                             projectCompressThreshold,
                             keepRecent);
                 });
