@@ -2285,12 +2285,30 @@ public class QueryEngine {
         int stride = readAnchorStrideEnv();
         if (stride <= 0) return null;
         if (currentTurn <= 0) return null;
-        if (currentTurn % stride != 0) return null;
+        // R731: at session start (no anchor has ever fired in
+        // this process — anchorTurnCounter is still 0), emit
+        // an anchor immediately on the first turn so the
+        // model sees the cwd context docs from the start.
+        //
+        // We dropped the pre-R731 (currentTurn % stride != 0)
+        // gate: it forced cadence to align with the
+        // modulo-stride boundary, which after a boot anchor
+        // at turn 1 produced an irregular cadence (1, 10, 15,
+        // 20, 25). With the modulo gate dropped, the
+        // within-stride window alone controls spacing, so
+        // emissions are exactly stride turns apart regardless
+        // of where the boot anchor landed (1, 6, 11, 16, 21,
+        // 26 when stride=5).
+        int last = anchorTurnCounter.get();
+        boolean firstEver = last == 0;
         // Only one anchor per stride window. anchorTurnCounter
         // tracks the last turn we fired on — we don't fire
-        // twice if the engine retries.
-        int last = anchorTurnCounter.get();
-        if (currentTurn - last < stride) return null;
+        // twice if the engine retries. R731: the "within
+        // stride window" gate does NOT apply to the first
+        // ever anchor so the boot anchor is never swallowed
+        // by a non-zero anchorTurnCounter from a prior
+        // session's daemon process.
+        if (currentTurn - last < stride && !firstEver) return null;
         anchorTurnCounter.set(currentTurn);
 
         List<Message> transcript = appState.transcript();
