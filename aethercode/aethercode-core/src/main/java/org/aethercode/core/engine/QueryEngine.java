@@ -97,6 +97,16 @@ public class QueryEngine {
     // rounds" patterns and arms the skip-confirmation counter.
     private volatile java.util.function.Consumer<String> onUserPrompt = s -> {};
     private final AtomicInteger runCounter = new AtomicInteger();
+    /** R719: anchor turn stride. Every K turns the engine
+     *  auto-appends a USER-role session-anchor message whose
+     *  metadata carries {@code anchor=true}; L4 then
+     *  guarantees this message survives any future strip.
+     *  Default 5 — a balance between "anchor fires often
+     *  enough to refresh project memory" and "anchor doesn't
+     *  dominate the transcript budget". Tunable via
+     *  {@code AETHERCODE_R719_ANCHOR_STRIDE}. */
+    public static final int DEFAULT_ANCHOR_STRIDE = 5;
+    private final AtomicInteger anchorTurnCounter = new AtomicInteger();
     /** hard turn cap is gone. Per-todo adaptive control in
      *  {@code TodoRunController} replaces both this cap and the
      *  high-risk tool counter. The field is kept for API compatibility
@@ -1523,6 +1533,43 @@ public class QueryEngine {
                             TranscriptPruner.DEFAULT_MIN_KEEP,
                             TranscriptPruner.DEFAULT_TRUNCATE_TO_CHARS,
                             metricsCollector);
+                    // R719: Session Anchor. Every K turns (default 5)
+                    // the engine auto-appends a USER-role
+                    // session-anchor to the wire-side transcript.
+                    // The anchor carries:
+                    //   - cwd
+                    //   - last 3 user prompts (one-line summaries)
+                    //   - last 3 file paths the model touched
+                    //   - current intent (the latest user message
+                    //     text, truncated to 200 chars)
+                    //   - metadata.kind=session-anchor, anchor=true
+                    //
+                    // L4 (R719 anchor-preserving) guarantees the
+                    // anchor survives every future
+                    // stripOldestToFit. So even after 10000+ L4 strips,
+                    // the model still has the system message +
+                    // every periodic anchor + the last 16
+                    // non-anchor messages.
+                    Message anchor = maybeEmitSessionAnchor(runCounter.get());
+                    if (anchor != null) {
+                        // R719: anchor must persist on disk so the
+                        // next turn's transcript naturally carries
+                        // it. Without the on-disk append, the
+                        // anchor only survives the current wire
+                        // call and is lost on the next session
+                        // load. appendMessage + messageSink keep the
+                        // TUI / desktop transcript in sync too.
+                        try {
+                            appState.appendMessage(anchor);
+                        } catch (Throwable ignored) {
+                            // If appendMessage throws (e.g. read-only
+                            // store in tests), fall back to
+                            // wire-side only — the model still
+                            // sees it this turn.
+                        }
+                        messageSink.accept(anchor);
+                        cleanedTranscript = appendToList(cleanedTranscript, anchor);
+                    }
                     // R716 final: trim the head of the transcript
                     // when it exceeds the hard cap. Default 300
                     // messages / 800K chars. Acts as a defence
@@ -2092,5 +2139,133 @@ public class QueryEngine {
             }
         }
         return n;
+    }
+
+    // =================================================================
+    //  R719: Session Anchor emission
+    //  =================================================================
+    //
+    //  Auto-append a USER-role session-anchor every K turns. The
+    //  anchor's metadata carries {@code anchor=true} so the R719
+    //  anchor-preserving L4 keeps it across every future strip.
+    //
+    //  Why a USER-role message and not a SYSTEM-role note?
+    //  SYSTEM role is implicitly anchor (the existing
+    //  head-locked path), but appending SYSTEM mid-transcript
+    //  is semantically wrong (the model sees it as a "global
+    //  rule" update). USER-role anchor reads as "a periodic
+    //  reminder from the user/system about where we are" — the
+    //  model treats it as context, not as a rule rewrite.
+
+    /** R719: if {@code currentTurn} is a multiple of the anchor
+     *  stride (default 5), build a session-anchor message and
+     *  return it. Returns null otherwise. The anchor is then
+     *  appended to the wire-side transcript by the caller.
+     *
+     *  <p>Anchor content:
+     *  <ul>
+     *    <li>cwd</li>
+     *    <li>last 3 user prompts (one-line summaries)</li>
+     *    <li>last 3 file paths the model touched</li>
+     *    <li>current intent (latest user message, truncated to 200 chars)</li>
+     *  </ul>
+     */
+    private Message maybeEmitSessionAnchor(int currentTurn) {
+        int stride = readAnchorStrideEnv();
+        if (stride <= 0) return null;
+        if (currentTurn <= 0) return null;
+        if (currentTurn % stride != 0) return null;
+        // Only one anchor per stride window. anchorTurnCounter
+        // tracks the last turn we fired on — we don't fire
+        // twice if the engine retries.
+        int last = anchorTurnCounter.get();
+        if (currentTurn - last < stride) return null;
+        anchorTurnCounter.set(currentTurn);
+
+        List<Message> transcript = appState.transcript();
+        StringBuilder body = new StringBuilder();
+        body.append("[R719 session-anchor] turn ").append(currentTurn)
+                .append(" / ").append(stride).append("-stride.\n");
+
+        // cwd
+        try {
+            Object cwdObj = appState.cwd();
+            String cwd = cwdObj == null ? null : cwdObj.toString();
+            if (cwd != null && !cwd.isBlank()) {
+                body.append("cwd: ").append(cwd).append('\n');
+            }
+        } catch (Throwable ignored) {}
+
+        // last 3 user prompts
+        body.append("\nLast user prompts:\n");
+        java.util.List<String> lastUserTexts = new java.util.ArrayList<>();
+        if (transcript != null) {
+            for (int i = transcript.size() - 1; i >= 0 && lastUserTexts.size() < 3; i--) {
+                Message m = transcript.get(i);
+                if (m != null && m.role() == Role.USER && !TranscriptPruner.isAnchor(m)) {
+                    String t = m.textContent();
+                    if (t != null && !t.isBlank()) {
+                        String oneLine = t.replace('\n', ' ').replace('\r', ' ');
+                        if (oneLine.length() > 100) oneLine = oneLine.substring(0, 97) + "...";
+                        lastUserTexts.add(0, "  - " + oneLine);
+                    }
+                }
+            }
+        }
+        if (lastUserTexts.isEmpty()) body.append("  (none yet)\n");
+        else for (String s : lastUserTexts) body.append(s).append('\n');
+
+        // last 3 file paths the model touched
+        body.append("\nRecent files touched:\n");
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        if (transcript != null) {
+            for (int i = transcript.size() - 1; i >= 0 && seen.size() < 3; i--) {
+                Message m = transcript.get(i);
+                if (m == null) continue;
+                for (ContentBlock b : m.content()) {
+                    if (b instanceof ContentBlock.ToolUseBlock tu && tu.input() instanceof Map) {
+                        Object p = ((Map<?, ?>) tu.input()).get("file_path");
+                        if (p == null) p = ((Map<?, ?>) tu.input()).get("path");
+                        if (p != null) seen.add(p.toString());
+                        if (seen.size() >= 3) break;
+                    }
+                }
+            }
+        }
+        if (seen.isEmpty()) body.append("  (none yet)\n");
+        else for (String p : seen) body.append("  - ").append(p).append('\n');
+
+        // current intent
+        body.append("\nCurrent intent: continue the long-running task. The original user ");
+        body.append("prompt was at the head of this transcript; if you cannot see it, ");
+        body.append("read on-disk plan/progress docs to recover state.\n");
+
+        Message anchor = TranscriptPruner.anchorMessage(body.toString());
+        if (metricsCollector != null) {
+            metricsCollector.incAnchorInjection();
+        }
+        LOG.info("R719: emitted session-anchor at turn {} (stride={})", currentTurn, stride);
+        return anchor;
+    }
+
+    /** R719: read AETHERCODE_R719_ANCHOR_STRIDE env, default 5. */
+    private static int readAnchorStrideEnv() {
+        String raw;
+        try { raw = System.getenv("AETHERCODE_R719_ANCHOR_STRIDE"); }
+        catch (SecurityException ignored) { return DEFAULT_ANCHOR_STRIDE; }
+        if (raw == null || raw.isBlank()) return DEFAULT_ANCHOR_STRIDE;
+        try { return Integer.parseInt(raw.trim()); }
+        catch (NumberFormatException ignored) { return DEFAULT_ANCHOR_STRIDE; }
+    }
+
+    /** R719: append a single message to a list, returning a new
+     *  list (the wire-side transcript is filtered each turn so
+     *  we don't mutate appState.transcript() here). */
+    private static List<Message> appendToList(List<Message> in, Message m) {
+        if (m == null) return in;
+        java.util.ArrayList<Message> out = new java.util.ArrayList<>(in == null ? 1 : in.size() + 1);
+        if (in != null) out.addAll(in);
+        out.add(m);
+        return out;
     }
 }

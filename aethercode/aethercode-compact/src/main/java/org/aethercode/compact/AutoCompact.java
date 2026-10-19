@@ -85,13 +85,19 @@ public class AutoCompact {
      *  out the window with stale context. */
     public static final int DEFAULT_EFFECTIVE_CAP_TOKENS = 200_000;
 
-    /** R718-G: trigger compaction at 50% of the effective cap
-     *  (was R717's 0.7). 200K × 0.5 = 100K — well below the
-     *  wire red line, leaving room for the model to actually
-     *  generate a response before we ask it to summarise again.
-     *  Matches Claude Code's actual ~50% trigger band once you
-     *  back out its smaller cap. Per user "更频繁" directive. */
-    public static final double DEFAULT_COMPACT_AT = 0.5;
+    /** R719: trigger compaction at 40% of the effective cap
+     *  (was R718's 0.5, was R717's 0.7). 200K × 0.4 = 80K —
+     *  significantly below the wire red line, with the L5
+     *  emitting a PostCompact re-injection (cwd / recent files
+     *  / git / intent) on every fire. Per the R718 3-day RAG
+     *  build telemetry: L5 fired 0 times in 26 turns because
+     *  the post-L4 transcript always stayed under the 50%
+     *  trigger. Lowering to 0.4 makes L5 fire 2-3x more often,
+     *  refreshing the model's project memory via PostCompact
+     *  re-injection on each cycle. The R719 Session Anchor
+     *  is the primary fix; this is the secondary "earlier L5"
+     *  fix. */
+    public static final double DEFAULT_COMPACT_AT = 0.4;
 
     /** R717: keep at least the most-recent N messages verbatim
      *  when summarising. The model needs the last 1-2 turns

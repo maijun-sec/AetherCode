@@ -123,10 +123,23 @@ public final class StructuredCompactor8 implements Compactor {
      *  Pushing the window to its declared max just
      *  dilutes attention. */
     public static final int DEFAULT_CONTEXT_WINDOW = 200_000;
-    /** R718-G: buffer 32K (was 64K). Smaller buffer means
-     *  the trigger fires earlier — "more frequent
-     *  compression". */
-    public static final int DEFAULT_BUFFER = 32_000;
+    /** R719: buffer 80K (was R718's 32K). Smaller buffer
+     *  means the trigger fires earlier — "more frequent
+     *  compression". With buffer=80K the trigger fires at
+     *  200K - 80K = 120K tokens, which roughly matches
+     *  AutoCompact's compactAt=0.4 (200K * 0.4 = 80K tokens
+     *  via the wire-call gate, which is the same effective
+     *  frequency once you back out the two pipelines'
+     *  different token estimators). Per the R718 3-day RAG
+     *  build telemetry: L5 fired 0 times in 26 turns because
+     *  the trigger band was 168K tokens and the post-L4
+     *  transcript always stayed under it. With buffer=80K
+     *  L5 fires at 120K tokens, 2-3x more often, emitting a
+     *  fresh PostCompact re-injection (cwd / recent files /
+     *  git / intent) on each cycle. The R719 Session Anchor
+     *  is the primary fix; this is the secondary "earlier L5"
+     *  fix. */
+    public static final int DEFAULT_BUFFER = 80_000;
     /** R718-G: max input 160K (was 900K). The summarise
      *  wire call should itself fit inside the 200K cap. */
     public static final int DEFAULT_MAX_INPUT_TOKENS = 160_000;

@@ -77,6 +77,13 @@ public final class MetricsCollector {
     /** R718-L5: how many consecutive summarisation failures have
      *  tripped the circuit breaker. 0 when healthy. */
     private final AtomicLong compactFailures       = new AtomicLong();
+    /** R719: how many session-anchor messages the engine
+     *  auto-emitted (one per K turns, default K=5). Each
+     *  emission appends a USER-role message with
+     *  {@code metadata.anchor=true} so L4 never strips it.
+     *  The model can use this to refresh its memory of the
+     *  project on long-task cycles. */
+    private final AtomicLong anchorInjections      = new AtomicLong();
 
     // Cost is tracked as a double because cents precision isn't needed.
     private final java.util.concurrent.atomic.AtomicReference<Double> costUsd =
@@ -124,6 +131,7 @@ public final class MetricsCollector {
         if (summaryInputTokens > 0) lastCompactionTokens.set(summaryInputTokens);
     }
     public void incCompactFailure()       { compactFailures.incrementAndGet(); }
+    public void incAnchorInjection()     { anchorInjections.incrementAndGet(); }
 
     /** record per-call token usage from the chat client. Negative
      *  values are clamped to 0. */
@@ -185,6 +193,10 @@ public final class MetricsCollector {
         m.put("l5Compacts",            l5Compacts.get());
         m.put("lastCompactionTokens",  lastCompactionTokens.get());
         m.put("compactFailures",       compactFailures.get());
+        // R719: session-anchor injection counter — fires
+        // every K turns (default K=5). The UI can show this
+        // as "anchor events" alongside the L1-L5 counters.
+        m.put("anchorInjections",      anchorInjections.get());
         return m;
     }
 

@@ -805,17 +805,30 @@ public final class TranscriptPruner {
         // emergency-drop through bumpL4Metrics below so the
         // UI sees "1 strip per L4 firing".
 
-        // Walk tail-backwards, accumulating until we either hit
-        // minKeep or the cap. The single special case is the
-        // first message: if it's SYSTEM (or null/USER-system),
-        // we keep it locked at the head so the global rules
-        // survive.
+        // R719: Session Anchor. Anchors (system message + any
+        // message with metadata.anchor=true) must NEVER be
+        // stripped by L4. We collect their indices + chars up
+        // front so the kept budget calculation accounts for
+        // them. Without this, after 600+ L4 strips the original
+        // user task prompt (which sits at the head) gets
+        // dropped and the model has no actionable request.
         boolean headIsLocked = isSystem(transcript.get(0));
-        int tailStart = 0;
-        if (headIsLocked) tailStart = 1;
+        int tailStart = headIsLocked ? 1 : 0;
+
+        // Collect anchor indices (between tailStart and size-1,
+        // excluding the head which is already locked).
+        java.util.List<Integer> anchorIndices = new java.util.ArrayList<>();
+        long anchorChars = 0;
+        for (int i = tailStart; i < transcript.size(); i++) {
+            if (isAnchor(transcript.get(i))) {
+                anchorIndices.add(i);
+                anchorChars += messageCharLength(transcript.get(i));
+            }
+        }
 
         int kept = 0;
         long keptChars = headIsLocked ? messageCharLength(transcript.get(0)) : 0;
+        keptChars += anchorChars;
         int dropFromHead = -1;
         // walk from tail backwards, but we still need to drop
         // from the head. So we count survivors: we want to keep
@@ -832,9 +845,16 @@ public final class TranscriptPruner {
         // the largest message down. The cap is the wire-side
         // hard limit; minKeep is a "model still has context"
         // UX hint.
+        //
+        // R719: anchors in the tail range are SKIPPED — they
+        // count toward keptChars (so they consume budget) but
+        // they don't bump maxTail, because we're going to
+        // include them in the kept list regardless.
         long tailChars = 0;
         int maxTail = 0;
+        java.util.Set<Integer> anchorSet = new java.util.HashSet<>(anchorIndices);
         for (int i = size - 1; i >= tailStart; i--) {
+            if (anchorSet.contains(i)) continue; // R719: skip anchor
             int mcl = messageCharLength(transcript.get(i));
             if (tailChars + mcl + keptChars > maxChars && maxTail >= minKeep) {
                 break;
@@ -843,7 +863,7 @@ public final class TranscriptPruner {
             maxTail++;
         }
         int newTailStart = size - maxTail;
-        int dropped = newTailStart - tailStart;
+        int dropped = newTailStart - tailStart - anchorIndices.size();
         // If the survivors exceed the cap (because we kept
         // minKeep and that put us over), or if we couldn't
         // drop anything from the head (no head messages),
@@ -851,21 +871,27 @@ public final class TranscriptPruner {
         // below.
         long survivorChars = 0;
         if (headIsLocked) survivorChars += messageCharLength(transcript.get(0));
+        for (int idx : anchorIndices) survivorChars += messageCharLength(transcript.get(idx));
         for (int i = newTailStart; i < size; i++) {
             survivorChars += messageCharLength(transcript.get(i));
         }
         if (dropped <= 0 || survivorChars > maxChars) {
             // R718-H: clipLargest may itself drop further;
             // bumpL4Metrics is called from inside its
-            // rescue path too.
+            // rescue path too. R719: clipLargest honours
+            // anchors (largest picks a non-anchor).
             bumpL4Metrics(metrics, dropped <= 0 ? 0 : dropped);
             return clipLargest(transcript, truncateToChars, keptChars, maxChars);
         }
-        // Build the new list
+        // Build the new list: head + every anchor (in original order)
+        // + tail non-anchor.
         List<Message> out = new ArrayList<>(size - dropped);
         if (headIsLocked) {
             out.add(transcript.get(0));
         }
+        // R719: append anchors in their original position order
+        // so the "session state" timeline reads correctly.
+        for (int idx : anchorIndices) out.add(transcript.get(idx));
         for (int i = newTailStart; i < size; i++) out.add(transcript.get(i));
         // R718: L2 microcompact the survivors BEFORE we measure
         // the final size. A 50K-char bash output with 200 blank
@@ -892,15 +918,16 @@ public final class TranscriptPruner {
         Message note = buildStripNote(
                 "R717-L4 strip-oldest",
                 "dropped " + dropped + " of " + size + " message(s) (kept "
-                        + (out.size() - (headIsLocked ? 1 : 0)) + " tail) to fit "
+                        + (out.size() - (headIsLocked ? 1 : 0)) + " tail + "
+                        + anchorIndices.size() + " anchor(s) [R719]) to fit "
                         + "the model's per-call context limit (maxChars=" + maxChars
                         + ", current=" + current + ").",
                 "transcript-strip-side-note",
                 dropped);
         out.add(0, note);
-        LOG.warn("R718-L4: stripOldestToFit dropped {} head message(s) of {} " +
-                        "(kept {}, maxChars={}, current={}, l2Saved={})",
-                dropped, size, out.size() - 1, maxChars, current, l2Saved);
+        LOG.warn("R719-L4: stripOldestToFit dropped {} head message(s) of {} " +
+                        "(kept {} non-anchor + {} anchor, maxChars={}, current={}, l2Saved={})",
+                dropped, size, maxTail, anchorIndices.size(), maxChars, current, l2Saved);
         if (metrics != null) {
             metrics.incL4Strip(dropped);
         }
@@ -929,15 +956,25 @@ public final class TranscriptPruner {
         int largestIdx = -1;
         int largestSize = 0;
         long totalSize = 0;
+        // R719: anchor messages are protected from clipping —
+        // find the largest non-anchor. If only anchors exist
+        // (everything is anchor), there's nothing to clip, so
+        // we hand off to emergencyDropOldest.
         for (int i = 0; i < transcript.size(); i++) {
             int sz = messageCharLength(transcript.get(i));
             totalSize += sz;
-            if (sz > largestSize) {
+            if (sz > largestSize && !isAnchor(transcript.get(i))) {
                 largestSize = sz;
                 largestIdx = i;
             }
         }
-        if (largestIdx < 0) return transcript;
+        if (largestIdx < 0) {
+            // R719: every message is anchor; can't clip. Hand
+            // off to emergency drop (which also respects
+            // anchors — but if everything is anchor it just
+            // keeps at least one).
+            return emergencyDropOldest(transcript, maxChars);
+        }
         if (totalSize <= maxChars) return transcript; // already fits, no-op
         // How much we need to shave off to make it fit:
         long overflow = totalSize - maxChars;
@@ -959,9 +996,17 @@ public final class TranscriptPruner {
         // other large messages still overflow), drop oldest
         // until the total fits. The note surfaces BOTH
         // rescues so the user sees what happened.
+        // R719: skip anchor messages when dropping oldest —
+        // the system head + any session-anchor mid-stream
+        // must survive even in this rescue path.
         if (totalChars(out) > maxChars) {
-            while (out.size() > 1 && totalChars(out) > maxChars) {
-                out.remove(0);
+            int readIdx = 0;
+            while (readIdx < out.size() && totalChars(out) > maxChars) {
+                Message head = out.get(readIdx);
+                if (isAnchor(head)) { readIdx++; continue; }
+                if (out.size() <= 1) break; // keep at least 1 message
+                out.remove(readIdx);
+                // don't advance readIdx — list shifted
             }
             Message note = buildStripNote(
                     "R718-L4 clip+drop",
@@ -999,13 +1044,27 @@ public final class TranscriptPruner {
             List<Message> transcript, long maxChars) {
         if (transcript == null || transcript.isEmpty()) return transcript;
         List<Message> trimmed = new ArrayList<>(transcript);
-        while (trimmed.size() > 1 && totalChars(trimmed) > maxChars) {
-            trimmed.remove(0);
+        // R719: skip anchor messages when dropping oldest —
+        // anchors must survive even in the emergency-drop
+        // rescue. Walk from the front, drop the first
+        // non-anchor we find, repeat.
+        int writeIdx = 0;
+        int readIdx = 0;
+        while (readIdx < trimmed.size() && totalChars(trimmed) > maxChars) {
+            Message m = trimmed.get(readIdx);
+            if (isAnchor(m)) {
+                readIdx++;
+                continue;
+            }
+            if (trimmed.size() - 1 <= 1) break; // keep at least one non-anchor
+            trimmed.remove(readIdx);
+            // don't advance readIdx since list shifted
         }
         Message note = buildStripNote(
-                "R718-L4 emergency-drop",
+                "R719-L4 emergency-drop",
                 "transcript was over the per-call cap even after clip-largest; " +
-                "dropped oldest until the cap was met. Continue from the user's last intent.",
+                "dropped oldest non-anchor messages until the cap was met. " +
+                "Anchor messages preserved. Continue from the user's last intent.",
                 "transcript-clip-side-note",
                 transcript.size() - trimmed.size());
         trimmed.add(0, note);
@@ -1088,6 +1147,44 @@ public final class TranscriptPruner {
 
     private static boolean isSystem(Message m) {
         return m != null && m.role() == Role.SYSTEM;
+    }
+
+    // =================================================================
+    //  R719: Session Anchor — messages that L4 must NEVER drop.
+    //  =================================================================
+    //  An anchor message carries `metadata["anchor"] == Boolean.TRUE`.
+    //  The system message is implicitly anchor (always kept at the
+    //  head) — we don't need a separate metadata marker for it.
+    //  Anchors physically survive the strip-oldest path even when
+    //  hundreds of non-anchor messages get dropped. This is how we
+    //  fix the long-task-cycle problem identified during the R718
+    //  3-day RAG build: after 600+ L4 strips the model had no
+    //  visible user task prompt; with anchors, it always has the
+    //  original prompt + every periodic session-anchor emission.
+
+    /** R719: true iff this message must survive L4 strip-oldest.
+     *  True for any SYSTEM message, and for any user/assistant
+     *  message whose metadata carries {@code anchor=true}. */
+    public static boolean isAnchor(Message m) {
+        if (m == null) return false;
+        if (m.role() == Role.SYSTEM) return true;
+        Object flag = m.metadata() == null ? null : m.metadata().get("anchor");
+        return Boolean.TRUE.equals(flag);
+    }
+
+    /** R719: build an anchor message. The metadata carries
+     *  {@code kind="session-anchor"} so the renderer can show
+     *  these distinctly, and {@code anchor=true} so L4 keeps it. */
+    public static Message anchorMessage(String text) {
+        java.util.Map<String, Object> meta = new java.util.LinkedHashMap<>();
+        meta.put("kind", "session-anchor");
+        meta.put("anchor", Boolean.TRUE);
+        return new Message(
+                "session-anchor-" + System.currentTimeMillis(),
+                Role.USER,
+                List.of(new ContentBlock.TextBlock(text)),
+                null,
+                meta);
     }
 
     // =================================================================
