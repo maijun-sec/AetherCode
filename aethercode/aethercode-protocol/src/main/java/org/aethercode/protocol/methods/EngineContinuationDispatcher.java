@@ -149,12 +149,26 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                         }
                     } else if (ev instanceof StreamEvent.RunEnd re) {
                         engine.metrics().incTurnCompleted();
-                        if (re.stopReason() != null && re.stopReason().startsWith("loop")) {
+                        // R743: was `stopReason.startsWith("loop")`,
+                        // which missed `same_error_hard_stop`
+                        // (R181/R739) — see the identical fix in
+                        // AetherCodeMethods. Delegate to the canonical
+                        // predicate so the child-session metrics sink
+                        // and the main one can't drift.
+                        if (re.isDeterministicHardStop()) {
                             engine.metrics().incLoopStop();
                         }
                         lastStopReason = re.stopReason() == null ? "end_turn" : re.stopReason();
-                        engine.traces().endSpan(queryTraceId,
-                                re.stopReason() != null && re.stopReason().startsWith("error") ? "error" : "ok");
+                        // R743: same span-status fix as the main sink —
+                        // the old `startsWith("error")` recorded
+                        // runtime_exception / cancelled /
+                        // same_error_hard_stop spans as "ok".
+                        boolean spanOk = re.bareKind().equals("stop")
+                                || re.bareKind().equals("end_turn")
+                                || re.bareKind().equals("tool_calls")
+                                || re.bareKind().equals("awaiting_user_decision")
+                                || re.bareKind().equals("empty_input");
+                        engine.traces().endSpan(queryTraceId, spanOk ? "ok" : "error");
                         for (String leftover : openToolSpans.values()) {
                             engine.traces().endSpan(leftover, "error");
                         }

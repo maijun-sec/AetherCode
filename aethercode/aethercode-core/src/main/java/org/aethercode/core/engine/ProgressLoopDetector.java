@@ -487,8 +487,9 @@ public final class ProgressLoopDetector {
      *  hard stops. Returns one of
      *  {@code "research_mode"} /
      *  {@code "no_file_write_progress"} /
-     *  {@code "same_fingerprint"} / {@code "user_interrupt"}
-     *  / null if no loop fired yet. */
+     *  {@code "empty_tool_input"} / {@code "same_error"} /
+     *  {@code "same_fingerprint"} / {@code "long_output"} /
+     *  {@code "user_interrupt"} / null if no loop fired yet. */
     public String lastLoopKind() { return lastLoopKind; }
 
     /** R136.3: setter for {@link #maxNoFileWriteTurns}.
@@ -989,6 +990,26 @@ public final class ProgressLoopDetector {
         }
 
         // 3. Same error threshold.
+        //
+        // R739 (2026-10-20): the same_error path used to call
+        // {@code tiered("same_error", ...)}, which escalates through
+        // the warn→stop ladder (loop_warn_1 → loop_warn_2 → ... →
+        // loop_detected). That requires the same error to fire
+        // {@code WARN_BEFORE_STOP + 1} = 5 times in a row before
+        // the engine actually stops — way too forgiving for a
+        // deterministic loop pattern. A model stuck on the same
+        // broken tool call (e.g. asking for a missing required
+        // field over and over) WILL NOT recover via "more
+        // thinking"; the user needs to see the diagnostic.
+        //
+        // Same-error therefore behaves like the empty_tool_input /
+        // research_mode / no_file_write_progress patterns above:
+        // hit {@code sameErrorThreshold} (default 3) times in a row
+        // and we return a hard-stop {@code "loop_detected"} directly,
+        // bypassing the warn ladder. The kind string stays
+        // "same_error" via {@code lastLoopKind} so the engine's
+        // pre-existing R181 branch (which keys on the kind to
+        // surface "same_error_hard_stop") keeps working.
         if (outputs != null && !outputs.isEmpty()) {
             String errKey = aggregateErrorKey(outputs);
             if (errKey != null) {
@@ -999,9 +1020,15 @@ public final class ProgressLoopDetector {
                     lastErrorCount = 1;
                 }
                 if (lastErrorCount >= sameErrorThreshold) {
-                    return tiered("same_error",
-                            "same error returned " + lastErrorCount + " times in a row: " + errKey,
-                            "same error x" + lastErrorCount + ": " + errKey);
+                    currentTier++;
+                    this.lastLoopKind = "same_error";
+                    // Note the hard-stop tier: a same_error that
+                    // trips the threshold IS a stop, not a warn.
+                    return new LoopInfo("loop_detected",
+                            "same error returned " + lastErrorCount + " times in a row: " + errKey
+                                    + " (model is repeating a broken call; the run is being hard-stopped)",
+                            "same error x" + lastErrorCount + ": " + errKey,
+                            currentTier);
                 }
             } else {
                 lastErrorKey = null;

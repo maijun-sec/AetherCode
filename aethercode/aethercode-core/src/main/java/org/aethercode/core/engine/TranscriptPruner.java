@@ -698,10 +698,39 @@ public final class TranscriptPruner {
         if (original.metadata() != null) meta.putAll(original.metadata());
         meta.put("kind", "transcript-dedupe-side-note");
         meta.put("collapsed_from_index", firstIdx);
+        // R741: keep the stub's ROLE equal to the original message's
+        // role. Pre-R741 this hard-coded {@code Role.USER}, which
+        // silently rewrote a collapsed {@code TOOL_RESULT} into a
+        // USER message sitting in the middle of a tool-call batch.
+        //
+        // Why that's fatal (Lesson 1054 — the provider contract is an
+        // adjacency-preserving batch, not just id existence): the
+        // assistant still declares N tool_use blocks, but a USER
+        // message wedged between the declaration and its Nth
+        // tool_result TERMINATES the contiguous batch. The engine
+        // ends up sending `assistant(tool_use×N)` followed by fewer
+        // than N tool_results, and `api.minimaxi.com` rejects it with
+        // `400 invalid params, tool result's tool id (call_X) not
+        // found (2013)` — the exact error R736 spent three rounds
+        // eliminating.
+        //
+        // R736's `stripOrphanToolResults` CANNOT repair this shape:
+        // it only ever *drops* messages, so it cannot re-create the
+        // tool_result the stub swallowed. Empirically verified — see
+        // `TranscriptPrunerDedupeAdjacencyR741Test`.
+        //
+        // The stub keeps a TOOL_RESULT role and a ToolResultBlock
+        // carrying the SAME tool_use_id (from the original message's
+        // metadata / block) so it counts as a legitimate answer to the
+        // declaration. Only the body shrinks to the note text.
+        String toolUseId = lookupToolUseId(original);
+        ContentBlock body = toolUseId != null
+                ? new ContentBlock.ToolResultBlock(toolUseId, text, false)
+                : new ContentBlock.TextBlock(text);
         return new Message(
                 "r718-l3-" + System.currentTimeMillis() + "-" + firstIdx,
-                Role.USER,
-                List.of(new ContentBlock.TextBlock(text)),
+                original.role(),
+                List.of(body),
                 null, meta);
     }
 

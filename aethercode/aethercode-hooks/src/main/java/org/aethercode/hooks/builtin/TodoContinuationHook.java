@@ -182,6 +182,24 @@ public class TodoContinuationHook {
     // ------------------------------------------------------------------
 
     /**
+     * R743: is {@code stopReason} one of the engine's DETERMINISTIC
+     * terminal stops?
+     *
+     * <p>Thin delegation to {@link StreamEvent#isDeterministicHardStopOf}
+     * so the continuation gate and the metrics sink can never drift
+     * apart again — pre-R743 they were two independent prefix
+     * heuristics and both missed {@code same_error_hard_stop}.
+     *
+     * <p>Package-private (not private) so the R743 source-pin test can
+     * exercise the predicate for every reason the engine can emit
+     * without standing up a scheduler + dispatcher.
+     */
+    static boolean isDeterministicHardStop(String lowerCaseStopReason) {
+        return org.aethercode.core.stream.StreamEvent
+                .isDeterministicHardStopOf(lowerCaseStopReason);
+    }
+
+    /**
      * Called by {@code AetherCodeMethods.query} after the run
      * finishes streaming. Decides whether to schedule a
      * continuation, and on success fires
@@ -312,6 +330,47 @@ public class TodoContinuationHook {
                     || sr.contains("max_iterations")
                     || sr.contains("max_tokens")) {
                 LOG.info("R89 boulder: stop reason '{}' not safe for continuation, skipping (run {})",
+                        stopReason, runId);
+                return;
+            }
+            // R743: the engine's DETERMINISTIC hard-stop reasons.
+            //
+            // Pre-R743 the only loop-shaped stopReason this hook knew
+            // about was the `loop_*` family (`loop_research_mode`,
+            // `loop_no_file_write_progress`, `loop_same_fingerprint`)
+            // emitted by `ProgressLoopDetector`. Since then the engine
+            // grew three MORE hard stops whose strings do not match
+            // `startsWith("loop_")`:
+            //
+            //   QueryEngine:2363  "loop_detected: empty_tool_input (…)"
+            //   QueryEngine:2568  "same_error_hard_stop"           (R181/R739)
+            //   QueryEngine:1983  "cancelled"                      (R721)
+            //
+            // Each of those means the ENGINE decided, deterministically,
+            // that continuing is pointless or unwanted:
+            //  - `empty_tool_input` / `same_error_hard_stop`: the model
+            //    is repeating a provably broken call. A continuation
+            //    replays the same transcript, so the model emits the
+            //    same broken call again — R739 turned this into a
+            //    hard stop precisely because "more thinking" cannot
+            //    recover. Re-dispatching here UNDOES R739 and turns a
+            //    clean stop into an unattended token-burning loop.
+            //  - `cancelled`: the user pressed Ctrl-C. Auto-continuing
+            //    2s later resurrects a run the user deliberately
+            //    killed.
+            //
+            // This is the R739 lesson applied one layer up: a
+            // deterministic engine decision must be honoured by a
+            // deterministic hook path, not routed through a
+            // name-prefix heuristic that predates the decision.
+            //
+            // Note `loop_detected: empty_tool_input (...)` starts with
+            // "loop_d", NOT "loop_", so the branch below never saw it
+            // either — it fell all the way through to step 8 and
+            // scheduled the continuation.
+            if (isDeterministicHardStop(sr)) {
+                LOG.info("R743: stop reason '{}' is a deterministic engine hard-stop, "
+                                + "not continuing (run {})",
                         stopReason, runId);
                 return;
             }

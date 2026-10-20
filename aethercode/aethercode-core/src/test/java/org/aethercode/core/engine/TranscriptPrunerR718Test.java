@@ -136,8 +136,28 @@ class TranscriptPrunerR718Test {
         // second occurrence should be the dedupe stub
         assertEquals(2, out.size());
         assertNotSame(in2.get(1), out.get(1));
-        String stubText = ((ContentBlock.TextBlock) out.get(1).content().get(0)).text();
+        // R741: the stub's body used to be a TextBlock, which meant the
+        // message had to be re-typed as Role.USER to be a "note" — and
+        // a USER message wedged mid-batch terminates the contiguous
+        // tool_result run, producing the provider's 400 (2013). The
+        // stub now keeps Role.TOOL_RESULT and carries a ToolResultBlock
+        // with the SAME tool_use_id, so the marker text lives in the
+        // block's content rather than in a TextBlock. See
+        // TranscriptPrunerDedupeAdjacencyR741Test for the full
+        // invariant; this case still pins "the marker text is present".
+        ContentBlock stubBody = out.get(1).content().get(0);
+        String stubText;
+        if (stubBody instanceof ContentBlock.TextBlock tb) {
+            stubText = tb.text();
+        } else {
+            stubText = String.valueOf(((ContentBlock.ToolResultBlock) stubBody).content());
+        }
         assertTrue(stubText.contains("R718-L3 dedupe"));
+        assertEquals(Role.TOOL_RESULT, out.get(1).role(),
+                "R741: the dedupe stub must preserve the original role so it stays "
+                        + "a legal answer inside the tool-call batch");
+        assertEquals("call_1", ((ContentBlock.ToolResultBlock) stubBody).toolUseId(),
+                "R741: the stub must answer the same tool_use_id the assistant declared");
     }
 
     @Test

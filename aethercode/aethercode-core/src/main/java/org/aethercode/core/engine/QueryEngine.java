@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -857,72 +859,315 @@ public class QueryEngine {
      */
     public static List<Message> stripOrphanToolResults(List<Message> transcript) {
         if (transcript == null || transcript.isEmpty()) return transcript;
-        Set<String> knownToolUseIds = new HashSet<>();
-        List<Message> cleaned = null; // lazily allocated on first drop
-        for (int i = 0; i < transcript.size(); i++) {
+
+        // R736 (rev2, 2026-10-20). The R716 rule ("drop a tool_result
+        // whose tool_use never appeared") plus the first R736 attempt
+        // ("drop a tool_use whose tool_result never appeared") were
+        // both ID-EXISTENCE checks. The live provider's contract is
+        // stronger: an assistant message that declares N tool_calls
+        // must be followed by EXACTLY N tool_result messages whose
+        // ids are precisely the declared set, in some order, with no
+        // interleaving user/system messages and no off-batch
+        // tool_results pulled in from anywhere else. We proved three
+        // failure shapes against the live endpoint on 2026-10-20:
+        //
+        //   assistant(tc=[c1,c2]) + tool(c1)             -> 500 (c2 missing)
+        //   assistant(tc=[c1,c2,c3]) + tool(c1)+tool(c3)  -> 500 (c2 missing)
+        //   assistant(tc=[c1]) + tool(c1)+tool(c2)        -> 500 (c2 alien)
+        //
+        // The R716 / first-R736 pass let all three survive because
+        // every tool_result present could be reverse-mapped to SOME
+        // prior tool_use, and vice versa. The invisible defect in the
+        // polluting RAG transcript turned out to be exactly this
+        // adjacency shape: an assistant declared 4 calls but only 2
+        // results landed contiguously; the batch boundary was at the
+        // wrong place.
+        //
+        // Algorithm: scan forward in a single pass, treating an
+        // assistant (with declared tool_use ids) as the START of a
+        // "call batch". Collect every immediately-following tool_result
+        // into a set, stopping at the first non-tool-result message.
+        // At batch end:
+        //   - declared ids absent from the answered set  -> dangling
+        //   - answered ids absent from the declared set  -> alien
+        // Strip dangling tool_use blocks from the assistant (preserving
+        // its prose, dropping the whole message if the prose goes too);
+        // emit alien tool_results as drops under the R716 banner.
+        // Orphan tool_results (no preceding assistant at all) remain
+        // the R716 case and are dropped with the existing warn.
+        // Fast path: when no repair is needed, return the same list.
+
+        int n = transcript.size();
+
+        // Phase 1 — index declared ids per assistant index.
+        // declaredIds[i] is non-empty ONLY for assistant messages that
+        // carry tool_use blocks; empty for every other role.
+        List<List<String>> declaredIds = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Message m = transcript.get(i);
+            List<String> ids = new ArrayList<>();
+            if (m != null && m.role() == Role.ASSISTANT) {
+                for (ContentBlock b : m.content()) {
+                    if (b instanceof ContentBlock.ToolUseBlock tu
+                            && tu.id() != null && !tu.id().isBlank()) {
+                        ids.add(tu.id());
+                    }
+                }
+            }
+            declaredIds.add(ids);
+        }
+
+        // Phase 2 — for each batch, decide which declared ids were
+        // ACTUALLY answered contiguously, and which tool_results were
+        // ALIEN (id answers some other assistant earlier, or no
+        // assistant at all). Per i we record:
+        //   danglingIdxs[i] = list of ToolUseBlock positions inside the
+        //                     assistant message at i whose id went
+        //                     unanswered by this batch (or by anything).
+        //   alienIdx[i]    = true when the message at i is a tool_result
+        //                     whose id belongs to a DIFFERENT assistant
+        //                     (not the one that started the current
+        //                     batch), or to no assistant at all.
+        // Forward pass: when we see an assistant with declared ids, we
+        // open a batch; while we keep seeing tool_results immediately
+        // after, we record them as answered-by-this-batch; the first
+        // non-tool_result closes the batch. Then we mark any declared
+        // id not collected as dangling, and any collected id not
+        // declared as alien (these answered tool_results get dropped).
+        List<List<Integer>> danglingIdxs = new ArrayList<>(n);
+        boolean[] alienIdx = new boolean[n];
+        for (int i = 0; i < n; i++) danglingIdxs.add(null);
+
+        // ownerOf(id) = index of the assistant that DECLARED id; built
+        // greedily with "nearest preceding" semantics — matches the
+        // answerer's intent in any sane transcript and survives the
+        // shape where an earlier assistant's tool_result bleeds past
+        // a later tool_use declaration by being marked alien.
+        Map<String, Integer> ownerOf = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            List<String> dec = declaredIds.get(i);
+            if (dec.isEmpty()) continue;
+            for (String id : dec) {
+                ownerOf.putIfAbsent(id, i); // first declaration wins
+            }
+        }
+
+        int i0 = 0;
+        while (i0 < n) {
+            List<String> dec = declaredIds.get(i0);
+            if (dec.isEmpty()) { i0++; continue; }
+            // Open batch at i0. Collect up to N tool_results (one per
+            // declared id is the max sane; the helper allows exactly
+            // dec.size()). Anything beyond is a separate batch or a
+            // stray.
+            List<String> batchAnswered = new ArrayList<>();
+            Set<String> batchAnsweredSet = new HashSet<>();
+            int j = i0 + 1;
+            while (j < n && batchAnswered.size() < dec.size()) {
+                Message mj = transcript.get(j);
+                if (mj == null || mj.role() != Role.TOOL_RESULT) break;
+                String id = toolUseIdOf(mj);
+                if (id == null || id.isBlank()) break;
+                batchAnswered.add(id);
+                batchAnsweredSet.add(id);
+                j++;
+            }
+            // Dangling ids: declared but not answered here.
+            List<Integer> dangs = null;
+            for (int c = 0; c < transcript.get(i0).content().size(); c++) {
+                ContentBlock b = transcript.get(i0).content().get(c);
+                if (!(b instanceof ContentBlock.ToolUseBlock tu)) continue;
+                String id = tu.id();
+                if (id == null || id.isBlank()) continue;
+                if (!batchAnsweredSet.contains(id)) {
+                    if (dangs == null) dangs = new ArrayList<>();
+                    dangs.add(c);
+                }
+            }
+            if (dangs != null) danglingIdxs.set(i0, dangs);
+            // Alien tool_results: answered ids whose owner is NOT this
+            // assistant, OR whose owner doesn't exist at all (the R716
+            // orphan case — preserved exactly).
+            //
+            // Important: read the id from the ACTUAL transcript at
+            // position k, not from `batchAnswered` — `batchAnswered`
+            // is the (id, count) tally while we walked forward, but
+            // any given k may have been added to the tally AND may
+            // itself be dropped here if its id is alien. Re-derive
+            // the id from `transcript.get(k)` to avoid a misleading
+            // index→id lookup.
+            for (int k = i0 + 1; k < j; k++) {
+                String id = toolUseIdOf(transcript.get(k));
+                Integer owner = id == null ? null : ownerOf.get(id);
+                if (id == null || owner == null || owner != i0) {
+                    alienIdx[k] = true;
+                }
+            }
+            // Decide where to resume. If the batch closed BEFORE
+            // exhausting dec.size() (not enough tool_results) we still
+            // move to the next message; if we collected exactly
+            // dec.size() and the next message IS a tool_result, that
+            // next message is alien (handled above) AND we must not
+            // consume it as the start of a fresh batch — but in
+            // practice the alien marking already protects it: i0 jumps
+            // to k+1 only for the k=j tool_results we just decided on,
+            // not for the undecided ones after. Easier: advance i0 by
+            // 1 each step regardless; dangling marks cover the rest.
+            i0 = i0 + 1; // never re-enter as a batch start unless it's
+                         // still an assistant with declared ids (rare
+                         // nested case; harmless — just re-runs the
+                         // same dangling recomputation, idempotent).
+        }
+
+        // Phase 3 — produce the repaired list. Drops = R716 orphan
+        // tool_results (no owner at all) plus alien tool_results
+        // PLUS tool_results whose owner self-stripped the matching
+        // tool_use in this pass (a previously-valid id whose
+        // declaration is gone). Rewrites = assistants whose dangling
+        // tool_use blocks are stripped; assistants whose stripping
+        // empties the message are dropped entirely.
+        //
+        // We need the post-rewrite "surviving tool_use ids" set per
+        // assistant BEFORE we decide any tool_result's fate, so the
+        // owner-self-stripped case above is visible. Build
+        // `survivingUseIds[assistantIdx]` from `declaredIds` minus
+        // `danglingIdxs[assistantIdx]`.
+        Map<Integer, Set<String>> survivingUseIds = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            List<String> dec = declaredIds.get(i);
+            if (dec.isEmpty()) continue;
+            List<Integer> dangs = danglingIdxs.get(i);
+            Set<String> keeps = new LinkedHashSet<>(dec);
+            if (dangs != null) {
+                // walk dangs positions and remove by id (not by index
+                // — keeps is the id set, danglingIdxs positions might
+                // be stale by now, safer to recompute)
+                // actually: dangs is positions in m.content, and
+                // m.content is unchanged between phase 1 and phase 3,
+                // so positions are stable.
+                for (int pos : dangs) {
+                    if (pos < transcript.get(i).content().size()) {
+                        ContentBlock b = transcript.get(i).content().get(pos);
+                        if (b instanceof ContentBlock.ToolUseBlock tu) {
+                            keeps.remove(tu.id());
+                        }
+                    }
+                }
+            }
+            survivingUseIds.put(i, keeps);
+        }
+
+        List<Message> cleaned = null;
+        int droppedResults = 0;
+        int strippedToolCalls = 0;
+        int emptiedAssistants = 0;
+
+        for (int i = 0; i < n; i++) {
             Message m = transcript.get(i);
             if (m == null) continue;
-            // Collect every tool_use id from assistant messages as we go.
-            // ToolUseBlock can be embedded in an assistant message
-            // either as a single block or alongside text blocks, so
-            // we scan the whole content array.
-            if (m.role() == Role.ASSISTANT) {
-                for (ContentBlock b : m.content()) {
-                    if (b instanceof ContentBlock.ToolUseBlock tu) {
-                        if (tu.id() != null && !tu.id().isBlank()) {
-                            knownToolUseIds.add(tu.id());
-                        }
-                    }
-                }
-            }
-            // Decide whether this message must be dropped.
             boolean drop = false;
-            String orphanToolUseId = null; // captured here so the warn below has it
+
             if (m.role() == Role.TOOL_RESULT) {
-                String toolUseId = null;
-                // Prefer the metadata field (canonical) — fall back to
-                // the ToolResultBlock's toolUseId for messages that
-                // built the tool_use_id differently.
-                if (m.metadata() != null && m.metadata().get("tool_use_id") instanceof String s) {
-                    toolUseId = s;
-                }
-                if (toolUseId == null || toolUseId.isBlank()) {
-                    for (ContentBlock b : m.content()) {
-                        if (b instanceof ContentBlock.ToolResultBlock tr) {
-                            toolUseId = tr.toolUseId();
-                            if (toolUseId != null && !toolUseId.isBlank()) break;
-                        }
+                String id = toolUseIdOf(m);
+                Integer owner = id == null ? null : ownerOf.get(id);
+                if (id == null || owner == null) {
+                    // R716 case
+                    drop = true;
+                    droppedResults++;
+                    LOG.warn("R736: dropping tool_result message at index {} (tool_use_id={}): "
+                                    + "no preceding assistant declared this id",
+                            i, id);
+                } else if (alienIdx[i]) {
+                    // cross-batch intruder
+                    drop = true;
+                    droppedResults++;
+                    LOG.warn("R736: dropping tool_result message at index {} (tool_use_id={}): "
+                                    + "id={} answered a DIFFERENT assistant (index {}) than its "
+                                    + "batch — providers reject cross-batch tool_results with a "
+                                    + "bare 500", i, id, id, owner);
+                } else {
+                    // Owner's batch is this batch; but the owner may
+                    // have self-stripped this id in this very pass.
+                    Set<String> keeps = survivingUseIds.get(owner);
+                    if (keeps == null || !keeps.contains(id)) {
+                        drop = true;
+                        droppedResults++;
+                        LOG.warn("R736: dropping tool_result message at index {} (tool_use_id={}): "
+                                        + "owner assistant at index {} no longer carries a "
+                                        + "tool_use for this id — its own pass stripped it as "
+                                        + "dangling. Leaving the tool_result in place would "
+                                        + "produce the same 400 the strip was meant to avoid.",
+                                i, id, owner);
                     }
                 }
-                if (toolUseId == null || !knownToolUseIds.contains(toolUseId)) {
+            }
+
+            List<Integer> dangs = danglingIdxs.get(i);
+            if (!drop && dangs != null && !dangs.isEmpty()) {
+                // Strip the dangling ToolUseBlocks. Preserve prose
+                // (TextBlock) and other unrelated blocks.
+                List<ContentBlock> rewritten = new ArrayList<>(m.content());
+                for (int k = dangs.size() - 1; k >= 0; k--) {
+                    rewritten.remove(dangs.get(k).intValue());
+                }
+                strippedToolCalls += dangs.size();
+                if (rewritten.isEmpty()) {
                     drop = true;
-                    orphanToolUseId = toolUseId;
+                    emptiedAssistants++;
+                    LOG.warn("R736: dropping assistant message at index {} — every declared "
+                                    + "tool_call ({}) was either dangling or alien; an assistant "
+                                    + "message with no content is rejected by the provider",
+                            i, dangs.size());
+                } else if (rewritten.size() != m.content().size()) {
+                    if (cleaned == null) {
+                        cleaned = new ArrayList<>(n);
+                        for (int j = 0; j < i; j++) cleaned.add(transcript.get(j));
+                    }
+                    m = new Message(m.id(), m.role(), rewritten,
+                            m.timestamp(), m.metadata());
                 }
             }
+
             if (drop) {
                 if (cleaned == null) {
-                    cleaned = new ArrayList<>(transcript.size() - 1);
+                    cleaned = new ArrayList<>(n);
                     for (int j = 0; j < i; j++) cleaned.add(transcript.get(j));
                 }
-                // log once per drop so a transcript with N orphans
-                // doesn't spam N log lines (the per-message reason
-                // is in the count below).
-                LOG.warn("R716: dropping orphan tool result message at index {} "
-                        + "(tool_use_id={} not present in any prior tool_use block); "
-                        + "this is a transcript-recovery path for transcripts that drifted "
-                        + "out of sync with the strict tool_call_id ordering some providers require",
-                        i, orphanToolUseId);
+                // skip
             } else if (cleaned != null) {
                 cleaned.add(m);
             }
         }
-        if (cleaned == null) return transcript; // fast path: no orphans
-        if (LOG.isInfoEnabled() && cleaned.size() < transcript.size()) {
-            LOG.info("R716: stripOrphanToolResults dropped {} orphan tool result(s) from transcript of {} messages",
-                    transcript.size() - cleaned.size(), transcript.size());
+        if (cleaned == null) return transcript; // fast path
+        if (LOG.isInfoEnabled()) {
+            LOG.info("R736: stripOrphanToolResults repaired transcript of {} messages -> {}: "
+                            + "{} tool_result(s) dropped (R716 orphan or R736 alien), "
+                            + "{} dangling tool_call(s) stripped, "
+                            + "{} assistant message(s) emptied. The provider rejects any shape "
+                            + "where an assistant's declared tool_call ids ≠ the ids of the "
+                            + "tool_results that immediately follow it, with a bare "
+                            + "`500 unknown error (1000)`.",
+                    n, cleaned.size(), droppedResults, strippedToolCalls, emptiedAssistants);
         }
         return cleaned;
     }
+
+    /** R736: canonical {@code tool_use_id} for a TOOL_RESULT message. */
+    private static String toolUseIdOf(Message m) {
+        if (m == null || m.role() != Role.TOOL_RESULT) return null;
+        if (m.metadata() != null && m.metadata().get("tool_use_id") instanceof String s) {
+            return s;
+        }
+        for (ContentBlock b : m.content()) {
+            if (b instanceof ContentBlock.ToolResultBlock tr) {
+                if (tr.toolUseId() != null && !tr.toolUseId().isBlank()) return tr.toolUseId();
+            }
+        }
+        return null;
+    }
+
+    /** R736: canonical {@code tool_use_id} for a TOOL_RESULT message.
+     *  Prefers the metadata field, falls back to the content block. */
 
     /**
      * R716 final: hard-cap the transcript so a long-running session
@@ -1181,40 +1426,86 @@ public class QueryEngine {
         for (int t = 0; t < todos.size(); t++) {
             java.util.Map<String, Object> todo = todos.get(t);
             Object subs = todo.get("subtasks");
-            if (!(subs instanceof java.util.List<?> subList)) continue;
-            for (Object se : subList) {
-                if (!(se instanceof java.util.Map<?, ?> sm)) continue;
-                String id = strOr(sm.get("id"), null);
-                if (id == null) continue;
-                String status = strOr(sm.get("status"), "pending");
-                String content = strOr(sm.get("content"), "");
-                String summary = strOr(sm.get("summary"), null);
+            // R740: a flat top-level todo (no `subtasks` field) is the
+            // common shape the model uses via todo_write when it does
+            // not break work down further. Pre-R740 we silently
+            // skipped these (continue) and never fired SubTaskStart /
+            // SubTaskEnd for them, so the MessageList SubTaskCard area
+            // stayed empty even though the RightPanel "Plan" tab (which
+            // has its own todo_write handler in the desktop store) was
+            // showing every item as completed. Treat each flat todo as
+            // a single sub-task under a synthetic task-id 0 with an
+            // auto-generated stable id (`auto-{idx}`).
+            if (subs instanceof java.util.List<?> subList) {
+                for (Object se : subList) {
+                    if (!(se instanceof java.util.Map<?, ?> sm)) continue;
+                    String id = strOr(sm.get("id"), null);
+                    if (id == null) continue;
+                    String status = strOr(sm.get("status"), "pending");
+                    String content = strOr(sm.get("content"), "");
+                    String summary = strOr(sm.get("summary"), null);
+                    String key = t + ":" + id;
+                    seen.add(key);
+                    String prev = lastSubTaskStatus.get(key);
+                    boolean isTerminal = "completed".equals(status) || "failed".equals(status) || "skipped".equals(status);
+                    if (prev == null) {
+                        // First sight. Always emit Start so the UI can
+                        // anchor the card; if the initial status is
+                        // already terminal, follow up with an End so
+                        // the renderer shows the summary card right
+                        // away.
+                        action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
+                        if (isTerminal) {
+                            action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
+                        }
+                    } else if (!prev.equals(status)) {
+                        // Status changed. The interesting transitions:
+                        //   any -> terminal   → emit End
+                        //   * -> in_progress  → emit Start (re-open OR
+                        //                          first activation; the
+                        //                          UI needs the in_progress
+                        //                          signal to switch the
+                        //                          active card).
+                        // The reverse (in_progress -> pending) is rare and
+                        // treated as silent — the engine still updates
+                        // lastSubTaskStatus so subsequent transitions are
+                        // correct, but no event fires.
+                        if (isTerminal) {
+                            action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
+                        } else if ("in_progress".equals(status)) {
+                            action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
+                        }
+                    }
+                    lastSubTaskStatus.put(key, status);
+                    if (activeKey == null && "in_progress".equals(status)) {
+                        activeKey = key;
+                    }
+                }
+            } else if (subs == null) {
+                // R740: flat-todo branch. Synthesize one sub-task entry
+                // from the top-level todo itself. We only synthesize if
+                // the todo has at least a `content` string — otherwise
+                // there is nothing for the renderer to show, and we'd
+                // rather emit nothing than an empty SubTaskCard.
+                // R740 marker: emits a sub-task under id `auto-{t}`
+                // for every flat top-level todo. Used as the deployment-
+                // time verification marker so the daemon log can confirm
+                // the new branch actually fired for a real transcript.
+                String content = strOr(todo.get("content"), null);
+                if (content == null) continue;
+                String id = "auto-" + t;
+                String status = strOr(todo.get("status"), "pending");
+                String summary = strOr(todo.get("summary"), null);
                 String key = t + ":" + id;
                 seen.add(key);
                 String prev = lastSubTaskStatus.get(key);
                 boolean isTerminal = "completed".equals(status) || "failed".equals(status) || "skipped".equals(status);
                 if (prev == null) {
-                    // First sight. Always emit Start so the UI can
-                    // anchor the card; if the initial status is
-                    // already terminal, follow up with an End so
-                    // the renderer shows the summary card right
-                    // away.
                     action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
                     if (isTerminal) {
                         action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
                     }
                 } else if (!prev.equals(status)) {
-                    // Status changed. The interesting transitions:
-                    //   any -> terminal   → emit End
-                    //   * -> in_progress  → emit Start (re-open OR
-                    //                          first activation; the
-                    //                          UI needs the in_progress
-                    //                          signal to switch the
-                    //                          active card).
-                    // The reverse (in_progress -> pending) is rare and
-                    // treated as silent — the engine still updates
-                    // lastSubTaskStatus so subsequent transitions are
-                    // correct, but no event fires.
                     if (isTerminal) {
                         action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
                     } else if ("in_progress".equals(status)) {
@@ -1225,7 +1516,13 @@ public class QueryEngine {
                 if (activeKey == null && "in_progress".equals(status)) {
                     activeKey = key;
                 }
+                if (LOG.isInfoEnabled() && prev == null) {
+                    LOG.info("R740: flat-todo synthesised SubTaskStart taskId={} subTaskId={} status={} content='{}'",
+                            t, id, status, content);
+                }
             }
+            // subs is non-null but not a List (e.g. String) — silently
+            // ignore, same as before R740.
         }
         // Sub-tasks that disappeared from the list (e.g. a
         // todo_write that didn't include them). Treat as skipped.
@@ -1317,7 +1614,125 @@ public class QueryEngine {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(plan);
         }
+        // R737: the response-language lock. Appended LAST so it sits
+        // at the very end of the prompt — the position closest to the
+        // model's "now" attention, same reasoning as planModeSuffix
+        // above. This is the deterministic half of the fix: the
+        // identity section of the system prompt carries a soft
+        // "reply in the user's language" rule, but a MiniMax-M3
+        // class model follows English because the whole prompt is
+        // English. Detecting the language from the transcript and
+        // stating it explicitly, per turn, at the tail, is what
+        // actually flips the output.
+        String lang = responseLanguageDirective();
+        if (!lang.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(lang);
+        }
         return sb.toString();
+    }
+
+    /**
+     * R737: build the per-turn response-language directive, or ""
+     * when the user has not written anything we can confidently
+     * classify (or has written only English / only code).
+     *
+     * <p>Detection is deliberately conservative and cheap:
+     * <ul>
+     *   <li>Scan BACKWARDS through the transcript for the most
+     *       recent message that has meaningful prose. Tool
+     *       results and assistant turns are skipped — we want the
+     *       USER's language, not the tool output's (tool output is
+     *       always English/system-locale and would poison the
+     *       detection).</li>
+     *   <li>Count CJK codepoints (U+4E00–U+9FFF, U+3040–U+30FF
+     *       for kana, U+AC00–U+D7AF for hangul) against Latin
+     *       letters. If CJK ≥ 12 and CJK ≥ 25% of the letter
+     *       count → Chinese. The threshold keeps a single pasted
+     *       CJK filename or error string from flipping the whole
+     *       turn's language.</li>
+     *   <li>Only Chinese is detected today. Other languages fall
+     *       through to the identity-section soft rule, which asks
+     *       the model to mirror the user's language — the model
+     *       handles that natively; Chinese needed the explicit
+     *       override because the prompt is English and M3's
+     *       prior for Chinese turns is to answer in English.</li>
+     * </ul>
+     *
+     * <p>The directive is scoped the same way the identity rule is:
+     * prose follows the user's language, code / paths / identifiers
+     * / copied error strings stay verbatim. Without that scope the
+     * model starts translating `bash` command lines and file paths,
+     * which breaks the tools.
+     */
+    private String responseLanguageDirective() {
+        String detected = detectUserLanguage();
+        if (detected == null) return "";
+        return """
+                # Response language (R737, per-turn, highest priority)
+
+                The user is reading **Chinese**. Write all of your natural-language
+                output in Chinese: prose, summaries, explanations, questions, the
+                design block, todo items, headings.
+
+                Keep these VERBATIM in their original form — translating them breaks
+                the tools:
+                - code, file paths, identifiers, CLI flags
+                - error strings and log lines copied out of tool output
+                - tool names (`bash`, `grep`, `file_read`, …)
+
+                Code comments should match the surrounding file's existing language.
+                Do not announce the language switch and do not provide a translation
+                alongside the original — just write Chinese.""";
+    }
+
+    /** R737: the detected language tag, or null when unclassifiable. */
+    private String detectUserLanguage() {
+        List<Message> transcript = appState.transcript();
+        if (transcript == null || transcript.isEmpty()) return null;
+        // Walk backwards; the FIRST user message with enough prose wins.
+        // We do not stop at the first user message — a user who typed
+        // "ok" after a long Chinese task would otherwise un-set the
+        // language — we look for the most recent message that carries
+        // enough letters to classify at all.
+        for (int i = transcript.size() - 1; i >= 0; i--) {
+            Message m = transcript.get(i);
+            if (m == null || m.role() != Role.USER) continue;
+            String text = m.textContent();
+            if (text == null || text.isBlank()) continue;
+            int cjk = 0, latin = 0;
+            for (int c = 0; c < text.length(); c++) {
+                char ch = text.charAt(c);
+                if ((ch >= '一' && ch <= '鿿')
+                        || (ch >= '぀' && ch <= 'ヿ')
+                        || (ch >= '가' && ch <= '힯')) {
+                    cjk++;
+                } else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+                    latin++;
+                }
+            }
+            if (cjk >= 12 && cjk * 4 >= latin) {
+                // R737 trace. Lesson 1052: a fix you cannot see fire
+                // in the log is a fix you cannot prove shipped. This
+                // marker is the deployment-time check for the language
+                // lock — if it never appears but the model still
+                // answers in English, detection is not firing.
+                LOG.info("R737: detected user language=zh from transcript[{}] "
+                        + "(cjk={}, latin={}); appending the response-language "
+                        + "directive to this turn's system prompt", i, cjk, latin);
+                return "zh";
+            }
+            // Not classifiable as Chinese. Keep walking backwards —
+            // the most recent *classifiable* user message wins, not the
+            // most recent user message.
+        }
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("R737: no user message cleared the Chinese threshold "
+                    + "(cjk>=12 && cjk*4>=latin) across {} transcript entries; "
+                    + "leaving the response language to the identity-section rule",
+                    transcript.size());
+        }
+        return null;
     }
 
     public QueryEngine(
@@ -1547,661 +1962,712 @@ public class QueryEngine {
 
             @Override
             public boolean tryAdvance(java.util.function.Consumer<? super StreamEvent> action) {
-                if (finished) return false;
-                // R721: honour cancel's thread interrupt. Pre-R720
-                // the cancel RPC only flipped the future's cancel
-                // flag, which no in-flight code path actually
-                // observed — the LLM stream kept reading until the
-                // model yielded the next RunEnd, which could be
-                // 60-120s away. R721 has the cancel RPC also call
-                // {@code Thread.interrupt()} on the worker thread
-                // that owns this tryAdvance; we now bail cleanly
-                // at the top of every iteration, emit a single
-                // RunEnd so the renderer's transcript shows the
-                // run ended (not errored), and stop the stream.
-                // The interrupt flag is cleared here so any
-                // downstream I/O (socket reads, NIO selectors)
-                // that polls Thread.interrupted() doesn't loop.
-                if (Thread.interrupted()) {
-                    finished = true;
-                    stopReason = "cancelled";
-                    try {
-                        action.accept(new StreamEvent.RunEnd(
-                                "cancelled", List.of()));
-                    } catch (Exception ignored) {
-                        // the action consumer can throw on a closed
-                        // downstream — that's fine, the run is
-                        // over either way.
-                    }
-                    return false;
-                }
-
-                if (currentLlmStream == null) {
-                    // the per-query turn cap is gone. Per-todo adaptive
-                    // control in TodoRunController is the source of truth
-                    // for "this is taking too long".
-                    // Start of a turn.
-                    action.accept(new StreamEvent.RunStart(runId, effectiveChatClient.modelId()));
-                    // emit any sub-task transitions BEFORE the LLM
-                    // stream starts. On the first turn, this surfaces the
-                    // model's initial plan; on subsequent turns, this
-                    // surfaces transitions that happened in the previous
-                    // tool batch (e.g. a sub_todo_write close).
-                    emitSubTaskTransitions(action);
-                    // use the snapshotted memory section for this
-                    // query, not the live field. effectiveSystem() reads
-                    // the live field; we temporarily swap it in via a
-                    // local-only path here.
-                    String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix);
-                    // R716: filter orphan tool results before handing
-                    // the transcript to the chat client. Some providers
-                    // (notably MiniMax-M3's OpenAI-compat endpoint) strictly
-                    // validate that every role=TOOL_RESULT message carries
-                    // a tool_use_id that appears in a prior assistant
-                    // message's tool_calls. The on-disk transcript can
-                    // drift out of sync with that invariant when a
-                    // content block is truncated during recovery or when
-                    // a session is restored across a schema migration —
-                    // the result is a 400 with the cryptic error code
-                    // 2013 "tool result's tool id(call_X) not found".
-                    // Stripping the orphan entries before the wire call
-                    // is a no-op for healthy transcripts (every
-                    // tool_result has a matching tool_use) and a recovery
-                    // path for the drifted ones. The transcript itself
-                    // is NOT mutated — only the wire-side copy.
-                    List<Message> cleanedTranscript = appState.transcript();
-                    // R718-L3: transcript-level tool-result dedup.
-                    // Runs BEFORE the strip-oldest pass so a
-                    // transcript with 4 identical file_reads of
-                    // the same file gets collapsed to 1, leaving
-                    // the strip with less work to do. Pure filter,
-                    // same-reference fast path when no dupes
-                    // exist. Zero API cost. Mirrors the Claude
-                    // Code "duplicate tool_result collapse" layer.
-                    cleanedTranscript = TranscriptPruner.dedupeToolResults(cleanedTranscript, metricsCollector);
-                    // R718-L4: strip-oldest rescue. Cheaper than
-                    // the R716 hard cap, runs BEFORE the LLM call
-                    // as a "your transcript is over the per-call
-                    // limit, drop oldest" guard. Default cap is
-                    // 150K chars (~37K tokens — the user's
-                    // chosen sweet spot below the declared 1M
-                    // window, lowered from R717's 200K per the
-                    // "more frequent compression" directive).
-                    // Tunable via
-                    // AETHERCODE_R717_PRE_CALL_MAX_CHARS.
-                    // Same-reference fast path when under cap.
-                    // Pure filter, transcript on disk is NOT
-                    // mutated. R718-L4 fires here BEFORE the R716
-                    // hard cap so a 1700-message transcript gets
-                    // reduced to "last 16 tail" with a synthetic
-                    // note rather than a blunt "keep last 300"
-                    // — the user can see the L4 note in the
-                    // transcript, the renderer can attach a
-                    // "View original" affordance.
-                    cleanedTranscript = TranscriptPruner.stripOldestToFit(
-                            cleanedTranscript,
-                            TranscriptPruner.DEFAULT_PRE_CALL_MAX_CHARS,
-                            TranscriptPruner.DEFAULT_MIN_KEEP,
-                            TranscriptPruner.DEFAULT_TRUNCATE_TO_CHARS,
-                            metricsCollector);
-                    // R719: Session Anchor. Every K turns (default 5)
-                    // the engine auto-appends a USER-role
-                    // session-anchor to the wire-side transcript.
-                    // The anchor carries:
-                    //   - cwd
-                    //   - last 3 user prompts (one-line summaries)
-                    //   - last 3 file paths the model touched
-                    //   - current intent (the latest user message
-                    //     text, truncated to 200 chars)
-                    //   - metadata.kind=session-anchor, anchor=true
-                    //
-                    // L4 (R719 anchor-preserving) guarantees the
-                    // anchor survives every future
-                    // stripOldestToFit. So even after 10000+ L4 strips,
-                    // the model still has the system message +
-                    // every periodic anchor + the last 16
-                    // non-anchor messages.
-                    Message anchor = maybeEmitSessionAnchor(runCounter.get());
-                    if (anchor != null) {
-                        // R719: anchor must persist on disk so the
-                        // next turn's transcript naturally carries
-                        // it. Without the on-disk append, the
-                        // anchor only survives the current wire
-                        // call and is lost on the next session
-                        // load. appendMessage + messageSink keep the
-                        // TUI / desktop transcript in sync too.
+                try {
+                    if (finished) return false;
+                    // R721: honour cancel's thread interrupt. Pre-R720
+                    // the cancel RPC only flipped the future's cancel
+                    // flag, which no in-flight code path actually
+                    // observed — the LLM stream kept reading until the
+                    // model yielded the next RunEnd, which could be
+                    // 60-120s away. R721 has the cancel RPC also call
+                    // {@code Thread.interrupt()} on the worker thread
+                    // that owns this tryAdvance; we now bail cleanly
+                    // at the top of every iteration, emit a single
+                    // RunEnd so the renderer's transcript shows the
+                    // run ended (not errored), and stop the stream.
+                    // The interrupt flag is cleared here so any
+                    // downstream I/O (socket reads, NIO selectors)
+                    // that polls Thread.interrupted() doesn't loop.
+                    if (Thread.interrupted()) {
+                        finished = true;
+                        stopReason = "cancelled";
                         try {
-                            appState.appendMessage(anchor);
-                        } catch (Throwable ignored) {
-                            // If appendMessage throws (e.g. read-only
-                            // store in tests), fall back to
-                            // wire-side only — the model still
-                            // sees it this turn.
+                            action.accept(new StreamEvent.RunEnd(
+                                    "cancelled", List.of()));
+                        } catch (Exception ignored) {
+                            // the action consumer can throw on a closed
+                            // downstream — that's fine, the run is
+                            // over either way.
                         }
-                        messageSink.accept(anchor);
-                        cleanedTranscript = appendToList(cleanedTranscript, anchor);
+                        return false;
                     }
-                    // R716 final: trim the head of the transcript
-                    // when it exceeds the hard cap. Default 300
-                    // messages / 800K chars. Acts as a defence
-                    // in depth behind R717-L4 — R717 keeps the
-                    // transcript under the per-call cap; R716
-                    // makes sure even the L4 survivor list never
-                    // exceeds a single hard wall. The on-disk
-                    // transcript is NOT mutated.
-                    cleanedTranscript = trimHeadIfOversized(
-                            cleanedTranscript,
-                            DEFAULT_MAX_TRANSCRIPT_MESSAGES,
-                            DEFAULT_MAX_TRANSCRIPT_CHARS);
-                    // R716: filter orphan tool results AFTER the
-                    // trims. Both trims can leave tail tool_results
-                    // whose matching tool_use was dropped from
-                    // the head — running stripOrphanToolResults
-                    // here drops those. The transcript itself is
-                    // NOT mutated — only the wire-side copy. Pure
-                    // filter, same-reference fast path.
-                    cleanedTranscript = stripOrphanToolResults(cleanedTranscript);
-                    currentLlmStream = effectiveChatClient.stream(
-                            cleanedTranscript, turnSystem, appState.toolPool());
-                    currentLlmIt = currentLlmStream.iterator();
-                    pending = new ArrayList<>();
-                    stopReason = "end_turn";
-                    lastAssistantBlocks = List.of();
-                    turnsTaken++;
-                    turnHadUsage = false;
-                    return true;
-                }
 
-                if (currentLlmIt.hasNext()) {
-                    StreamEvent ev = currentLlmIt.next();
-                    if (ev instanceof StreamEvent.TextDelta td) {
-                        action.accept(td);
+                    if (currentLlmStream == null) {
+                        // the per-query turn cap is gone. Per-todo adaptive
+                        // control in TodoRunController is the source of truth
+                        // for "this is taking too long".
+                        // Start of a turn.
+                        action.accept(new StreamEvent.RunStart(runId, effectiveChatClient.modelId()));
+                        // emit any sub-task transitions BEFORE the LLM
+                        // stream starts. On the first turn, this surfaces the
+                        // model's initial plan; on subsequent turns, this
+                        // surfaces transitions that happened in the previous
+                        // tool batch (e.g. a sub_todo_write close).
+                        emitSubTaskTransitions(action);
+                        // use the snapshotted memory section for this
+                        // query, not the live field. effectiveSystem() reads
+                        // the live field; we temporarily swap it in via a
+                        // local-only path here.
+                        String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix);
+                        // R716: filter orphan tool results before handing
+                        // the transcript to the chat client. Some providers
+                        // (notably MiniMax-M3's OpenAI-compat endpoint) strictly
+                        // validate that every role=TOOL_RESULT message carries
+                        // a tool_use_id that appears in a prior assistant
+                        // message's tool_calls. The on-disk transcript can
+                        // drift out of sync with that invariant when a
+                        // content block is truncated during recovery or when
+                        // a session is restored across a schema migration —
+                        // the result is a 400 with the cryptic error code
+                        // 2013 "tool result's tool id(call_X) not found".
+                        // Stripping the orphan entries before the wire call
+                        // is a no-op for healthy transcripts (every
+                        // tool_result has a matching tool_use) and a recovery
+                        // path for the drifted ones. The transcript itself
+                        // is NOT mutated — only the wire-side copy.
+                        List<Message> cleanedTranscript = appState.transcript();
+                        // R718-L3: transcript-level tool-result dedup.
+                        // Runs BEFORE the strip-oldest pass so a
+                        // transcript with 4 identical file_reads of
+                        // the same file gets collapsed to 1, leaving
+                        // the strip with less work to do. Pure filter,
+                        // same-reference fast path when no dupes
+                        // exist. Zero API cost. Mirrors the Claude
+                        // Code "duplicate tool_result collapse" layer.
+                        cleanedTranscript = TranscriptPruner.dedupeToolResults(cleanedTranscript, metricsCollector);
+                        // R718-L4: strip-oldest rescue. Cheaper than
+                        // the R716 hard cap, runs BEFORE the LLM call
+                        // as a "your transcript is over the per-call
+                        // limit, drop oldest" guard. Default cap is
+                        // 150K chars (~37K tokens — the user's
+                        // chosen sweet spot below the declared 1M
+                        // window, lowered from R717's 200K per the
+                        // "more frequent compression" directive).
+                        // Tunable via
+                        // AETHERCODE_R717_PRE_CALL_MAX_CHARS.
+                        // Same-reference fast path when under cap.
+                        // Pure filter, transcript on disk is NOT
+                        // mutated. R718-L4 fires here BEFORE the R716
+                        // hard cap so a 1700-message transcript gets
+                        // reduced to "last 16 tail" with a synthetic
+                        // note rather than a blunt "keep last 300"
+                        // — the user can see the L4 note in the
+                        // transcript, the renderer can attach a
+                        // "View original" affordance.
+                        cleanedTranscript = TranscriptPruner.stripOldestToFit(
+                                cleanedTranscript,
+                                TranscriptPruner.DEFAULT_PRE_CALL_MAX_CHARS,
+                                TranscriptPruner.DEFAULT_MIN_KEEP,
+                                TranscriptPruner.DEFAULT_TRUNCATE_TO_CHARS,
+                                metricsCollector);
+                        // R719: Session Anchor. Every K turns (default 5)
+                        // the engine auto-appends a USER-role
+                        // session-anchor to the wire-side transcript.
+                        // The anchor carries:
+                        //   - cwd
+                        //   - last 3 user prompts (one-line summaries)
+                        //   - last 3 file paths the model touched
+                        //   - current intent (the latest user message
+                        //     text, truncated to 200 chars)
+                        //   - metadata.kind=session-anchor, anchor=true
+                        //
+                        // L4 (R719 anchor-preserving) guarantees the
+                        // anchor survives every future
+                        // stripOldestToFit. So even after 10000+ L4 strips,
+                        // the model still has the system message +
+                        // every periodic anchor + the last 16
+                        // non-anchor messages.
+                        Message anchor = maybeEmitSessionAnchor(runCounter.get());
+                        if (anchor != null) {
+                            // R719: anchor must persist on disk so the
+                            // next turn's transcript naturally carries
+                            // it. Without the on-disk append, the
+                            // anchor only survives the current wire
+                            // call and is lost on the next session
+                            // load. appendMessage + messageSink keep the
+                            // TUI / desktop transcript in sync too.
+                            try {
+                                appState.appendMessage(anchor);
+                            } catch (Throwable ignored) {
+                                // If appendMessage throws (e.g. read-only
+                                // store in tests), fall back to
+                                // wire-side only — the model still
+                                // sees it this turn.
+                            }
+                            messageSink.accept(anchor);
+                            cleanedTranscript = appendToList(cleanedTranscript, anchor);
+                        }
+                        // R716 final: trim the head of the transcript
+                        // when it exceeds the hard cap. Default 300
+                        // messages / 800K chars. Acts as a defence
+                        // in depth behind R717-L4 — R717 keeps the
+                        // transcript under the per-call cap; R716
+                        // makes sure even the L4 survivor list never
+                        // exceeds a single hard wall. The on-disk
+                        // transcript is NOT mutated.
+                        cleanedTranscript = trimHeadIfOversized(
+                                cleanedTranscript,
+                                DEFAULT_MAX_TRANSCRIPT_MESSAGES,
+                                DEFAULT_MAX_TRANSCRIPT_CHARS);
+                        // R716: filter orphan tool results AFTER the
+                        // trims. Both trims can leave tail tool_results
+                        // whose matching tool_use was dropped from
+                        // the head — running stripOrphanToolResults
+                        // here drops those. The transcript itself is
+                        // NOT mutated — only the wire-side copy. Pure
+                        // filter, same-reference fast path.
+                        cleanedTranscript = stripOrphanToolResults(cleanedTranscript);
+                        currentLlmStream = effectiveChatClient.stream(
+                                cleanedTranscript, turnSystem, appState.toolPool());
+                        currentLlmIt = currentLlmStream.iterator();
+                        pending = new ArrayList<>();
+                        stopReason = "end_turn";
+                        lastAssistantBlocks = List.of();
+                        turnsTaken++;
+                        turnHadUsage = false;
                         return true;
                     }
-                    if (ev instanceof StreamEvent.Usage u) {
-                        // record per-call token usage to both
-                        // MetricsCollector (for the UI / getMetrics)
-                        // and CostTracker (for $ accounting). We don't
-                        // forward Usage to the consumer — it's a side
-                        // channel, not a model-stream event. If the
-                        // chat client doesn't supply a real count, the
-                        // post-batch fallback below will estimate.
-                        turnHadUsage = true;
-                        if (u.inputTokens() > 0 || u.outputTokens() > 0) {
-                            if (metricsCollector != null) {
-                                metricsCollector.addTokens(u.inputTokens(), u.outputTokens());
+
+                    if (currentLlmIt.hasNext()) {
+                        StreamEvent ev = currentLlmIt.next();
+                        if (ev instanceof StreamEvent.TextDelta td) {
+                            action.accept(td);
+                            return true;
+                        }
+                        if (ev instanceof StreamEvent.Usage u) {
+                            // record per-call token usage to both
+                            // MetricsCollector (for the UI / getMetrics)
+                            // and CostTracker (for $ accounting). We don't
+                            // forward Usage to the consumer — it's a side
+                            // channel, not a model-stream event. If the
+                            // chat client doesn't supply a real count, the
+                            // post-batch fallback below will estimate.
+                            turnHadUsage = true;
+                            if (u.inputTokens() > 0 || u.outputTokens() > 0) {
+                                if (metricsCollector != null) {
+                                    metricsCollector.addTokens(u.inputTokens(), u.outputTokens());
+                                }
+                                if (costTracker != null) {
+                                    try {
+                                        costTracker.record(effectiveChatClient.modelId(),
+                                                new org.aethercode.core.cost.CostTracker.Usage(
+                                                        u.inputTokens(), u.outputTokens()));
+                                    } catch (Throwable t) {
+                                        // CostTracker failures must not break the stream.
+                                    }
+                                }
                             }
+                            return true;
+                        }
+                        if (ev instanceof StreamEvent.ToolUseStart tu) {
+                            pending.add(new ContentBlock.ToolUseBlock(tu.id(), tu.name(), tu.input()));
+                            action.accept(tu);
+                            return true;
+                        }
+                        if (ev instanceof StreamEvent.RunStart) {
+                            // the engine owns the per-turn RunStart (emitted above
+                            // before the LLM call). If a ChatClient implementation also
+                            // emits its own RunStart (e.g. a legacy client, a test mock),
+                            // drop it here so the consumer never sees a duplicate
+                            // "turn started" event. This is purely defensive — the
+                            // SpringAiChatClient no longer emits RunStart either.
+                            return true;
+                        }
+                        if (ev instanceof StreamEvent.RunEnd re) {
+                            // prior round fix: the model-side RunEnd is an INTERNAL signal, not a
+                            // stream event for the consumer. Do NOT return here — fall through
+                            // to the batch handler below. Without this, a pure-text response
+                            // (no tool calls) would re-enter the "Start of a turn" branch on
+                            // the next tryAdvance and call the LLM again — producing the
+                            // "infinite repeat" symptom (9-10 model calls for a simple
+                            // "how are you?"). The model-side RunEnd is consumed here for its
+                            // side effects (stopReason, finalBlocks), and the engine emits its
+                            // own terminal RunEnd after the batch handling completes.
+                            stopReason = re.stopReason();
+                            lastAssistantBlocks = re.finalBlocks();
+                            // chat clients no longer emit a separate
+                            // ToolUseStart event per tool call (the model just
+                            // declares its tool calls inside the final
+                            // AssistantMessage). To preserve the engine's
+                            // "run a batch of tools" behaviour, populate
+                            // `pending` from the finalBlocks here so the batch
+                            // handler below picks them up.
+                            if (pending.isEmpty() && lastAssistantBlocks != null) {
+                                for (ContentBlock b : lastAssistantBlocks) {
+                                    if (b instanceof ContentBlock.ToolUseBlock tu) {
+                                        pending.add(tu);
+                                    }
+                                }
+                            }
+                            currentLlmStream = null;
+                            // fall through to batch handler
+                        } else {
+                            // ToolResult, SideNote, or any other event type — pass through.
+                            action.accept(ev);
+                            return true;
+                        }
+                    }
+
+                    // LLM iterator is exhausted OR RunEnd was just processed: handle the batch.
+                    currentLlmStream = null;
+                    // token-usage fallback. Many chat clients (notably
+                    // the MiniMax / spring-ai OpenAI-compatible transport)
+                    // don't populate `ChatResponse.getMetadata().getUsage()`
+                    // — the model returns the answer but no usage
+                    // information. The desktop TokenUsage panel would
+                    // otherwise stay at 0 indefinitely. We fall back to a
+                    // chars/4 estimate on the assistant's output text +
+                    // the full transcript (proxy for input). Runs on
+                    // EVERY turn (not just the tool-batch path) so a
+                    // pure-text response still gets an estimate.
+                    if (!turnHadUsage && metricsCollector != null) {
+                        int estOut = estimateAssistantChars(lastAssistantBlocks) / 4;
+                        int estIn = estimateInputChars(appState.transcript()) / 4;
+                        if (estOut > 0 || estIn > 0) {
+                            metricsCollector.addTokens(estIn, estOut);
                             if (costTracker != null) {
                                 try {
                                     costTracker.record(effectiveChatClient.modelId(),
-                                            new org.aethercode.core.cost.CostTracker.Usage(
-                                                    u.inputTokens(), u.outputTokens()));
-                                } catch (Throwable t) {
-                                    // CostTracker failures must not break the stream.
-                                }
+                                            new org.aethercode.core.cost.CostTracker.Usage(estIn, estOut));
+                                } catch (Throwable ignored) { }
                             }
                         }
-                        return true;
                     }
-                    if (ev instanceof StreamEvent.ToolUseStart tu) {
-                        pending.add(new ContentBlock.ToolUseBlock(tu.id(), tu.name(), tu.input()));
-                        action.accept(tu);
-                        return true;
+                    if (!lastAssistantBlocks.isEmpty()) {
+                        Message assistantMsg = new Message(null, Role.ASSISTANT, lastAssistantBlocks, null, Map.of());
+                        appState.appendMessage(assistantMsg);
+                        messageSink.accept(assistantMsg);
                     }
-                    if (ev instanceof StreamEvent.RunStart) {
-                        // the engine owns the per-turn RunStart (emitted above
-                        // before the LLM call). If a ChatClient implementation also
-                        // emits its own RunStart (e.g. a legacy client, a test mock),
-                        // drop it here so the consumer never sees a duplicate
-                        // "turn started" event. This is purely defensive — the
-                        // SpringAiChatClient no longer emits RunStart either.
-                        return true;
-                    }
-                    if (ev instanceof StreamEvent.RunEnd re) {
-                        // prior round fix: the model-side RunEnd is an INTERNAL signal, not a
-                        // stream event for the consumer. Do NOT return here — fall through
-                        // to the batch handler below. Without this, a pure-text response
-                        // (no tool calls) would re-enter the "Start of a turn" branch on
-                        // the next tryAdvance and call the LLM again — producing the
-                        // "infinite repeat" symptom (9-10 model calls for a simple
-                        // "how are you?"). The model-side RunEnd is consumed here for its
-                        // side effects (stopReason, finalBlocks), and the engine emits its
-                        // own terminal RunEnd after the batch handling completes.
-                        stopReason = re.stopReason();
-                        lastAssistantBlocks = re.finalBlocks();
-                        // chat clients no longer emit a separate
-                        // ToolUseStart event per tool call (the model just
-                        // declares its tool calls inside the final
-                        // AssistantMessage). To preserve the engine's
-                        // "run a batch of tools" behaviour, populate
-                        // `pending` from the finalBlocks here so the batch
-                        // handler below picks them up.
-                        if (pending.isEmpty() && lastAssistantBlocks != null) {
-                            for (ContentBlock b : lastAssistantBlocks) {
-                                if (b instanceof ContentBlock.ToolUseBlock tu) {
-                                    pending.add(tu);
-                                }
-                            }
-                        }
-                        currentLlmStream = null;
-                        // fall through to batch handler
-                    } else {
-                        // ToolResult, SideNote, or any other event type — pass through.
-                        action.accept(ev);
-                        return true;
-                    }
-                }
-
-                // LLM iterator is exhausted OR RunEnd was just processed: handle the batch.
-                currentLlmStream = null;
-                // token-usage fallback. Many chat clients (notably
-                // the MiniMax / spring-ai OpenAI-compatible transport)
-                // don't populate `ChatResponse.getMetadata().getUsage()`
-                // — the model returns the answer but no usage
-                // information. The desktop TokenUsage panel would
-                // otherwise stay at 0 indefinitely. We fall back to a
-                // chars/4 estimate on the assistant's output text +
-                // the full transcript (proxy for input). Runs on
-                // EVERY turn (not just the tool-batch path) so a
-                // pure-text response still gets an estimate.
-                if (!turnHadUsage && metricsCollector != null) {
-                    int estOut = estimateAssistantChars(lastAssistantBlocks) / 4;
-                    int estIn = estimateInputChars(appState.transcript()) / 4;
-                    if (estOut > 0 || estIn > 0) {
-                        metricsCollector.addTokens(estIn, estOut);
-                        if (costTracker != null) {
-                            try {
-                                costTracker.record(effectiveChatClient.modelId(),
-                                        new org.aethercode.core.cost.CostTracker.Usage(estIn, estOut));
-                            } catch (Throwable ignored) { }
-                        }
-                    }
-                }
-                if (!lastAssistantBlocks.isEmpty()) {
-                    Message assistantMsg = new Message(null, Role.ASSISTANT, lastAssistantBlocks, null, Map.of());
-                    appState.appendMessage(assistantMsg);
-                    messageSink.accept(assistantMsg);
-                }
-                if (pending.isEmpty()) {
-                    // No tool calls -> check if we should compact before declaring done.
-                    if (compactor != null) {
-                        var messages = new ArrayList<>(appState.transcript());
-                        if (compactor.shouldCompact(messages)) {
-                            // emit a "compaction started" SideNote BEFORE
-                            // the compactor runs so the desktop can show a
-                            // "compacting..." indicator while the LLM call
-                            // is in flight. Before the desktop had to
-                            // guess at compaction from context-window state
-                            // and could only show a post-hoc system
-                            // message. Both events use kind="compaction"
-                            // so the desktop can match start↔complete by
-                            // their kind without needing a per-event id.
-                            action.accept(new StreamEvent.SideNote(
-                                    "compaction",
-                                    "started: " + messages.size() + " messages"));
-                            var spliced = compactor.compact(messages);
-                            if (spliced != null && spliced != messages) {
-                                appState.transcript().clear();
-                                for (var mm : spliced) appState.appendMessage(mm);
-                                // also surface the completion as a
-                                // SideNote with the same kind. The
-                                // previous sideNoteSink.accept(...)
-                                // string-only path is kept as a fallback
-                                // for callers that wired it up (none in
-                                // production, but the SDK keeps a null
-                                // sink there).
-                                sideNoteSink.accept("compacted: " + spliced.size() + " messages from " + messages.size());
+                    if (pending.isEmpty()) {
+                        // No tool calls -> check if we should compact before declaring done.
+                        if (compactor != null) {
+                            var messages = new ArrayList<>(appState.transcript());
+                            if (compactor.shouldCompact(messages)) {
+                                // emit a "compaction started" SideNote BEFORE
+                                // the compactor runs so the desktop can show a
+                                // "compacting..." indicator while the LLM call
+                                // is in flight. Before the desktop had to
+                                // guess at compaction from context-window state
+                                // and could only show a post-hoc system
+                                // message. Both events use kind="compaction"
+                                // so the desktop can match start↔complete by
+                                // their kind without needing a per-event id.
                                 action.accept(new StreamEvent.SideNote(
                                         "compaction",
-                                        "completed: " + messages.size() + " → " + spliced.size() + " messages"));
-                            }
-                        }
-                    }
-                    finished = true;
-                    action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
-                    return true;
-                }
-
-                List<ContentBlock.ToolUseBlock> batch = List.copyOf(pending);
-                pending = new ArrayList<>();
-                // compute the assistant text length for the
-                // current turn so the detector can spot "long output
-                // without tool calls" patterns.
-                int assistantTextChars = 0;
-                for (ContentBlock b : lastAssistantBlocks) {
-                    if (b instanceof ContentBlock.TextBlock t) {
-                        assistantTextChars += t.text() == null ? 0 : t.text().length();
-                    }
-                }
-                // pre-check the batch with no results yet (the
-                // pre-run signals we know about: same fingerprint, high-
-                // risk tool, long output). Same-error is checked after
-                // the batch runs.
-                //
-                // tiered warning. preInfo.shouldStop() means the
-                // detector has hit WARN_BEFORE_STOP+1 times in a row
-                // — the user has not acked, so we treat it as a real
-                // hard stop and end the run. preInfo.isWarning() means
-                // the detector is at tier 1 or 2 — we emit a SideNote
-                // so the desktop LoopGuardBanner can show "is this a
-                // real loop?" and offer the user a "Continue" button that
-                // calls loopAck to reset the tier, and we keep going.
-                // The user can also let it climb to tier 3 (stop) on
-                // its own if the same pattern keeps firing.
-                if (loopDetector != null) {
-                    ProgressLoopDetector.LoopInfo preInfo =
-                            loopDetector.recordBatch(batch, java.util.List.of(), assistantTextChars);
-                    // R170 (2026-08-29): the user-reported loop-stop bug.
-                    // The detector's old "tier 3 = loop_detected = hard
-                    // stop" branch above is DEAD CODE. The user explicitly
-                    // asked for a user-confirmation flow ("where is the user confirmation?") — silently killing a model on a small task
-                    // because its tool calls happened to match a fingerprint
-                    // is unacceptable. The detector now only WARNS;
-                    // ending the run is reserved for the user (Ctrl-C →
-                    // user_interrupt) or the streaming executor's own
-                    // error path. The detector's internal tier is still
-                    // bumped so the LoopGuardBanner can keep escalating
-                    // severity in the UI, but the engine does not act
-                    // on it.
-                    //
-                    // If the user later wants the old hard-stop back, the
-                    // simplest path is to gate this block on
-                    // `System.getProperty("aethercode.loop.hardStop", "false")
-                    //  .equalsIgnoreCase("true")` so the behaviour is
-                    // opt-in per daemon, not the surprise default.
-                    //
-                    // R266h (2026-09-14): carve-out for the
-                    // {@code empty_tool_input} pattern. The
-                    // soft-warn policy is the right call for
-                    // fingerprint-style loops (a real model
-                    // sometimes does legitimately repeat the
-                    // same fingerprint while iterating on a
-                    // long task) and for research_mode (a
-                    // model might genuinely be exploring). The
-                    // empty-input pattern is different: a model
-                    // that emits `bash {}` or `glob {}` 2+ times
-                    // in a row is provably not making progress
-                    // — the engine's `StreamingToolExecutor`
-                    // already rejected the call with a precise
-                    // "expected JSON shape" error (R266h) and
-                    // the model is unable to translate that
-                    // hint into a correct call. Continuing
-                    // past the threshold wastes user time and
-                    // pollutes the transcript with more "X is
-                    // required" tool results. We hard-stop
-                    // here and surface a clear RunEnd so the
-                    // LoopGuardBanner can show the user
-                    // "your model is stuck on empty tool
-                    // calls — start a new session or
-                    // rephrase" with a one-click "Reset
-                    // session" action.
-                    if (preInfo != null && "loop_detected".equals(preInfo.kind())
-                            && "empty_tool_input".equals(loopDetector.lastLoopKind())) {
-                        action.accept(new StreamEvent.SideNote(
-                                "empty_tool_input",
-                                "the model sent " + loopDetector.emptyInputStreak()
-                                        + " consecutive tool calls with empty input. "
-                                        + "this is a model-side bug — the engine rejected each call with the expected JSON shape "
-                                        + "but the model could not re-emit a correct call. "
-                                        + "the run is being ended; please start a new session or rephrase your prompt."));
-                        stopReason = "loop_detected: empty_tool_input ("
-                                + loopDetector.emptyInputStreak()
-                                + " consecutive empty tool calls)";
-                        finished = true;
-                        action.accept(new StreamEvent.RunEnd(stopReason, List.of()));
-                        return true;
-                    }
-                    if (preInfo != null && preInfo.isWarning()) {
-                        // tier-1 (soft) warnings are silent.
-                        // previously, every tier-1 hit emitted a
-                        // SideNote that the TUI surfaced in the
-                        // chat with a yellow box + "Tab to expand"
-                        // button + "still running" badge. The
-                        // user explicitly asked to drop the
-                        // tier-1 chatter ("if the impact is small, just drop it"
-                        // — the run still continues, the model
-                        // is being given a chance to course-correct
-                        // on its own). Tier-2 (the actual hard
-                        // stop) keeps emitting the existing
-                        // SideNote so the LoopGuardBanner can
-                        // surface the final decision; that's
-                        // the one warning the user MUST see.
-                        //
-                        // The detector still increments its
-                        // internal tier and still escalates to
-                        // tier-2 if the pattern persists — this
-                        // change only affects the side channel.
-                        if (preInfo.tier() >= ProgressLoopDetector.WARN_BEFORE_STOP) {
-                            action.accept(new StreamEvent.SideNote(
-                                    preInfo.kind(),
-                                    "warn " + preInfo.tier() + "/" + ProgressLoopDetector.WARN_BEFORE_STOP
-                                            + " after " + turnsTaken + " turns — "
-                                            + preInfo.description()
-                                            + (preInfo.summary() == null ? "" : " (" + preInfo.summary() + ")")));
-                        } else {
-                            // tier-1 only — log at DEBUG so
-                            // operators can still see the streak
-                            // in the daemon log, but the user
-                            // doesn't get a chat notification.
-                            LOG.debug("loop-detector tier-1 hit: " + preInfo.description()
-                                    + (preInfo.summary() == null ? "" : " (" + preInfo.summary() + ")"));
-                        }
-                    }
-                }
-                // Use the streaming executor for live event delivery.
-                java.util.Iterator<StreamingToolExecutor.Event> it =
-                        streamingExecutor.run(batch, appState).iterator();
-                java.util.List<ProgressLoopDetector.BatchResult> results = new java.util.ArrayList<>();
-                while (it.hasNext()) {
-                    StreamingToolExecutor.Event ev = it.next();
-                    switch (ev) {
-                        case StreamingToolExecutor.Event.Started st -> {
-                            action.accept(new StreamEvent.ToolUseStart(st.id(), st.name(), st.input()));
-                        }
-                        case StreamingToolExecutor.Event.Completed cp -> {
-                            Message toolMsg = Message.toolResult(cp.id(), cp.output(), cp.isError());
-                            appState.appendMessage(toolMsg);
-                            messageSink.accept(toolMsg);
-                            action.accept(new StreamEvent.ToolResult(cp.id(), cp.output(), cp.isError()));
-                            // Look up the tool name from the batch by id.
-                            String toolName = null;
-                            for (ContentBlock.ToolUseBlock b : batch) {
-                                if (cp.id() != null && cp.id().equals(b.id())) {
-                                    toolName = b.name();
-                                    break;
+                                        "started: " + messages.size() + " messages"));
+                                var spliced = compactor.compact(messages);
+                                if (spliced != null && spliced != messages) {
+                                    appState.transcript().clear();
+                                    for (var mm : spliced) appState.appendMessage(mm);
+                                    // also surface the completion as a
+                                    // SideNote with the same kind. The
+                                    // previous sideNoteSink.accept(...)
+                                    // string-only path is kept as a fallback
+                                    // for callers that wired it up (none in
+                                    // production, but the SDK keeps a null
+                                    // sink there).
+                                    sideNoteSink.accept("compacted: " + spliced.size() + " messages from " + messages.size());
+                                    action.accept(new StreamEvent.SideNote(
+                                            "compaction",
+                                            "completed: " + messages.size() + " → " + spliced.size() + " messages"));
                                 }
                             }
-                            results.add(new ProgressLoopDetector.BatchResult(
-                                    cp.id(), toolName, String.valueOf(cp.output()), cp.isError()));
-                            // "auto-finish loop detector" — when a
-                            // tool call successfully produces real output
-                            // (file_write "wrote N bytes" / non-error
-                            // shell exit 0 / etc.), reset the loop
-                            // detector's tier so the next "thinking"
-                            // turn after the write isn't misclassified
-                            // as a loop. This is the RAG "I just wrote
-                            // 5 files, now I'm thinking about the next
-                            // one" signal — the thinking is real work.
-                            //
-                            // We use the tool name + isError + output
-                            // shape (a few well-known success patterns
-                            // from built-in tools) to decide. Adding new
-                            // patterns is cheap; false positives just
-                            // reset the tier to 0 which is always safe.
-                            if (loopDetector != null && !cp.isError()
-                                    && isProgressSignal(toolName, cp.output())) {
-                                loopDetector.notifyProgress();
-                            }
                         }
-                        case StreamingToolExecutor.Event.Progress p -> {
-                            // forward streamed tool output as a
-                            // ToolOutputDelta stream event so the
-                            // desktop can stream-append the chunk to
-                            // the matching tool event's `output`
-                            // field. previously, we only fed the
-                            // messageSink (which the SDK's
-                            // AetherCodeEngine left as `null`), so
-                            // bash tool's line-by-line emit was
-                            // silently dropped — the user saw a
-                            // blank card for the whole 5s of an
-                            // `mvn --version` and only saw the
-                            // output after the tool completed. The
-                            // user described this as "mvn takes a bit long to run" — the actual runtime
-                            // was fine, but with no live feedback
-                            // it felt slow.
-                            //
-                            // Extract the text from the assistant
-                            // message. BashTool's emit produces
-                            // `Message.assistantText("[out] line")`
-                            // or `"[err] line"`. We forward the
-                            // raw text including the `[out]/[err]`
-                            // prefix so the user can tell stdout
-                            // from stderr in the streamed view.
-                            String text = progressText(p.msg());
-                            if (text != null && !text.isEmpty()) {
-                                action.accept(new StreamEvent.ToolOutputDelta(p.id(), text));
-                            }
-                            // Also forward to the legacy messageSink
-                            // (kept for any direct TUI consumer that
-                            // wired one up — the SDK's
-                            // AetherCodeEngine is the canonical
-                            // consumer now and reads via the
-                            // ToolOutputDelta path).
-                            messageSink.accept(p.msg());
-                        }
-                        case StreamingToolExecutor.Event.BatchEnd ignored -> {
-                            // tool batch finished. The TodoWriteTool /
-                            // SubTodoWriteTool have already mutated
-                            // appState.todoList(); emit any sub-task
-                            // transitions before we head back to the LLM
-                            // for the next turn. This is the right place
-                            // because it batches all the in-batch
-                            // sub_todo_write calls into a single diff
-                            // pass — the model often updates several
-                            // sub-tasks in one batch and we don't want a
-                            // separate SubTaskStart/End pair per
-                            // transition.
-                            emitSubTaskTransitions(action);
-                        }
-                    }
-                }
-                // post-check. The detector gets the actual results
-                // so it can spot the "same error N times in a row" pattern.
-                //
-                // removed the post-check hard stop too. The
-                // pre-check was already non-stopping, but the
-                // post-check still had `if (postInfo.shouldStop())
-                // { finished = true; return false; }` — a tool
-                // batch that produced `same_error` after a real
-                // result would still kill the run. The detector
-                // still emits its warnings + the LoopGuardBanner
-                // can surface them; ending the run is the user's
-                // call (Ctrl-C → `user_interrupt`).
-                if (loopDetector != null) {
-                    ProgressLoopDetector.LoopInfo postInfo =
-                            loopDetector.recordBatch(batch, results, assistantTextChars);
-                    if (postInfo != null && postInfo.isWarning()) {
-                        // same tier-1 silent treatment as
-                        // the pre-check (see the pre-check comment
-                        // for the user-facing rationale). Tier-2
-                        // (the actual stop) keeps emitting the
-                        // SideNote so the LoopGuardBanner fires.
-                        if (postInfo.tier() >= ProgressLoopDetector.WARN_BEFORE_STOP) {
-                            action.accept(new StreamEvent.SideNote(
-                                    postInfo.kind(),
-                                    "warn " + postInfo.tier() + "/" + ProgressLoopDetector.WARN_BEFORE_STOP
-                                            + " after " + turnsTaken + " turns — "
-                                            + postInfo.description()
-                                            + (postInfo.summary() == null ? "" : " (" + postInfo.summary() + ")")));
-                        } else {
-                            LOG.debug("loop-detector tier-1 hit (post): " + postInfo.description()
-                                    + (postInfo.summary() == null ? "" : " (" + postInfo.summary() + ")"));
-                        }
-                    }
-                    // hard-stop the run on `same_error` death spiral.
-                    //
-                    // previously (prior round) the post-check never hard-stopped;
-                    // the rationale was "ending the run is the user's
-                    // call (Ctrl-C -> user_interrupt)". But that breaks
-                    // unattended runs: a model looping on
-                    //   file_write -> "timeout: null" -> file_write -> ...
-                    // emits 30+ tool calls in a row, errorRate=0.89,
-                    // turnsCompleted=0, and the user might not be at the
-                    // keyboard. The same-error pattern means the tool is
-                    // deterministically broken for this model; no amount
-                    // of "thinking" will recover, and the run just keeps
-                    // spending tokens.
-                    //
-                    // We only re-introduce the hard stop for the
-                    // `same_error` kind. The other loop kinds
-                    // (same_fingerprint, long_output, research_mode)
-                    // keep the R171 soft treatment so a model that
-                    // legitimately needs many turns of exploration
-                    // (e.g. looking at 5 files before writing) isn't
-                    // killed mid-task.
-                    if (postInfo != null && "same_error".equals(postInfo.kind())
-                            && postInfo.shouldStop()) {
-                        LOG.warn("R181: hard-stopping run on same_error death spiral (tier={}, turns={}): {}",
-                                postInfo.tier(), turnsTaken, postInfo.description());
-                        action.accept(new StreamEvent.SideNote(
-                                "same_error_hard_stop",
-                                "R181: same tool returned the same error 3+ times in a row — "
-                                        + "the run is in a death spiral and is being hard-stopped. "
-                                        + "User can re-run after fixing the underlying tool issue. "
-                                        + "Reason: " + postInfo.description()));
-                        stopReason = "same_error_hard_stop";
                         finished = true;
+                        action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                        return true;
+                    }
+
+                    List<ContentBlock.ToolUseBlock> batch = List.copyOf(pending);
+                    pending = new ArrayList<>();
+                    // compute the assistant text length for the
+                    // current turn so the detector can spot "long output
+                    // without tool calls" patterns.
+                    int assistantTextChars = 0;
+                    for (ContentBlock b : lastAssistantBlocks) {
+                        if (b instanceof ContentBlock.TextBlock t) {
+                            assistantTextChars += t.text() == null ? 0 : t.text().length();
+                        }
+                    }
+                    // pre-check the batch with no results yet (the
+                    // pre-run signals we know about: same fingerprint, high-
+                    // risk tool, long output). Same-error is checked after
+                    // the batch runs.
+                    //
+                    // tiered warning. preInfo.shouldStop() means the
+                    // detector has hit WARN_BEFORE_STOP+1 times in a row
+                    // — the user has not acked, so we treat it as a real
+                    // hard stop and end the run. preInfo.isWarning() means
+                    // the detector is at tier 1 or 2 — we emit a SideNote
+                    // so the desktop LoopGuardBanner can show "is this a
+                    // real loop?" and offer the user a "Continue" button that
+                    // calls loopAck to reset the tier, and we keep going.
+                    // The user can also let it climb to tier 3 (stop) on
+                    // its own if the same pattern keeps firing.
+                    if (loopDetector != null) {
+                        ProgressLoopDetector.LoopInfo preInfo =
+                                loopDetector.recordBatch(batch, java.util.List.of(), assistantTextChars);
+                        // R170 (2026-08-29): the user-reported loop-stop bug.
+                        // The detector's old "tier 3 = loop_detected = hard
+                        // stop" branch above is DEAD CODE. The user explicitly
+                        // asked for a user-confirmation flow ("where is the user confirmation?") — silently killing a model on a small task
+                        // because its tool calls happened to match a fingerprint
+                        // is unacceptable. The detector now only WARNS;
+                        // ending the run is reserved for the user (Ctrl-C →
+                        // user_interrupt) or the streaming executor's own
+                        // error path. The detector's internal tier is still
+                        // bumped so the LoopGuardBanner can keep escalating
+                        // severity in the UI, but the engine does not act
+                        // on it.
+                        //
+                        // If the user later wants the old hard-stop back, the
+                        // simplest path is to gate this block on
+                        // `System.getProperty("aethercode.loop.hardStop", "false")
+                        //  .equalsIgnoreCase("true")` so the behaviour is
+                        // opt-in per daemon, not the surprise default.
+                        //
+                        // R266h (2026-09-14): carve-out for the
+                        // {@code empty_tool_input} pattern. The
+                        // soft-warn policy is the right call for
+                        // fingerprint-style loops (a real model
+                        // sometimes does legitimately repeat the
+                        // same fingerprint while iterating on a
+                        // long task) and for research_mode (a
+                        // model might genuinely be exploring). The
+                        // empty-input pattern is different: a model
+                        // that emits `bash {}` or `glob {}` 2+ times
+                        // in a row is provably not making progress
+                        // — the engine's `StreamingToolExecutor`
+                        // already rejected the call with a precise
+                        // "expected JSON shape" error (R266h) and
+                        // the model is unable to translate that
+                        // hint into a correct call. Continuing
+                        // past the threshold wastes user time and
+                        // pollutes the transcript with more "X is
+                        // required" tool results. We hard-stop
+                        // here and surface a clear RunEnd so the
+                        // LoopGuardBanner can show the user
+                        // "your model is stuck on empty tool
+                        // calls — start a new session or
+                        // rephrase" with a one-click "Reset
+                        // session" action.
+                        if (preInfo != null && "loop_detected".equals(preInfo.kind())
+                                && "empty_tool_input".equals(loopDetector.lastLoopKind())) {
+                            action.accept(new StreamEvent.SideNote(
+                                    "empty_tool_input",
+                                    "the model sent " + loopDetector.emptyInputStreak()
+                                            + " consecutive tool calls with empty input. "
+                                            + "this is a model-side bug — the engine rejected each call with the expected JSON shape "
+                                            + "but the model could not re-emit a correct call. "
+                                            + "the run is being ended; please start a new session or rephrase your prompt."));
+                            stopReason = "loop_detected: empty_tool_input ("
+                                    + loopDetector.emptyInputStreak()
+                                    + " consecutive empty tool calls)";
+                            finished = true;
+                            action.accept(new StreamEvent.RunEnd(stopReason, List.of()));
+                            return true;
+                        }
+                        if (preInfo != null && preInfo.isWarning()) {
+                            // tier-1 (soft) warnings are silent.
+                            // previously, every tier-1 hit emitted a
+                            // SideNote that the TUI surfaced in the
+                            // chat with a yellow box + "Tab to expand"
+                            // button + "still running" badge. The
+                            // user explicitly asked to drop the
+                            // tier-1 chatter ("if the impact is small, just drop it"
+                            // — the run still continues, the model
+                            // is being given a chance to course-correct
+                            // on its own). Tier-2 (the actual hard
+                            // stop) keeps emitting the existing
+                            // SideNote so the LoopGuardBanner can
+                            // surface the final decision; that's
+                            // the one warning the user MUST see.
+                            //
+                            // The detector still increments its
+                            // internal tier and still escalates to
+                            // tier-2 if the pattern persists — this
+                            // change only affects the side channel.
+                            if (preInfo.tier() >= ProgressLoopDetector.WARN_BEFORE_STOP) {
+                                action.accept(new StreamEvent.SideNote(
+                                        preInfo.kind(),
+                                        "warn " + preInfo.tier() + "/" + ProgressLoopDetector.WARN_BEFORE_STOP
+                                                + " after " + turnsTaken + " turns — "
+                                                + preInfo.description()
+                                                + (preInfo.summary() == null ? "" : " (" + preInfo.summary() + ")")));
+                            } else {
+                                // tier-1 only — log at DEBUG so
+                                // operators can still see the streak
+                                // in the daemon log, but the user
+                                // doesn't get a chat notification.
+                                LOG.debug("loop-detector tier-1 hit: " + preInfo.description()
+                                        + (preInfo.summary() == null ? "" : " (" + preInfo.summary() + ")"));
+                            }
+                        }
+                    }
+                    // Use the streaming executor for live event delivery.
+                    java.util.Iterator<StreamingToolExecutor.Event> it =
+                            streamingExecutor.run(batch, appState).iterator();
+                    java.util.List<ProgressLoopDetector.BatchResult> results = new java.util.ArrayList<>();
+                    while (it.hasNext()) {
+                        StreamingToolExecutor.Event ev = it.next();
+                        switch (ev) {
+                            case StreamingToolExecutor.Event.Started st -> {
+                                action.accept(new StreamEvent.ToolUseStart(st.id(), st.name(), st.input()));
+                            }
+                            case StreamingToolExecutor.Event.Completed cp -> {
+                                Message toolMsg = Message.toolResult(cp.id(), cp.output(), cp.isError());
+                                appState.appendMessage(toolMsg);
+                                messageSink.accept(toolMsg);
+                                action.accept(new StreamEvent.ToolResult(cp.id(), cp.output(), cp.isError()));
+                                // Look up the tool name from the batch by id.
+                                String toolName = null;
+                                for (ContentBlock.ToolUseBlock b : batch) {
+                                    if (cp.id() != null && cp.id().equals(b.id())) {
+                                        toolName = b.name();
+                                        break;
+                                    }
+                                }
+                                results.add(new ProgressLoopDetector.BatchResult(
+                                        cp.id(), toolName, String.valueOf(cp.output()), cp.isError()));
+                                // "auto-finish loop detector" — when a
+                                // tool call successfully produces real output
+                                // (file_write "wrote N bytes" / non-error
+                                // shell exit 0 / etc.), reset the loop
+                                // detector's tier so the next "thinking"
+                                // turn after the write isn't misclassified
+                                // as a loop. This is the RAG "I just wrote
+                                // 5 files, now I'm thinking about the next
+                                // one" signal — the thinking is real work.
+                                //
+                                // We use the tool name + isError + output
+                                // shape (a few well-known success patterns
+                                // from built-in tools) to decide. Adding new
+                                // patterns is cheap; false positives just
+                                // reset the tier to 0 which is always safe.
+                                if (loopDetector != null && !cp.isError()
+                                        && isProgressSignal(toolName, cp.output())) {
+                                    loopDetector.notifyProgress();
+                                }
+                            }
+                            case StreamingToolExecutor.Event.Progress p -> {
+                                // forward streamed tool output as a
+                                // ToolOutputDelta stream event so the
+                                // desktop can stream-append the chunk to
+                                // the matching tool event's `output`
+                                // field. previously, we only fed the
+                                // messageSink (which the SDK's
+                                // AetherCodeEngine left as `null`), so
+                                // bash tool's line-by-line emit was
+                                // silently dropped — the user saw a
+                                // blank card for the whole 5s of an
+                                // `mvn --version` and only saw the
+                                // output after the tool completed. The
+                                // user described this as "mvn takes a bit long to run" — the actual runtime
+                                // was fine, but with no live feedback
+                                // it felt slow.
+                                //
+                                // Extract the text from the assistant
+                                // message. BashTool's emit produces
+                                // `Message.assistantText("[out] line")`
+                                // or `"[err] line"`. We forward the
+                                // raw text including the `[out]/[err]`
+                                // prefix so the user can tell stdout
+                                // from stderr in the streamed view.
+                                String text = progressText(p.msg());
+                                if (text != null && !text.isEmpty()) {
+                                    action.accept(new StreamEvent.ToolOutputDelta(p.id(), text));
+                                }
+                                // Also forward to the legacy messageSink
+                                // (kept for any direct TUI consumer that
+                                // wired one up — the SDK's
+                                // AetherCodeEngine is the canonical
+                                // consumer now and reads via the
+                                // ToolOutputDelta path).
+                                messageSink.accept(p.msg());
+                            }
+                            case StreamingToolExecutor.Event.BatchEnd ignored -> {
+                                // tool batch finished. The TodoWriteTool /
+                                // SubTodoWriteTool have already mutated
+                                // appState.todoList(); emit any sub-task
+                                // transitions before we head back to the LLM
+                                // for the next turn. This is the right place
+                                // because it batches all the in-batch
+                                // sub_todo_write calls into a single diff
+                                // pass — the model often updates several
+                                // sub-tasks in one batch and we don't want a
+                                // separate SubTaskStart/End pair per
+                                // transition.
+                                emitSubTaskTransitions(action);
+                            }
+                        }
+                    }
+                    // post-check. The detector gets the actual results
+                    // so it can spot the "same error N times in a row" pattern.
+                    //
+                    // removed the post-check hard stop too. The
+                    // pre-check was already non-stopping, but the
+                    // post-check still had `if (postInfo.shouldStop())
+                    // { finished = true; return false; }` — a tool
+                    // batch that produced `same_error` after a real
+                    // result would still kill the run. The detector
+                    // still emits its warnings + the LoopGuardBanner
+                    // can surface them; ending the run is the user's
+                    // call (Ctrl-C → `user_interrupt`).
+                    if (loopDetector != null) {
+                        ProgressLoopDetector.LoopInfo postInfo =
+                                loopDetector.recordBatch(batch, results, assistantTextChars);
+                        if (postInfo != null && postInfo.isWarning()) {
+                            // same tier-1 silent treatment as
+                            // the pre-check (see the pre-check comment
+                            // for the user-facing rationale). Tier-2
+                            // (the actual stop) keeps emitting the
+                            // SideNote so the LoopGuardBanner fires.
+                            if (postInfo.tier() >= ProgressLoopDetector.WARN_BEFORE_STOP) {
+                                action.accept(new StreamEvent.SideNote(
+                                        postInfo.kind(),
+                                        "warn " + postInfo.tier() + "/" + ProgressLoopDetector.WARN_BEFORE_STOP
+                                                + " after " + turnsTaken + " turns — "
+                                                + postInfo.description()
+                                                + (postInfo.summary() == null ? "" : " (" + postInfo.summary() + ")")));
+                            } else {
+                                LOG.debug("loop-detector tier-1 hit (post): " + postInfo.description()
+                                        + (postInfo.summary() == null ? "" : " (" + postInfo.summary() + ")"));
+                            }
+                        }
+                        // hard-stop the run on `same_error` death spiral.
+                        //
+                        // previously (prior round) the post-check never hard-stopped;
+                        // the rationale was "ending the run is the user's
+                        // call (Ctrl-C -> user_interrupt)". But that breaks
+                        // unattended runs: a model looping on
+                        //   file_write -> "timeout: null" -> file_write -> ...
+                        // emits 30+ tool calls in a row, errorRate=0.89,
+                        // turnsCompleted=0, and the user might not be at the
+                        // keyboard. The same-error pattern means the tool is
+                        // deterministically broken for this model; no amount
+                        // of "thinking" will recover, and the run just keeps
+                        // spending tokens.
+                        //
+                        // We only re-introduce the hard stop for the
+                        // `same_error` kind. The other loop kinds
+                        // (same_fingerprint, long_output, research_mode)
+                        // keep the R171 soft treatment so a model that
+                        // legitimately needs many turns of exploration
+                        // (e.g. looking at 5 files before writing) isn't
+                        // killed mid-task.
+                        if (postInfo != null && "same_error".equals(postInfo.kind())
+                                && postInfo.shouldStop()) {
+                            LOG.warn("R181: hard-stopping run on same_error death spiral (tier={}, turns={}): {}",
+                                    postInfo.tier(), turnsTaken, postInfo.description());
+                            action.accept(new StreamEvent.SideNote(
+                                    "same_error_hard_stop",
+                                    "R181: same tool returned the same error 3+ times in a row — "
+                                            + "the run is in a death spiral and is being hard-stopped. "
+                                            + "User can re-run after fixing the underlying tool issue. "
+                                            + "Reason: " + postInfo.description()));
+                            stopReason = "same_error_hard_stop";
+                            finished = true;
+                            // R735 (2026-10-20): the previous R181 patch
+                            // forgot to emit StreamEvent.RunEnd. The other
+                            // three terminal branches in this tryAdvance
+                            // (cancelled, awaiting_user_decision,
+                            // empty_tool_input) all emit RunEnd so the
+                            // desktop's stream_event handler can flip
+                            // isStreaming=false, populate lastFailedPrompt
+                            // (so the EndOfTaskPanel's ↻ retry button
+                            // shows), and clear currentQuery. Without
+                            // RunEnd, the engine falls into the green
+                            // `● Idle` state with no error banner and
+                            // no recovery affordance — the user thinks
+                            // the engine is still running.
+                            //
+                            // lastAssistantBlocks is the final assistant
+                            // text accumulated for this run (line 1537,
+                            // updated at 1771). Carrying it on the RunEnd
+                            // lets the MessageList mark the last
+                            // assistant message complete (run_end
+                            // isComplete=true handler at store/index.ts
+                            // :3239) and react-markdown re-parse the
+                            // trailing body.
+                            action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                            return false;
+                        }
+                    }
+                    // per-todo adaptive control. Checked AFTER the loop
+                    // detector so a true stuck-loop still wins (we stop
+                    // immediately, no point asking the LLM to keep going on
+                    // something that's clearly broken). Verdict handling:
+                    //   - Continue: keep going.
+                    //   - AskLlm: append a synthetic user message that asks
+                    //     the LLM to decide; bump the soft threshold.
+                    //   - AwaitUser: stop the run and emit
+                    //     AwaitUserDecision so the renderer can show a
+                    //     special prompt. The next query() call is treated
+                    //     as the user's continuation decision.
+                    List<String> toolNames = new ArrayList<>();
+                    int batchErrors = 0;
+                    for (var b : batch) toolNames.add(b.name());
+                    for (var r : results) if (r.isError()) batchErrors++;
+                    TodoRunController.Verdict verdict = todoController.check(
+                            batch, toolNames, batchErrors, appState);
+                    if (verdict instanceof TodoRunController.Verdict.AskLlm ask) {
+                        action.accept(new StreamEvent.SideNote("todo-step-bump",
+                                ask.summary() + " (threshold now " + ask.newSoftThreshold() + ")"));
+                        // Inject the ask prompt as a real user message so the
+                        // LLM sees it on the next turn.
+                        String prompt = TodoRunController.buildAskLlmPrompt(
+                                todoController.currentTodoKey(),
+                                todoController.currentTodoStepCount(),
+                                ask.newSoftThreshold() - todoController.bumpIncrement(),
+                                ask.newSoftThreshold());
+                        Message askMsg = Message.userText(prompt);
+                        appState.appendMessage(askMsg);
+                        messageSink.accept(askMsg);
+                        action.accept(new StreamEvent.SideNote("todo-ask-llm", prompt));
+                    } else if (verdict instanceof TodoRunController.Verdict.AwaitUser au) {
+                        stopReason = "awaiting_user_decision";
+                        finished = true;
+                        action.accept(new StreamEvent.SideNote("todo-await-user",
+                                au.summary() + " (after " + todoController.bumpsIssued() + " LLM bumps)"));
+                        action.accept(new StreamEvent.AwaitUserDecision(
+                                au.summary(),
+                                todoController.currentTodoStepCount(),
+                                todoController.softThreshold(),
+                                TodoRunController.defaultDecisionOptions()));
+                        pendingAwaitSummary = au.summary();
+                        awaitingUserDecision = true;
+                        action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
                         return false;
                     }
-                }
-                // per-todo adaptive control. Checked AFTER the loop
-                // detector so a true stuck-loop still wins (we stop
-                // immediately, no point asking the LLM to keep going on
-                // something that's clearly broken). Verdict handling:
-                //   - Continue: keep going.
-                //   - AskLlm: append a synthetic user message that asks
-                //     the LLM to decide; bump the soft threshold.
-                //   - AwaitUser: stop the run and emit
-                //     AwaitUserDecision so the renderer can show a
-                //     special prompt. The next query() call is treated
-                //     as the user's continuation decision.
-                List<String> toolNames = new ArrayList<>();
-                int batchErrors = 0;
-                for (var b : batch) toolNames.add(b.name());
-                for (var r : results) if (r.isError()) batchErrors++;
-                TodoRunController.Verdict verdict = todoController.check(
-                        batch, toolNames, batchErrors, appState);
-                if (verdict instanceof TodoRunController.Verdict.AskLlm ask) {
-                    action.accept(new StreamEvent.SideNote("todo-step-bump",
-                            ask.summary() + " (threshold now " + ask.newSoftThreshold() + ")"));
-                    // Inject the ask prompt as a real user message so the
-                    // LLM sees it on the next turn.
-                    String prompt = TodoRunController.buildAskLlmPrompt(
-                            todoController.currentTodoKey(),
-                            todoController.currentTodoStepCount(),
-                            ask.newSoftThreshold() - todoController.bumpIncrement(),
-                            ask.newSoftThreshold());
-                    Message askMsg = Message.userText(prompt);
-                    appState.appendMessage(askMsg);
-                    messageSink.accept(askMsg);
-                    action.accept(new StreamEvent.SideNote("todo-ask-llm", prompt));
-                } else if (verdict instanceof TodoRunController.Verdict.AwaitUser au) {
-                    stopReason = "awaiting_user_decision";
+                    return true;
+            
+                } catch (Throwable t) {
+                    // R735a (2026-10-20): the LLM stream threw mid-iteration
+                    // (e.g. upstream 500 from the chat provider, or any
+                    // WebClientResponseException that escaped the chat-client
+                    // retry loop). Pre-R735a the exception propagated out of
+                    // tryAdvance, killing the Spliterator with no terminal
+                    // RunEnd emitted — the desktop sat in the green
+                    // `● Idle` state with no error banner or retry affordance
+                    // because nothing ever arrived on the `stream_event`
+                    // channel. Translate the throw into a single RunEnd with
+                    // stopReason="runtime_exception: …" so the desktop's
+                    // run_end handler can flip isStreaming=false, populate
+                    // lastFailedPrompt, and surface the `● Failed (reason)`
+                    // pill that R735 introduced.
                     finished = true;
-                    action.accept(new StreamEvent.SideNote("todo-await-user",
-                            au.summary() + " (after " + todoController.bumpsIssued() + " LLM bumps)"));
-                    action.accept(new StreamEvent.AwaitUserDecision(
-                            au.summary(),
-                            todoController.currentTodoStepCount(),
-                            todoController.softThreshold(),
-                            TodoRunController.defaultDecisionOptions()));
-                    pendingAwaitSummary = au.summary();
-                    awaitingUserDecision = true;
-                    action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                    stopReason = "runtime_exception: " + t.getClass().getSimpleName()
+                            + ": " + (t.getMessage() == null ? "" : t.getMessage());
+                    LOG.warn("R735a: LLM stream threw, ending run with {}",
+                            stopReason, t);
+                    try {
+                        action.accept(new StreamEvent.RunEnd(stopReason, List.of()));
+                    } catch (Exception ignored) {
+                        // downstream may already be closed (WS dropped,
+                        // cancelled run); nothing to do.
+                    }
                     return false;
-                }
-                return true;
-            }
+                }}
         };
         return StreamSupport.stream(sp, false);
     }

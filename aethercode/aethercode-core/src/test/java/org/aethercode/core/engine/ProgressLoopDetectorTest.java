@@ -93,10 +93,13 @@ class ProgressLoopDetectorTest {
 
     @Test
     void sameErrorTriggersLoop() {
-        // same_error is wrapped as "loop_warn_1" on the
-        // first hit; the raw cause is in the description, not
-        // the kind. See sameFingerprintTriggersLoop above for
-        // the contract.
+        // R739 (2026-10-20): same_error no longer escalates
+        // through the warn ladder. Hitting sameErrorThreshold once
+        // hard-stops with kind="loop_detected". The previous
+        // "loop_warn_1" verdict was too forgiving for a model
+        // that cannot recover from a deterministic bad call. See
+        // sameFingerprintTriggersLoop above for the contract on
+        // other loop kinds.
         ProgressLoopDetector d = ProgressLoopDetector.builder()
                 .window(8).fingerprintThreshold(99) // disable fingerprint
                 .sameErrorThreshold(3)
@@ -108,8 +111,13 @@ class ProgressLoopDetectorTest {
         assertNull(feed(d, List.of(block), List.of(err), 0));
         ProgressLoopDetector.LoopInfo info = feed(d, List.of(block), List.of(err), 0);
         assertTrue(info.isLoop(), "expected a loop after 3 same-error results");
-        assertEquals("loop_warn_1", info.kind());
-        assertTrue(info.isWarning());
+        assertEquals("loop_detected", info.kind(),
+                "R739: same_error must hard-stop at the threshold hit, "
+                        + "not via the loop_warn_1 ladder");
+        assertTrue(info.shouldStop(),
+                "R739: shouldStop() must be true so the engine's R181 branch fires");
+        assertFalse(info.isWarning(),
+                "R739: same_error verdict is a stop, not a warn");
     }
 
     @Test
@@ -129,14 +137,18 @@ class ProgressLoopDetectorTest {
     }
 
     // the post-check in QueryEngine hard-stops the run on
-    // same_error tier 3 (loop_detected). Verify the detector
-    // escalates same_error from warn to detected as expected.
+    // same_error (R181 originally expected loop_detected at tier 3,
+    // after warning twice). R739 changed the same_error path to
+    // bypass the tiered warn ladder entirely — a model stuck on
+    // the same broken tool call cannot recover via "more
+    // thinking", so hitting sameErrorThreshold once is enough to
+    // hard-stop. The kind stays "loop_detected"; lastLoopKind()
+    // surfaces "same_error" so the engine's R181 SideNote + RunEnd
+    // branch fires correctly.
     //
-    // The escalation sequence (with sameErrorThreshold=3) is:
+    // The new sequence (with sameErrorThreshold=3) is:
     //   hits 1-2    -> null (no verdict)
-    //   hit 3       -> loop_warn_1
-    //   hit 4       -> loop_warn_2 (WARN_BEFORE_STOP)
-    //   hit 5       -> loop_detected (the hard-stop kind)
+    //   hit 3       -> loop_detected (immediate hard-stop, no warn)
     @Test
     void r181_sameErrorEscalatesToLoopDetected() {
         ProgressLoopDetector d = ProgressLoopDetector.builder()
@@ -149,22 +161,22 @@ class ProgressLoopDetectorTest {
         // First 2 hits are below threshold, return null.
         assertNull(feed(d, List.of(block), List.of(err), 0));
         assertNull(feed(d, List.of(block), List.of(err), 0));
-        // Hit 3: loop_warn_1 (first detection).
-        ProgressLoopDetector.LoopInfo w1 = feed(d, List.of(block), List.of(err), 0);
-        assertEquals("loop_warn_1", w1.kind());
-        // Hit 4: loop_warn_2 (WARN_BEFORE_STOP).
-        ProgressLoopDetector.LoopInfo w2 = feed(d, List.of(block), List.of(err), 0);
-        assertEquals("loop_warn_2", w2.kind());
-        // Hit 5: loop_detected — the kind the post-check looks for
-        // to hard-stop the run.
+        // Hit 3: loop_detected — the kind the post-check looks for
+        // to hard-stop the run. R739 fires immediately at the
+        // threshold hit, not after a warn ladder.
         ProgressLoopDetector.LoopInfo detected = feed(d, List.of(block), List.of(err), 0);
-        assertEquals("loop_detected", detected.kind());
+        assertEquals("loop_detected", detected.kind(),
+                "R739: same_error must hard-stop at the threshold hit");
         assertTrue(detected.shouldStop(),
-                "R181 expects loop_detected on same_error tier 3 to be a hard stop");
+                "R181 + R739: loop_detected on same_error is a hard stop");
         // R181 contract: the description should still mention the
         // error text so the operator can identify the loop.
         assertTrue(detected.description().contains("timeout: null"),
                 "description should surface the looping error text");
+        // R739: lastLoopKind must be "same_error" so the engine's
+        // R181 SideNote + RunEnd branch keys on the right kind.
+        assertEquals("same_error", d.lastLoopKind(),
+                "R739: lastLoopKind() must be same_error for the R181 SideNote branch");
     }
 
     // ----- 3. long output --------------------------------------------------

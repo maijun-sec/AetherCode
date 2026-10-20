@@ -51,7 +51,95 @@ public sealed interface StreamEvent {
     record ToolOutputDelta(String id, String text) implements StreamEvent {}
 
     /** A whole run completed. {@code stopReason} mirrors the API value (e.g. "end_turn", "tool_use"). */
-    record RunEnd(String stopReason, java.util.List<ContentBlock> finalBlocks) implements StreamEvent {}
+    record RunEnd(String stopReason, java.util.List<ContentBlock> finalBlocks) implements StreamEvent {
+
+        /**
+         * R743: the BARE kind of this RunEnd's stopReason — the
+         * canonical prefix before the first {@code ": "} / space, or
+         * the whole string when it carries no decoration.
+         *
+         * <p>The engine decorates several stopReasons with a
+         * diagnostic suffix — {@code "loop_detected: empty_tool_input
+         * (4 consecutive empty tool calls)"}, {@code "error:
+         * WebClientResponseException$…: 500 from POST https://…"}.
+         * Consumers that need to CLASSIFY a stop (metrics
+         * bucketing, continuation gating, the desktop's failed-pill)
+         * must compare against this bare kind, never the decorated
+         * string. This is the R735b lesson generalised: an exact
+         * match against a wire string silently misclassifies every
+         * decorated reason.
+         */
+        public String bareKind() {
+            return bareKindOf(stopReason);
+        }
+
+        /**
+         * R743: is this run a DETERMINISTIC terminal stop — one where
+         * the engine has already decided, on its own, that continuing
+         * is pointless or unwanted?
+         *
+         * <p>These are the reasons every downstream consumer must
+         * treat as "do not auto-resume":
+         * <ul>
+         *   <li>{@code loop_detected…} — {@code QueryEngine:2363},
+         *       empty-tool-input death spiral.</li>
+         *   <li>{@code same_error_hard_stop} — {@code QueryEngine:2568},
+         *       R181/R739 same-error death spiral. Note this one does
+         *       NOT start with {@code "loop"}, which is why the old
+         *       {@code startsWith("loop")} metrics predicate missed it.</li>
+         *   <li>{@code cancelled} — {@code QueryEngine:1983}, R721
+         *       user-initiated cancel. Never resurrect.</li>
+         * </ul>
+         *
+         * <p>Deliberately NOT included:
+         * <ul>
+         *   <li>{@code stop} / {@code end_turn} — success.</li>
+         *   <li>{@code tool_calls} — an intermediate hand-off.</li>
+         *   <li>{@code awaiting_user_decision} — the engine is PAUSED
+         *       waiting on the user; auto-resuming races their answer.</li>
+         *   <li>{@code empty_input} — a no-op guard that never reaches
+         *       a session-idle hook.</li>
+         *   <li>{@code error…} — already excluded upstream by every
+         *       caller's "contains error" check; kept out so this
+         *       predicate stays about LOOPS specifically.</li>
+         * </ul>
+         */
+        public boolean isDeterministicHardStop() {
+            return isDeterministicHardStopOf(stopReason);
+        }
+    }
+
+    // ---- R743: shared stopReason classification --------------------
+    //
+    // Static twins of the RunEnd instance methods so callers that only
+    // have the raw string (the desktop's `run_end` handler, the
+    // session-idle hook, the metrics sink) can reuse ONE definition
+    // instead of each re-inventing a prefix heuristic and drifting.
+    // Three layers had three subtly different predicates before R743
+    // and all three were wrong in different ways.
+
+    /** @see RunEnd#bareKind() */
+    static String bareKindOf(String stopReason) {
+        if (stopReason == null) return "";
+        String s = stopReason.trim();
+        int cut = s.length();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == ':' || c == ' ' || c == '(') { cut = i; break; }
+        }
+        return s.substring(0, cut);
+    }
+
+    /** @see RunEnd#isDeterministicHardStop() */
+    static boolean isDeterministicHardStopOf(String stopReason) {
+        if (stopReason == null) return false;
+        String kind = bareKindOf(stopReason);
+        return "loop_detected".equals(kind)
+                // R181 / R739 same-error death spiral.
+                || "same_error_hard_stop".equals(kind)
+                // R721 user-initiated cancel.
+                || "cancelled".equals(kind);
+    }
 
     /** Compaction or memory write occurred; the caller may want to redraw the status line. */
     record SideNote(String kind, String message) implements StreamEvent {}

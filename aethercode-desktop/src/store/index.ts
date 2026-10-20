@@ -1,4 +1,4 @@
-﻿// Zustand store …single source of truth for the renderer.
+// Zustand store …single source of truth for the renderer.
 // All RPC goes through the AetherCodeRpc singleton (Tauri invoke + listen).
 
 import { create } from 'zustand';
@@ -83,6 +83,28 @@ const SDD_PHASE_IDS: SddPhaseId[] = [
   'analyze', 'tasks', 'implement', 'converge',
 ];
 const SDD_OPTIONAL: ReadonlySet<SddPhaseId> = new Set(['clarify', 'analyze', 'converge']);
+
+// R743: is this run_end the per-todo controller pausing for the
+// user, rather than finishing?
+//
+// The engine currently emits the BARE string
+// `"awaiting_user_decision"`, so a plain `===` matched. That's a
+// latent trap though: every other stopReason in this handler is
+// already treated as possibly-decorated (see the `failedKind`
+// prefix-match above, R735b), and the moment someone appends a
+// diagnostic suffix — `"awaiting_user_decision: 10 bumps on
+// 'step 2'"` — all four call sites silently flip: the `✓Done`
+// badge flashes, the step card closes, and `pendingFollowUp`
+// auto-fires a new query into a PAUSED engine.
+//
+// Match on the bare kind instead: the portion before the first
+// `": "`, space, or `(`. Mirrors `StreamEvent.bareKindOf` on the
+// Java side; keep the two in step.
+function isAwaitingUserDecision(stopReason: string | undefined): boolean {
+  if (!stopReason) return false;
+  const kind = stopReason.trim().split(/[: (]/)[0];
+  return kind === 'awaiting_user_decision';
+}
 
 // Map phase number (1-8) ↔ phase id.
 function phaseIdFor(n: number): SddPhaseId {
@@ -2042,6 +2064,23 @@ interface AppState {
    *  hit the ↻ retry button on the EndOfTaskPanel to
    *  re-fire this prompt without retyping it. */
   lastFailedPrompt: string | null;
+  /** R735 (2026-10-20): the stopReason of the last failed
+   *  run, captured so the Header's "● Failed" pill (and any
+   *  future diagnostic surface) can show "● Failed
+   *  (same_error_hard_stop)" instead of a generic ● Idle.
+   *  Cleared on the next successful run_end. New stopReason
+   *  flavours added in R735 / future rounds (e.g.
+   *  same_error_hard_stop) extend the `failedStopKinds`
+   *  set in the run_end handler. */
+  lastFailedStopReason: string | null;
+  /** R735: wall-clock timestamp of the last failed run, so
+   *  the Header can show the failed pill for a bounded
+   *  window (e.g. 60s) instead of forever. The user's
+   *  screenshot showed the engine sitting in a misleading
+   *  ● Idle state for minutes after a same_error_hard_stop;
+   *  with a timestamp, the Header can show "● Failed
+   *  (same_error_hard_stop) · 23s ago" and fade out. */
+  lastFailedAt: number | null;
   /** R348: re-fire the last failed prompt. Walks the same
    *  path as `sendMessage` (so queued / streaming /
    *  awaiting-decision branches all work) but seeds the
@@ -3222,16 +3261,75 @@ export const useStore = create<AppState>((set, get) => {
         //  lastFailedPrompt intact — a brief error after a
         //  long conversation shouldn't trigger a retry of
         //  the very first query of the session.
-        const failedStopKinds = new Set(['error', 'loop', 'max_turns']);
-        const isFailedRun = stopReason ? failedStopKinds.has(stopReason) : false;
-        if (isFailedRun) {
-          set({ lastFailedPrompt: get().currentInput || get().lastFailedPrompt });
+        //
+        // R735 (2026-10-20): extend the failed set to include
+        //  `same_error_hard_stop` (R181 engine hard-stop on
+        //  repeated identical tool errors) and
+        //  `awaiting_user_decision` (TodoRunController pause).
+        //  Pre-R735 neither reason surfaced in the Header — the
+        //  UI fell through to ● Idle, hiding the failure. Both
+        //  reasons now write lastFailedPrompt + lastFailedStopReason
+        //  + lastFailedAt so the Header's "● Failed (reason)" pill
+        //  can render the right diagnostic and the ↻ retry button
+        //  remains visible.
+        const failedStopKinds = [
+          'error',
+          'loop',
+          'max_turns',
+          'same_error_hard_stop',
+          'awaiting_user_decision',
+          'runtime_exception',
+          'stale_force_end',
+          'cancelled',
+        ] as const;
+        // R735b (2026-10-20): prefix match, NOT Set.has().
+        //
+        // The engine does NOT emit bare enum stopReasons — it
+        // emits *decorated* strings carrying the failure detail.
+        // `SpringAiChatClient.java:325` (the chat-provider error
+        // path) offers:
+        //
+        //   queue.offer(new StreamEvent.RunEnd(
+        //       "error: " + e.getClass().getSimpleName() + ": "
+        //       + e.getMessage(), List.of()));
+        //
+        // so an upstream 500 from api.minimaxi.com arrives as
+        // `"error: WebClientResponseException$InternalServerError:
+        // 500 Internal Server Error from POST https://..."` —
+        // a ~120-char string, NOT the literal `"error"`.
+        //
+        // `Set.has(stopReason)` therefore returned false, the
+        // run was classified as a *success*, `lastFailedPrompt`
+        // stayed null, and the renderer fell through to the green
+        // `● Idle` bucket with no error banner and no ↻ retry
+        // button — the exact silent-kill symptom R735/R735a were
+        // both chasing, still reproducing after both shipped.
+        //
+        // Prefix matching is the right primitive here because every
+        // decorated stopReason in the engine starts with its
+        // canonical kind followed by `": "` (or is exactly the
+        // kind). `startsWith` is also robust to a future kind that
+        // carries a suffix, which an exact-match set never is.
+        // R735b: a decorated stopReason is far too long to render in
+        // the Header pill (it embeds a full URL). Keep the *kind* for
+        // display; the pill shows `● Failed (error)` and the ↻ retry
+        // button still works because it only needs lastFailedPrompt.
+        const failedKind = stopReason
+          ? failedStopKinds.find((k) => stopReason === k
+            || stopReason.startsWith(`${k}:`) || stopReason.startsWith(`${k} `))
+          : undefined;
+        if (failedKind) {
+          set({
+            lastFailedPrompt: get().currentInput || get().lastFailedPrompt,
+            lastFailedStopReason: failedKind,
+            lastFailedAt: Date.now(),
+          });
         } else if (stopReason === 'stop' || stopReason === 'end_turn') {
           // Successful end — clear the retry slot so the
           // ↻ button only appears for the latest failure.
           // Don't clear on awaiting_user_decision (the user
           // hasn't finished the conversation yet).
-          set({ lastFailedPrompt: null });
+          set({ lastFailedPrompt: null, lastFailedStopReason: null, lastFailedAt: null });
         }
         set((s) => {
           const msgs = [...s.messages];
@@ -3273,7 +3371,7 @@ export const useStore = create<AppState>((set, get) => {
             activeWorkflow: null,
             runningWorkflow: null,
           };
-          if (stopReason === 'awaiting_user_decision') {
+          if (isAwaitingUserDecision(stopReason)) {
             // The AwaitUserDecision event was emitted just before
             // the RunEnd with the same info; the engine state is
             // already in awaitingUserDecision. We just need to
@@ -3293,7 +3391,7 @@ export const useStore = create<AppState>((set, get) => {
           }
           return updates;
         });
-        if (stopReason !== 'awaiting_user_decision') {
+        if (!isAwaitingUserDecision(stopReason)) {
           setTimeout(() => {
             const cur = useStore.getState().currentActivity;
             if (cur?.kind === 'done') useStore.setState({ currentActivity: null });
@@ -3325,7 +3423,7 @@ export const useStore = create<AppState>((set, get) => {
         // drop the synthetic "current query" task. The
         // user's message is now done; the Header reverts to
         // "Idle" / "No active task" until the next sendMessage.
-        if (stopReason !== 'awaiting_user_decision') {
+        if (!isAwaitingUserDecision(stopReason)) {
           // R83 Issue #6: close out the current step. The user
           // message is done; the step card flips to its
           // "done" state (collapsible, with a stop-reason pill).
@@ -3353,7 +3451,7 @@ export const useStore = create<AppState>((set, get) => {
         // continue manually, and firing an unrelated
         // follow-up while the engine is paused is
         // surprising.
-        if (stopReason !== 'awaiting_user_decision') {
+        if (!isAwaitingUserDecision(stopReason)) {
           const queued = get().pendingFollowUp;
           if (queued) {
             // clear first so the next run doesn't see
@@ -4207,6 +4305,8 @@ export const useStore = create<AppState>((set, get) => {
     // failure, so the user can re-fire the failed
     // prompt with one keystroke.
     lastFailedPrompt: null,
+    lastFailedStopReason: null,
+    lastFailedAt: null,
     // R349 (PM P0-2): budget + cumulative cost. The
     // budget is null until the user sets it (Settings
     // panel has a "cost cap" slider). cumulativeCostUsd
@@ -5195,7 +5295,18 @@ export const useStore = create<AppState>((set, get) => {
     retryLastFailedPrompt: async () => {
       const prompt = get().lastFailedPrompt;
       if (!prompt) return;
-      set({ currentInput: prompt, lastFailedPrompt: null });
+      // R735: also clear the new stop-reason / timestamp
+      // fields so the Header's "● Failed" pill goes away
+      // the moment the user retries. Without this, the
+      // pill would linger until the next successful run_end
+      // lands (which could be tens of seconds for a slow
+      // retry).
+      set({
+        currentInput: prompt,
+        lastFailedPrompt: null,
+        lastFailedStopReason: null,
+        lastFailedAt: null,
+      });
       await get().sendMessage();
     },
 
@@ -8317,6 +8428,14 @@ if (typeof window !== 'undefined') {
     // window is also too aggressive if the user walked away.
     // Suspend the timer entirely until the prompt resolves.
     if (s.pendingPermissions && s.pendingPermissions.length > 0) return;
+    // R735 (2026-10-20): if the engine already populated a
+    //  failed run (e.g. same_error_hard_stop surfaced via
+    //  the now-correct RunEnd emit), we should NOT also
+    //  raise a stream-stale notification. The user already
+    //  has the diagnostic on the Header pill + the ↻
+    //  retry button. Doubling up with a stale banner
+    //  muddies the failure surface.
+    if (s.lastFailedAt && (Date.now() - s.lastFailedAt) < STREAM_STALE_MS) return;
     if (Date.now() - s.lastChunkTs > STREAM_STALE_MS) {
       console.warn(`[store] stream stale: no chunk for ${STREAM_STALE_MS}ms, force-ending`);
       // Force-end the stream (same behaviour as before).
@@ -8324,11 +8443,34 @@ if (typeof window !== 'undefined') {
       // `pushNotification`, which has its own dedup-by-source
       // logic — pushing twice in a row replaces rather than
       // stacks.
-      useStore.setState({ isStreaming: false });
+      //
+      // R735: also populate lastFailedStopReason +
+      // lastFailedAt so the Header's "● Failed" pill and
+      // the EndOfTaskPanel's ↻ retry button both stay
+      // surfaced. Pre-R735 the user had to read the toast
+      // notification to learn the run had died, and the
+      // notification could be dismissed without ever
+      // setting lastFailedPrompt — leaving the input bar
+      // enabled but the user confused about whether the
+      // run was actually over.
+      useStore.setState({
+        isStreaming: false,
+        lastFailedStopReason: 'stale_force_end',
+        lastFailedAt: Date.now(),
+        // R735: also capture the prompt for ↻ retry. If
+        // currentInput is empty (the run started long ago
+        // and the input was cleared), fall back to the
+        // LAST user message in the chat so retry has
+        // something to fire.
+        lastFailedPrompt: s.currentInput || (() => {
+          const last = [...s.messages].reverse().find((m) => m.role === 'user');
+          return last ? last.content : null;
+        })(),
+      });
       s.pushNotification({
         level: 'error',
         title: 'Stream stale',
-        message: `Daemon stopped responding for ${STREAM_STALE_MS / 1000}s. Try sending again, or cancel the run.`,
+        message: `Daemon stopped responding for ${STREAM_STALE_MS / 1000}s. The run was force-ended. You can retry the prompt from the End-of-task panel.`,
         source: 'stream-stale',
         // sticky — the user must dismiss. Sending a new
         // prompt / switching session / cancelling will also

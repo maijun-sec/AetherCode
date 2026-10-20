@@ -190,11 +190,231 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - **R722** (build helper): `aethercode-build-helper.ps1`
   auto-detects JDK and picks a safe (mockito, byte-buddy) pair.
   Replaces 9-13min stuck builds.
+- **R735** (terminal-event contract + chat scroll):
+  Two P0s from one screenshot. (1) `QueryEngine`'s
+  `same_error_hard_stop` branch (R181) omitted
+  `StreamEvent.RunEnd`, so the desktop's `case 'run_end':`
+  handler never ran and a dead engine looked like a healthy
+  green `● Idle`. (2) `MessageList`'s scroll listener flipped
+  `pinned=false` on first paint, permanently disabling
+  auto-scroll — user could scroll up but not down. Fixes:
+  RunEnd emit + `QueryEngineR735Test` (2 source-pin cases);
+  `useLayoutEffect` pre-paint snap + `userScrolledRef` +
+  `MessageListR735AutoScroll.test.tsx` (7 cases); Header
+  `● Failed (reason)` + `● Sub-task stuck` buckets.
+- **R735a** (R735 follow-up): wrap the whole `tryAdvance` body
+  in `try { ... } catch (Throwable t) { emit RunEnd(stopReason="runtime_exception: ...") }`.
+  Without it, any throw escaping `currentLlmIt.next()` silently
+  kills the Spliterator. Pin:
+  `QueryEngineR735Test.tryAdvance_hasOuterTryCatchRuntimeException`.
+- **R735b** (R735 follow-up): the actual root cause of the
+  "still dies silently" report was the renderer using
+  `failedStopKinds.has(stopReason)` — an exact-match Set lookup
+  — while the engine emits decorated stopReasons (~120 chars).
+  `Set.has("error")` was false; every upstream 500 was
+  classified as success. Fix: prefix-match + store the BARE
+  kind for display. Guarded by `failedStopReasonR735b.test.ts`.
+- **R736** (transcript repair): `stripOrphanToolResults`
+  rev3'd to enforce adjacency-preserving batch on top of the
+  R716 id-existence rule. Three rounds, all unit-tested green
+  before end-to-end proved each one incomplete — the real RAG
+  shape only validates when self-stripped orphans are dropped
+  in the same pass as their declarations. 15 source-pin cases
+  in `QueryEngineStripOrphanR736Test`.
+- **R737** (response language): per-turn `responseLanguageDirective`
+  appended LAST in `buildSystemForTurn`, detected from the
+  transcript backwards (CJK ≥ 12 && CJK × 4 ≥ Latin).
+- **R738** (POISON on the chat-client error path).
+- **R739** (`same_error` bypasses the warn ladder and hard-stops
+  at `sameErrorThreshold`).
+- **R740** (`emitSubTaskTransitions` synthesizes `auto-{idx}`
+  sub-tasks for flat todos).
+- **R741** (L3 dedupe stub role): `buildDedupeStub` hard-coded
+  `Role.USER`, which wedges a non-tool message into the middle
+  of a tool-call batch. Now role-preserving with the original
+  `tool_use_id`.
+- **R742** (POISON on the retry-exhaustion path): R738's own
+  sibling — `if (it == null)` offered a terminal `RunEnd` and
+  returned without poisoning the queue.
+- **R743** (one stopReason taxonomy): four layers had
+  hand-rolled classifiers; `StreamEvent` now owns `bareKind()` /
+  `isDeterministicHardStop()` and all four delegate.
+
+## Watch out for (R735 additions)
+
+- **Every terminal `stopReason = "…"` in `QueryEngine.tryAdvance`
+  must be followed by `action.accept(new StreamEvent.RunEnd(...))`
+  before `return false;`.** `QueryEngineR735Test` enforces this;
+  if you add a new hard-stop branch, the test's `checked >= 4`
+  floor will also make you re-validate the contract.
+- **Observer-derived scroll state needs a `useLayoutEffect` snap
+  plus a "who scrolled" tag.** The scroll listener registers on
+  mount and fires *before* any `useEffect` correction, so
+  `pinned = distance < 80` is garbage on the first tick. See
+  `MessageList.tsx` `userScrolledRef`.
+- **`useLayoutEffect` ≠ "layout is done" (R735-fix1).** It
+  guarantees DOM *commit*, not final *layout*. A single
+  `scrollTop = scrollHeight` inside it reads a STALE
+  `scrollHeight` (markdown blocks, `<details>` folds, and the
+  streaming cursor resolve heights in later passes) and lands the
+  viewport mid-transcript — the user reported "the newest tool card
+  renders above the prompt". Any snap-to-bottom after the content
+  *changes shape* must converge over a bounded number of
+  `requestAnimationFrame`s, exit when the measured bottom offset
+  stops moving, and `cancelAnimationFrame` on cleanup. See
+  `MAX_SNAP_FRAMES` in `MessageList.tsx`. Note the asymmetry: the
+  auto-scroll effect only needs a single rAF (it re-measures on
+  every content change); the mount / session-switch snap needs
+  full convergence.
+- **`● Idle` is not a health indicator** (pre-R735). The Header now
+  has a fourth `● Failed (reason)` bucket; if you touch the
+  status pill, keep that bucket or the "dead engine looks
+  healthy" regression comes back.
+- **`QueryEngineAnchorR726Test` is red on some checkouts** for
+  reasons unrelated to current work (it reads `docs/R7*.md` from a
+  temp dir). Don't chase it when validating an unrelated change.
+- **`currentLlmIt.next()` inside `tryAdvance` needs a top-level
+  `catch (Throwable t)` that emits RunEnd (R735a).** Without it,
+  any exception escaping the Spliterator (e.g. upstream 500 from
+  the chat provider that escaped the retry loop) silently kills the
+  stream with no terminal event delivered to the renderer, which
+  falls into `● Idle` with no error banner / retry. Pin the
+  contract with `tryAdvance_hasOuterTryCatchRuntimeException`.
+- **An exact `Set.has()` across the wire is a latent bug (R735b).
+  `failedStopKinds` must prefix-match.** The engine emits
+  *decorated* stopReasons — `SpringAiChatClient.java:325` produces
+  `"error: <class>: <msg>"` (~120 chars, embeds a URL) — so
+  `Set.has("error")` returned false and every upstream 500 was
+  classified as a success, leaving the renderer in `● Idle`. Use
+  `startsWith(\`${k}:\`)` and store the **bare kind** for display.
+  Guarded by `failedStopReasonR735b.test.ts`.
+- **Verify the patch is inside the jar, not just that the build
+  succeeded (R735b).** `mvn package` reports `BUILD SUCCESS` and
+  syncs a byte-for-byte correct jar that can still contain a stale
+  class — Maven's incremental compiler skips regeneration when the
+  diff looks formatting-only. Extract the class from the final
+  artifact and grep its constant pool:
+  `[System.IO.Compression.ZipFile]::OpenRead($jar)` →
+  `QueryEngine$1.class` → `$t.Contains('<your marker>')`.
+  When a deploy "doesn't take", run `mvn clean package`.
+
+## Watch out for (R736 additions)
+
+- **The provider's tool-call contract is **adjacency-preserving
+  batch**, not id-existence (Lesson 1054).** "Every tool_use has a
+  matching tool_result, and every tool_result has a matching
+  tool_use" is necessary but NOT sufficient; the surviving
+  tool_use ids on any assistant must equal the ids of the tool
+  results in the **immediately contiguous** tool-result batch,
+  with no non-tool messages between. The validation message is
+  `400 invalid params, tool result's tool id (call_X) not found
+  (2013)` from `api.minimaxi.com` (and the bare `500 unknown
+  error (1000)` from the parallel fallback). Any transcript
+  contamination — L4 head-trim, mid-session retries, schema
+  migration leftovers — will silently break this. The
+  `QueryEngine.stripOrphanToolResults` helper has been rev3'd
+  to enforce adjacency. If you add a new transcript-trimming
+  step (pruning, compaction, schema migration), make sure the
+  survivor of that step keeps assistants' tool_use blocks in
+  the SAME positions they were declared, or you'll spawn a new
+  shape that breaks the API.
+- **When you strip a declaration in one pass, you owe a second
+  pass to drop its now-orphaned tool_result (Lesson 1055).** R736
+  rev2 only handled cross-batch aliens; rev3 added the
+  `survivingUseIds[ownerIdx]` check that drops TRs whose owner
+  no longer carries their id post-strip. Look for the marker
+  line `no longer carries a tool_use for this id — its own pass
+  stripped it as dangling` in
+  `$env:TEMP\aethercode-daemon-port22888.log` to confirm the
+  self-stripped branch fired for a given transcript pathology.
+- **For transcript-repair work the unit tests are necessary but
+  not sufficient (Lesson 1056).** The transcripts on disk after
+  L4 head-trim and mid-session interruption contain shapes the
+  unit tests against idealized pairs don't enumerate. Verify
+  per-deploy by emitting a unique log marker in each repair
+  branch and grepping the daemon log right after a `query`
+  call:
+  `Select-String 'R736:.*(no preceding assistant|answered a DIFFERENT|no longer carries)' $env:TEMP\aethercode-daemon-port22888.log`.
+  If R736 logs a clean "no changes" line and the API still 400s,
+  the live shape is one the unit tests don't model — fall back
+  to dump-then-patch.
+
+## Watch out for (R741–R743 additions)
+
+- **A transcript-repair pass may only DROP or REWRITE-IN-PLACE.
+  It may not change a message's ROLE.** R741: `TranscriptPruner`'s
+  L3 `buildDedupeStub` replaced a collapsed `TOOL_RESULT` with a
+  `Role.USER` side-note. That single field is what broke adjacency
+  (Lesson 1054) — a USER message terminates the contiguous
+  tool_result batch, producing `400 (2013)` even though
+  `stripOrphanToolResults` would have found nothing wrong. **R736's
+  repair pass cannot fix this class of bug** because it only drops
+  messages; it can never re-create the tool_result the stub
+  swallowed. If you add a new transcript pass, keep the role.
+  Guarded by `TranscriptPrunerDedupeAdjacencyR741Test` (6 cases).
+- **A side-note that must live inside a tool batch has to be a
+  `ToolResultBlock` carrying the original `tool_use_id`**, not a
+  `TextBlock` — otherwise the provider doesn't count it as an
+  answer to the declaration.
+- **Pair EVERY terminal `RunEnd` with `queue.offer(POISON)`**
+  inside `SpringAiChatClient.runCall`. R738 fixed the streaming
+  `catch`; R742 fixed the `it == null` retry-exhaustion branch
+  (`<runCall(); queue.offer(POISON)>` in the runner lambda is only
+  reached on a NORMAL return, so every early `return;` skips it).
+  Symptom when missing: the desktop sits in green `● Idle` with no
+  error banner and no ↻ retry, while the `RunEnd` sits unread in
+  the queue. Guarded by `SpringAiChatClientR742Test` — which bounds
+  its search to the `if (it == null) { … }` block precisely because
+  R738's own test (`indexOf(POISON) > 0` anywhere later in the
+  file) passed against this still-broken branch.
+- **`StreamEvent` owns the stopReason taxonomy.** Use
+  `re.bareKind()` / `re.isDeterministicHardStop()`; never
+  hand-roll a `startsWith` heuristic. R743 found FOUR independent
+  classifiers (`AetherCodeMethods` metric, `EngineContinuationDispatcher`
+  metric, `TodoContinuationHook` continuation gate, and both span-status
+  writers) and three of them were wrong in different directions:
+  - `startsWith("loop")` missed `same_error_hard_stop` and `cancelled`
+    → `incLoopStop()` under-counted the unattended stops it exists to alert on.
+  - `startsWith("loop_")` missed `loop_detected: …` (that starts
+    `loop_d`!) **and** `same_error_hard_stop` → the hook
+    auto-continued a run the engine had just hard-stopped, silently
+    undoing R739; it also resurrected R721 user cancels.
+  - `startsWith("error")` missed `runtime_exception: …` /
+    `cancelled` / `same_error_hard_stop` → all recorded as span
+    status **"ok"**.
+- **A deterministic engine decision must be honoured
+  deterministically downstream (R739's lesson, one layer up).**
+  When the engine hard-stops on a provably-broken pattern, no
+  auto-continue path may re-dispatch it.
+- **Pre-existing red to ignore:** `QueryErrorNotificationTest.query_catchEmitsRunEndAndErrorLog`
+  asserts a `run_end` with `isError=true`, but since R735a the
+  engine emits its own `runtime_exception: …` `RunEnd` (no
+  `isError` field) first, so the protocol synthetic handler is never
+  reached. Verified pre-existing on 2026-10-20 by reproducing with
+  all R743 changes stashed. Reconciling the two means touching the
+  R735a terminal-event path — tracked as a follow-up, see
+  `docs/R741-R742-R743-bug-fixes.md`.
+- **Assertj's `assertThat(String).contains(a, b)` is VARARGS** — it
+  asserts the source contains BOTH strings. Passing your failure
+  message as the second argument makes the test assert that the
+  source contains your own message. Use JUnit's
+  `assertTrue(s.contains(x))` for source-pin tests.
+- **The deploy artifact is now `aethercode-cli-0.1.0-SNAPSHOT.jar`
+  (56 MB fat jar), NOT `…-shaded.jar`.** The "Daemon deploy cycle"
+  section above still names the shaded jar — update it if the shade
+  plugin is ever removed. Desktop destination path is unchanged.
+- **Comment markers (`// R741:`) are stripped by javac and are NOT
+  in the class constant pool.** Verifying a fix landed in the jar
+  must grep the *compiled* artefact — the new method reference
+  (`ContentBlock$ToolResultBlock`), the new method name
+  (`isDeterministicHardStop`), or a new log string. Verified via
+  `javap -p -c` for R741.
 
 ## See also
 
 - `docs/R719-session-anchor.md`
 - `docs/R720-systematic-repair.md`
+- `docs/R741-R742-R743-bug-fixes.md`
 - `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`
   (Mavis's cross-project agent memory)
 - `~/.aethercode/agent-memory/default/MEMORY.md` (per-agent

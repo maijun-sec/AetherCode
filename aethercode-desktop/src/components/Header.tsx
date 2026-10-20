@@ -97,6 +97,13 @@ export function Header({
     engineState, currentTaskId, tasks,
     isStreaming, isConnected, currentQuery,
     lastChunkTs,
+    // R735 (2026-10-20): read the failed-run fields so the
+    // status pill can show "● Failed (same_error_hard_stop)"
+    // instead of a generic green ● Idle when the engine dies
+    // mid-run. lastFailedAt drives the fade-out window — the
+    // pill auto-clears 60s after the failure so the user is
+    // not nagged forever.
+    lastFailedStopReason, lastFailedAt,
     pickCwd, cwd,
     // Theme state; setTheme() mirrors the value onto <html data-theme="...">, with the preference persisted to prefs.theme.
     theme, setTheme,
@@ -113,6 +120,34 @@ export function Header({
     const id = setInterval(() => setTick((t) => (t + 1) % 1000000), 100);
     return () => clearInterval(id);
   }, [isStreaming]);
+  // R735 (2026-10-20): failed-pill ticker. When the engine
+  //  has populated lastFailedAt we want the "● Failed
+  //  (reason) · Ns ago" pill to count up live, AND we want
+  //  the pill to fall back to ● Idle after 60s. The streaming
+  //  setTick above only runs while isStreaming, so it does
+  //  not cover the post-failure idle period. We start a
+  //  separate 1-second ticker for the 60-second window after
+  //  the failure. Cleaning up the timer is critical: a leak
+  //  here would leave a setInterval firing forever, ticking
+  //  the header once a second indefinitely.
+  useEffect(() => {
+    if (!lastFailedAt) return;
+    const FAILED_PILL_WINDOW_MS = 60_000;
+    const ageMs = Date.now() - lastFailedAt;
+    if (ageMs >= FAILED_PILL_WINDOW_MS) return;
+    const id = setInterval(() => {
+      setTick((t) => (t + 1) % 1000000);
+      // Re-check: if we've crossed the 60s window, stop
+      // ticking. Reading lastFailedAt from getState() avoids
+      // re-creating the interval every time the timestamp
+      // updates.
+      const cur = useStore.getState().lastFailedAt;
+      if (!cur || (Date.now() - cur) >= FAILED_PILL_WINDOW_MS) {
+        clearInterval(id);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lastFailedAt]);
 
   // The streaming phase has four states: preparing / streaming / stale (no new chunk for 60s) / idle.
   // R349: stale threshold raised from 30s → 60s. The user
@@ -157,7 +192,45 @@ export function Header({
         color: 'var(--warning)',
       };
     }
+    // R735 (2026-10-20): sub-task stuck detector. The user
+    //  reported a sub-task that had been "running" for 12
+    //  minutes with only 1 message — the engine had hard-
+    //  stopped on `same_error_hard_stop` mid-flight, the
+    //  run_end was never emitted, and `currentQuery` was
+    //  still set. The status pill showed "● Running" (or,
+    //  after the user poked around, "● Idle") but the
+    //  sub-task row in the Kanban kept ticking up. We
+    //  catch this exact shape: `currentQuery` is set AND
+    //  `runElapsedMs` is large (3 min+) AND `lastChunkTs`
+    //  has not advanced recently (30s+). The "● Sub-task
+    //  stuck" pill is the early-warning before the stale
+    //  watchdog (90s default) force-ends.
+    if (active && runElapsedMs > 180_000
+        && (!lastChunkTs || elapsedSinceChunk > 30_000)) {
+      const stuckSec = Math.floor(runElapsedMs / 1000);
+      return {
+        text: `● Sub-task stuck · ${stuckSec}s (no response in ${Math.floor(elapsedSinceChunk / 1000)}s)`,
+        color: 'var(--warning)',
+      };
+    }
     if (active) return { text: '● Running', color: 'var(--accent)' };
+    // R735 (2026-10-20): fourth status bucket. When the engine
+    //  hard-stopped a run (same_error_hard_stop, max_turns, error,
+    //  loop, awaiting_user_decision) the run_end handler
+    //  populated lastFailedStopReason + lastFailedAt. The pill
+    //  shows the reason for 60s so the user has a real
+    //  diagnostic instead of an empty green ● Idle. After 60s
+    //  the pill falls back to ● Idle — the failure is still
+    //  visible via the ↻ retry button on the EndOfTaskPanel
+    //  and via the error message in the chat scrollback.
+    if (lastFailedStopReason && lastFailedAt
+        && (now - lastFailedAt) < 60_000) {
+      const ago = Math.max(0, Math.round((now - lastFailedAt) / 1000));
+      return {
+        text: `● Failed (${lastFailedStopReason}) · ${ago}s ago`,
+        color: 'var(--error)',
+      };
+    }
     return { text: '● Idle', color: 'var(--success)' };
   })();
 

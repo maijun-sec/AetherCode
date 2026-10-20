@@ -3772,7 +3772,23 @@ public class AetherCodeMethods {
                         }
                     } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd re) {
                         target.metrics().incTurnCompleted();
-                        if (re.stopReason() != null && re.stopReason().startsWith("loop")) {
+                        // R743: count every loop-family hard stop, not
+                        // just the `loop*` prefixed ones.
+                        //
+                        // The old predicate was
+                        // `stopReason.startsWith("loop")`, which matched
+                        // `loop_detected: empty_tool_input (…)` but NOT
+                        // `same_error_hard_stop` (R181/R739) — the most
+                        // common unattended death spiral in the field.
+                        // So `incLoopStop()` under-counted exactly the
+                        // case the counter exists to alert on, and
+                        // `getMetrics` reported a clean session while
+                        // the engine was hard-stopping runs.
+                        //
+                        // Delegate to the one canonical predicate on
+                        // StreamEvent so this sink and the
+                        // TodoContinuationHook gate can't drift again.
+                        if (re.isDeterministicHardStop()) {
                             target.metrics().incLoopStop();
                         }
                         // R727: detect "idle turn" — end with no
@@ -3796,7 +3812,35 @@ public class AetherCodeMethods {
                         // tool spans (shouldn't happen, but defensive)
                         // are also closed with "error" so the recorder
                         // doesn't leak.
-                        target.traces().endSpan(queryTraceId, re.stopReason() != null && re.stopReason().startsWith("error") ? "error" : "ok");
+                        // R743: the span status must follow the SAME taxonomy as the
+                        // loop-stop metric above, not a bare
+                        // `startsWith("error")`.
+                        //
+                        // The old predicate matched only the
+                        // chat-client's decorated `"error: <class>:
+                        // <msg>"` and recorded EVERY other terminal
+                        // stop as "ok" — including the three the
+                        // engine reaches on its own:
+                        //   `runtime_exception: …`   (R735a)
+                        //   `cancelled`               (R721)
+                        //   `same_error_hard_stop`    (R181/R739)
+                        // So a run that blew up mid-stream left an
+                        // "ok" span in the trace, and the recorder
+                        // reported a clean session.
+                        //
+                        // Deliberately NOT reusing
+                        // isDeterministicHardStop(): a *cancelled*
+                        // run is not an error, and an "error" stop
+                        // is not a loop. This is the third bucket —
+                        // "did the run end badly" — and it wants the
+                        // complement of the SUCCESS kinds, which is
+                        // why bareKindOf is the right primitive here.
+                        boolean spanOk = re.bareKind().equals("stop")
+                                || re.bareKind().equals("end_turn")
+                                || re.bareKind().equals("tool_calls")
+                                || re.bareKind().equals("awaiting_user_decision")
+                                || re.bareKind().equals("empty_input");
+                        target.traces().endSpan(queryTraceId, spanOk ? "ok" : "error");
                         for (String leftover : openToolSpans.values()) {
                             target.traces().endSpan(leftover, "error");
                         }

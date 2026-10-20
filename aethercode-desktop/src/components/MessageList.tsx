@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useStore, ChatMessage, ChatStep, ChatSubTask, scanLatestSddPhaseInMessages, SDD_PHASE_DONE_RE, SDD_PHASE_SKIP_RE } from '../store';
@@ -1069,6 +1069,29 @@ export function MessageList() {
   const [pinned, setPinned] = useState(true);
   const [unseenCount, setUnseenCount] = useState(0);
   const lastSeenRef = useRef({ msgs: 0, subs: 0, steps: 0 });
+  // R735 (2026-10-20): distinguishes "user actively scrolled the
+  // list away from the bottom" (true) from "initial mount / programmatic
+  // scroll to bottom" (false). Without this flag the scroll listener
+  // (registered on mount, deps []) fires once for the layout
+  // pass after the very first useLayoutEffect pinned the viewport to
+  // the bottom — `distance = scrollHeight - 0 - clientHeight` is huge
+  // because the list is taller than the viewport — and the listener
+  // sets `pinned = false`, which makes the auto-scroll useEffect
+  // (line 1217 below) take the else-branch and accumulate unseenCount
+  // forever. The user symptom was "content is in the middle, scrolling
+  // up shows the top, scrolling down does nothing" — i.e. the viewport
+  // is anchored at scrollTop=0 and pinned=false, so no auto-scroll
+  // ever fires.
+  //
+  // The fix is two-part:
+  //   1. useLayoutEffect (below) snaps to the bottom BEFORE the scroll
+  //      listener's first paint, so the first onScroll event sees
+  //      distance < 80 and keeps pinned=true.
+  //   2. userScrolledRef is flipped to true the first time the user
+  //      actually drags the scrollbar; once flipped, the auto-scroll
+  //      effect respects the listener's pinned=false verdict even on
+  //      later re-renders.
+  const userScrolledRef = useRef(false);
   // live list of subagent spawn cards. Each entry
   // is a `subagent_spawn` event's payload (role, description,
   // status) keyed by event id so duplicate dispatches don't
@@ -1120,6 +1143,71 @@ export function MessageList() {
   // and re-registration and miss the transition.
   const pinnedRef = useRef(pinned);
   useEffect(() => { pinnedRef.current = pinned; }, [pinned]);
+
+  // R735 (2026-10-20): snap to bottom on mount AND on session
+  // switch, plus R735-fix1: converge over multiple frames.
+  //
+  // Why multi-frame: useLayoutEffect fires after React commits the
+  // DOM, but the children's FINAL height is not yet stable —
+  // markdown blocks, `<details>` fold affordances, and the
+  // streaming cursor all resolve their heights in subsequent layout
+  // passes. A single `scrollTop = scrollHeight` therefore reads a
+  // STALE scrollHeight and lands the viewport in the middle of the
+  // transcript (the exact "content sits in the middle, tool cards
+  // appear above the prompt" symptom the user reported after R735
+  // shipped). Converging over a handful of animation frames until
+  // the measured bottom stops moving fixes it: each frame re-reads
+  // scrollHeight (now grown to its real value) and re-snaps.
+  //
+  // The loop exits when either (a) the bottom offset stops changing,
+  // or (b) we hit MAX_SNAP_FRAMES. The iteration count is small (6)
+  // because each frame is a paint, not a layout thrash.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    // Nothing to scroll — snapping an empty / short list would just
+    // set scrollTop=0 and needlessly trip the listener.
+    if (el.scrollHeight <= el.clientHeight) return;
+
+    // Clean slate: a fresh mount (or session switch) means "the user
+    // wants to see the newest content". Without this reset, coming
+    // back to a session where the user had scrolled up would keep
+    // them stuck at the old position.
+    userScrolledRef.current = false;
+    pinnedRef.current = true;
+    if (!pinned) setPinned(true);
+
+    // Snap to bottom, then keep re-snapping until the measured
+    // bottom offset stops moving (content height settled) or we
+    // exhaust the frame budget.
+    const MAX_SNAP_FRAMES = 6;
+    let frames = 0;
+    let lastBottom = -1;
+    let rafId = 0;
+    const converge = () => {
+      const node = listRef.current;
+      if (!node) return;
+      node.scrollTop = node.scrollHeight;
+      const bottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+      frames += 1;
+      // Converged: we're at the bottom AND the offset didn't move
+      // since the previous frame, so the content height is stable.
+      if (bottom <= 1 && Math.abs(bottom - lastBottom) < 1) return;
+      if (frames >= MAX_SNAP_FRAMES) return;
+      lastBottom = bottom;
+      rafId = requestAnimationFrame(converge);
+    };
+    // First snap synchronously (pre-paint, so the listener's very
+    // first onScroll measures distance < 80 and keeps pinned=true).
+    converge();
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  // Re-run on session switch. We deliberately do NOT depend on
+  // `messages.length` / `steps.length` — those are the auto-scroll
+  // useEffect's job. Re-running here would cause a double-snap on
+  // every streamed token.
+  }, [currentSessionId]);
   // R315: scan new chat messages for SDD phase-complete patterns.
   // The agent's sdd skill emits a pause message in the exact
   // shape "✅ 第 N 阶段完成 — <title>" (and optional sentinel
@@ -1202,7 +1290,56 @@ export function MessageList() {
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const wasPinned = pinnedRef.current;
+      // R735: a programmatic scroll (mount snap / jumpToBottom /
+      // useLayoutEffect snap) fires this onScroll with
+      // scrollTop = scrollHeight - clientHeight (distance < 80)
+      // — the listener must NOT treat that as "user scrolled",
+      // it should keep pinned=true. The userScrolledRef is
+      // already cleared to false by the useLayoutEffect above
+      // (or by jumpToBottom below) BEFORE the scroll assignment,
+      // so we trust the ref here: only a real user gesture that
+      // moves the scrollbar away from the bottom flips it.
+      //
+      // Edge case: the FIRST onScroll event after a mount snap
+      // arrives before our queueMicrotask(() => userScrolledRef =
+      // false) has run. The microtask is scheduled in the same
+      // task as the scrollTop assignment, and React's effect
+      // order is effects -> microtasks, so the listener (which
+      // is a passive scroll handler, fires async) will see
+      // userScrolledRef=false by the time it runs. We assert
+      // that here by guarding on userScrolledRef.
+      if (distance > 80 && !userScrolledRef.current) {
+        // Programmatic snap or auto-scroll landed within the
+        // pin window; keep pinned=true. This is the "mount
+        // snap" path: scrollHeight > clientHeight, scrollTop
+        // was set to scrollHeight in useLayoutEffect, distance
+        // ≈ 0, but React's first paint of children may have
+        // shifted scrollHeight by a pixel or two — the
+        // distance>80 branch is unreachable from a true snap,
+        // so we only need to defend the OTHER direction: if
+        // distance IS > 80 AND the user hasn't scrolled, it
+        // means the auto-scroll useEffect's last scrollTop
+        // assignment was overridden by an in-flight text_delta
+        // resize; the auto-scroll useEffect's next tick will
+        // re-snap. We just keep pinned=true.
+        if (wasPinned) {
+          pinnedRef.current = true;
+          return; // don't flip pinned false; the next auto-scroll tick handles it
+        }
+      }
       const nowPinned = distance < 80;
+      if (!nowPinned) {
+        // distance > 80: user dragged the scrollbar away
+        // from the bottom. Mark as a real user scroll so
+        // future auto-scroll useEffect runs respect the
+        // user's intent.
+        userScrolledRef.current = true;
+      } else if (wasPinned && nowPinned) {
+        // distance < 80: viewport is at the bottom. Clear
+        // the user-scrolled gate so a user that comes back
+        // to the bottom re-enables auto-scroll.
+        userScrolledRef.current = false;
+      }
       if (!wasPinned && nowPinned) {
         setUnseenCount(0);
         lastSeenRef.current = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
@@ -1217,7 +1354,15 @@ export function MessageList() {
   useEffect(() => {
     const cur = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
     const el = listRef.current;
-    if (pinned && el) {
+    // R735: the auto-scroll MUST run whenever the user has
+    // not actively scrolled away from the bottom — even if
+    // pinned=false due to a listener race (see useLayoutEffect
+    // comments). The previous logic gated on `pinned && el`,
+    // which silently dropped auto-scroll for the entire
+    // lifetime of a session if the first listener tick
+    // mis-classified the initial state.
+    const shouldFollowTail = (pinned || !userScrolledRef.current) && !!el;
+    if (shouldFollowTail) {
       // Historical reference: direct scrollTop assignment, not
       // scrollIntoView. scrollIntoView with behavior:'smooth'
       // is async; when many chunks arrive in quick succession
@@ -1240,6 +1385,14 @@ export function MessageList() {
       // state and means "user wants the bottom").
       requestAnimationFrame(() => {
         if (!listRef.current) return;
+        // R735: clear userScrolledRef before the assignment so
+        // the onScroll event the assignment fires interprets
+        // the resulting distance<80 as "back to bottom" and
+        // keeps pinned=true. (Without this, a stale
+        // userScrolledRef=true from a prior interaction would
+        // still gate the next listener's verdict and the next
+        // token would be missed.)
+        if (pinned) userScrolledRef.current = false;
         listRef.current.scrollTop = listRef.current.scrollHeight;
       });
       lastSeenRef.current = cur;
@@ -1277,10 +1430,18 @@ export function MessageList() {
     // trigger reliably — multiple scrollIntoView calls cancel
     // each other, the animation never lands. Direct assignment
     // is what the pinned auto-scroll path already uses.
+    //
+    // R735: clear userScrolledRef so the onScroll event this
+    // assignment fires does NOT get re-classified as a user
+    // gesture. Otherwise the next token's auto-scroll useEffect
+    // would see userScrolledRef=true and skip the snap, leaving
+    // the user stuck one token behind.
     const el = listRef.current;
+    userScrolledRef.current = false;
     if (el) el.scrollTop = el.scrollHeight;
     setUnseenCount(0);
     setPinned(true);
+    pinnedRef.current = true;
     lastSeenRef.current = { msgs: messages.length, subs: subTasks.length, steps: steps.length };
   };
 

@@ -277,6 +277,28 @@ public class SpringAiChatClient implements ChatClient {
             if (lastBody != null) errMsg += " [body=" + lastBody + "]";
             LOG.error("R697: all {} attempts failed. Final: {}", attempt, errMsg);
             queue.offer(new StreamEvent.RunEnd(errMsg, List.of()));
+            // R742: this is the R738 bug in its sibling. R738 fixed
+            // the `catch (Exception e)` mid-iteration branch below
+            // (RunEnd without POISON ⇒ the Spliterator's
+            // `queue.take()` blocks forever and the consumer never
+            // reads the RunEnd that is already sitting in the queue).
+            // The `it == null` branch has the SAME shape — offer a
+            // terminal RunEnd, then `return;`, which skips the
+            // `queue.offer(POISON)` at the bottom of runCall()'s
+            // caller in `stream(...)`.
+            //
+            // This is the single most reachable variant of the bug:
+            // `it == null` means all 3 R697 retry attempts exhausted,
+            // which is exactly what happens on a sustained upstream
+            // outage or a persistently-400 MiniMax prompt. The user
+            // sees the input box stay disabled and the header sit in
+            // a misleading `● Idle` — the RunEnd carrying the real
+            // diagnostic never reaches the renderer.
+            //
+            // R742 rule: EVERY terminal RunEnd offer inside runCall
+            // must be immediately followed by `queue.offer(POISON)`.
+            // If you add a new early-return branch, pair them.
+            queue.offer(POISON);
             return;
         }
         try {
@@ -325,6 +347,18 @@ public class SpringAiChatClient implements ChatClient {
             queue.offer(new StreamEvent.RunEnd(
                     "error: " + e.getClass().getSimpleName() + ": " + e.getMessage(),
                     List.of()));
+            // R738: poison the queue so the Spliterator's `queue.take()`
+            // unblocks and returns false. Pre-R738 we offered a RunEnd
+            // but `return;` skipped the POISON offer at the bottom of
+            // runCall(), so the Spliterator blocked forever on
+            // `queue.take()`, QueryEngine.currentLlmIt.next() never
+            // completed, and the R735a try/catch around tryAdvance was
+            // unreachable — the desktop sat in `● Idle` with no error
+            // banner / ↻ retry even though the RunEnd was sitting in
+            // the queue all along (Lesson 1052 redux: produced
+            // terminal event, consumer never read it). Always pair a
+            // (RunEnd, POISON) so the spliterator closes.
+            queue.offer(POISON);
             return;
         }
         if (LOG.isDebugEnabled()) {
