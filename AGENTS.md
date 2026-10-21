@@ -410,11 +410,35 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   (`isDeterministicHardStop`), or a new log string. Verified via
   `javap -p -c` for R741.
 
+- **R748** (scroll permanent latch + L4 self-consumption): two
+  independent desktop bugs. (1) `userScrolledRef` in
+  `MessageList.tsx` was a ONE-WAY latch cleared only by
+  reaching the bottom again — but `distance` is measured
+  against a `scrollHeight` that grows with every streamed token,
+  so content growth alone armed it and no user action could
+  clear it. Fix: arm only when `scrollTop` itself moved
+  (`scrollTopMoved`), plus a TTL (`USER_SCROLL_GATE_TTL_MS`
+  = 4s) + a wakeup timer so following resumes. `shouldFollowTail`
+  must read `!isUserScrollGateActive()`, NOT the raw boolean —
+  reading the boolean bypasses the TTL and restores the latch.
+  (2) `stripOldestToFit` re-trimmed the FULL on-disk transcript
+  every turn, so the drop counter grew ~6 messages PER TURN and
+  the working window shrank 139 -> 107 inside ONE user request;
+  the model forgot its own work, began re-reading files, and
+  17.6% of requests were dropped by the provider (the "卡住然后
+  恢复" symptom — 120s/143s/449s stalls are the R697 retry
+  ladder's fingerprint). Fix: a shrink-to-fit tier BEFORE
+  head-drop that uniformly clips oversized TOOL_RESULTs to a
+  descending water mark. Clipping is REQUIRED, not cheaper:
+  dropping a tool_result forces R736 to strip its tool_call and
+  the whole turn vanishes.
+
 ## See also
 
 - `docs/R719-session-anchor.md`
 - `docs/R720-systematic-repair.md`
 - `docs/R741-R742-R743-bug-fixes.md`
+- `docs/R748-scroll-latch-and-l4-self-consumption.md`
 - `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`
   (Mavis's cross-project agent memory)
 - `~/.aethercode/agent-memory/default/MEMORY.md` (per-agent

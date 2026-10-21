@@ -53,16 +53,20 @@ describe('R275: chat scroll behavior — always scroll when pinned + per-tick un
     // mount because the first batch of streamed content is
     // already taller than the viewport (distance ≫ 80).
     const src = readSrc('src/components/MessageList.tsx');
-    // Extract the auto-scroll useEffect body. There are several
-    // useEffect calls in this file; we want the one that handles
-    // auto-scroll, which is the one right before `const
-    // jumpToBottom = ...`.
+    // Extract the auto-scroll useEffect body. R748 added an
+    // additional useEffect (the TTL wakeup timer) BETWEEN the
+    // auto-scroll effect and jumpToBottom, so the old
+    // "last useEffect before jumpToBottom" heuristic now grabs the
+    // wrong one. Anchor on the auto-scroll effect's own marker
+    // instead — `shouldFollowTail` appears exactly once and only
+    // inside this effect.
+    const autoIdx = src.indexOf('shouldFollowTail');
+    expect(autoIdx, 'shouldFollowTail computation must exist').toBeGreaterThan(0);
     const jtIdx = src.indexOf('const jumpToBottom');
-    expect(jtIdx, 'jumpToBottom declaration must exist').toBeGreaterThan(0);
-    // walk backward to the previous `useEffect(`
+    expect(jtIdx, 'jumpToBottom declaration must exist').toBeGreaterThan(autoIdx);
     const slice = src.slice(0, jtIdx);
-    const lastUseEffectStart = slice.lastIndexOf('useEffect(');
-    expect(lastUseEffectStart, 'useEffect before jumpToBottom must exist').toBeGreaterThan(0);
+    const lastUseEffectStart = slice.lastIndexOf('useEffect(', autoIdx);
+    expect(lastUseEffectStart, 'auto-scroll useEffect must exist').toBeGreaterThan(0);
     const body = slice.slice(lastUseEffectStart, jtIdx);
     // The auto-scroll branch is inside `if (pinned && el) { ...
     // requestAnimationFrame(() => { ... }); ... }`. The R275 fix
@@ -100,9 +104,19 @@ describe('R275: chat scroll behavior — always scroll when pinned + per-tick un
     // to "89020 new" even while the user was seeing the latest
     // content (they were pinned but had briefly scrolled up).
     const src = readSrc('src/components/MessageList.tsx');
+    // R748: anchor on `shouldFollowTail` rather than "the last
+    // useEffect before jumpToBottom" — R748 inserted the TTL
+    // wakeup useEffect between the auto-scroll effect and
+    // jumpToBottom, so that heuristic now slices the wrong block
+    // and reports 0 occurrences of the per-branch lastSeenRef
+    // advance.
+    const autoIdx = src.indexOf('shouldFollowTail');
+    expect(autoIdx, 'shouldFollowTail computation must exist').toBeGreaterThan(0);
     const jtIdx = src.indexOf('const jumpToBottom');
+    expect(jtIdx, 'jumpToBottom declaration must exist').toBeGreaterThan(autoIdx);
     const slice = src.slice(0, jtIdx);
-    const lastUseEffectStart = slice.lastIndexOf('useEffect(');
+    const lastUseEffectStart = slice.lastIndexOf('useEffect(', autoIdx);
+    expect(lastUseEffectStart, 'auto-scroll useEffect must exist').toBeGreaterThan(0);
     const body = slice.slice(lastUseEffectStart, jtIdx);
     // Count occurrences of `lastSeenRef.current = cur` inside the
     // useEffect body — must be ≥ 2 (one in each branch).

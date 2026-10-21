@@ -18,10 +18,16 @@ import { describe, it, expect } from 'vitest';
  * branches + the persistence wiring.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const STORE_TS = join(process.cwd(), 'src', 'store', 'index.ts');
-const INPUT_TS = join(process.cwd(), 'src', 'components', 'MessageInput.tsx');
+// R748: resolve the package root from this file's own location,
+// never from the ambient wd — under vitest's jsdom environment
+// with several source-pin suites in one run, the ambient wd is
+// not reliably the package root.
+const __root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const STORE_TS = join(__root, 'src', 'store', 'index.ts');
+const INPUT_TS = join(__root, 'src', 'components', 'MessageInput.tsx');
 const storeSource = readFileSync(STORE_TS, 'utf8');
 const inputSource = readFileSync(INPUT_TS, 'utf8');
 

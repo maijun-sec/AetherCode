@@ -16,9 +16,15 @@ import { describe, it, expect } from 'vitest';
  * mode branch.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const STORE_TS = join(process.cwd(), 'src', 'store', 'index.ts');
+// R748: resolve the package root from this file's own location,
+// never from the ambient wd — under vitest's jsdom environment
+// with several source-pin suites in one run, the ambient wd is
+// not reliably the package root.
+const __root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const STORE_TS = join(__root, 'src', 'store', 'index.ts');
 const source = readFileSync(STORE_TS, 'utf8');
 
 describe('R331 createNewSession mode branch', () => {
@@ -66,7 +72,7 @@ describe('R331 MessageInput no longer auto-detects SDD from chat input', () => {
     // that — sessions are mode-bound at creation. The
     // MessageInput source should no longer mention
     // sddIntentKeyword / spec-kit / speckit trigger.
-    const miSrc = readFileSync(join(process.cwd(), 'src', 'components', 'MessageInput.tsx'), 'utf8');
+    const miSrc = readFileSync(join(__root, 'src', 'components', 'MessageInput.tsx'), 'utf8');
     expect(miSrc).not.toMatch(/sddIntentKeyword/);
     expect(miSrc).not.toMatch(/spec-kit|speckit|用SDD流程|规格化.*流程/);
   });
@@ -76,7 +82,7 @@ describe('R331 MessageInput no longer auto-detects SDD from chat input', () => {
     // active, the user can type approve/skip/modify and
     // they get routed to sendSsdCommand. R331 must preserve
     // this — only the auto-detect branch is removed.
-    const miSrc = readFileSync(join(process.cwd(), 'src', 'components', 'MessageInput.tsx'), 'utf8');
+    const miSrc = readFileSync(join(__root, 'src', 'components', 'MessageInput.tsx'), 'utf8');
     expect(miSrc).toMatch(/sendSsdCommand\('approve'\)/);
     expect(miSrc).toMatch(/sendSsdCommand\('skip'\)/);
     expect(miSrc).toMatch(/sendSsdCommand\('modify',\s*intent\)/);

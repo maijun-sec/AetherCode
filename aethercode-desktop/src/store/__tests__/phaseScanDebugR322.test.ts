@@ -16,7 +16,8 @@ import { describe, it, expect } from 'vitest';
  * truth).
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   scanLatestSddPhaseInMessages,
   SDD_PHASE_TITLE_TO_ID,
@@ -31,7 +32,12 @@ import {
   SDD_PHASE_SKIP_RE,
 } from '../index';
 
-const ML = join(process.cwd(), 'src', 'components', 'MessageList.tsx');
+// R748: resolve the package root from this file's own location,
+// never from the ambient wd — under vitest's jsdom environment
+// with several source-pin suites in one run, the ambient wd is
+// not reliably the package root.
+const __root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const ML = join(__root, 'src', 'components', 'MessageList.tsx');
 const ml = readFileSync(ML, 'utf8');
 
 // pinned reference — see import block above.
@@ -123,7 +129,7 @@ choices:end -->`;
   it('store text_delta + run_end handlers call sddScanAndApplyPhaseUpdate', () => {
     // R330: both handlers must call the scanner as backstops.
     // Read store source to verify both call sites are wired.
-    const storeSrc = readFileSync(join(process.cwd(), 'src', 'store', 'index.ts'), 'utf8');
+    const storeSrc = readFileSync(join(__root, 'src', 'store', 'index.ts'), 'utf8');
     // text_delta inline scan (gated on no-pending-confirm)
     expect(storeSrc).toMatch(/case 'text_delta'[\s\S]*?sddScanAndApplyPhaseUpdate\(\)/);
     // run_end inline scan (canonical backstop)

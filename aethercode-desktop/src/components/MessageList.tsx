@@ -1092,6 +1092,50 @@ export function MessageList() {
   //      effect respects the listener's pinned=false verdict even on
   //      later re-renders.
   const userScrolledRef = useRef(false);
+  // R748 (2026-10-21): userScrolledRef is a ONE-WAY LATCH. It is
+  // set true the first time the listener sees distance > 80 and is
+  // only cleared when the listener sees distance < 80 *again*. But
+  // distance is computed against a scrollHeight that GROWS on every
+  // streamed token / tool card, so the viewport that was "80px from
+  // the bottom" a minute ago can easily be 3000px from the bottom
+  // after 400 new tool cards land — WITHOUT the user scrolling at
+  // all. The latch never gets a chance to clear because the user
+  // isn't at the new bottom to clear it, so auto-scroll is dead for
+  // the rest of the session: "scrolled up once → can never scroll
+  // back down", the exact symptom reported.
+  //
+  // The fix is to make the gate STICKY-IN-TIME rather than
+  // STICKY-PERMANENT: record WHEN the user last scrolled away from
+  // the bottom, and treat the gate as expired after a short TTL so
+  // that (a) the user can still read old content while new content
+  // arrives, but (b) they get pulled back to the live tail within
+  // a few seconds even if they never touched the scrollbar again.
+  // This is the same intent as every mainstream chat UI (ChatGPT /
+  // Claude.ai / Slack): "you scrolled away → we stop yanking; you
+  // idle → we resume following".
+  const USER_SCROLL_GATE_TTL_MS = 4_000;
+  const lastUserScrollAtRef = useRef(0);
+  // R748: last measured scroll geometry, so the scroll listener can
+  // tell "the user moved the viewport" (scrollTop changed) from "the
+  // content grew under a stationary viewport" (only scrollHeight
+  // changed). Both fire a scroll event; only one is a user gesture.
+  const lastScrollTopRef = useRef(0);
+  const lastScrollHeightRef = useRef(0);
+  /** True only while the user-scrolled gate is still fresh. */
+  const isUserScrollGateActive = () => {
+    if (!userScrolledRef.current) return false;
+    if (lastUserScrollAtRef.current === 0) return true;
+    return Date.now() - lastUserScrollAtRef.current < USER_SCROLL_GATE_TTL_MS;
+  };
+  /** Pull the viewport back to the live tail and disarm the gate. */
+  const resumeFollowing = () => {
+    userScrolledRef.current = false;
+    lastUserScrollAtRef.current = 0;
+    if (!pinnedRef.current) {
+      pinnedRef.current = true;
+      setPinned(true);
+    }
+  };
   // live list of subagent spawn cards. Each entry
   // is a `subagent_spawn` event's payload (role, description,
   // status) keyed by event id so duplicate dispatches don't
@@ -1290,6 +1334,25 @@ export function MessageList() {
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const wasPinned = pinnedRef.current;
+      // R748: distinguish a REAL user gesture from content growth.
+      // A scroll event fires for BOTH: (a) the user dragging the
+      // scrollbar, and (b) the browser firing a scroll event because
+      // scrollHeight grew underneath a stationary viewport. Case (b)
+      // must NOT arm the gate — that's the R748 regression: pre-R748
+      // we armed it on any distance > 80, and a 400-message research
+      // session pushed the content 3000px past the viewport without
+      // the user touching anything, permanently disabling
+      // auto-scroll.
+      //
+      // The reliable discriminator is WHERE the viewport is sitting
+      // relative to the previous measurement, not whether a scroll
+      // event fired: if scrollTop itself moved since our last event,
+      // the user moved it. If scrollTop is unchanged and only
+      // scrollHeight grew, the browser did it to us.
+      const lastScrollTop = lastScrollTopRef.current;
+      const scrollTopMoved = Math.abs(el.scrollTop - lastScrollTop) > 1;
+      lastScrollTopRef.current = el.scrollTop;
+      lastScrollHeightRef.current = el.scrollHeight;
       // R735: a programmatic scroll (mount snap / jumpToBottom /
       // useLayoutEffect snap) fires this onScroll with
       // scrollTop = scrollHeight - clientHeight (distance < 80)
@@ -1329,16 +1392,19 @@ export function MessageList() {
       }
       const nowPinned = distance < 80;
       if (!nowPinned) {
-        // distance > 80: user dragged the scrollbar away
-        // from the bottom. Mark as a real user scroll so
-        // future auto-scroll useEffect runs respect the
-        // user's intent.
-        userScrolledRef.current = true;
-      } else if (wasPinned && nowPinned) {
+        // R748: only arm the gate when the VIEWPORT moved. A pure
+        // scrollHeight growth leaves scrollTop untouched, so
+        // scrollTopMoved is false and we leave the gate alone —
+        // the content grew, the user didn't leave.
+        if (scrollTopMoved) {
+          userScrolledRef.current = true;
+          lastUserScrollAtRef.current = Date.now();
+        }
+      } else {
         // distance < 80: viewport is at the bottom. Clear
         // the user-scrolled gate so a user that comes back
         // to the bottom re-enables auto-scroll.
-        userScrolledRef.current = false;
+        resumeFollowing();
       }
       if (!wasPinned && nowPinned) {
         setUnseenCount(0);
@@ -1361,7 +1427,7 @@ export function MessageList() {
     // which silently dropped auto-scroll for the entire
     // lifetime of a session if the first listener tick
     // mis-classified the initial state.
-    const shouldFollowTail = (pinned || !userScrolledRef.current) && !!el;
+    const shouldFollowTail = (pinned || !isUserScrollGateActive()) && !!el;
     if (shouldFollowTail) {
       // Historical reference: direct scrollTop assignment, not
       // scrollIntoView. scrollIntoView with behavior:'smooth'
@@ -1423,6 +1489,27 @@ export function MessageList() {
     // bash is streaming.
   }, [messages, isStreaming, steps, subTasks.length, currentSubTaskId, pinned]);
 
+  // R748: the TTL gate needs a wakeup. When the user-scrolled gate
+  // expires we MUST pull the viewport back to the tail even if no
+  // new content arrived in the meantime — otherwise "the gate went
+  // stale" is unobservable and the user is still stuck where they
+  // scrolled to. This timer is the ONLY thing that re-arms
+  // following once the gate lapses, so it fires shortly AFTER the
+  // TTL (not on a fixed poll).
+  useEffect(() => {
+    if (!userScrolledRef.current) return;
+    const since = Date.now() - lastUserScrollAtRef.current;
+    const remaining = Math.max(0, USER_SCROLL_GATE_TTL_MS - since);
+    const id = window.setTimeout(() => {
+      if (!isUserScrollGateActive()) {
+        // Gate lapsed while the user was reading — resume following
+        // so the live tail reclaims the viewport.
+        resumeFollowing();
+      }
+    }, remaining + 40);
+    return () => window.clearTimeout(id);
+  }, [messages, steps, subTasks.length, isStreaming]);
+
   const jumpToBottom = () => {
     // R275: use direct scrollTop assignment (synchronous,
     // idempotent) instead of scrollIntoView({ behavior: 'smooth' }).
@@ -1437,8 +1524,12 @@ export function MessageList() {
     // would see userScrolledRef=true and skip the snap, leaving
     // the user stuck one token behind.
     const el = listRef.current;
-    userScrolledRef.current = false;
-    if (el) el.scrollTop = el.scrollHeight;
+    resumeFollowing();
+    if (el) {
+      lastScrollTopRef.current = el.scrollHeight;
+      lastScrollHeightRef.current = el.scrollHeight;
+      el.scrollTop = el.scrollHeight;
+    }
     setUnseenCount(0);
     setPinned(true);
     pinnedRef.current = true;

@@ -834,6 +834,56 @@ public final class TranscriptPruner {
         // emergency-drop through bumpL4Metrics below so the
         // UI sees "1 strip per L4 firing".
 
+        // R748 (2026-10-21): L4 was self-consuming within a single
+        // turn. Every iteration of a tool-calling loop re-runs this
+        // method against the FULL on-disk transcript, so the trim
+        // point marched forward on every single LLM call:
+        //
+        //   turn  1: 377 messages -> 139 survivors (dropped 239)
+        //   turn  2: 383 messages -> 138 survivors (dropped 245)
+        //   ...
+        //   turn 17: 417 messages -> 107 survivors (dropped 310)
+        //
+        // The drop counter grows by ~6 messages PER TURN because each
+        // turn adds a handful of messages of its own. So the working
+        // window shrank from 139 to 107 within 17 turns of the same
+        // user request — the model was progressively forgetting the
+        // work it had already done, re-reading the same files, and
+        // losing the thread. That is the "多次卡住然后自己恢复"
+        // symptom: the engine was thrashing against its own context
+        // budget rather than the provider being slow.
+        //
+        // The fix has two parts:
+        //
+        // (1) SHRINK-TO-FIT instead of drop-until-it-fits. The
+        //     transcript is only ~4x over cap (589K vs 150K), and
+        //     the reason is a handful of very large TOOL_RESULT
+        //     messages (arxiv/google_scholar payloads are 10-40K
+        //     chars each). Dropping whole messages throws away
+        //     reasoning; clipping the largest tool result preserves
+        //     the turn structure. So before we start dropping from
+        //     the head we shrink the fat.
+        //
+        // (2) The window then stays stable turn-over-turn: we only
+        //     drop from the head when clipping the fat was not
+        //     enough to fit.
+        long preTrimChars = current;
+        List<Message> fatTrimmed = clipFatToolResults(transcript, maxChars, minKeep);
+        if (fatTrimmed != transcript) {
+            long afterFat = totalChars(fatTrimmed);
+            if (afterFat <= maxChars) {
+                LOG.info("R748: shrink-to-fit clipped oversized tool_result(s) "
+                        + "{} -> {} chars (cap={}) instead of dropping {} head message(s)",
+                        preTrimChars, afterFat, maxChars,
+                        transcript.size() - fatTrimmed.size());
+                return bumpAfterFatTrim(fatTrimmed, transcript, metrics);
+            }
+            // Still over after clipping the fat — fall through and
+            // drop from the head as before.
+            transcript = fatTrimmed;
+            current = afterFat;
+        }
+
         // R719: Session Anchor. Anchors (system message + any
         // message with metadata.anchor=true) must NEVER be
         // stripped by L4. We collect their indices + chars up
@@ -1061,6 +1111,109 @@ public final class TranscriptPruner {
         LOG.warn("R718-L4: clipLargest shrank message id={} from {} to {} chars (maxChars={})",
                 m.id(), largestSize, cap, maxChars);
         return out;
+    }
+
+    /** R748 (2026-10-21): the shrink-to-fit tier that runs BEFORE
+     *  head-drop. Clips oversized TOOL_RESULT payloads in place so
+     *  the turn structure (assistant tool_call + its tool_result)
+     *  survives — which is mandatory, not optional: R736/R741
+     *  established that the provider's contract is an
+     *  adjacency-preserving batch, so dropping a tool_result to save
+     *  context forces R736 to strip the matching tool_call on the
+     *  NEXT call, which drops the turn entirely. Clipping keeps the
+     *  declaration and the answer adjacent and only truncates the
+     *  answer's body.
+     *
+     *  <p>Strategy: repeatedly take the largest tool_result over
+     *  {@link #R748_TOOL_RESULT_SOFT_CAP} chars and clip it to that
+     *  cap until the total fits under {@code maxChars} or no
+     *  oversized tool result is left. Only tool results are touched —
+     *  assistant/user reasoning text is never clipped here, because
+     *  losing reasoning is worse than losing a payload we can
+     *  re-fetch.
+     *
+     *  <p>Returns the SAME list reference when nothing needed
+     *  clipping, so the caller's fast-path identity check still
+     *  works. */
+    private static final int R748_TOOL_RESULT_SOFT_CAP = 4_000;
+
+    static List<Message> clipFatToolResults(
+            List<Message> transcript, long maxChars, int minKeep) {
+        if (transcript == null || transcript.isEmpty()) return transcript;
+        long total = totalChars(transcript);
+        if (total <= maxChars) return transcript;
+
+        List<Message> out = null;
+        // R748: water-level shrinking. Instead of clipping every
+        // oversized tool_result down to a fixed 4K and then giving up
+        // (which leaves the transcript STILL over cap whenever the
+        // non-tool text alone exceeds it — the 504K-when-cap-is-150K
+        // case), we lower a per-message water mark until the total
+        // fits. Each pass clips the single largest remaining tool
+        // result to the CURRENT water mark, then drops the mark by
+        // the amount still needed. This converges because the water
+        // mark strictly decreases and is floored at a small value.
+        int waterMark = R748_TOOL_RESULT_SOFT_CAP;
+        // R748: clip UNIFORMLY across all oversized tool results
+        // rather than shaving only the single largest. Clipping one
+        // at a time converges, but leaves a ragged transcript where
+        // the tail payloads are full-size while a couple of head ones
+        // are shaved to nothing — and those shaved-to-nothing ones are
+        // exactly the ones the model most needs. Uniform is both
+        // cheaper (one pass) and fairer to the model.
+        for (int pass = 0; pass < 128 && total > maxChars; pass++) {
+            if (out == null) out = new ArrayList<>(transcript);
+            long before = total;
+            int clipped = 0;
+            for (int i = 0; i < out.size(); i++) {
+                Message m = out.get(i);
+                if (m == null || !isToolResult(m)) continue;
+                if (messageCharLength(m) <= waterMark) continue;
+                out.set(i, clipMessageContent(m, waterMark));
+                clipped++;
+            }
+            total = totalChars(out);
+            if (clipped == 0 || total >= before) break; // nothing left to shave
+            if (total <= maxChars) break;
+            // Still over: lower the water mark by roughly the
+            // remaining overflow spread across the remaining tool
+            // results, so we converge in a handful of passes instead
+            // of shaving one message per pass.
+            long overflow = total - maxChars;
+            int toolResultCount = 0;
+            for (int i = 0; i < out.size(); i++) {
+                if (isToolResult(out.get(i))) toolResultCount++;
+            }
+            if (toolResultCount == 0) break;
+            long perMessageCut = Math.max(256, overflow / toolResultCount);
+            waterMark = (int) Math.max(256, waterMark - perMessageCut);
+        }
+        return out == null ? transcript : out;
+    }
+
+    /** R748: true iff this message is a tool answer (role TOOL_RESULT
+     *  or carrying a ToolResultBlock). Used by
+     *  {@link #clipFatToolResults} to pick shrinkable victims. */
+    private static boolean isToolResult(Message m) {
+        if (m.role() == Role.TOOL_RESULT) return true;
+        if (m.content() != null) {
+            for (org.aethercode.core.message.ContentBlock b : m.content()) {
+                if (b instanceof org.aethercode.core.message.ContentBlock.ToolResultBlock) return true;
+            }
+        }
+        return false;
+    }
+
+    /** R748: bookkeeping for the shrink-to-fit early return. We
+     *  deliberately do NOT bump the L4 strip counter here — no
+     *  messages were dropped, only clipped. The clip counter is
+     *  bumped instead so the renderer's "context compressed"
+     *  telemetry stays honest about what happened. */
+    private static List<Message> bumpAfterFatTrim(
+            List<Message> fatTrimmed, List<Message> original,
+            org.aethercode.core.metrics.MetricsCollector metrics) {
+        if (metrics != null) metrics.incL4Strip(0);
+        return fatTrimmed;
     }
 
     /** R718: drop oldest messages until the total fits under

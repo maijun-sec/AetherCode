@@ -15,9 +15,16 @@ import { describe, it, expect } from 'vitest';
  * block to the user), this test fails.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const TS = join(process.cwd(), 'src', 'components', 'MessageList.tsx');
+// R748: resolve the package root from this file's own location,
+// never from the ambient wd — under vitest's jsdom environment
+// with several source-pin suites in one run, the ambient wd is
+// not reliably the package root.
+const __root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+const TS = join(__root, 'src', 'components', 'MessageList.tsx');
 const source = readFileSync(TS, 'utf8');
 
 describe('MessageList — R318 hidden-sdd collapse', () => {

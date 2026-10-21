@@ -1,5 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// R748: resolve the package root from this file's own location, never
+// from the ambient wd — under vitest's jsdom environment with several
+// source-pin suites in one run, the ambient wd is not reliably the
+// package root.
+const __root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 /**
  * R337 regression test: MessageInput's approve/skip regex
@@ -107,12 +116,8 @@ describe('R337 MessageInput approve/skip regex (pure-Chinese keywords)', () => {
     // Source-pin test: ensure future edits don't reintroduce
     // the ASCII-only `\b` regression. We verify by reading
     // the MessageInput.tsx source.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { readFileSync } = require('node:fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { join } = require('node:path');
     const src = readFileSync(
-      join(process.cwd(), 'src', 'components', 'MessageInput.tsx'),
+      join(__root, 'src', 'components', 'MessageInput.tsx'),
       'utf8',
     );
     // The approve/skip lines must NOT use `\b` as a trailing

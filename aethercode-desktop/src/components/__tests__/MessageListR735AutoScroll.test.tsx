@@ -30,9 +30,17 @@ import { describe, it, expect } from 'vitest';
 // to re-validate the auto-scroll behaviour.
 
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const TS = join(process.cwd(), 'src', 'components', 'MessageList.tsx');
+// R748: derive the package root from this file's own location instead
+// of process.cwd(). Under vitest's jsdom environment with multiple
+// source-pin suites in one run, process.cwd() is not reliably the
+// package root — this suite then read a non-existent path and failed
+// with a confusing "expected undefined" mismatch rather than an
+// ENOENT. Same fix as MessageListR748ScrollGate / ToolsPanel.
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const TS = join(root, 'src', 'components', 'MessageList.tsx');
 const source = readFileSync(TS, 'utf8');
 
 describe('MessageList — R735 auto-scroll first-paint', () => {
@@ -106,10 +114,20 @@ describe('MessageList — R735 auto-scroll first-paint', () => {
     // — even if pinned is false (because the listener flipped
     // it for some reason), auto-scroll still fires as long as
     // the user hasn't actively scrolled away.
+    //
+    // R748: the right-hand side is now `!isUserScrollGateActive()`
+    // rather than `!userScrolledRef.current`. The raw boolean was a
+    // PERMANENT latch — it could only be cleared by the user
+    // reaching the bottom again, which content growth made
+    // unreachable — so auto-scroll stayed dead after a single
+    // scroll-up. `isUserScrollGateActive()` is the TTL-aware
+    // version and preserves this test's intent (follow the tail
+    // unless the user scrolled away) while making it recoverable.
+    // See MessageListR748ScrollGate.test.tsx for the full contract.
     const block = source.match(
-      /shouldFollowTail\s*=\s*\(pinned\s*\|\|\s*!userScrolledRef\.current\)\s*&&\s*!!el/
+      /shouldFollowTail\s*=\s*\(pinned\s*\|\|\s*!\s*isUserScrollGateActive\(\)\)\s*&&\s*!!el/
     );
-    expect(block, 'auto-scroll useEffect must gate on (pinned || !userScrolledRef.current)').toBeTruthy();
+    expect(block, 'auto-scroll useEffect must gate on (pinned || !isUserScrollGateActive())').toBeTruthy();
   });
 
   it('the scroll listener flips userScrolledRef to true on a real user scroll', () => {
@@ -128,9 +146,19 @@ describe('MessageList — R735 auto-scroll first-paint', () => {
     // Without this, the user clicking the jump-to-bottom button
     // would still be "user-scrolled" on the next render, and
     // the next streamed token would skip auto-scroll.
-    const block = source.match(
-      /jumpToBottom\s*=\s*\(\s*\)\s*=>\s*\{[\s\S]*?userScrolledRef\.current\s*=\s*false;[\s\S]*?scrollTop\s*=\s*\w+\.scrollHeight/
-    );
-    expect(block, 'jumpToBottom must clear userScrolledRef before snapping').toBeTruthy();
+    //
+    // R748: the reset moved into the `resumeFollowing()` helper,
+    // which clears BOTH the boolean and its TTL timestamp — the
+    // timestamp matters because a stale one would re-arm the gate
+    // on the next scroll event. The INTENT is unchanged: the manual
+    // jump must fully disarm the user-scrolled gate before snapping.
+    const jumpIdx = source.indexOf('const jumpToBottom');
+    expect(jumpIdx, 'jumpToBottom declaration must exist').toBeGreaterThan(0);
+    const body = source.slice(jumpIdx, jumpIdx + 900);
+    expect(
+      body,
+      'jumpToBottom must call resumeFollowing() (which clears userScrolledRef ' +
+        'and the TTL timestamp) before snapping to the bottom'
+    ).toMatch(/resumeFollowing\(\)/);
   });
 });

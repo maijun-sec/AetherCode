@@ -19,12 +19,18 @@ import { describe, it, expect } from 'vitest';
  * + CSS grid layout.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const BAR = join(process.cwd(), 'src', 'components', 'SddPhaseBar.tsx');
-const CSS = join(process.cwd(), 'src', 'components', 'SddPhaseBar.css');
-const STORE = join(process.cwd(), 'src', 'store', 'index.ts');
-const INPUT = join(process.cwd(), 'src', 'components', 'MessageInput.tsx');
+// R748: resolve the package root from this file's own location,
+// never from the ambient wd — under vitest's jsdom environment
+// with several source-pin suites in one run, the ambient wd is
+// not reliably the package root.
+const __root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const BAR = join(__root, 'src', 'components', 'SddPhaseBar.tsx');
+const CSS = join(__root, 'src', 'components', 'SddPhaseBar.css');
+const STORE = join(__root, 'src', 'store', 'index.ts');
+const INPUT = join(__root, 'src', 'components', 'MessageInput.tsx');
 
 const bar = readFileSync(BAR, 'utf8');
 const css = readFileSync(CSS, 'utf8');
