@@ -2520,6 +2520,29 @@ public class AetherCodeMethods {
         }
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("sessionId",       target.appState().sessionId());
+        // R749 (2026-10-21): the AUTHORITATIVE run state. The
+        // desktop used to infer "is a run in flight" purely from
+        // whether it had received a chunk recently, which is a
+        // guess — and a guess the UI can get permanently wrong. The
+        // reported symptom was a desktop stuck showing "Running"
+        // for 7 minutes with 0 engine threads alive and the daemon
+        // having processed zero queries since it booted: the run had
+        // died with the previous daemon process, but the renderer
+        // never learned about it because nothing ever reconciled.
+        //
+        // `inFlight` is the single source of truth — `query()`
+        // registers the run before any event flows, and the
+        // `finally` block removes it on EVERY exit path (success,
+        // hard-stop, cancel, throw). So "is this runId present"
+        // answers "is this run actually executing" with no
+        // heuristics involved.
+        //
+        // The UI must treat this as ground truth on every reconnect
+        // and after any suspected desync, rather than inferring from
+        // silence.
+        java.util.List<String> liveRunIds = List.copyOf(inFlight.keySet());
+        r.put("isRunning",        !liveRunIds.isEmpty());
+        r.put("liveRunIds",       liveRunIds);
         r.put("model",           target.appState().mainLoopModel());
         r.put("permissionMode",  target.appState().permissionMode().name());
         r.put("toolCount",       target.appState().toolPool().size());

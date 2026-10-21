@@ -433,12 +433,39 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   dropping a tool_result forces R736 to strip its tool_call and
   the whole turn vanishes.
 
+- **R749** (stale `Running` after a daemon restart): the desktop
+  showed "Running" for 7 minutes while `jstack` showed zero engine
+  threads and the daemon had processed zero queries since boot. The
+  renderer inferred "is a run in flight?" from ONE signal — "have I
+  seen a chunk lately" — and after a reconnect that inference is
+  always wrong: a freshly-established healthy WS connection is
+  silent-but-fine, so every liveness signal reads green while
+  `isStreaming` stays stuck true from the dead run. The
+  `daemon.disconnected` notification that would have cleared it is
+  only emitted when the ping fails / read errors / close arrives,
+  and a supervisor that reconnects in between means it never fires.
+  Fix: stop inferring. `inFlight` in `AetherCodeMethods` is
+  authoritative — `query()` registers before any event flows and the
+  `finally` removes on EVERY exit path (success / hard-stop /
+  cancel / throw) — so `getState().isRunning` answers "is this run
+  actually executing" with no heuristics. The renderer reconciles
+  against it in TWO places: `initialize()` (the reconnect path,
+  immediately) and `refreshEngineState()` (the 15s tick). The guard
+  is one-directional (`isRunning === false && isStreaming`) because
+  the converse legitimately happens (a run that started after our
+  snapshot) and treating it as a desync would kill live runs. Also
+  fixed the watchdog's own blind spot: `lastChunkTs <= 0` used to
+  bail out, which is EXACTLY the window between "isStreaming = true"
+  and the first chunk — a run killed there was unwatchable; it now
+  falls back to `currentQuery.startedAt`.
+
 ## See also
 
 - `docs/R719-session-anchor.md`
 - `docs/R720-systematic-repair.md`
 - `docs/R741-R742-R743-bug-fixes.md`
 - `docs/R748-scroll-latch-and-l4-self-consumption.md`
+- `docs/R749-stale-running-after-daemon-restart.md`
 - `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`
   (Mavis's cross-project agent memory)
 - `~/.aethercode/agent-memory/default/MEMORY.md` (per-agent

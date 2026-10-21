@@ -4664,6 +4664,46 @@ export const useStore = create<AppState>((set, get) => {
           if (state?.sessionId) {
             void get().hydrateTranscript(state.sessionId);
           }
+          // R749 (2026-10-21): reconcile streaming state IMMEDIATELY
+          // on (re)connect, before the 15s timer would get around to
+          // it.
+          //
+          // This is the exact path that produced the reported
+          // "stuck showing Running for 7 minutes" bug: the daemon
+          // restarted underneath the renderer (jar mtime change /
+          // manual kill), the renderer reconnected to the healthy
+          // new daemon, and from that instant every liveness signal
+          // was green — so nothing ever corrected the stale
+          // `isStreaming: true` left over from the dead run.
+          //
+          // `state.isRunning` comes from the engine's own in-flight
+          // run registry, so it is authoritative rather than an
+          // inference from stream silence. When the renderer thinks
+          // it is streaming but the engine has no registered run,
+          // the renderer is provably wrong and we say so.
+          if (state?.isRunning === false && get().isStreaming) {
+            console.warn(
+              '[store] R749: reconnected to a daemon with no in-flight run while the ' +
+              'renderer still believed it was streaming — clearing stale state.',
+            );
+            set((s) => ({
+              isStreaming: false,
+              currentStepId: null,
+              currentSubTaskId: null,
+              currentQuery: null,
+              lastFailedStopReason: 'daemon_lost_run',
+              lastFailedAt: Date.now(),
+              lastFailedPrompt: (() => {
+                const last = [...s.messages].reverse().find((m) => m.role === 'user');
+                return last ? last.content : null;
+              })(),
+              messages: [...s.messages, {
+                id: newId('system'), role: 'system' as const,
+                content: '[任务已中断] 引擎侧已无进行中的任务（daemon 可能重启过）。点击 ↻ 可重试。',
+                timestamp: Date.now(), isError: true,
+              }],
+            }));
+          }
           // R268e (2026-09-15): auto-restore the most-recent
           // session when the daemon comes up with NO
           // currentSessionId. Previously the renderer's
@@ -7899,6 +7939,52 @@ export const useStore = create<AppState>((set, get) => {
                 ? mapDaemonToUiPermission(r.permissionMode)
                 : get().permissionMode,
         } as Partial<AppState>);
+        // R749 (2026-10-21): reconcile the local streaming flag
+        // against the engine's AUTHORITATIVE in-flight registry.
+        //
+        // The reported bug: a desktop stuck showing "Running" for
+        // 7 minutes while jstack showed zero engine threads and the
+        // daemon had processed zero queries since boot. The run had
+        // died with the previous daemon process; the renderer never
+        // found out because it had no way to find out — it only knew
+        // "I haven't received a chunk lately", and after a reconnect
+        // the fresh connection is perfectly healthy, so every
+        // liveness signal said "all good".
+        //
+        // `r.isRunning` is not an inference: it is whether the
+        // engine currently has a registered run. So when the UI
+        // believes it is streaming but the engine says nothing is in
+        // flight, the UI is wrong by definition, and we correct it
+        // rather than waiting for a watchdog timeout that may never
+        // fire.
+        //
+        // The converse is deliberately NOT treated as an error: a
+        // run that started between our snapshot and our last chunk
+        // would legitimately show `isRunning=false` locally. We only
+        // correct the one direction that is provably a desync.
+        if (r.isRunning === false && get().isStreaming) {
+          console.warn(
+            '[store] R749: renderer was streaming but the engine reports no ' +
+            'in-flight run — clearing the stale streaming state.',
+          );
+          set((s) => ({
+            isStreaming: false,
+            currentStepId: null,
+            currentSubTaskId: null,
+            currentQuery: null,
+            lastFailedStopReason: 'daemon_lost_run',
+            lastFailedAt: Date.now(),
+            lastFailedPrompt: s.currentInput || (() => {
+              const last = [...s.messages].reverse().find((m) => m.role === 'user');
+              return last ? last.content : null;
+            })(),
+            messages: [...s.messages, {
+              id: newId('system'), role: 'system' as const,
+              content: '[任务已中断] 引擎侧已无进行中的任务（daemon 可能重启过）。点击 ↻ 可重试。',
+              timestamp: Date.now(), isError: true,
+            }],
+          }));
+        }
       } catch (e) {
         // Previously, getState failures during initialize()
         // silently left engineState as null forever. The
@@ -8421,7 +8507,18 @@ function suggestSibling(cwd: string | null): string {
 if (typeof window !== 'undefined') {
   setInterval(() => {
     const s = useStore.getState();
-    if (!s.isStreaming || s.lastChunkTs <= 0) return;
+    if (!s.isStreaming) return;
+    // R749 (2026-10-21): `lastChunkTs <= 0` used to bail out
+    // entirely, which made the watchdog permanently blind for any
+    // run that had not yet produced its first chunk. A run that
+    // sets isStreaming but then dies BEFORE the first chunk (e.g.
+    // the daemon is killed mid-query) would then sit in "Running"
+    // forever with no watchdog able to intervene. Fall back to the
+    // run's own start time when we have no chunk timestamp yet, so
+    // "streaming started but never spoke" is still bounded.
+    const startedAt = s.currentQuery?.startedAt ?? 0;
+    const lastActivity = s.lastChunkTs > 0 ? s.lastChunkTs : startedAt;
+    if (lastActivity <= 0) return;
     // don't fire while a permission prompt is up. The
     // user might just be reading a 200-line diff and a 30s
     // window is way too aggressive for that — but a 90s
@@ -8436,7 +8533,7 @@ if (typeof window !== 'undefined') {
     //  retry button. Doubling up with a stale banner
     //  muddies the failure surface.
     if (s.lastFailedAt && (Date.now() - s.lastFailedAt) < STREAM_STALE_MS) return;
-    if (Date.now() - s.lastChunkTs > STREAM_STALE_MS) {
+    if (Date.now() - lastActivity > STREAM_STALE_MS) {
       console.warn(`[store] stream stale: no chunk for ${STREAM_STALE_MS}ms, force-ending`);
       // Force-end the stream (same behaviour as before).
       // The notification is dispatched separately via

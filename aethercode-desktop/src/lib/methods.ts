@@ -64,6 +64,16 @@ export interface EngineState {
   toolCount: number;
   contextWindow: number;
   contextUsed?: number;
+  /** R749: AUTHORITATIVE "is a run actually executing" from the
+   *  engine's own in-flight run registry — NOT an inference from
+   *  "have I seen a chunk recently". The UI must reconcile against
+   *  this on every WS reconnect: a renderer that merely infers
+   *  running-state from stream silence will believe a run is alive
+   *  long after the process that owned it died. */
+  isRunning?: boolean;
+  /** The runIds the engine currently has registered. Lets the UI
+   *  tell "my run died" from "a different run is in flight". */
+  liveRunIds?: string[];
   // per-session skip-confirmation counter. When > 0, the
   // engine is auto-allowing tool calls that would otherwise
   // prompt. Surfaced in the StatusBar so the user can see how
