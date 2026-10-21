@@ -112,17 +112,31 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
         // existing handler paints text deltas, tool cards, etc.
         // for free).
         Thread t = new Thread(() -> {
-            try {
-                java.util.stream.Stream<StreamEvent> stream = engine.query(prompt);
-                java.util.concurrent.ConcurrentHashMap<String, String> openToolSpans =
-                        new java.util.concurrent.ConcurrentHashMap<>();
-                String queryTraceId = engine.traces().startSpan("query.continuation", Map.of(
+            // R745: the consumer must ALWAYS leave a terminal event
+            // behind, and must never hold the session lock open
+            // forever. `sawRunEnd` is read by the post-loop guard
+            // below; `eventCount` feeds the R745 LOG marker so a
+            // silent consumer is provable from the daemon log
+            // (Lesson 1052 - no marker means no way to prove the
+            // deploy landed).
+            final boolean[] sawRunEnd = { false };
+            final int[] eventCount = { 0 };
+            final java.util.concurrent.ConcurrentHashMap<String, String> openToolSpans =
+                    new java.util.concurrent.ConcurrentHashMap<>();
+            String queryTraceId = null;
+            String lastStopReason = "end_turn";
+            // R745: try-with-resources. Pre-fix this was a bare
+            // `Stream<StreamEvent> stream = engine.query(prompt);`
+            // with ZERO closes in the whole file - every continuation
+            // leaked the Spliterator-backed stream (and whatever the
+            // chat client holds behind it) for the JVM's lifetime.
+            try (java.util.stream.Stream<StreamEvent> stream = engine.query(prompt)) {
+                queryTraceId = engine.traces().startSpan("query.continuation", Map.of(
                         "runId", newRunId,
                         "parentRunId", runId,
                         "promptLen", prompt.length(),
                         "incompleteTodos", incompleteTodos.size()
                 ));
-                String lastStopReason = "end_turn";
                 engine.metrics().incTurnStarted();
                 java.util.Iterator<StreamEvent> it = stream.iterator();
                 // R727: tracks whether this continuation
@@ -131,8 +145,50 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                 // sawToolUse==false AND final assistant
                 // message is empty/whitespace.
                 boolean[] sawToolUse = { false };
-                while (it.hasNext()) {
+                while (true) {
+                    // R745: bounded wait for the next event. R744
+                    // guarded the producer side
+                    // (SpringAiChatClient.runCall's FIRST
+                    // hasNext()); NOTHING guarded this consumer
+                    // side. A Spliterator whose backing queue never
+                    // receives another element parks this thread
+                    // inside hasNext() indefinitely - the
+                    // continuation thread never exits, the
+                    // finally below never runs, and the session run
+                    // lock is held forever, which is exactly the
+                    // "session is busy with run cont-N" wedge the
+                    // lock comment warns about. Probe-thread +
+                    // join(deadline) is the same shape R744 used:
+                    // hasNext() is itself a blocking read, so it
+                    // cannot be polled from this thread.
+                    if (!awaitNextEvent(it)) {
+                        String stopReason = "consumer_timeout: no stream event for "
+                                + consumerTimeoutMs() + "ms (run " + newRunId + ")";
+                        LOG.warn("R745: continuation consumer stalled - no stream event "
+                                + "within {}ms (runId={}, events={}). Emitting a terminal "
+                                + "consumer_timeout RunEnd and abandoning the stream.",
+                                consumerTimeoutMs(), newRunId, eventCount[0]);
+                        if (queryTraceId != null) {
+                            try { engine.traces().endSpan(queryTraceId, "error"); } catch (Exception ignored) {}
+                        }
+                        for (String leftover : openToolSpans.values()) {
+                            try { engine.traces().endSpan(leftover, "error"); } catch (Exception ignored) {}
+                        }
+                        openToolSpans.clear();
+                        lastStopReason = stopReason;
+                        // R745: deliver the terminal event BEFORE
+                        // break so the TUI's isStreaming flips back
+                        // to false - a timeout that only logged would
+                        // reproduce the R735 "dead engine looks like
+                        // a healthy green Idle" symptom.
+                        StreamEvent.RunEnd te = new StreamEvent.RunEnd(
+                                stopReason, java.util.List.of());
+                        sawRunEnd[0] = true;
+                        notifyStreamEvent(newRunId, te, sessionId);
+                        break;
+                    }
                     StreamEvent ev = it.next();
+                    eventCount[0]++;
                     if (ev instanceof StreamEvent.ToolUseStart tu) {
                         sawToolUse[0] = true;
                         engine.metrics().incToolCall();
@@ -148,6 +204,10 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                             engine.traces().endSpan(toolTraceId, tr.isError() ? "error" : "ok");
                         }
                     } else if (ev instanceof StreamEvent.RunEnd re) {
+                        // R745: remember that the engine DID deliver a
+                        // terminal event, so the post-loop guard below
+                        // doesn't synthesise a duplicate.
+                        sawRunEnd[0] = true;
                         engine.metrics().incTurnCompleted();
                         // R743: was `stopReason.startsWith("loop")`,
                         // which missed `same_error_hard_stop`
@@ -186,6 +246,32 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
                                 re.finalBlocks());
                     }
                     notifyStreamEvent(newRunId, ev, sessionId);
+                }
+                // R745: R735's terminal-event contract, enforced on
+                // the CONSUMER side. A consumer can exit its loop
+                // without ever having seen a RunEnd - the
+                // Spliterator exhausted early, or the stream ended
+                // after a throw inside the producer that R735a's
+                // outer catch already converted elsewhere. When that
+                // happens the TUI's `isStreaming` never flips back
+                // to false and the user reads a dead continuation as
+                // a healthy green "Idle" (the exact R735 symptom).
+                // So: if we drained to exhaustion without a terminal
+                // event, mint one and say so in the stopReason.
+                if (!sawRunEnd[0]) {
+                    LOG.warn("R745: continuation consumer exited without RunEnd "
+                            + "(runId={}, events={}) - emitting a synthetic terminal event",
+                            newRunId, eventCount[0]);
+                    if (queryTraceId != null) {
+                        try { engine.traces().endSpan(queryTraceId, "error"); } catch (Exception ignored) {}
+                    }
+                    for (String leftover : openToolSpans.values()) {
+                        try { engine.traces().endSpan(leftover, "error"); } catch (Exception ignored) {}
+                    }
+                    openToolSpans.clear();
+                    lastStopReason = "no_run_end: consumer exited without terminal event";
+                    notifyStreamEvent(newRunId, new StreamEvent.RunEnd(
+                            lastStopReason, java.util.List.of()), sessionId);
                 }
                 // Fire SESSION_IDLE so any future boulder hooks see
                 // this continuation as a normal idle session and
@@ -263,6 +349,71 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
     // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
+
+    /**
+     * R745/R746: how long the continuation consumer waits for the NEXT
+     * stream event before declaring the stream stalled.
+     *
+     * <p>Reuses {@code AETHERCODE_R744_FIRST_CHUNK_TIMEOUT_MS} (and its
+     * 180s default) deliberately rather than minting a new knob: R744
+     * already established that budget as "the longest a healthy
+     * provider may take before we call the attempt broken", measured
+     * at 40-90s cold-start TTFB. A continuation that stalls for LONGER
+     * than a first chunk may legitimately take is, by the same
+     * evidence, dead - and the only reason it can be dead is
+     * un-drained on this side, since R744 guards the producer.
+     *
+     * <p>A malformed override falls through to the default for the
+     * same reason R744 does it: a typo in an env var must never be
+     * able to disable the guard and reintroduce the wedge.
+     *
+     * <p>R746: the env-var parsing now lives in the shared
+     * {@link org.aethercode.core.stream.StreamConsumerGuard} so the
+     * continuation dispatcher, the subagent orchestrator,
+     * {@code AgentTool} and {@code SddOrchestrator} cannot drift on the
+     * number. The method stays as a one-line delegate because the
+     * R745 source pins name it.
+     */
+    static long consumerTimeoutMs() {
+        return org.aethercode.core.stream.StreamConsumerGuard.timeoutMs();
+    }
+
+    /** R745: same default R744 uses for the producer-side first-chunk
+     *  wait. See {@link #consumerTimeoutMs()}. R746: the single source
+     *  of truth is {@link org.aethercode.core.stream.StreamConsumerGuard#TIMEOUT_MS_DEFAULT}. */
+    static final long CONSUMER_TIMEOUT_MS_DEFAULT =
+            org.aethercode.core.stream.StreamConsumerGuard.TIMEOUT_MS_DEFAULT;
+
+    /**
+     * R745: bounded {@code hasNext()}.
+     *
+     * <p>{@code hasNext()} on a Spliterator-backed stream is itself a
+     * blocking read, so it cannot be polled from the calling thread -
+     * a single call parks until the producer offers an element. We run
+     * it on a short-lived daemon probe thread and {@code join()} it
+     * with a deadline, which keeps the original blocking semantics (no
+     * busy-wait, no truncated stream) while giving the caller a bound.
+     *
+     * <p>Returns {@code true} when the caller may call
+     * {@code it.next()} - including the legal "stream finished
+     * cleanly with zero remaining elements" case, which yields
+     * {@code false} from {@code hasNext()} but is a completed, NOT
+     * stalled stream. Returns {@code false} only when the deadline
+     * expired with the probe still parked, i.e. the stream is wedged.
+     *
+     * <p>On timeout the probe is interrupted and abandoned; it stays a
+     * daemon so a genuinely dead provider cannot keep the JVM alive.
+     *
+     * <p>R746: the probe itself now lives in the shared
+     * {@link org.aethercode.core.stream.StreamConsumerGuard}. Only the
+     * dispatcher's own call site and its two terminal-event branches
+     * (the consumer_timeout break and the no_run_end guard) stay here,
+     * because those also own span teardown and the TUI notification.
+     */
+    private static boolean awaitNextEvent(java.util.Iterator<?> it) {
+        return org.aethercode.core.stream.StreamConsumerGuard
+                .awaitNextEvent(it, consumerTimeoutMs());
+    }
 
     private void notifyStreamEvent(String runId, StreamEvent ev, String sessionId) {
         try {

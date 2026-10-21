@@ -352,9 +352,16 @@ public final class PlanExecutor {
         public String execute(int stepIndex, String title, Task task) {
             StringBuilder out = new StringBuilder();
             String taskHint = "[executing plan step " + (stepIndex + 1) + ": " + title + "]";
-            engine.query(taskHint).forEach(ev -> {
-                if (ev instanceof StreamEvent.TextDelta td) out.append(td.text());
-            });
+            // R746b: close the stream. A plan step is driven by the
+            // caller on its own thread and the outer loop already has
+            // its own step accounting, so this gets
+            // try-with-resources only — see
+            // docs/R746-consumer-guard-rollout.md.
+            try (java.util.stream.Stream<StreamEvent> stream = engine.query(taskHint)) {
+                stream.forEach(ev -> {
+                    if (ev instanceof StreamEvent.TextDelta td) out.append(td.text());
+                });
+            }
             String s = out.toString().strip();
             return s.isEmpty() ? "(no output)" : s;
         }

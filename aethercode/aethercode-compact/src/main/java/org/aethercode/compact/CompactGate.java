@@ -159,11 +159,15 @@ public class CompactGate implements Compactor {
         List<Message> req = new ArrayList<>();
         req.add(Message.userText(prompt.toString()));
         StringBuilder out = new StringBuilder();
-        Stream<StreamEvent> stream = chatClient.stream(req, systemPrompt, List.of());
-        for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
-            StreamEvent ev = it.next();
-            if (ev instanceof StreamEvent.TextDelta td) out.append(td.text());
-            else if (ev instanceof StreamEvent.RunEnd) break;
+        // R746b: close the stream. Synchronous in-process
+        // summarisation — close-only, no bounded wait (see
+        // docs/R746-consumer-guard-rollout.md).
+        try (Stream<StreamEvent> stream = chatClient.stream(req, systemPrompt, List.of())) {
+            for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
+                StreamEvent ev = it.next();
+                if (ev instanceof StreamEvent.TextDelta td) out.append(td.text());
+                else if (ev instanceof StreamEvent.RunEnd) break;
+            }
         }
         return out.toString();
     }

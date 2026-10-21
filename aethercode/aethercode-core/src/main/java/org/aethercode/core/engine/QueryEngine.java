@@ -2650,11 +2650,43 @@ public class QueryEngine {
                     // RunEnd emitted — the desktop sat in the green
                     // `● Idle` state with no error banner or retry affordance
                     // because nothing ever arrived on the `stream_event`
-                    // channel. Translate the throw into a single RunEnd with
-                    // stopReason="runtime_exception: …" so the desktop's
-                    // run_end handler can flip isStreaming=false, populate
-                    // lastFailedPrompt, and surface the `● Failed (reason)`
-                    // pill that R735 introduced.
+                    // channel. Translate the throw into a single RunEnd whose
+                    // stopReason is prefixed `runtime_exception` so the
+                    // desktop's run_end handler can flip isStreaming=false,
+                    // populate lastFailedPrompt, and surface the
+                    // `● Failed (reason)` pill that R735 introduced.
+                    //
+                    // R744 (2026-10-21): this catch is NECESSARY BUT NOT
+                    // SUFFICIENT, and the gap is worth naming so the next
+                    // reader doesn't trust it alone. A catch can only
+                    // translate a throw. It cannot help when the engine is
+                    // parked DOWNSTREAM inside `currentLlmIt.next()` →
+                    // `SpringAiChatClient`'s Spliterator → `queue.take()`
+                    // → the chat client's runner thread parked on a socket
+                    // read that never returns. In that shape nothing is
+                    // thrown, so this catch is unreachable and the run is
+                    // silent. Observed live on daemon PID 23280: the
+                    // upstream provider accepted the HTTP request and never
+                    // finished the SSE body; the log ended at the last
+                    // pre-call line, the transcript stopped writing, and
+                    // the desktop showed a green `● Idle`.
+                    //
+                    // R744 therefore fixes the CAUSE at the only layer that
+                    // can see it — the chat client's unbounded first-chunk
+                    // read (`SpringAiChatClient.awaitFirstChunk`) — by
+                    // bounding that wait so the call falls through to the
+                    // R697 retry ladder and ultimately to the R742-hardened
+                    // `(RunEnd, POISON)` terminal branch. The contract
+                    // below stays: every `return false;` in this method is
+                    // preceded by a RunEnd. What it cannot promise is that
+                    // `currentLlmIt.next()` ever RETURNS — that is the
+                    // chat client's obligation, not the engine's.
+                    //
+                    // NOTE for future editors: do not reproduce the
+                    // stopReason ASSIGNMENT shape inside a comment in
+                    // this file. `QueryEngineR735Test` scans the
+                    // SOURCE for that pattern and would treat the
+                    // prose as a real terminal branch (Lesson 1057).
                     finished = true;
                     stopReason = "runtime_exception: " + t.getClass().getSimpleName()
                             + ": " + (t.getMessage() == null ? "" : t.getMessage());

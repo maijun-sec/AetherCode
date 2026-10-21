@@ -3728,12 +3728,40 @@ public class AetherCodeMethods {
             // classified idle if the assistant's final message
             // was truncated.
             final boolean[] sawToolUse = { false };
+            // R745: did the engine deliver a terminal event on this
+            // stream? forEach returns normally on clean exhaustion, so
+            // a stream that ends WITHOUT a RunEnd returns exactly like
+            // a healthy one - and the renderer's isStreaming never
+            // flips back to false, reproducing the R735 "dead engine
+            // looks like a healthy green Idle" symptom. Checked by the
+            // post-forEach guard below.
+            final boolean[] sawRunEnd = { false };
+            final int[] eventCount = { 0 };
             try {
                 // increment the metrics collector as events flow
                 // through. The collector is per-engine; the TUI
                 // surfaces its snapshot via getMetrics.
                 target.metrics().incTurnStarted();
-                target.query(prompt).forEach(ev -> {
+                // R745: the same consumer-side contract the
+                // continuation dispatcher now enforces (close +
+                // bounded hasNext + guaranteed RunEnd). Pre-fix this
+                // was `target.query(prompt).forEach(...)` - the
+                // stream was NEVER closed, and `forEach` parks inside
+                // hasNext() with no deadline at all.
+                //
+                // For the main query path the blast radius of an
+                // unbounded park is worse than for a continuation:
+                // this thread is the one registered in runThreads, so
+                // a wedged hasNext() makes the R721 cancel path the
+                // ONLY escape, and the finally below (which releases
+                // the session run lock) never runs.
+                try (java.util.stream.Stream<org.aethercode.core.stream.StreamEvent> stream =
+                             target.query(prompt)) {
+                    stream.forEach(ev -> {
+                    // R745: feeds the post-forEach diagnostic marker
+                    // so a "consumer exited without RunEnd" line
+                    // reports how far the stream actually got.
+                    eventCount[0]++;
                     // count tool calls + errors as they happen.
                     if (ev instanceof org.aethercode.core.stream.StreamEvent.ToolUseStart tu) {
                         sawToolUse[0] = true;  // R727: track that this run emitted at least one tool call so the idle-detector doesn't false-positive
@@ -3771,6 +3799,10 @@ public class AetherCodeMethods {
                             target.traces().endSpan(toolTraceId, tr.isError() ? "error" : "ok");
                         }
                     } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd re) {
+                        // R745: the engine DID deliver a terminal
+                        // event, so the post-loop guard below must
+                        // not synthesise a duplicate.
+                        sawRunEnd[0] = true;
                         target.metrics().incTurnCompleted();
                         // R743: count every loop-family hard stop, not
                         // just the `loop*` prefixed ones.
@@ -3865,7 +3897,42 @@ public class AetherCodeMethods {
                     notifier.accept(new JsonRpcNotification(
                             org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
                             NOTIFY_STREAM_EVENT, evWrap));
-                });
+                    });
+                    // R745: enforce R735's terminal-event contract on
+                    // the CONSUMER side. The stream closing normally is
+                    // NOT evidence that the run ended - an exhausted
+                    // Spliterator with no RunEnd looks identical from
+                    // here, and the renderer keeps isStreaming=true
+                    // forever with no error banner (R735's
+                    // "dead engine looks like a healthy green Idle").
+                    if (!sawRunEnd[0]) {
+                        LOG.warn("R745: query consumer exited without RunEnd "
+                                + "(runId={}, events={}) - emitting a synthetic terminal event",
+                                runId, eventCount[0]);
+                        Map<String, Object> endWrap = new LinkedHashMap<>();
+                        endWrap.put("runId", runId);
+                        if (_targetSid != null) endWrap.put("sessionId", _targetSid);
+                        Map<String, Object> endEvent = new LinkedHashMap<>();
+                        endEvent.put("type", "run_end");
+                        endEvent.put("stopReason",
+                                "no_run_end: consumer exited without terminal event");
+                        endEvent.put("error",
+                                "stream exhausted without a RunEnd event (R745)");
+                        endEvent.put("isError", true);
+                        endWrap.put("event", endEvent);
+                        try {
+                            notifier.accept(new JsonRpcNotification(
+                                    org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
+                                    NOTIFY_STREAM_EVENT, endWrap));
+                        } catch (Exception ignored) {}
+                        lastStopReason[0] = "no_run_end: consumer exited without terminal event";
+                        try { target.traces().endSpan(queryTraceId, "error"); } catch (Exception ignored) {}
+                        for (String leftover : openToolSpans.values()) {
+                            try { target.traces().endSpan(leftover, "error"); } catch (Exception ignored) {}
+                        }
+                        openToolSpans.clear();
+                    }
+                }
                 // fire the SESSION_IDLE event so TodoContinuationHook
                 // (and any future "boulder" hooks) get a chance to
                 // auto-continue the session. The forEach above is a

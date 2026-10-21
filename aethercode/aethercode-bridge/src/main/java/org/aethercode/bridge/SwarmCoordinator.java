@@ -58,9 +58,15 @@ public class SwarmCoordinator {
         if (engine == null) return CompletableFuture.failedFuture(new IllegalArgumentException("unknown teammate: " + id));
         StringBuilder out = new StringBuilder();
         return CompletableFuture.supplyAsync(() -> {
-            engine.query(task).forEach(ev -> {
-                if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) out.append(td.text());
-            });
+            // R746b: close the stream. sendTask already returns a
+        // CompletableFuture the caller can time out on, so this site
+        // gets try-with-resources only — see
+        // docs/R746-consumer-guard-rollout.md.
+            try (java.util.stream.Stream<org.aethercode.core.stream.StreamEvent> stream = engine.query(task)) {
+                stream.forEach(ev -> {
+                    if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) out.append(td.text());
+                });
+            }
             String result = out.toString();
             blackboard.write(id + ":last_result", result);
             return result;

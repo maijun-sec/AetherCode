@@ -170,31 +170,35 @@ public final class StructuredCompactor implements Compactor {
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.userText(prompt.toString()));
         StringBuilder out = new StringBuilder();
-        Stream<StreamEvent> stream = chatClient.stream(msgs, systemPrompt, List.of());
-        for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
-            StreamEvent ev = it.next();
-            if (ev instanceof StreamEvent.TextDelta td) {
-                out.append(td.text());
-            } else if (ev instanceof StreamEvent.RunEnd re) {
-                // The chat client's own RunEnd carries the final
-                // blocks. If the structured summary ended up as
-                // a text block in the final message, prefer that
-                // (it's already assembled and avoids any chunk
-                // truncation). Otherwise we keep the streamed
-                // accumulation.
-                if (re.finalBlocks() != null) {
-                    for (ContentBlock b : re.finalBlocks()) {
-                        if (b instanceof ContentBlock.TextBlock t) {
-                            // Only adopt the final block if the
-                            // streamed accumulation is empty (the
-                            // client didn't emit TextDelta).
-                            if (out.length() == 0) {
-                                out.append(t.text());
+        // R746b: close the stream. Synchronous in-process
+        // summarisation — close-only, no bounded wait (see
+        // docs/R746-consumer-guard-rollout.md).
+        try (Stream<StreamEvent> stream = chatClient.stream(msgs, systemPrompt, List.of())) {
+            for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
+                StreamEvent ev = it.next();
+                if (ev instanceof StreamEvent.TextDelta td) {
+                    out.append(td.text());
+                } else if (ev instanceof StreamEvent.RunEnd re) {
+                    // The chat client's own RunEnd carries the final
+                    // blocks. If the structured summary ended up as
+                    // a text block in the final message, prefer that
+                    // (it's already assembled and avoids any chunk
+                    // truncation). Otherwise we keep the streamed
+                    // accumulation.
+                    if (re.finalBlocks() != null) {
+                        for (ContentBlock b : re.finalBlocks()) {
+                            if (b instanceof ContentBlock.TextBlock t) {
+                                // Only adopt the final block if the
+                                // streamed accumulation is empty (the
+                                // client didn't emit TextDelta).
+                                if (out.length() == 0) {
+                                    out.append(t.text());
+                                }
                             }
                         }
                     }
+                    break;
                 }
-                break;
             }
         }
         if (out.length() == 0) {

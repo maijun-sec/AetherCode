@@ -183,14 +183,18 @@ public class MemoryExtractor {
 
         // Run the subagent.
         StringBuilder out = new StringBuilder();
-        Stream<org.aethercode.core.stream.StreamEvent> stream = chatClient.stream(
-                req, systemPrompt, List.of(scopedEdit));
-        for (java.util.Iterator<org.aethercode.core.stream.StreamEvent> it = stream.iterator(); it.hasNext(); ) {
-            org.aethercode.core.stream.StreamEvent ev = it.next();
-            if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
-                out.append(td.text());
-            } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd) {
-                break;
+        // R746b: close the stream. Synchronous in-process
+        // summarisation — close-only, no bounded wait (see
+        // docs/R746-consumer-guard-rollout.md).
+        try (Stream<org.aethercode.core.stream.StreamEvent> stream = chatClient.stream(
+                req, systemPrompt, List.of(scopedEdit))) {
+            for (java.util.Iterator<org.aethercode.core.stream.StreamEvent> it = stream.iterator(); it.hasNext(); ) {
+                org.aethercode.core.stream.StreamEvent ev = it.next();
+                if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
+                    out.append(td.text());
+                } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd) {
+                    break;
+                }
             }
         }
         return out.toString();

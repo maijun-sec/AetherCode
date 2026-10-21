@@ -566,6 +566,12 @@ public final class SddOrchestrator {
         String userPrompt = buildPhasePrompt(state, phase, inputFiles, artefactPath.toString(), feedback);
 
         Message user = Message.userText(userPrompt);
+        // R746: `phase` is reassigned in the withModel branch above, so
+        // javac does not treat it as effectively final and it cannot be
+        // referenced from the phase-consumer lambda below. Snapshot the
+        // id once, outside every lambda, for the LOG markers + the
+        // stopReason the guard mints on a stall.
+        final String phaseId = phase.id().name();
         try {
             // R709-C: run the stream consumption on a background thread
             // so we can enforce a wall-clock budget. The pre-R709 path
@@ -599,17 +605,56 @@ public final class SddOrchestrator {
                     : chatClient;
             java.util.concurrent.CompletableFuture<Void> streamFuture =
                     java.util.concurrent.CompletableFuture.runAsync(() -> {
-                        Stream<StreamEvent> stream = activeClient.stream(
-                                List.of(user), systemPrompt, toolPool);
-                        for (var ev : (Iterable<StreamEvent>) stream::iterator) {
-                            if (ev instanceof StreamEvent.TextDelta td) {
-                                fullText.append(td.text());
+                        // R746: close the stream and bound the wait
+                        // for the NEXT event. The `for`-over-`Iterable`
+                        // loop this replaces had no per-event bound: a
+                        // wedged producer parked the phase's consumer
+                        // thread inside hasNext() forever. That thread
+                        // is a CompletableFuture worker, so the
+                        // outer `future.get(10min)` did eventually fire
+                        // and mark the phase failed — but the
+                        // underlying stream (and the socket behind it)
+                        // stayed open for the daemon's lifetime, and
+                        // the 10-minute wait was the ONLY thing keeping
+                        // the phase from looking silently stuck. The
+                        // guard turns a stall into a prompt, accurate
+                        // PHASE_TIMEOUT with a stopReason instead of a
+                        // generic 10-minute hang.
+                        try (Stream<StreamEvent> stream = activeClient.stream(
+                                List.of(user), systemPrompt, toolPool)) {
+                            org.aethercode.core.stream.StreamConsumerGuard.Result guard =
+                                    org.aethercode.core.stream.StreamConsumerGuard.consume(
+                                            "sdd-orchestrator",
+                                            stream.iterator(),
+                                            ev -> {
+                                                if (ev instanceof StreamEvent.TextDelta td) {
+                                                    fullText.append(td.text());
+                                                }
+                                                // We do not gate on RunEnd here — the
+                                                // daemon's tool pool runs write_file /
+                                                // read_file side effects as the model
+                                                // issues them, so by the time RunEnd
+                                                // fires the artefact should be on disk.
+                                                // The guard still REQUIRES a terminal
+                                                // event before it returns success, so
+                                                // a stream that dies mid-phase can no
+                                                // longer masquerade as a completed one.
+                                            },
+                                            "phase=" + phaseNumber + "/" + phaseId,
+                                            org.aethercode.core.stream.StreamConsumerGuard.timeoutMs());
+                            if (guard.stalled()) {
+                                throw new SddException(SddException.Code.PHASE_TIMEOUT,
+                                        "phase " + phaseNumber + " (" + phaseId + ") stalled: "
+                                                + guard.stopReason() + " after "
+                                                + guard.eventCount() + " event(s)");
                             }
-                            // We do not gate on RunEnd here — the
-                            // daemon's tool pool runs write_file /
-                            // read_file side effects as the model
-                            // issues them, so by the time RunEnd
-                            // fires the artefact should be on disk.
+                            if (guard.outcome()
+                                    == org.aethercode.core.stream.StreamConsumerGuard.Outcome.EXHAUSTED_WITHOUT_RUN_END) {
+                                LOG.warn("R746: sdd-orchestrator consumer exited without RunEnd "
+                                                + "(phase {}/{}, {} event(s)) — the guard minted a "
+                                                + "synthetic terminal event",
+                                        phaseNumber, phaseId, guard.eventCount());
+                            }
                         }
                     });
             try {

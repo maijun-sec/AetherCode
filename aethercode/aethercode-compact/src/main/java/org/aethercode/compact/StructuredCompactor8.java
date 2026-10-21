@@ -290,20 +290,28 @@ public final class StructuredCompactor8 implements Compactor {
         // the main chat client otherwise.
         ChatClient summariser = summariserChatClient != null
                 ? summariserChatClient : chatClient;
-        Stream<StreamEvent> stream = summariser.stream(msgs, systemPrompt, List.of());
-        for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
-            StreamEvent ev = it.next();
-            if (ev instanceof StreamEvent.TextDelta td) {
-                out.append(td.text());
-            } else if (ev instanceof StreamEvent.RunEnd re) {
-                if (re.finalBlocks() != null) {
-                    for (ContentBlock b : re.finalBlocks()) {
-                        if (b instanceof ContentBlock.TextBlock t && out.length() == 0) {
-                            out.append(t.text());
+        // R746b: close the stream. Summarisation is an in-process
+        // synchronous call — a wedged provider throws a stack rather
+        // than parking silently — so this site gets try-with-resources
+        // ONLY, no bounded wait. The high-value consumer sites
+        // (SubagentOrchestrator / AgentTool / SddOrchestrator) are
+        // the ones that needed StreamConsumerGuard; see
+        // docs/R746-consumer-guard-rollout.md.
+        try (Stream<StreamEvent> stream = summariser.stream(msgs, systemPrompt, List.of())) {
+            for (java.util.Iterator<StreamEvent> it = stream.iterator(); it.hasNext(); ) {
+                StreamEvent ev = it.next();
+                if (ev instanceof StreamEvent.TextDelta td) {
+                    out.append(td.text());
+                } else if (ev instanceof StreamEvent.RunEnd re) {
+                    if (re.finalBlocks() != null) {
+                        for (ContentBlock b : re.finalBlocks()) {
+                            if (b instanceof ContentBlock.TextBlock t && out.length() == 0) {
+                                out.append(t.text());
+                            }
                         }
                     }
+                    break;
                 }
-                break;
             }
         }
         if (out.length() == 0) {

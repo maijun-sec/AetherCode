@@ -1,5 +1,6 @@
 package org.aethercode.core.agent;
 
+import org.aethercode.core.stream.StreamConsumerGuard;
 import org.aethercode.core.stream.StreamEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,10 +31,24 @@ public final class SubagentOrchestrator {
 
     private final Subagent.Registry registry;
     private final Subagent.EngineFactory engineFactory;
+    /** R746: bounded per-event wait for the child engine's stream. See
+     *  {@link StreamConsumerGuard#timeoutMs()} — this is the ONLY thing
+     *  that can rescue a parent agent from a wedged child, so it is
+     *  configurable for tests but defaults to the shared R744 budget. */
+    private final long consumerTimeoutMs;
 
     public SubagentOrchestrator(Subagent.Registry registry, Subagent.EngineFactory engineFactory) {
+        this(registry, engineFactory, StreamConsumerGuard.timeoutMs());
+    }
+
+    /** R746: test seam — pin a short consumer budget so the stall path
+     *  finishes in milliseconds instead of 180s. */
+    public SubagentOrchestrator(Subagent.Registry registry, Subagent.EngineFactory engineFactory,
+                                long consumerTimeoutMs) {
         this.registry = registry == null ? new Subagent.Registry() : registry;
         this.engineFactory = engineFactory == null ? SubagentOrchestrator::defaultFactory : engineFactory;
+        this.consumerTimeoutMs = consumerTimeoutMs > 0
+                ? consumerTimeoutMs : StreamConsumerGuard.timeoutMs();
     }
 
     /** delegate a task to the named subagent. Blocks until the child finishes. */
@@ -80,18 +95,43 @@ public final class SubagentOrchestrator {
                 : renderedCtx + "\n\n---\n\n## Your task\n\n" + task;
         AtomicInteger toolCalls = new AtomicInteger();
         StringBuilder out = new StringBuilder();
-        try {
-            child.query(effectiveTask).forEach(ev -> {
-                if (ev instanceof StreamEvent.TextDelta td) {
-                    out.append(td.text());
-                } else if (ev instanceof StreamEvent.ToolUseStart) {
-                    toolCalls.incrementAndGet();
-                } else if (ev instanceof StreamEvent.RunEnd re) {
-                    if (!"end_turn".equals(re.stopReason()) && re.stopReason() != null) {
-                        LOG.debug("subagent '{}' finished with stopReason={}", agentName, re.stopReason());
-                    }
-                }
-            });
+        // R746: the child engine here is UNATTENDED — nothing else
+        // drives it, and a wedged child does NOT throw back to the
+        // parent thread. Pre-fix `child.query(...).forEach(...)`
+        // parked forever inside hasNext() on a dead producer, so the
+        // parent agent waited on subagent_status indefinitely with no
+        // error path. The bounded wait below is therefore the ONLY
+        // mechanism by which the parent learns the child died; a
+        // STALLED result is surfaced as an error Result (not silently
+        // returned as "empty output") so the parent can act on it.
+        try (java.util.stream.Stream<StreamEvent> stream = child.query(effectiveTask)) {
+            StreamConsumerGuard.Result guard = StreamConsumerGuard.consume(
+                    "subagent-orchestrator",
+                    stream.iterator(),
+                    ev -> {
+                        if (ev instanceof StreamEvent.TextDelta td) {
+                            out.append(td.text());
+                        } else if (ev instanceof StreamEvent.ToolUseStart) {
+                            toolCalls.incrementAndGet();
+                        } else if (ev instanceof StreamEvent.RunEnd re) {
+                            if (!"end_turn".equals(re.stopReason()) && re.stopReason() != null) {
+                                LOG.debug("subagent '{}' finished with stopReason={}", agentName, re.stopReason());
+                            }
+                        }
+                    },
+                    "subagent=" + agentName,
+                    consumerTimeoutMs);
+            if (guard.stalled()) {
+                long elapsedMs = System.currentTimeMillis() - start;
+                LOG.warn("R746: subagent-orchestrator consumer stalled for subagent '{}' "
+                                + "after {}ms ({} event(s), stopReason={}) — returning an error "
+                                + "Result so the parent agent is NOT left waiting forever",
+                        agentName, consumerTimeoutMs, guard.eventCount(), guard.stopReason());
+                return Subagent.Result.error(agentName,
+                        "subagent '" + agentName + "' stalled: " + guard.stopReason()
+                                + " (" + guard.eventCount() + " event(s) received)",
+                        elapsedMs);
+            }
         } catch (Exception e) {
             return Subagent.Result.error(agentName, e.getMessage(), System.currentTimeMillis() - start);
         }

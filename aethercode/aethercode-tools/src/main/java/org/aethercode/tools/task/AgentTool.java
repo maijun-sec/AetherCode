@@ -548,29 +548,51 @@ public class AgentTool {
                 // The query() call's events are
                 // consumed inline; we treat a thrown
                 // exception as a retryable failure.
-                engine.query(fullPrompt, null, roleFilteredFinal).forEach(ev -> {
-                    if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
-                        attemptOut.append(td.text());
-                        // forward the in-flight text to
-                        // the partial sink (background
-                        // subagents only). The TUI /
-                        // desktop subscribes to the
-                        // SubagentRegistry's wire
-                        // notifications and shows a tail
-                        // preview as the model types.
-                        if (partialSink != null) {
-                            partialSink.accept(attemptOut.toString());
-                        }
-                    } else if (ev instanceof org.aethercode.core.stream.StreamEvent.SideNote sn
-                            && "task".equals(sn.kind())) {
-                        // The subagent's own Task ID is
-                        // emitted as a SideNote by
-                        // AetherCodeEngine.query(); log it
-                        // so the parent's log shows the
-                        // task tree.
-                        LOG.info("subagent {} spawned child: {}", child.id(), sn.message());
+                //
+                // R746: the bare `forEach` had no upper bound — a
+                // wedged producer parked this thread inside hasNext()
+                // forever, and since a spawned subagent is unattended
+                // nothing else ever notices. The bounded guard makes
+                // the stall a thrown failure, which the surrounding
+                // RetryHelper already knows how to surface to the
+                // parent (3 attempts, then a clear error result).
+                try (java.util.stream.Stream<org.aethercode.core.stream.StreamEvent> stream =
+                             engine.query(fullPrompt, null, roleFilteredFinal)) {
+                    org.aethercode.core.stream.StreamConsumerGuard.Result guard =
+                            org.aethercode.core.stream.StreamConsumerGuard.consume(
+                                    "agent-tool",
+                                    stream.iterator(),
+                                    ev -> {
+                                        if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
+                                            attemptOut.append(td.text());
+                                            // forward the in-flight text to
+                                            // the partial sink (background
+                                            // subagents only). The TUI /
+                                            // desktop subscribes to the
+                                            // SubagentRegistry's wire
+                                            // notifications and shows a tail
+                                            // preview as the model types.
+                                            if (partialSink != null) {
+                                                partialSink.accept(attemptOut.toString());
+                                            }
+                                        } else if (ev instanceof org.aethercode.core.stream.StreamEvent.SideNote sn
+                                                && "task".equals(sn.kind())) {
+                                            // The subagent's own Task ID is
+                                            // emitted as a SideNote by
+                                            // AetherCodeEngine.query(); log it
+                                            // so the parent's log shows the
+                                            // task tree.
+                                            LOG.info("subagent {} spawned child: {}", child.id(), sn.message());
+                                        }
+                                    },
+                                    "task=" + child.id(),
+                                    org.aethercode.core.stream.StreamConsumerGuard.timeoutMs());
+                    if (guard.stalled()) {
+                        throw new RuntimeException("subagent " + child.id()
+                                + " stream stalled: " + guard.stopReason()
+                                + " (will retry)");
                     }
-                });
+                }
                 lastOut[0] = attemptOut.toString();
                 // Treat empty output as a transient
                 // failure so the retry loop can give

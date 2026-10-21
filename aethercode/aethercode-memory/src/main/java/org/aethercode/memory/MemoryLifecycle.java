@@ -634,17 +634,21 @@ public final class MemoryLifecycle {
         List<Message> req = new ArrayList<>();
         req.add(Message.userText(prompt));
         StringBuilder out = new StringBuilder();
-        java.util.stream.Stream<org.aethercode.core.stream.StreamEvent> stream =
-                strategyChatClient.stream(req,
-                        "You distil transferable strategies from agent sessions. Be concise.",
-                        List.of());
-        for (java.util.Iterator<org.aethercode.core.stream.StreamEvent> it = stream.iterator();
-             it.hasNext(); ) {
-            org.aethercode.core.stream.StreamEvent ev = it.next();
-            if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
-                out.append(td.text());
-            } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd) {
-                break;
+        // R746b: close the stream. Synchronous in-process
+        // strategy chat — close-only, no bounded wait (see
+        // docs/R746-consumer-guard-rollout.md).
+        try (java.util.stream.Stream<org.aethercode.core.stream.StreamEvent> stream =
+                     strategyChatClient.stream(req,
+                             "You distil transferable strategies from agent sessions. Be concise.",
+                             List.of())) {
+            for (java.util.Iterator<org.aethercode.core.stream.StreamEvent> it = stream.iterator();
+                 it.hasNext(); ) {
+                org.aethercode.core.stream.StreamEvent ev = it.next();
+                if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
+                    out.append(td.text());
+                } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd) {
+                    break;
+                }
             }
         }
         return out.toString();

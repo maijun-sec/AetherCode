@@ -59,6 +59,117 @@ public class SpringAiChatClient implements ChatClient {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Object POISON = new Object();
 
+    /** R744: how long to wait for the FIRST SSE chunk of a streaming
+     *  completion before declaring the attempt stalled. Overridable
+     *  per-JVM via {@code AETHERCODE_R744_FIRST_CHUNK_TIMEOUT_MS} so a
+     *  slow-but-alive provider can be given more headroom without a
+     *  rebuild. 180s is comfortably longer than MiniMax-M3's observed
+     *  cold-start TTFB on a 150K-char transcript (R744 measured
+     *  ~40-90s), so a healthy call is never cut short. */
+    static final long FIRST_CHUNK_TIMEOUT_MS_DEFAULT = 180_000L;
+
+    /** how often {@link #awaitFirstChunk} polls the iterator. Short
+     *  enough that an R721 cancel ({@code Thread.interrupt()}) is
+     *  observed promptly; the iterator itself has no timed variant
+     *  once {@code toIterable()} has been handed a blocking
+     *  collection, so we re-check the deadline between polls. */
+    private static final long FIRST_CHUNK_POLL_MS = 250L;
+
+    static long firstChunkTimeoutMs() {
+        String v = System.getenv("AETHERCODE_R744_FIRST_CHUNK_TIMEOUT_MS");
+        if (v != null && !v.isBlank()) {
+            try {
+                long n = Long.parseLong(v.trim());
+                if (n > 0) return n;
+            } catch (NumberFormatException ignored) {
+                // fall through to the default; a malformed override
+                // must never be able to disable the R744 guard.
+                LOG.warn("R744: ignoring unparseable AETHERCODE_R744_FIRST_CHUNK_TIMEOUT_MS={}", v);
+            }
+        }
+        return FIRST_CHUNK_TIMEOUT_MS_DEFAULT;
+    }
+
+    /**
+     * R744: bounded wait for the first element of a streaming
+     * iterator.
+     *
+     * <p>Returns {@code true} when {@code hasNext()} reports an
+     * element is available (including the legal "stream finished
+     * empty" case, which yields {@code false} from {@code hasNext()}
+     * but is a completed, non-stalled response), and {@code false}
+     * when the deadline expired with the iterator still parked on the
+     * socket.
+     *
+     * <p>Implementation note: {@code hasNext()} on a
+     * {@code toIterable()} iterator is itself a blocking read, so we
+     * cannot "poll" it on a timer from the same thread — a single
+     * call parks until the provider sends something. We therefore
+     * run the single blocking {@code hasNext()} on a short-lived
+     * helper thread and {@code join()} it with a deadline. That
+     * keeps the ORIGINAL blocking semantics (no busy-wait, no
+     * truncated stream) while giving the caller a bound. The helper
+     * is a daemon, so a truly wedged provider cannot keep the JVM
+     * alive; on timeout we abandon it (it stays parked on the dead
+     * socket until the provider eventually errors or the process
+     * exits) and report the stall.
+     */
+    private static boolean awaitFirstChunk(java.util.Iterator<?> it) throws Exception {
+        final boolean[] ready = { false };
+        final boolean[] completed = { false };
+        Runnable probe = () -> {
+            try {
+                // Distinguish "has an element" from "stream ended
+                // cleanly with zero elements": both are legitimate
+                // non-stall outcomes for the caller's purposes.
+                ready[0] = it.hasNext();
+                completed[0] = true;
+            } catch (Throwable t) {
+                // propagate by recording failure; the caller re-runs
+                // the same hasNext() outside the helper so the
+                // original exception type reaches the R697 catch
+                // ladders.
+                completed[0] = true;
+                ready[0] = false;
+            }
+        };
+        Thread probeThread = new Thread(probe, "springai-first-chunk-probe");
+        probeThread.setDaemon(true);
+        probeThread.start();
+        long budget = firstChunkTimeoutMs();
+        long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budget);
+        while (System.nanoTime() < deadline) {
+            try {
+                probeThread.join(FIRST_CHUNK_POLL_MS);
+            } catch (InterruptedException ie) {
+                probeThread.interrupt();
+                Thread.currentThread().interrupt();
+                throw ie;
+            }
+            if (probeThread.isAlive()) {
+                continue;
+            }
+            // Probe finished. Re-run hasNext() on THIS thread so a
+            // real provider exception propagates into the R697
+            // catch ladders unchanged (the probe swallows it so we
+            // can return cleanly from a daemon thread).
+            if (completed[0]) {
+                // Re-invoking hasNext() on a finished, non-empty
+                // iterator is safe and returns the cached answer.
+                it.hasNext();
+                return true;
+            }
+            return true;
+        }
+        // R744: deadline hit with the probe still parked on the socket.
+        LOG.warn("R744: Spliterator would block forever — the provider accepted the "
+                + "request but sent no data within {}ms. Abandoning the probe thread "
+                + "and letting the R697 retry ladder decide.", budget);
+        probeThread.interrupt();
+        return false;
+    }
+
     private final String model;
     private final Options options;
     private final OpenAiChatModel chatModel;
@@ -249,7 +360,68 @@ public class SpringAiChatClient implements ChatClient {
             try {
                 reactor.core.publisher.Flux<ChatResponse> flux = chatModel.stream(prompt);
                 it = flux.toIterable().iterator();
-                it.hasNext();
+                // R744 (2026-10-21): this single `it.hasNext()` is the
+                // FIRST BLOCKING NETWORK READ of the whole call, and it
+                // is the only blocking read that is NOT inside the
+                // guarded streaming `try { while (it.hasNext()) … }
+                // catch (Exception e)` at line ~345. Everything the
+                // R697 loop below considers a "failed attempt"
+                // (WebClientResponseException, and any Throwable from
+                // `chatModel.stream`) lands in a `catch` that sleeps and
+                // retries — but a provider that ACCEPTS the TCP/HTTP
+                // request and then never finishes the SSE body produces
+                // NO exception here at all. The read simply parks on the
+                // socket. Symptoms, observed live on daemon PID 23280
+                // (2026-10-21 00:00, session default.jsonl):
+                //   - no log line at all after the last pre-call log
+                //   - daemon alive, CPU flat, RSS 1.2 GB, 52 threads
+                //   - `jstack -l` shows the `springai-runner` thread
+                //     parked in this method, NOT in `queue.take()`
+                //   - the transcript stops writing; the top-level run
+                //     never emits RunEnd, so the desktop shows a green
+                //     `● Idle`
+                //
+                // Why R738 / R742 both missed it: both fixed
+                // "terminal RunEnd offered but POISON missing" — a
+                // bug where the run DID terminate and the RunEnd was
+                // sitting unread in the queue. Here nothing terminates
+                // at all: we never reach any RunEnd offer, so pairing
+                // RunEnd↔POISON is irrelevant. R735a is also blind to
+                // it: it wraps QueryEngine.tryAdvance, but the engine is
+                // blocked DOWNSTREAM inside `currentLlmIt.next()`, so
+                // no Throwable is ever thrown — the R735a catch is
+                // unreachable. R721's cancel is the only thing that
+                // still unblocks it, and only if the user presses
+                // Ctrl-C.
+                //
+                // Fix: bound the wait. A streaming completion that has
+                // not produced its first chunk within
+                // AETHERCODE_R744_FIRST_CHUNK_TIMEOUT_MS (default 180s)
+                // is deterministically broken; treat it as a failed
+                // attempt so the existing R697 retry ladder below gets
+                // a chance, and — if all attempts time out — fall
+                // through to the `it == null` branch, which R742 has
+                // already taught to offer (RunEnd, POISON) together.
+                if (!awaitFirstChunk(it)) {
+                    // Drop the parked iterator so a timed-out attempt
+                    // can never leak into the streaming loop below.
+                    // `it` stays null ⇒ the `if (it == null)` branch
+                    // reports the failure terminally, and that branch
+                    // is R742-hardened (RunEnd AND POISON).
+                    lastErr = new java.util.concurrent.TimeoutException(
+                            "R744: no first SSE chunk within "
+                                    + firstChunkTimeoutMs() + "ms (attempt " + attempt + "/3)");
+                    LOG.warn("R697-retry: chat call attempt {} stalled waiting for the "
+                            + "first stream chunk after {}ms — the provider accepted the "
+                            + "request but never finished the response body.",
+                            attempt, firstChunkTimeoutMs());
+                    try { Thread.sleep(1000L * attempt); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    it = null;
+                    continue;
+                }
                 lastErr = null;
                 lastBody = null;
                 break;

@@ -329,34 +329,72 @@ public class Main implements Callable<Integer> {
             System.out.println();
             printTodoList(next, "📋 TODO plan");
         });
-        engine.query(input).forEach(ev -> {
-            if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
-                System.out.print(td.text());
-            } else if (ev instanceof org.aethercode.core.stream.StreamEvent.ToolUseStart tu) {
-                // surface tool calls in --print mode. Previously these
-                // were swallowed (either by spring-ai's internal loop, or by
-                // the engine's own batching). With proxyToolCalls(true) the
-                // model emits each tool call as a discrete event before the
-                // engine runs it; we print "→ toolname(args)" so the user
-                // sees the agent's plan as it happens. The actual tool result
-                // is fed back to the model — we don't print it (the model's
-                // reply to the user covers it).
-                String argStr = summariseArgs(tu.input());
-                System.out.println();
-                System.out.println(ANSI_DIM
-                        + "  → " + tu.name() + "(" + argStr + ")"
-                        + ANSI_RESET);
-            } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd) {
-                System.out.println();
-            } else if (ev instanceof org.aethercode.core.stream.StreamEvent.SideNote sn
-                    && ("task".equals(sn.kind()) || "memory".equals(sn.kind()))) {
-                // print task SideNotes so the user can see the task ID.
-                // also print memory SideNotes — "recalled N memory file(s)"
-                // is useful signal that the agent has the right context.
-                System.out.println(ANSI_DIM
-                        + "  [" + sn.message() + "]" + ANSI_RESET);
+        // R746: the ONE close-only site that gets a bounded wait too.
+        //
+        // `--print` is the unattended automation entry point: the
+        // caller is a script or CI job, not a human watching a TUI.
+        // Pre-fix `engine.query(input).forEach(...)` parked inside
+        // hasNext() forever if the producer wedged, and nothing
+        // rescued it — no session lock to release, no desktop to show
+        // a red banner, and System.exit(code) is only reached AFTER
+        // runHeadless returns. Ctrl-C interrupts the main thread, but
+        // a thread parked in a blocking queue read does not always
+        // observe the interrupt, so the documented "Ctrl-C and the
+        // process exits" contract degrades to "Ctrl-C and the process
+        // hangs". A bounded wait converts that into a clean non-zero
+        // exit with a named stopReason.
+        //
+        // Unlike SubagentOrchestrator / AgentTool / SddOrchestrator,
+        // this site is INBOUND (the user is present, the whole process
+        // is the consumer), so there is no downstream waiter to leave
+        // a terminal event for — the LOG marker + exit code are the
+        // signal. See docs/R746-consumer-guard-rollout.md for why this
+        // one site was promoted out of the close-only batch.
+        try (java.util.stream.Stream<org.aethercode.core.stream.StreamEvent> stream =
+                     engine.query(input)) {
+            org.aethercode.core.stream.StreamConsumerGuard.Result guard =
+                    org.aethercode.core.stream.StreamConsumerGuard.consume(
+                            "cli-headless",
+                            stream.iterator(),
+                            ev -> {
+                                if (ev instanceof org.aethercode.core.stream.StreamEvent.TextDelta td) {
+                                    System.out.print(td.text());
+                                } else if (ev instanceof org.aethercode.core.stream.StreamEvent.ToolUseStart tu) {
+                                    // surface tool calls in --print mode. Previously these
+                                    // were swallowed (either by spring-ai's internal loop, or by
+                                    // the engine's own batching). With proxyToolCalls(true) the
+                                    // model emits each tool call as a discrete event before the
+                                    // engine runs it; we print "→ toolname(args)" so the user
+                                    // sees the agent's plan as it happens. The actual tool result
+                                    // is fed back to the model — we don't print it (the model's
+                                    // reply to the user covers it).
+                                    String argStr = summariseArgs(tu.input());
+                                    System.out.println();
+                                    System.out.println(ANSI_DIM
+                                            + "  → " + tu.name() + "(" + argStr + ")"
+                                            + ANSI_RESET);
+                                } else if (ev instanceof org.aethercode.core.stream.StreamEvent.RunEnd) {
+                                    System.out.println();
+                                } else if (ev instanceof org.aethercode.core.stream.StreamEvent.SideNote sn
+                                        && ("task".equals(sn.kind()) || "memory".equals(sn.kind()))) {
+                                    // print task SideNotes so the user can see the task ID.
+                                    // also print memory SideNotes — "recalled N memory file(s)"
+                                    // is useful signal that the agent has the right context.
+                                    System.out.println(ANSI_DIM
+                                            + "  [" + sn.message() + "]" + ANSI_RESET);
+                                }
+                            },
+                            "mode=headless",
+                            org.aethercode.core.stream.StreamConsumerGuard.timeoutMs());
+            if (guard.stalled()) {
+                // LOG AND stderr: --print's stdout is machine-parsed, so
+                // the marker goes to stderr as well to stay visible in a
+                // CI log that captures both.
+                LOG.warn("R746: cli-headless consumer stalled — {}", guard.stopReason());
+                System.err.println("aethercode: " + guard.stopReason());
+                return 1;
             }
-        });
+        }
         return 0;
     }
 
