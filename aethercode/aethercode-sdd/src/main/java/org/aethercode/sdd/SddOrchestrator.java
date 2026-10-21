@@ -572,6 +572,11 @@ public final class SddOrchestrator {
         // id once, outside every lambda, for the LOG markers + the
         // stopReason the guard mints on a stall.
         final String phaseId = phase.id().name();
+        // R747-build: phaseNumber is likewise reassigned in the withModel
+        // branch above, so it is not effectively final either. Snapshot it
+        // next to phaseId — the phase-consumer lambda reads both for its
+        // run context and stopReason.
+        final int phaseNo = phaseNumber;
         try {
             // R709-C: run the stream consumption on a background thread
             // so we can enforce a wall-clock budget. The pre-R709 path
@@ -640,7 +645,7 @@ public final class SddOrchestrator {
                                                 // a stream that dies mid-phase can no
                                                 // longer masquerade as a completed one.
                                             },
-                                            "phase=" + phaseNumber + "/" + phaseId,
+                                            "phase=" + phaseNo + "/" + phaseId,
                                             org.aethercode.core.stream.StreamConsumerGuard.timeoutMs());
                             if (guard.stalled()) {
                                 throw new SddException(SddException.Code.PHASE_TIMEOUT,

@@ -105,7 +105,7 @@ class SubagentOrchestratorR746Test {
         // wedges forever. Pre-fix this parked inside hasNext() and the
         // parent's delegate() never returned.
         SubagentOrchestrator o = orchestratorWith((spec, parent) -> wedgedEngineAfter(
-                new StreamEvent[]{new StreamEvent.TextDelta("starting")},
+                new StreamEvent[] { new StreamEvent.TextDelta("starting") },
                 new CountDownLatch(1)));
 
         long started = System.nanoTime();

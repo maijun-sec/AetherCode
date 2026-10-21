@@ -2,6 +2,9 @@ package org.aethercode.cli;
 
 import org.aethercode.core.permission.PermissionMode;
 import org.aethercode.core.llm.ChatClient;
+import org.aethercode.core.stream.ClaudeStreamJsonEmitter;
+import org.aethercode.core.stream.StreamConsumerGuard;
+import org.aethercode.core.stream.StreamEvent;
 import org.aethercode.core.tool.Tool;
 import org.aethercode.engine.springai.SpringAiChatClient;
 import org.aethercode.mcp.McpManager;
@@ -69,7 +72,7 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--print", "-p"}, description = "Run a single turn non-interactively and exit.")
     boolean printMode;
 
-    @Option(names = {"--permission-mode"}, description = "Permission mode: ${COMPLETION-CANDIDATES}. Default: ${DEFAULT-VALUE} (overridden to BYPASS_PERMISSIONS in --print mode since there is no interactive prompt).")
+    @Option(names = {"--permission-mode"}, converter = LenientPermissionModeConverter.class, description = "Permission mode: ${COMPLETION-CANDIDATES}. Accepts the scheduler's camelCase spelling too (R747). Default: ${DEFAULT-VALUE} (overridden to BYPASS_PERMISSIONS in --print mode since there is no interactive prompt).")
     PermissionMode permissionMode = PermissionMode.DEFAULT;
 
     @Option(names = {"--cwd"}, description = "Working directory. Default: current dir.")
@@ -83,6 +86,47 @@ public class Main implements Callable<Integer> {
 
     @Option(names = {"--verbose", "-v"}, description = "Verbose logging (DEBUG level for the LLM client).")
     boolean verbose;
+
+    // ---- R747: scheduler-compatibility options -------------------------
+    // External dispatchers (Multica and anything else that already speaks
+    // the Claude Code stream-json protocol) drive AetherCode as a
+    // subprocess. They inject a fixed argv regardless of what the tool
+    // actually needs, and their docs state that protocol-critical flags
+    // are dropped from user-supplied arguments because overriding them
+    // would break the daemon's connection. The practical consequence for
+    // us is simple: every flag such a scheduler sends must at least parse,
+    // or the process dies before it can answer.
+    //
+    // None of these change local behaviour. They exist so the same binary
+    // can be registered as a custom runtime profile.
+
+    @Option(names = {"--output-format"}, description = "Output format for --print: text (default) or stream-json (Claude Code NDJSON protocol, R747).")
+    String outputFormat = "text";
+
+    @Option(names = {"--input-format"}, description = "Accepted for protocol compatibility; AetherCode reads the prompt as a single JSONL user frame (R747).")
+    String inputFormat = "text";
+
+    // --mcp-config is NOT redeclared here: Main already owns that option at
+    // line ~183 ("Path to mcp.json. Default: .aethercode/mcp.json in cwd").
+    // A duplicate @Option name is a runtime-only picocli failure
+    // (DuplicateOptionAnnotationsException), invisible to javac — it took a
+    // real --print run to surface. The existing field already accepts an
+    // absolute path, which is exactly the shape a scheduler passes.
+
+    @Option(names = {"--settings"}, description = "Accepted for protocol compatibility; AetherCode does not read Claude-style settings files and ignores this (R747).")
+    Path claudeSettingsPath;
+
+    @Option(names = {"--disallowed-tools"}, split = ",", description = "Tool names to disable for this run (R747).")
+    List<String> disallowedTools = new ArrayList<>();
+
+    @Option(names = {"--effort"}, description = "Reasoning effort hint from the scheduler; recorded but not yet mapped to a provider parameter (R747).")
+    String effort;
+
+    @Option(names = {"--strict-mcp-config"}, description = "Accepted for protocol compatibility (R747).")
+    boolean strictMcpConfig;
+
+    @Option(names = {"--resume"}, description = "Resume a prior session id from the scheduler (R747).")
+    String resumeSessionId;
 
     @Option(names = {"--max-tokens"}, description = "Max tokens in the model's response (default 4096; provider default if 0).")
     int maxTokens = 4096;
@@ -236,8 +280,17 @@ public class Main implements Callable<Integer> {
         // Fast path: --version / --help handled by picocli mixins.
 
         if (printMode) {
-            if (prompt == null || prompt.isBlank()) {
-                System.err.println("--print requires a prompt argument");
+            // R747: a scheduler driving us over the Claude Code stream-json
+            // protocol sends the prompt on stdin (as one JSONL user frame),
+            // not as an argv positional. Accept both; argv wins when present
+            // so a human running --print by hand is unaffected.
+            String effectivePrompt = prompt;
+            boolean streamJson = "stream-json".equalsIgnoreCase(outputFormat);
+            if (effectivePrompt == null || effectivePrompt.isBlank()) {
+                effectivePrompt = readPromptFromStdin(streamJson);
+            }
+            if (effectivePrompt == null || effectivePrompt.isBlank()) {
+                System.err.println("--print requires a prompt argument (or a prompt on stdin)");
                 return 2;
             }
             // --print is non-interactive. The default permission mode would
@@ -248,7 +301,7 @@ public class Main implements Callable<Integer> {
             if (permissionMode == PermissionMode.DEFAULT) {
                 permissionMode = PermissionMode.BYPASS_PERMISSIONS;
             }
-            return runHeadless(prompt);
+            return streamJson ? runStreamJson(effectivePrompt) : runHeadless(effectivePrompt);
         }
         // positional argument without --print is almost always a mistake.
         if (prompt != null && !prompt.isBlank()) {
@@ -310,6 +363,139 @@ public class Main implements Callable<Integer> {
                     this::buildEngineForSession);
         }
         return runRepl();
+    }
+
+    /** True when stdin has at least one byte waiting. False on any error —
+     *  the caller then falls back to the argv prompt. */
+    private static boolean stdinHasData() {
+        try {
+            return System.in.available() > 0;
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * R747: read the prompt from stdin when it was not given as an argv
+     * positional.
+     *
+     * <p>Two shapes are accepted, matching what schedulers actually send:
+     * <ul>
+     *   <li>a Claude Code user frame —
+     *       {@code {"type":"user","message":{"role":"user","content":[{"type":"text","text":"…"}]}}}
+     *       — parsed as JSON and the text extracted;</li>
+     *   <li>anything else — treated as the raw prompt text.</li>
+     * </ul>
+     *
+     * <p>Reading stops at EOF. The scheduler keeps its end of the pipe open
+     * after the prompt (the Claude Code protocol uses the same stdin for
+     * {@code control_response} frames), so a single {@code readLine()} is
+     * not enough: collect every line and concatenate.
+     */
+    private String readPromptFromStdin(boolean streamJson) {
+        if (System.console() != null && !stdinHasData()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        try (var reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(System.in, java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(line);
+            }
+        } catch (Exception e) {
+            System.err.println("R747: failed to read prompt from stdin: " + e);
+            return null;
+        }
+        String raw = sb.toString().trim();
+        if (raw.isEmpty()) return null;
+        if (!streamJson) return raw;
+        return extractClaudeUserText(raw);
+    }
+
+    /**
+     * Pull the prompt text out of a Claude Code {@code user} frame. Returns
+     * the input unchanged when it is not parseable as such a frame — a
+     * plain-text prompt is still a perfectly good prompt.
+     */
+    private static String extractClaudeUserText(String raw) {
+        if (!raw.startsWith("{")) return raw;
+        try {
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(raw);
+            var content = node.path("message").path("content");
+            if (!content.isArray()) return raw;
+            StringBuilder text = new StringBuilder();
+            for (var block : content) {
+                if ("text".equals(block.path("type").asText())) {
+                    if (text.length() > 0) text.append('\n');
+                    text.append(block.path("text").asText());
+                }
+            }
+            return text.length() == 0 ? raw : text.toString();
+        } catch (Exception ignored) {
+            return raw;
+        }
+    }
+
+    /**
+     * R747: unattended run over the Claude Code stream-json protocol.
+     *
+     * <p>Differences from {@link #runHeadless}:
+     * <ul>
+     *   <li>stdout carries NDJSON protocol frames only — no human-readable
+     *       decoration, no todo dumps, no ANSI. Anything diagnostic goes to
+     *       stderr so it cannot corrupt the frame stream.</li>
+     *   <li>A terminal {@code type:"result"} frame is guaranteed on every
+     *       exit path, including a stalled or thrown run. The scheduler
+     *       classifies success from that frame, so a truncated stream must
+     *       read as failure rather than as a clean exit.</li>
+     * </ul>
+     */
+    private int runStreamJson(String input) {
+        AetherCodeEngine engine = buildEngine();
+        ClaudeStreamJsonEmitter emitter = new ClaudeStreamJsonEmitter(System.out);
+        int exit = 0;
+        try (java.util.stream.Stream<StreamEvent> stream = engine.query(input)) {
+            StreamConsumerGuard.Result guard = StreamConsumerGuard.consume(
+                    "cli-stream-json",
+                    stream.iterator(),
+                    emitter::accept,
+                    "mode=stream-json",
+                    StreamConsumerGuard.timeoutMs());
+            if (!emitter.terminalEmitted()) {
+                // Fail closed: no result frame from the engine means we
+                // cannot claim the task completed. Say why.
+                String reason = guard.stalled()
+                        ? "consumer_timeout: " + guard.stopReason()
+                        : "no_run_end: engine stream ended without RunEnd";
+                emitter.finish(true, reason);
+                if (guard.stalled()) {
+                    LOG.warn("R747: {} — {}", ClaudeStreamJsonEmitter.MARKER, guard.stopReason());
+                    System.err.println("aethercode: " + guard.stopReason());
+                }
+                exit = 1;
+            } else if (guard.stalled()) {
+                // The engine did emit a terminal event, so the frames are
+                // self-consistent; still report the stall for the operator.
+                LOG.warn("R747: {} stalled after terminal event — {}",
+                        ClaudeStreamJsonEmitter.MARKER, guard.stopReason());
+                System.err.println("aethercode: " + guard.stopReason());
+                exit = 1;
+            }
+        } catch (Throwable t) {
+            // A throw here never reaches the engine's own handler (we are
+            // the outermost consumer), so the terminal frame is ours to
+            // write. Without this the scheduler waits out its own timeout.
+            String reason = "runtime_exception: "
+                    + (t.getMessage() != null ? t.getMessage() : t.getClass().getName());
+            emitter.finish(true, reason);
+            System.err.println("aethercode: " + reason);
+            exit = 1;
+        } finally {
+            emitter.flush();
+        }
+        return exit;
     }
 
     private int runHeadless(String input) {
