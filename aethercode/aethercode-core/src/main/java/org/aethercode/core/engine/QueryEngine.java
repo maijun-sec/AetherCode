@@ -1957,12 +1957,130 @@ public class QueryEngine {
              *  chat client for the current turn. Used to decide
              *  whether to fall back to char-based estimation. */
             private boolean turnHadUsage = false;
-            private Stream<StreamEvent> currentLlmStream;
+            /** R750: RunStart is emitted once per RUN, not once per
+             *  turn. This branch re-enters on every LLM turn of the
+             *  same run, so without the latch an external stream-json
+             *  consumer sees system/init repeated once per iteration. */
+            private boolean runStartEmitted = false;
+            /** R750 (2026-10-22): events produced during ONE
+             *  {@code tryAdvance} call that have not been handed to the
+             *  consumer yet.
+             *
+             *  <p>Why this exists. {@code tryAdvance(action)} has a
+             *  contract: it may pass AT MOST ONE element to {@code action}
+             *  per call, and {@code hasNext()} is allowed to invoke
+             *  {@code tryAdvance} internally to find out whether an
+             *  element exists. {@code StreamConsumerGuard} (R746) probes
+             *  {@code hasNext()} on a separate thread precisely to bound
+             *  the blocking read — which means every {@code action.accept}
+             *  inside this method is invoked with the probe's OWN
+             *  throwaway action, and only the single element later
+             *  returned by {@code it.next()} reaches the real handler.
+             *
+             *  <p>That silently dropped every event emitted after the
+             *  first within one tryAdvance call. Measured on a real
+             *  5-turn tool-calling run: all 5 {@code ToolResult} frames
+             *  arrived, and all 5 {@code ToolUseStart} declarations were
+             *  lost — so the wire stream carried tool answers with no
+             *  matching calls, which is exactly the orphan shape the
+             *  provider's adjacency contract (R736/R741) forbids and
+             *  which multica's stream-json backend then renders as
+             *  "a result with no call".
+             *
+             *  <p>The fix is to buffer instead of forwarding: every
+             *  internal emit enqueues, and {@code tryAdvance} drains at
+             *  most one element per call. That makes the contract hold
+             *  for ANY consumer — the guard's probe thread, a plain
+             *  {@code forEach}, or {@code collect()} — rather than
+             *  working around one particular consumer. */
+            private final java.util.ArrayDeque<StreamEvent> pendingEvents =
+                    new java.util.ArrayDeque<>();
+
+            /** R750: internal emit target. Buffers instead of writing
+             *  straight through, so nothing depends on how many events a
+             *  single tryAdvance produces. */
+            private void emit(StreamEvent ev) {
+                if (ev != null) pendingEvents.addLast(ev);
+            }
+
+            /** R750: hand at most ONE buffered event to the consumer, per
+             *  the Spliterator contract. Returns true when something was
+             *  delivered OR more remain buffered (so the caller keeps
+             *  pulling), false only when nothing is left to give. */
+            private boolean drainOne(java.util.function.Consumer<? super StreamEvent> action) {
+                if (pendingEvents.isEmpty()) return false;
+                action.accept(pendingEvents.pollFirst());
+                return true;
+            }
+
+            /**
+             * R750b: the ONLY correct way to end a {@code tryAdvance}
+             * iteration that produced no consumer-visible event.
+             *
+             * <p>Several branches legitimately produce nothing — a
+             * {@code Usage} event recorded internally, a model-side
+             * {@code RunStart} dropped as a duplicate, a turn-start that
+             * only issues the LLM call. Each used to end with a bare
+             * {@code return true;}, which is a CONTRACT VIOLATION, not a
+             * harmless no-op.
+             *
+             * <p>{@code tryAdvance} returning {@code true} promises the
+             * action received an element. Returning true without one
+             * desynchronises {@code Spliterators.AbstractSpliterator}'s
+             * iterator: {@code hasNext()} caches "true", {@code next()}
+             * has nothing to hand back, and the following
+             * {@code hasNext()} re-enters {@code tryAdvance}, finds an
+             * empty buffer, and returns false. The consumer reads that as
+             * a clean drain and exits WITHOUT the terminal RunEnd —
+             * {@code no_run_end: engine stream ended without RunEnd}.
+             *
+             * <p>So: deliver one buffered event if there is one; if not,
+             * tell the enclosing loop to keep driving the engine (which
+             * parks in the LLM read until the model really produces
+             * something). The loop re-checks {@code finished} and the
+             * cancel interrupt flag on every pass, so terminal and
+             * cancel paths still work.
+             */
+            private boolean deliveredOrContinue(java.util.function.Consumer<? super StreamEvent> action) {
+                if (!pendingEvents.isEmpty()) return drainOne(action);
+                return false;
+            }
+            /** R750: tool ids already announced to the consumer this run.
+ *  The model-stream pass-through and the tool executor's
+ *  {@code Started} event describe the SAME call; emitting both
+ *  produced a duplicate {@code tool_use} frame on the Claude
+ *  stream-json wire. Populated by the model's ToolUseStart branch,
+ *  consulted by the executor's Started branch. */
+private final java.util.Set<String> announcedToolUseIds =
+                    java.util.Collections.newSetFromMap(
+                            new java.util.concurrent.ConcurrentHashMap<>());
+
+private Stream<StreamEvent> currentLlmStream;
             private java.util.Iterator<StreamEvent> currentLlmIt;
 
             @Override
             public boolean tryAdvance(java.util.function.Consumer<? super StreamEvent> action) {
-                try {
+              try {
+                // R750b: several branches legitimately produce no
+                // consumer-visible event (an internally-recorded Usage, a
+                // dropped duplicate RunStart, a turn-start that only
+                // issues the LLM call). They must NOT end the iteration
+                // with a bare `return true` — see
+                // deliveredOrContinue for why that desynchronises the
+                // iterator into a premature clean drain.
+                engineLoop:
+                while (true) {
+                    // R750: a previous tryAdvance may have produced several
+                    // events. The Spliterator contract allows exactly ONE per
+                    // call, so hand back the buffered ones first and only
+                    // resume engine work once the buffer is empty. Without
+                    // this, everything after the first event of a busy turn
+                    // (notably every ToolUseStart / ToolResult pair) is
+                    // silently swallowed by whichever consumer probes
+                    // hasNext() — see the pendingEvents doc.
+                    if (!pendingEvents.isEmpty()) {
+                        return drainOne(action);
+                    }
                     if (finished) return false;
                     // R721: honour cancel's thread interrupt. Pre-R720
                     // the cancel RPC only flipped the future's cancel
@@ -1981,9 +2099,18 @@ public class QueryEngine {
                     if (Thread.interrupted()) {
                         finished = true;
                         stopReason = "cancelled";
+                        // R750: anything already buffered (SideNote from a
+                        // partially-processed batch, etc.) still owes the
+                        // consumer a delivery. Hand back ONE per call; the
+                        // top-of-method guard will keep draining on the next
+                        // call. Only when the buffer is empty do we emit
+                        // the terminal RunEnd directly and terminate — a
+                        // buffered RunEnd drained ahead of an older event,
+                        // then `return false`, would strand the RunEnd and
+                        // leave the desktop in the green ● Idle state.
+                        if (!pendingEvents.isEmpty()) return drainOne(action);
                         try {
-                            action.accept(new StreamEvent.RunEnd(
-                                    "cancelled", List.of()));
+                            action.accept(new StreamEvent.RunEnd("cancelled", List.of()));
                         } catch (Exception ignored) {
                             // the action consumer can throw on a closed
                             // downstream — that's fine, the run is
@@ -1997,13 +2124,46 @@ public class QueryEngine {
                         // control in TodoRunController is the source of truth
                         // for "this is taking too long".
                         // Start of a turn.
-                        action.accept(new StreamEvent.RunStart(runId, effectiveChatClient.modelId()));
+                        //
+                        // R750 (2026-10-22): RunStart is a RUN-scoped
+                        // event, not a TURN-scoped one. This branch re-enters
+                        // on every LLM turn, so the emit used to fire once
+                        // per turn — an external scheduler driving us over
+                        // the Claude Code stream-json protocol saw
+                        // system/init repeated on every iteration of a
+                        // tool-calling loop (measured: 5 identical init
+                        // frames in a 5-turn run). The desktop interprets a
+                        // second RunStart as "a new run began", and
+                        // multica's stream-json contract treats
+                        // `system`/`subtype=init` as the single
+                        // session-establishing frame, so a duplicated init
+                        // makes both surfaces mis-report the run.
+                        //
+                        // The engine-side consumers (desktop store, TUI)
+                        // already only act on the FIRST RunStart for a run
+                        // and treat later ones as a per-turn refresh, which
+                        // is why this stayed invisible until a third-party
+                        // scheduler read the same stream. Emit once.
+                        if (!runStartEmitted) {
+                            runStartEmitted = true;
+                            emit(new StreamEvent.RunStart(runId, effectiveChatClient.modelId()));
+                        }
                         // emit any sub-task transitions BEFORE the LLM
                         // stream starts. On the first turn, this surfaces the
                         // model's initial plan; on subsequent turns, this
                         // surfaces transitions that happened in the previous
                         // tool batch (e.g. a sub_todo_write close).
-                        emitSubTaskTransitions(action);
+                        // R750: route through the pendingEvents buffer instead of the
+                            // caller's raw action. Called from inside
+                            // tryAdvance, a direct action.accept(...)
+                            // emits several SubTaskStart/End events in
+                            // ONE tryAdvance call, violating the "at most
+                            // one event per call" contract and losing them
+                            // to a probe-then-pull consumer. Package-
+                            // private tests still call the method directly
+                            // with their own collector, so the signature is
+                            // unchanged.
+                            emitSubTaskTransitions(stEvent -> emit(stEvent));
                         // use the snapshotted memory section for this
                         // query, not the live field. effectiveSystem() reads
                         // the live field; we temporarily swap it in via a
@@ -2125,14 +2285,47 @@ public class QueryEngine {
                         lastAssistantBlocks = List.of();
                         turnsTaken++;
                         turnHadUsage = false;
-                        return true;
+                        // R750b: NEVER return true here having delivered
+                        // nothing. This branch exists to start a turn
+                        // (call the LLM, reset per-turn state); it produces
+                        // no consumer-visible event by design, and the
+                        // first turn only appeared to work because
+                        // `runStartEmitted` had queued a RunStart that
+                        // `drainOne` could hand over. From turn 2 onward
+                        // there is no RunStart (correctly — it is
+                        // run-scoped), the buffer is empty, and a bare
+                        // `return true` promises an element that does not
+                        // exist.
+                        //
+                        // That breaks `Spliterators.AbstractSpliterator`:
+                        // its iterator caches hasNext()==true, then next()
+                        // has nothing to return, and the following
+                        // hasNext() re-enters tryAdvance, which now finds
+                        // an empty buffer and returns false. The consumer
+                        // reads that as a CLEAN DRAIN and exits WITHOUT the
+                        // terminal RunEnd — the `no_run_end: engine stream
+                        // ended without RunEnd` that made every tool-using
+                        // stream-json run terminate as `subtype: error`.
+                        //
+                        // Looping instead keeps the "more events are
+                        // coming" promise honest: the next iteration of
+                        // this while(true) parks in `currentLlmIt.next()`
+                        // until the model actually produces something, and
+                        // returns true only once an event was really
+                        // delivered. It re-checks `finished` and the
+                        // interrupt flag on every pass, so cancel and
+                        // terminal branches still work.
+                        continue;
                     }
 
                     if (currentLlmIt.hasNext()) {
                         StreamEvent ev = currentLlmIt.next();
                         if (ev instanceof StreamEvent.TextDelta td) {
-                            action.accept(td);
-                            return true;
+                            emit(td);
+                            // R750: deliver any events this turn buffered before
+                            // claiming there is more to pull.
+                            if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
                         }
                         if (ev instanceof StreamEvent.Usage u) {
                             // record per-call token usage to both
@@ -2157,12 +2350,23 @@ public class QueryEngine {
                                     }
                                 }
                             }
-                            return true;
+                            // R750: deliver any events this turn buffered before
+                            // claiming there is more to pull.
+                            if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
                         }
                         if (ev instanceof StreamEvent.ToolUseStart tu) {
                             pending.add(new ContentBlock.ToolUseBlock(tu.id(), tu.name(), tu.input()));
-                            action.accept(tu);
-                            return true;
+                            // R750: remember that the consumer has already
+                            // been told about this tool, so the executor's
+                            // `Started` event does not announce it a second
+                            // time (duplicate tool_use frame on the wire).
+                            announcedToolUseIds.add(tu.id());
+                            emit(tu);
+                            // R750: deliver any events this turn buffered before
+                            // claiming there is more to pull.
+                            if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
                         }
                         if (ev instanceof StreamEvent.RunStart) {
                             // the engine owns the per-turn RunStart (emitted above
@@ -2171,7 +2375,10 @@ public class QueryEngine {
                             // drop it here so the consumer never sees a duplicate
                             // "turn started" event. This is purely defensive — the
                             // SpringAiChatClient no longer emits RunStart either.
-                            return true;
+                            // R750: deliver any events this turn buffered before
+                            // claiming there is more to pull.
+                            if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
                         }
                         if (ev instanceof StreamEvent.RunEnd re) {
                             // prior round fix: the model-side RunEnd is an INTERNAL signal, not a
@@ -2203,8 +2410,11 @@ public class QueryEngine {
                             // fall through to batch handler
                         } else {
                             // ToolResult, SideNote, or any other event type — pass through.
-                            action.accept(ev);
-                            return true;
+                            emit(ev);
+                            // R750b: only claim success if an event was really
+                            // delivered; otherwise keep driving the engine.
+                            if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
                         }
                     }
 
@@ -2252,7 +2462,7 @@ public class QueryEngine {
                                 // message. Both events use kind="compaction"
                                 // so the desktop can match start↔complete by
                                 // their kind without needing a per-event id.
-                                action.accept(new StreamEvent.SideNote(
+                                emit(new StreamEvent.SideNote(
                                         "compaction",
                                         "started: " + messages.size() + " messages"));
                                 var spliced = compactor.compact(messages);
@@ -2267,14 +2477,17 @@ public class QueryEngine {
                                     // production, but the SDK keeps a null
                                     // sink there).
                                     sideNoteSink.accept("compacted: " + spliced.size() + " messages from " + messages.size());
-                                    action.accept(new StreamEvent.SideNote(
+                                    emit(new StreamEvent.SideNote(
                                             "compaction",
                                             "completed: " + messages.size() + " → " + spliced.size() + " messages"));
                                 }
                             }
                         }
                         finished = true;
-                        action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                        emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                        // R750: deliver any events this turn buffered before
+                        // claiming there is more to pull.
+                        if (!pendingEvents.isEmpty()) return drainOne(action);
                         return true;
                     }
 
@@ -2353,7 +2566,7 @@ public class QueryEngine {
                         // session" action.
                         if (preInfo != null && "loop_detected".equals(preInfo.kind())
                                 && "empty_tool_input".equals(loopDetector.lastLoopKind())) {
-                            action.accept(new StreamEvent.SideNote(
+                            emit(new StreamEvent.SideNote(
                                     "empty_tool_input",
                                     "the model sent " + loopDetector.emptyInputStreak()
                                             + " consecutive tool calls with empty input. "
@@ -2364,8 +2577,11 @@ public class QueryEngine {
                                     + loopDetector.emptyInputStreak()
                                     + " consecutive empty tool calls)";
                             finished = true;
-                            action.accept(new StreamEvent.RunEnd(stopReason, List.of()));
-                            return true;
+                            emit(new StreamEvent.RunEnd(stopReason, List.of()));
+                            // R750: deliver any events this turn buffered before
+                            // claiming there is more to pull.
+                            if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
                         }
                         if (preInfo != null && preInfo.isWarning()) {
                             // tier-1 (soft) warnings are silent.
@@ -2388,7 +2604,7 @@ public class QueryEngine {
                             // tier-2 if the pattern persists — this
                             // change only affects the side channel.
                             if (preInfo.tier() >= ProgressLoopDetector.WARN_BEFORE_STOP) {
-                                action.accept(new StreamEvent.SideNote(
+                                emit(new StreamEvent.SideNote(
                                         preInfo.kind(),
                                         "warn " + preInfo.tier() + "/" + ProgressLoopDetector.WARN_BEFORE_STOP
                                                 + " after " + turnsTaken + " turns — "
@@ -2412,13 +2628,40 @@ public class QueryEngine {
                         StreamingToolExecutor.Event ev = it.next();
                         switch (ev) {
                             case StreamingToolExecutor.Event.Started st -> {
-                                action.accept(new StreamEvent.ToolUseStart(st.id(), st.name(), st.input()));
+                                // R750: do NOT re-announce a tool the
+                                // renderer has already been told about.
+                                //
+                                // The model-stream pass-through above (the
+                                // `ev instanceof StreamEvent.ToolUseStart`
+                                // branch) already emitted this exact id /
+                                // name / input as soon as the MODEL decided
+                                // to call it, which is what makes the tool
+                                // card appear instantly in the UI. The
+                                // executor's `Started` event carries the
+                                // same id and payload, so emitting it again
+                                // produced TWO `tool_use` frames per real
+                                // tool call. On the R747 Claude stream-json
+                                // wire that is a duplicate tool_use id —
+                                // exactly the class of protocol defect that
+                                // produces "tool result's tool id not
+                                // found" style rejections downstream.
+                                //
+                                // The executor event is still the
+                                // authoritative signal for tools that never
+                                // streamed a ToolUseStart from the model
+                                // (e.g. a tool injected by the todo
+                                // controller), so it is emitted ONLY when the
+                                // id has not already been announced.
+                                if (announcedToolUseIds.add(st.id())) {
+                                    emit(new StreamEvent.ToolUseStart(
+                                            st.id(), st.name(), st.input()));
+                                }
                             }
                             case StreamingToolExecutor.Event.Completed cp -> {
                                 Message toolMsg = Message.toolResult(cp.id(), cp.output(), cp.isError());
                                 appState.appendMessage(toolMsg);
                                 messageSink.accept(toolMsg);
-                                action.accept(new StreamEvent.ToolResult(cp.id(), cp.output(), cp.isError()));
+                                emit(new StreamEvent.ToolResult(cp.id(), cp.output(), cp.isError()));
                                 // Look up the tool name from the batch by id.
                                 String toolName = null;
                                 for (ContentBlock.ToolUseBlock b : batch) {
@@ -2475,7 +2718,7 @@ public class QueryEngine {
                                 // from stderr in the streamed view.
                                 String text = progressText(p.msg());
                                 if (text != null && !text.isEmpty()) {
-                                    action.accept(new StreamEvent.ToolOutputDelta(p.id(), text));
+                                    emit(new StreamEvent.ToolOutputDelta(p.id(), text));
                                 }
                                 // Also forward to the legacy messageSink
                                 // (kept for any direct TUI consumer that
@@ -2497,7 +2740,17 @@ public class QueryEngine {
                                 // sub-tasks in one batch and we don't want a
                                 // separate SubTaskStart/End pair per
                                 // transition.
-                                emitSubTaskTransitions(action);
+                                // R750: route through the pendingEvents buffer instead of the
+                            // caller's raw action. Called from inside
+                            // tryAdvance, a direct action.accept(...)
+                            // emits several SubTaskStart/End events in
+                            // ONE tryAdvance call, violating the "at most
+                            // one event per call" contract and losing them
+                            // to a probe-then-pull consumer. Package-
+                            // private tests still call the method directly
+                            // with their own collector, so the signature is
+                            // unchanged.
+                            emitSubTaskTransitions(stEvent -> emit(stEvent));
                             }
                         }
                     }
@@ -2523,7 +2776,7 @@ public class QueryEngine {
                             // (the actual stop) keeps emitting the
                             // SideNote so the LoopGuardBanner fires.
                             if (postInfo.tier() >= ProgressLoopDetector.WARN_BEFORE_STOP) {
-                                action.accept(new StreamEvent.SideNote(
+                                emit(new StreamEvent.SideNote(
                                         postInfo.kind(),
                                         "warn " + postInfo.tier() + "/" + ProgressLoopDetector.WARN_BEFORE_STOP
                                                 + " after " + turnsTaken + " turns — "
@@ -2559,7 +2812,7 @@ public class QueryEngine {
                                 && postInfo.shouldStop()) {
                             LOG.warn("R181: hard-stopping run on same_error death spiral (tier={}, turns={}): {}",
                                     postInfo.tier(), turnsTaken, postInfo.description());
-                            action.accept(new StreamEvent.SideNote(
+                            emit(new StreamEvent.SideNote(
                                     "same_error_hard_stop",
                                     "R181: same tool returned the same error 3+ times in a row — "
                                             + "the run is in a death spiral and is being hard-stopped. "
@@ -2589,7 +2842,12 @@ public class QueryEngine {
                             // isComplete=true handler at store/index.ts
                             // :3239) and react-markdown re-parse the
                             // trailing body.
-                            action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                            emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                            // R750: drain the buffer one event per call
+                            // BEFORE terminating. `return false` with a
+                            // RunEnd still buffered would strand it and
+                            // leave the desktop in the green ● Idle state.
+                            if (!pendingEvents.isEmpty()) return drainOne(action);
                             return false;
                         }
                     }
@@ -2611,7 +2869,7 @@ public class QueryEngine {
                     TodoRunController.Verdict verdict = todoController.check(
                             batch, toolNames, batchErrors, appState);
                     if (verdict instanceof TodoRunController.Verdict.AskLlm ask) {
-                        action.accept(new StreamEvent.SideNote("todo-step-bump",
+                        emit(new StreamEvent.SideNote("todo-step-bump",
                                 ask.summary() + " (threshold now " + ask.newSoftThreshold() + ")"));
                         // Inject the ask prompt as a real user message so the
                         // LLM sees it on the next turn.
@@ -2623,24 +2881,32 @@ public class QueryEngine {
                         Message askMsg = Message.userText(prompt);
                         appState.appendMessage(askMsg);
                         messageSink.accept(askMsg);
-                        action.accept(new StreamEvent.SideNote("todo-ask-llm", prompt));
+                        emit(new StreamEvent.SideNote("todo-ask-llm", prompt));
                     } else if (verdict instanceof TodoRunController.Verdict.AwaitUser au) {
                         stopReason = "awaiting_user_decision";
                         finished = true;
-                        action.accept(new StreamEvent.SideNote("todo-await-user",
+                        emit(new StreamEvent.SideNote("todo-await-user",
                                 au.summary() + " (after " + todoController.bumpsIssued() + " LLM bumps)"));
-                        action.accept(new StreamEvent.AwaitUserDecision(
+                        emit(new StreamEvent.AwaitUserDecision(
                                 au.summary(),
                                 todoController.currentTodoStepCount(),
                                 todoController.softThreshold(),
                                 TodoRunController.defaultDecisionOptions()));
                         pendingAwaitSummary = au.summary();
                         awaitingUserDecision = true;
-                        action.accept(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                        emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                        // R750: drain the buffer one event per call BEFORE
+                        // terminating — a `return false` with the RunEnd
+                        // still buffered strands it (green ● Idle).
+                        if (!pendingEvents.isEmpty()) return drainOne(action);
                         return false;
                     }
-                    return true;
-            
+                    // R750b: only claim success if an event was really delivered;
+                    // otherwise keep driving the engine.
+                    if (deliveredOrContinue(action)) return true;
+                            continue engineLoop;
+                }
+
                 } catch (Throwable t) {
                     // R735a (2026-10-20): the LLM stream threw mid-iteration
                     // (e.g. upstream 500 from the chat provider, or any
@@ -2692,6 +2958,26 @@ public class QueryEngine {
                             + ": " + (t.getMessage() == null ? "" : t.getMessage());
                     LOG.warn("R735a: LLM stream threw, ending run with {}",
                             stopReason, t);
+                    // R750: the terminal RunEnd here is the ONE event that
+                    // must NOT go through the pendingEvents buffer. The run
+                    // is over and we are about to `return false`; if we
+                    // buffered the RunEnd and then drained the OLDEST
+                    // buffered event (a ToolUseStart from the failed turn)
+                    // and returned, the terminal RunEnd would never reach
+                    // the consumer — reproducing the exact green `● Idle`
+                    // silent-death that R735a/R744 exist to prevent.
+                    //
+                    // So: discard any leftover buffered non-terminal events
+                    // (the run is failing; partial tool_use frames without
+                    // their tool_results would be an orphan-protocol bug),
+                    // then deliver the RunEnd DIRECTLY via action.accept and
+                    // terminate the Spliterator. This keeps the
+                    // "every terminal return is preceded by exactly one
+                    // RunEnd via action.accept" contract that
+                    // QueryEngineSilentDeathR744Test pins, AND the
+                    // "at most one event per tryAdvance" Spliterator
+                    // contract — we emit exactly one event here, then stop.
+                    pendingEvents.clear();
                     try {
                         action.accept(new StreamEvent.RunEnd(stopReason, List.of()));
                     } catch (Exception ignored) {

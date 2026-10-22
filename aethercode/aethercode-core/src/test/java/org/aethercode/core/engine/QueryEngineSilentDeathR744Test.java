@@ -100,6 +100,29 @@ class QueryEngineSilentDeathR744Test {
     }
 
     /**
+     * The outer catch's source window, bounded by the catch block itself
+     * rather than by a magic character count.
+     *
+     * <p>Lesson 1107: a fixed {@code WINDOW = 4000} silently stopped
+     * covering this block once R750 grew the R750 explanatory comment
+     * above the {@code action.accept(new StreamEvent.RunEnd(...))} call.
+     * The test still "audited" the catch, but the window ended before
+     * the assertion it was actually about, so a REAL missing RunEnd and
+     * a merely-shorter comment were indistinguishable — the exact same
+     * failure mode as Lesson 1057 (prose that looks like a branch).
+     *
+     * <p>The reliable boundary is structural: the catch block ends at
+     * the {@code }} that precedes
+     * {@code return StreamSupport.stream(sp, false);}. Slice to that.
+     */
+    private static String outerCatchBody(String src) {
+        int start = outerCatchIdx(src);
+        int endMarker = src.indexOf("return StreamSupport.stream(sp, false);", start);
+        if (endMarker < 0) endMarker = Math.min(src.length(), start + WINDOW);
+        return src.substring(start, endMarker);
+    }
+
+    /**
      * Paths 1-3 of the four engine termination shapes. Each entry names
      * a unique anchor in the source that identifies the branch, and a
      * human description of when it fires. Each must reach a
@@ -224,12 +247,15 @@ class QueryEngineSilentDeathR744Test {
         assertTrue(catchIdx > 0,
                 "R744: outer catch (Throwable t) of tryAdvance not found — expected the "
                         + "R735a comment header: " + OUTER_CATCH_ANCHOR);
-        String window = src.substring(catchIdx, Math.min(catchIdx + WINDOW, src.length()));
-        assertTrue(window.contains("action.accept(new StreamEvent.RunEnd("),
+        String body = outerCatchBody(src);
+        assertTrue(body.contains("action.accept(new StreamEvent.RunEnd("),
                 "R744: the outer catch MUST offer a RunEnd via action.accept — offering it "
-                        + "any other way (e.g. only assigning stopReason) leaves the desktop "
-                        + "in the green ● Idle state");
-        assertTrue(window.contains("return false"),
+                        + "any other way (e.g. only assigning stopReason, or routing it "
+                        + "through the R750 pendingEvents buffer) leaves the desktop "
+                        + "in the green ● Idle state. R750 additionally requires that the "
+                        + "terminal RunEnd NOT be buffered: `return false` with the RunEnd "
+                        + "still queued strands it.");
+        assertTrue(body.contains("return false"),
                 "R744: the outer catch must terminate the Spliterator with `return false;` "
                         + "after emitting its RunEnd");
     }
@@ -246,8 +272,8 @@ class QueryEngineSilentDeathR744Test {
         String src = readSource();
         int catchIdx = outerCatchIdx(src);
         assertTrue(catchIdx > 0, "R744: outer catch not found");
-        String window = src.substring(catchIdx, Math.min(catchIdx + WINDOW, src.length()));
-        assertTrue(window.contains("R744"),
+        String body = outerCatchBody(src);
+        assertTrue(body.contains("R744"),
                 "R744: the outer catch must carry the R744 marker explaining that it "
                         + "cannot cover a downstream block (no throw is raised when the "
                         + "chat client's first-chunk read parks on the socket), and that the "

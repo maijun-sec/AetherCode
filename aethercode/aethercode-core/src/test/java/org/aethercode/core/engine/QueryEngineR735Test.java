@@ -90,7 +90,22 @@ class QueryEngineR735Test {
             // that's a default-state seed, not a terminal branch.
             if ("end_turn".equals(reason)) continue;
             int after = m.end();
-            String window = src.substring(after, Math.min(after + 1200, src.length()));
+            // Lesson 1107: a fixed 1200-char window silently stopped
+            // covering the `runtime_exception` (outer catch) branch once
+            // R750 grew the explanatory comment above its
+            // `action.accept(new StreamEvent.RunEnd(...))`. A real
+            // missing RunEnd and a merely-longer comment were then
+            // indistinguishable — same failure mode as Lesson 1057.
+            // The reliable boundary for the OUTER CATCH is the catch
+            // block's own end; for every other branch the tight window
+            // is fine because its comment blocks are short.
+            String window;
+            if ("runtime_exception: ".equals(reason)) {
+                int endMarker = src.indexOf("return StreamSupport.stream(sp, false);", after);
+                window = src.substring(after, endMarker < 0 ? Math.min(after + 1200, src.length()) : endMarker);
+            } else {
+                window = src.substring(after, Math.min(after + 1200, src.length()));
+            }
             boolean hasRunEnd = window.contains("StreamEvent.RunEnd");
             assertTrue(hasRunEnd,
                     "R735: stopReason=\"" + reason + "\" terminal branch must emit " +

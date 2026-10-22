@@ -459,6 +459,318 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   and the first chunk — a run killed there was unwatchable; it now
   falls back to `currentQuery.startedAt`.
 
+- **R750** (TUI slash-command registry has no renderer contract):
+  the 2026-10-21 TUI agent-interaction benchmark found that
+  `aethercode-tui/src/commands.ts` returns internal `__X__` sentinels
+  (`local: "__MEMORY_PANEL__:project"`, `"__TODO_BOARD__"`, …) that each
+  renderer is supposed to recognise, but **17 of the 45 sentinels are
+  claimed by neither `tui.tsx` nor `line.ts`** — so the user typing
+  `/memory` sees the literal text `__MEMORY_PANEL__:project` printed
+  back (Ink falls through to `tui.tsx:1186-1188`
+  `dispatch({type:"sideNote", message: slash.local})`; line mode falls
+  through to `line.ts:1832-1834` `logAbove(colorize(slash.local, …))`).
+  Affected commands: `/memory` `/memory-edit` `/todos` `/mcp`
+  `/mcp-login` `/mcp-reconnect` `/agent-pick` `/effort-pick` `/cwd-pick`
+  `/threads` `/consents` `/notifications` `/workflow` (bare)
+  `/update` `/update-deps` **and `/mode` (bare — the Ink path has no
+  mode picker; only `line.ts:1816-1831` does)**.
+  The matching React components exist and are complete but unreachable:
+  **27 components / 5,859 lines** are importable from neither entry point
+  (`MemoryPanel` 420, `ModelSelector` 392, `ConsentModal` 379,
+  `GrantsManager` 355, `ThreadSelector` 209, `AgentSelector` 207,
+  `McpViewer` 201, `EffortPicker` 188, `CwdSwitcher` 176,
+  `NotificationCenter` 222, `ContextMeter` 251, `TokenChart` 174, …),
+  plus 11 helper modules / 3,393 lines — 38 files / 9,252 lines total.
+  `state.ts:452,469` declare `agentPickerOpen` / `effortPickerOpen` and
+  `state.ts:1752,1765` implement their reducer cases, but **nothing
+  dispatches either action**. `tui.tsx:45` imports exactly one
+  panel-style component (`TodoBoard`), and renders it as a passive
+  right-column widget at `tui.tsx:2089`.
+  **Why:** this is one architectural defect, not 17 bugs — the command
+  registry and the renderers share no contract, so every new sentinel can
+  silently fall through. `SLASH_HELP` (`commands.ts:17-94`, 88 entries)
+  advertises all 17, so the bug is user-visible on first run.
+  **How to apply:** when adding a slash command that returns a `local`
+  sentinel, you owe a matching `if` branch in **both** renderers, or it
+  must be added to an explicit handled-token set. Assert coverage with a
+  reachability/BFS check over the static + `await import()` edges —
+  a component nobody imports is not "done", it is dead code.
+  Also note `SLASH_HELP` (88) and `SLASH_COMMANDS` (76) have drifted
+  apart, and `SLASH_HELP` still carries development notes
+  (`"对应历史 round: …"`, `commands.ts:29,39`) in user-facing text.
+  Full benchmark + 12-dimension comparison:
+  `D:\tmp\agent-experience-benchmark\agent-experience-gap-analysis-2026-10-21.md`.
+
+- **R750a** (TUI cannot interrupt a run; "queued" prompt is discarded):
+  separate from R750 and worse — it loses user input. The TUI has **no
+  cancel/interrupt RPC for the main run** (the only one is
+  `subagentCancel` for subagents). `Esc` in `tui.tsx:1619-1623` only
+  closes the search bar / help overlay; it does not stop the turn. The
+  only exit is `Ctrl+C`, which does `dispatch({type:"exit"})` + `exit()`
+  at `tui.tsx:1511-1515` and tears down the daemon with the TUI.
+  Worse, `tui.tsx:798-805` pushes a toast reading
+  `"model is still working — prompt queued"` and then `return`s — **the
+  typed text is thrown away, not queued**. `state.ts:93,803` has only
+  `submitting: boolean`; there is no `pendingPrompts` / queue array
+  anywhere in `state.ts`. Claude Code's equivalent (`interactive-mode.md`)
+  really queues, lists queued entries in the conversation, and binds
+  `Ctrl+Enter` to flush them; its `Esc` explicitly "Stop the current
+  response or tool call mid-turn so you can redirect".
+  **Lesson:** a toast that asserts a state the code does not implement is
+  worse than no toast — the user believes their prompt is safe. Any
+  "queued / will resume / in progress" string must be backed by an
+  actual queue structure, or the message must be changed to describe what
+  really happens (e.g. "press Ctrl+C to stop").
+
+- **R750b** (stream-json: `tool_use` lost, duplicated, and `no_run_end`):
+  four protocol bugs, three of which were invisible to source-pin tests.
+  Full write-up: `docs/R750-stream-json-protocol-fixes.md`. The load-bearing
+  lessons:
+  - **`tryAdvance`'s contract has TWO halves, and the second is easier to
+    miss.** It may not hand the action *more* than one event per call (that
+    one loses events to `StreamConsumerGuard`'s probe thread — the original
+    `tool_use` loss), AND it may not return `true` after handing the action
+    *none* (that one desynchronises `Spliterators.AbstractSpliterator`: the
+    iterator caches "has an element", `next()` finds nothing, and the next
+    `hasNext()` reports exhaustion → the consumer exits before the terminal
+    RunEnd → `no_run_end: engine stream ended without RunEnd`). The
+    turn-start branch legitimately produces no consumer-visible event, so it
+    ended with a bare `return true;`. Fixed by wrapping the body in
+    `engineLoop: while (true)` and routing every such branch through
+    `if (deliveredOrContinue(action)) return true; continue engineLoop;`.
+    **Any new `tryAdvance` exit must answer: did this iteration actually
+    deliver an event? If not, it cannot return true.**
+  - **`ToolUseStart` had two emitters for one call** — the model-stream
+    pass-through and `StreamingToolExecutor.Event.Started`, same id. On the
+    wire that is a duplicate `tool_use`. Deduped via `announcedToolUseIds`.
+    **"No orphans" and "no duplicates" are independent assertions** — the
+    duplicate passed every pre-existing orphan check.
+  - **`RunStart` is run-scoped, not turn-scoped.** It lived in the
+    `currentLlmStream == null` branch, which every turn enters → one
+    `system/init` per turn. `runStartEmitted` latch; exactly one per run.
+  - **A terminal `RunEnd` must NOT go through the `pendingEvents` buffer.**
+    Buffering it and then draining an older event before `return false`
+    strands it — the exact green `● Idle` silent death R735a/R744 exist to
+    prevent. The outer catch clears the buffer and offers the RunEnd
+    directly.
+  - `emitSubTaskTransitions(action)` wrote straight to the caller's action
+    (emitting several `SubTaskStart`/`End` in one `tryAdvance`); it is now
+    called as `emitSubTaskTransitions(stEvent -> emit(stEvent))`.
+  - **Regression tests must consume with `while (it.hasNext()) out.add(it.next())`,
+    not `forEach`.** `forEach` passes a real action to `tryAdvance`, so it
+    cannot see over-emission *or* under-delivery; the `hasNext`/`next` loop
+    is `StreamConsumerGuard`'s production shape and is the only one that
+    discriminates. `QueryEngineEventDeliveryR750Test` uses it deliberately.
+  - **Pre-existing red, unchanged:** `QueryErrorNotificationTest.
+    query_catchEmitsRunEndAndErrorLog` (see the R741–R743 note above; the
+    engine's own `runtime_exception` RunEnd shadows the protocol synthetic
+    handler). Verified pre-existing on 2026-10-22 with R750 stashed.
+
+- **R750c** (structural bounds for source-pin gates; the audit tool lied
+  three separate ways before it told the truth):
+  `aethercode-desktop/src/test-support/slice-structural.ts` replaces the
+  fixed-character slices. `sliceBlock(source, anchor)` returns the text from
+  an anchor to its matching close brace, so a bound cannot move when someone
+  writes a comment. Three findings, each of which cost real time:
+  - **A magic window is a latent gate.** `slice(idx, idx + 900)` is a guess
+    about a function's length. It is correct once and rots silently the first
+    time prose is added above the line being checked. The gate still *looks*
+    like it is auditing, so the drift is invisible.
+  - **Two implementations of one rule, one of them inert.**
+    `matchBrace` computed `const next = skipConstruct(src, i)` and then
+    discarded it, doing its own `/*` check — so the comment handling *inside*
+    `skipConstruct` was dead code. Comment state now has exactly one owner.
+  - **My audit tool reported a broken gate that was fine.** The first version
+    of `audit-window-gates.mjs` credited a *global* assertion
+    (`assert.match(tuiCode, /x/)`) against a *windowed* slice, and printed
+    "586% used" for a healthy test. **Lesson 1115 — an audit tool that has
+    never been checked against a known-good case will confidently report
+    nonsense; a false positive costs more than no audit, because it sends
+    someone to repair a healthy test.**
+  - **Lesson 1116 — a test that exercises a trap must place the anchor so the
+    trap is actually inside the scanned region.** The `line.ts` trap
+    (`"…on memory/* — only append…"`) sits at offset 48 inside a quote span
+    of 14..93, so the quote branch consumes it and the comment branch is
+    *never reached there*. Three revisions of that test anchored on functions
+    that closed before the trap, plus one that asserted
+    `not.toContain('on memory/*')` when the string is legitimately data —
+    all passing, all measuring nothing.
+  - **Two implementations that agree on well-formed input cannot be told
+    apart by tests built from well-formed input.** The `/*`-jump and the
+    comment-state machine differ only on an *unterminated* comment; that is
+    the only discriminating case, and it is now pinned.
+  - **Lesson 1117 — a threshold must be measured, not guessed.** A `20 KB`
+    region bound failed on correct code because the largest genuine function
+    in `line.ts` is 36554 chars. Measured max, then set the bound above it.
+  - Audit tool: `aethercode-tui/scripts/test/audit-window-gates.mjs`, run with
+    `node scripts/test/audit-window-gates.mjs <repo-root>`. Reports per-gate
+    headroom on **comment-stripped** source (via `strip-comments.mjs`), so
+    surrounding prose does not count against a window. Exits non-zero only
+    when a window is genuinely exhausted. Current state: 3 gates, 0 exhausted.
+  - **Non-global regex + `exec()` in a while loop = infinite loop.** The
+    first audit run hung for 180 s on exactly this. Every pattern in a scan
+    loop must carry `g`, plus an iteration guard.
+
+- **R363** (TUI can interrupt the run in flight): the daemon-side
+  cancel was already R721-hard (`done.cancel(true)` +
+  `Thread.interrupt()` + `ProcessHandle.destroyForcibly` + a 5s
+  `Thread.stop`, ~7ms settle) — **every line of plumbing to reach it
+  was missing.** `cancel` is keyed by `runId` and reads
+  `params.runId` unconditionally, while `sendPrompt` did
+  `client.request<unknown>("query")` and threw away the
+  `{runId, accepted}` response. Now: `State.activeRunId` +
+  `cancelRequested`, three actions (`setActiveRunId` /
+  `requestCancelRun` / `setCancelSettled`), and THREE runId sources
+  — the query response, `{ok:false, busyRunId}` (session-lock
+  conflict), and the `stream_event` / `permission_request`
+  notification params. Same path in line mode via a new optional
+  `LineInputCallbacks.onEscape` that fires on a **bare** ESC only
+  (CSI sequences are consumed first); `pickFromList` calls
+  `lineInput.pause()` so a picker still wins Esc. Full write-up:
+  `docs/R363-tui-cancel-interrupt.md`.
+  - **An `if (key.escape) … return;` branch earlier in the handler
+    makes a run STRUCTURALLY uncancellable, no matter what the
+    reducer holds.** The decision-card collapse/expand pair sat
+    ahead of every cancel candidate, so Esc could only ever fold a
+    card. When adding a new "Esc cancels X" feature, check for
+    earlier `return`-on-escape branches FIRST, and resolve the
+    whole thing as one ordered ladder (overlays → stop the run →
+    drop the queue → the pre-existing toggles).
+  - **Both run-boundary transitions must clear the cancel latch,
+    not just the successful path.** `submit` and `streamEnd` each
+    clear `activeRunId` + `cancelRequested`; otherwise the *first
+    Esc of the next turn* is a silent no-op and the run looks
+    uncancellable again. A cancel RPC that **fails** must release
+    the latch separately (`setCancelSettled`), or the strip says
+    "stopping…" forever on a run that is still running.
+  - **A daemon REFUSAL (`{ok:false}`) must not enter streaming.**
+    No run is coming, so leaving `submitting` true hangs the R362
+    queue drain forever.
+  - **A test that writes into the directory another test compiles
+    is a test-ordering landmine, not a flake.** 15 node:test suites
+    wrote `_…` shims into `src/` and `unlinkSync`'d them at module
+    end; `node --test` runs files in parallel, so the full-project
+    `tsc --noEmit` (`phase-7-t7-10.test.mjs`) hit `TS6053 … not
+    found` in the write→unlink window and went red only under
+    `npm test`. Fixed at the root: `tsconfig.json` excludes
+    `src/**/_*.ts{,x}`, and the three `r196-*` suites put their
+    shim in `tmp/` with `--rootDir` at the package root. **When a
+    source-pin test fails only in the full suite, suspect
+    cross-file filesystem coupling before suspecting the code
+    under test.**
+  - **A source-pin gate must be watched going red before it is
+    believed green.** R363's first version asserted
+    `setActiveRunId` appears in `tui.tsx` — satisfied by the two
+    notification fallbacks alone, so deleting the query-response
+    capture entirely still passed. Its ordering assertion also
+    anchored on `setDecisionCardExpanded`, so the "move the block
+    below" mutation inserted it *before* the anchor (the correct
+    order) and faked a pass. Fix: anchor the assertion inside the
+    function under test, and anchor ordering on a landmark
+    strictly downstream. `scripts/test/r363-mutate.mjs` (10 cases,
+    deliberately NOT in `npm test`) is the harness that caught
+    both.
+
+- **R364** (`/cwd-pick` actually switches): R362's panel audit
+  marked the cwd panel `ink: 'unavailable', line: 'unavailable'`
+  with the note "the backend has no setCwd RPC". **Both halves
+  were false.** `setCwd` is the **desktop's Tauri IPC command**
+  (`aethercode-desktop/src/store/index.ts` → `rpc.setCwd(path, sid)`,
+  handled by the Rust supervisor) — the TUI speaks JSON-RPC to the
+  Java daemon and had copied that name across, so every `/cwd-pick`
+  died on `-32601`. The JSON-RPC method is `switchProject`
+  (`AetherCodeMethods.java:1701` register, `HttpJsonRpcServer.java:837`
+  HTTP arm, `:2351-2409` the real implementation) — and `/cwd <path>`
+  plus line mode's `panelCwdPick` had been calling it correctly all
+  along. Full write-up: `docs/R364-cwd-rpc-name.md`.
+  - **Method names are namespaced by transport.** The same concept
+    has different names over Tauri IPC vs JSON-RPC. Copying a name
+    without its transport is invisible to the compiler and always
+    fails at runtime with -32601.
+  - **Renaming the RPC would have made the UI lie *louder*.** Fixing
+    only the name makes `/cwd-pick` SUCCEED while the panel still
+    shows the directory the user just left — three more defects had
+    to land with it: no `cwd_changed` case in either renderer (the
+    daemon has been emitting it all along), no cwd anywhere in
+    `State` (it was an immutable launch prop), and `getState` does
+    not return a cwd at all. `State.cwd` + a `setCurrentCwd`
+    action + a single derived `const currentCwd = state.cwd || cwd`
+    now feed 10 call sites, including **four `sdd.*` RPC payloads**
+    that were telling the daemon to build in a directory the session
+    had already left. Startup reconciles against `listProjects`
+    (the only read that carries the daemon's real binding).
+  - **A regex comment stripper silently eats code.** Every source-pin
+    gate used `src.replace(/\/\*[\s\S]*?\*\//g, …)`, and `line.ts`
+    contains the string `"...no update or delete RPC on memory/* …"`.
+    That `/*` reads as a comment opener and blanks the next **916
+    lines of real code**. Replaced with a real scanner at
+    `scripts/test/strip-comments.mjs` (tracks string + template
+    literals, `${}` nesting), shared by all four gates. Only
+    `line.ts` was affected, and R363's assertions all sit outside
+    the window — but any future assertion inside it would have been
+    silently testing whitespace.
+  - **A guard built on length is decorative.** The scanner preserves
+    length by design (so positional assertions stay valid), which
+    made `assertNotOverStripped`'s `(orig.length - stripped.length)`
+    ratio permanently 0. It has to count blanked non-newline
+    characters. Measured densities: median 26.5%, max 64.1%
+    (`src/rpc.ts`) — threshold set at 85%.
+  - **Source-pin assertions must not be length-anchored.** Four in
+    the R363/R364 gates sliced `idx ± N`; one went red purely because
+    an unrelated comment pushed a block 400 chars away, and one only
+    ever asserted *presence* in a window while its name claimed
+    *ordering*. All are now index arithmetic between block starts or
+    function-body slices.
+  - **`[IO.File]::WriteAllLines` joins with `Environment.NewLine`,
+    which is CRLF on Windows.** Three line-based replacements
+    converted the entire `tui.tsx` from LF to CRLF — violating this
+    package's convention, and the reason a mutation regex using
+    `\n        }` stopped matching. Prefer the Edit tool for TS
+    source; if a shell rewrite is unavoidable, verify line endings
+    afterwards across `src/` + `scripts/`.
+  - **A vacuous assertion looks exactly like a passing one.** The
+    "a blank cwd must not wipe an established one" test ran against
+    `INITIAL.cwd === ""`, so `"" === ""` held even with the blank
+    guard deleted. The mutation battery caught it; the test now sets
+    a real cwd first.
+
+- **R365** (the panel registry can no longer lie): R362 shipped
+  `panelIntents.ts` as "the single source of truth" with **ten rows at
+  `ink/line: 'unavailable'`** — **eight of which were false.** The
+  panels had been wired by that same round; the table was never
+  updated. R362's six checks on the table all verified STRUCTURE (entry
+  exists, gapNote present, component file resolves, ids unique) and
+  none verified TRUTH, so ten plausible lies scored a perfect pass.
+  Write-up: `docs/R365-panel-registry-truth.md`.
+  - **A status field that can be false without failing anything is
+    worse than no status field** — the next reader trusts it. The fix
+    is to DERIVE the status from the renderer source instead of
+    declaring it: `ink = PANEL_BY_INTENT[id] exists && tui.tsx has
+    case "<panelId>":`, `line = every sentinel has a case arm in
+    line.ts`. `r365-panel-truth.test.mjs` parses both and fails on
+    disagreement, so changing a renderer without the registry breaks
+    the suite and vice versa.
+  - **`unavailable` conflates three opposite situations.** A new
+    `PanelBlocker` distinguishes `not-wired` (the backend works, write
+    the UI), `backend-missing` (no such RPC — do NOT write it, it would
+    be a dead button) and `no-command` (the slash command does not
+    exist, so the sentinel has no producer). Required whenever either
+    renderer is `unavailable`.
+  - **Do not advertise a command that does not exist.**
+    `helpByGroup()` iterated every registry row, so `/help` listed
+    `/context` — but `handleSlash` has no `case "context"`, so typing
+    it answered "unknown slash command: /context. Try /help."
+    `advertised?: boolean` + `ADVERTISED_INTENTS` keeps the
+    placeholder row without shipping the dead link.
+  - When a derived-status gate parses a source anchor (a
+    `PANEL_BY_INTENT` literal, a `case` switch), assert the parse came
+    back non-trivial FIRST. An empty parse flips every `mounted`
+    derivation to `unavailable` and turns the gate green for entirely
+    the wrong reason.
+  - `aethercode-tui/src/panelIntents.ts` must stay **pure ASCII**. It
+    was GBK-double-encoded once already, and that cleanup left `-?`
+    where em dashes had been; they are now plain `-`.
+
 ## See also
 
 - `docs/R719-session-anchor.md`
@@ -466,6 +778,12 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - `docs/R741-R742-R743-bug-fixes.md`
 - `docs/R748-scroll-latch-and-l4-self-consumption.md`
 - `docs/R749-stale-running-after-daemon-restart.md`
+- `docs/R363-tui-cancel-interrupt.md`
+- `docs/R364-cwd-rpc-name.md`
+- `docs/R365-panel-registry-truth.md`
+- `D:\tmp\agent-experience-benchmark\agent-experience-gap-analysis-2026-10-21.md`
+  (TUI agent-interaction benchmark vs OpenCode / Claude Code / Aider /
+  Gemini; 12-dimension gap analysis + roadmap)
 - `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`
   (Mavis's cross-project agent memory)
 - `~/.aethercode/agent-memory/default/MEMORY.md` (per-agent
