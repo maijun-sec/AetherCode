@@ -107,6 +107,40 @@ public sealed interface StreamEvent {
         public boolean isDeterministicHardStop() {
             return isDeterministicHardStopOf(stopReason);
         }
+
+        /**
+         * R750d: did this run end in a FAILURE, as opposed to a clean stop
+         * or a user-initiated one?
+         *
+         * <p>This is what the desktop colours red and what the stream-json
+         * {@code result} frame reports as {@code is_error}. Before R750d
+         * nothing on the wire carried the answer: {@code eventToMap} for a
+         * RunEnd emitted only {@code type} + {@code stopReason}, so the
+         * only producer of {@code isError: true} was the protocol layer's
+         * synthetic catch handler — and that handler is UNREACHABLE for any
+         * throw raised inside the engine, because the engine's own
+         * {@code tryAdvance} catch (R735a) already turned it into a
+         * terminal RunEnd and returned normally.
+         *
+         * <p>So a run that died with {@code runtime_exception: …} reached
+         * the desktop indistinguishable from a clean {@code end_turn} at the
+         * field level. The renderer happened to recover because it also
+         * prefix-matches the stopReason (R735b), but the stream-json
+         * consumer — Multica — has no such fallback: it classifies success
+         * from {@code is_error} alone, so an upstream 500 was reported as
+         * a successful run.
+         *
+         * <p>Kept separate from {@link #isDeterministicHardStop()} on
+         * purpose. That predicate answers "did the engine DECIDE to stop"
+         * (loops, death spirals, user cancel) and deliberately excludes
+         * errors. This one answers "was the outcome a failure", which
+         * includes the deterministic stops that are also failures
+         * ({@code same_error_hard_stop}, {@code loop_detected}) and
+         * excludes {@code cancelled} (the user asked for it).
+         */
+        public boolean isErrorOutcome() {
+            return isErrorOutcomeOf(stopReason);
+        }
     }
 
     // ---- R743: shared stopReason classification --------------------
@@ -139,6 +173,51 @@ public sealed interface StreamEvent {
                 || "same_error_hard_stop".equals(kind)
                 // R721 user-initiated cancel.
                 || "cancelled".equals(kind);
+    }
+
+    /**
+     * R750d: did the run END IN FAILURE?
+     *
+     * <p>One definition, shared by every layer that has to answer this —
+     * the protocol's {@code eventToMap}, the stream-json {@code result}
+     * frame, and (indirectly) the desktop's red styling. R743's lesson
+     * applies verbatim: when three layers each hand-roll a prefix check over
+     * the same decorated string, they drift, and at least one of them is
+     * wrong.
+     *
+     * <p>The set is deliberately built from {@link #bareKindOf}, so
+     * {@code "runtime_exception: RuntimeException: upstream 503"} and
+     * {@code "runtime_exception"} classify identically. An exact match
+     * against the decorated wire string would classify every real one as
+     * "not an error" — which is precisely the bug this method exists to
+     * remove.
+     *
+     * <p>Out of scope on purpose:
+     * <ul>
+     *   <li>{@code cancelled} — the user asked for it; not a failure.</li>
+     *   <li>{@code awaiting_user_decision} — the engine is pausing for
+     *       input, which is the system working.</li>
+     *   <li>{@code end_turn} / {@code tool_use} / {@code stop} — clean.</li>
+     * </ul>
+     */
+    static boolean isErrorOutcomeOf(String stopReason) {
+        if (stopReason == null) return false;
+        return switch (bareKindOf(stopReason)) {
+            // R735a: the engine's own outer-catch translation of a throw.
+            case "runtime_exception" -> true;
+            // SpringAiChatClient's terminal error shape (R697 retry
+            // exhaustion, provider 4xx/5xx): "error: <class>: <msg>".
+            case "error" -> true;
+            // R745/R746 consumer-side terminal events.
+            case "no_run_end", "consumer_timeout" -> true;
+            // R181 / R739 death spiral, R181 loop detection.
+            case "same_error_hard_stop", "loop_detected" -> true;
+            // R750b surfaced a stalled first-chunk read as a timeout.
+            case "stale_force_end" -> true;
+            // Backpressure is a provider-capacity signal the user retries;
+            // reported separately by AetherCodeMethods, so not here.
+            default -> false;
+        };
     }
 
     /** Compaction or memory write occurred; the caller may want to redraw the status line. */

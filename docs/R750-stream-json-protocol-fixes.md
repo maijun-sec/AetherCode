@@ -175,3 +175,191 @@ jar 内 marker 已验证：`announcedToolUseIds` / `pendingEvents` / `drainOne` 
   这四个 bug 里，Part 2 / Part 3 / Part 4 全都是端到端跑出来的。
   反过来，Part 4 的回归测试也能用单测守住（变异后 5 个转红）——
   前提是测试用**生产的消费形状**（`hasNext`/`next`），而不是更方便的 `forEach`。
+---
+
+# R750d — 错误结果分类收口，以及一次被误诊的调度器竞态
+
+日期: 2026-10-22
+范围: `StreamEvent` / `ClaudeStreamJsonEmitter` / `AetherCodeMethods` / `TaskScheduler`
+
+R750d 原计划只有一件事：把「这次 run 算不算失败」的定义收口到一个地方。
+实际做下来是两件事 —— 第二件是从第一件的验证过程中**顺手挖出来的真 bug**，
+而且我一开始**诊断错了**。这一段记录那个误诊过程，因为它比修复本身更值得留。
+
+---
+
+## Part 1 — 错误分类只由 `StreamEvent` 定义一次
+
+### 问题
+
+engine 自己在 `tryAdvance` 的 outer catch 里产出终止事件：
+
+    RunEnd(stopReason="runtime_exception: <class>: <msg>")
+
+但 `AetherCodeMethods.eventToMap(RunEnd)` 只把 `stopReason` 原样放进 map，
+**没有错误位**。协议消费者拿到的就是一个"看起来正常"的终止帧。
+
+而 `ClaudeStreamJsonEmitter` 那边有自己一份 `OK_KINDS` 白名单，
+用的是 `!OK_KINDS.contains(kind)`。白名单的性质是**对新情况 fail-closed 成 error**：
+以后任何人加一种新的 stopReason，没同步进这个集合，就会被判成失败。
+两份分类逻辑还给出了**互相矛盾**的答案 —— `cancelled`（用户按 Esc）
+在 emitter 里被判 `is_error: true`。
+
+### 修法
+
+- `StreamEvent.isErrorOutcome()` —— 唯一的错误分类法，基于已有的
+  `bareKindOf()`，所以 `"runtime_exception: ..."`（装饰过的长串）和
+  `"runtime_exception"`（裸串）判定一致。
+- 判定为**失败**：`runtime_exception` / `error` / `no_run_end` /
+  `consumer_timeout` / `same_error_hard_stop` / `loop_detected` / `stale_force_end`
+- 判定为**非失败**：`end_turn` / `stop` / `tool_use` / `tool_calls` /
+  `cancelled` / `awaiting_user_decision` / `empty_input`
+- `eventToMap(RunEnd)` 在失败时补 `isError:true` + `error` 字段。
+- `ClaudeStreamJsonEmitter` 删掉 `OK_KINDS`，改问 `re.isErrorOutcome()`。
+
+### 一个必须说清的区分
+
+`cancelled` 同时是：
+
+- **deterministic hard stop**（`isDeterministicHardStopOf` → true）——
+  下游任何自动续跑路径都不许复活它（R743 的教训）；
+- **不是 error outcome** —— 用户自己按的 Esc，不是引擎故障。
+
+这两个集合**故意不同**。把它们合并正是 R743 警告过的错误。
+R750d 顺手把旧测试 `runEnd_cancelled_isClassifiedAsError` 改成
+`runEnd_cancelled_isNotClassifiedAsError`，并加断言 `subtype == "success"`
+且 `aethercode_stop_reason == "cancelled"` —— 让调度器仍然能区分
+"取消"和"真跑完了"，而不只是看到 `is_error: false`。
+
+---
+
+## Part 2 — `TaskScheduler.awaitIdle` 根本不是 barrier（误诊实录）
+
+### 怎么发现的
+
+跑全 reactor 时冒出一个新的红灯：
+`TaskSchedulerBridgeTest.bridge_runsTaskAndUpdatesRegistryToCompleted`
+断言 `ran == 1` 读到 0。单跑 5 次全绿，看 git log 也没有相关改动。
+
+### 第一次诊断：**错的**
+
+我读 `workerLoop`，看到出队顺序是
+
+    queue.take() -> pendingById.remove(id) -> runItem()
+
+而 `running.add` / `activeCount.incrementAndGet` 在 `runItem()` 里。
+于是认定：**存在一个窗口，id 不在 `pendingById`、不在 `running`、
+`activeCount` 也没算它**，而 `awaitIdle` 判定 idle 的条件恰好是
+「三者为空的合取」—— 所以它会提前返回 true。
+
+听起来非常合理。于是我"修"了：把 `running.add` / `incrementAndGet`
+提到 `pendingById.remove` 之后、`runItem()` 之前。
+
+然后写了个变异脚本，8 个 busy loop 压 CPU，两个变体都跑：
+
+    FIXED        => 5/0
+    REVERTED-BUG => 5/0      <-- 变异后依然全绿
+
+**两边都绿，等于什么都没证明。**（Lesson 1117）
+如果我当时看到 REVERTED 变红，就会自信地提交一个错误的修复 ——
+而实际上它连 bug 都没抓到。
+
+### 第二次诊断：找到真正的窗口
+
+新写的 barrier 测试（300 轮，每轮 schedule 一次然后 awaitIdle 一次）
+直接对着不变量打，在**修复后**的代码上依然会红：
+
+    awaitIdle returned true before round 127 had executed its body
+    ==> expected: <128> but was: <127>
+
+这才说明我的修复**没有真正解决问题**。真正的窗口在 `schedule()` 里：
+
+    schedule():  pendingById.put(id, item);   <-- 先写这里
+                 queue.put(item);             <-- 后写这里
+    workerLoop: queue.take() -> pendingById.remove -> running.add
+
+`awaitIdle` **从来没查过 `pendingById`**，而 `pendingById` 恰恰是最先被写入、
+最后被 worker 移除的那个结构。所以「已被接受但还没进队列」这个窗口，
+三个被检查的字段同时为空。
+
+### 第三次：加一个字段仍然不够
+
+把 `pendingById.isEmpty()` 加进合取 —— 上面两个窗口关了，
+但**第三个窗口**还在：`pendingById.remove()` 和 `running.add()` 之间。
+连跑 6 次，**3 次红**。
+
+> **Lesson 1120 — N 个集合逐个读，永远拼不出一致的快照。**
+> `isEmpty()` 是原子的，但「读四个字段的合取」不是 observeable-consistent 的：
+> 任何与 worker 的交错都可能让它们同时为空。补一个字段只是把窗口从
+> A 挪到 B，不是修好。
+
+### 真正的修法：一个字段
+
+新增 `AtomicInteger outstanding`：
+
+- `schedule()` 在**任何集合变可见之前** `incrementAndGet()`
+  （宁可短暂高报 —— 那只多一次 park 迭代；低报才是破坏 barrier）
+- worker / `cancel()` 在各自**唯一**的收尾路径上 `decrementAndGet()`，且
+  **在终止事件 emit 之后**（否则 awaitIdle 可能在 COMPLETED 通知之前返回，
+  调用方读到过期状态）
+- `awaitIdle` 只读这一个字段
+
+三次递减点必须**互斥**，这是实现里最容易出错的地方：
+
+| 路径 | 条件 | 谁递减 |
+| --- | --- | --- |
+| `cancel()` | `pendingById.remove(id) != null`（我赢了竞争） | `cancel()` |
+| worker 出队 | `wasPending == true` 且已取消 | worker |
+| `runItem` finally | 已被 worker 认领 | `runItem` |
+
+第一版我让 worker 无条件递减，结果 **cancelled 的 item 仍然留在队列里**，
+于是 `cancel()` 减一次、worker 再减一次 → 计数漂移 →
+三个既有测试的 `awaitIdle` 全部超时失败：
+
+    TaskSchedulerBridgeTest.bridge_cancelledPendingTaskSetsKilled  FAIL
+    TaskSchedulerTest.cancel_pendingTaskDoesNotRun                FAIL
+    TaskSchedulerAwaitIdleR750Test.awaitIdle_returnsTrueAfterQueuedTaskIsCancelled  FAIL
+
+这正是"修 barrier 反而制造 hang"的典型形态。计数必须**每个被接受的
+task 恰好减一次**。
+
+### 最终变异验证
+
+    FIXED        AwaitIdle 4/0  Bridge 5/0  SchedulerTest 10/0   failing methods: 0
+    REVERTED-BUG AwaitIdle 1F   Bridge 5/0  SchedulerTest 10/0   failing methods: 1
+
+新测试对缺陷有真实判别力，且**两个既有套件在两个变体下都不受影响**
+（说明新测试不是靠运气、也不是既有测试变弱了）。
+
+---
+
+## 教训
+
+- **Lesson 1119 — 变异测试两个变体都绿 = 你测的不是你以为的东西。**
+  我第一次"修复"后跑变异，FIXED 和 REVERTED 都是 5/0。如果当时把
+  "变异后仍然绿"读成"我的修复是对的"，就会提交一个连 bug 都没抓到的补丁。
+  **两个变体必须给出不同答案，否则先怀疑测试，再怀疑修复。**
+
+- **Lesson 1120 — N 个集合逐个读，拼不出一致的快照。**
+  补字段只是把窗口挪个位置。第一版加 `pendingById` 之后仍然 3/6 红。
+  屏障类谓词（idle / done / stopped / settled）必须建立在**单个**可原子读的
+  计数或状态字上，而不是多个容器的合取。
+
+- **Lesson 1121 — 我连续两次推断被事实推翻时，停下来去写会失败的测试，
+  而不是继续推理。**
+  第一次"修复"没解决问题，这个事实是 barrier 测试告诉我的 —— 不是读代码读出来的。
+  直接把不变量写成测试（300 轮对拍），比继续读 `workerLoop` 快得多。
+
+- **Lesson 1122 — 修 barrier 很容易变成制造 hang。**
+  三次递减点必须互斥，否则计数漂移，症状从"提前返回"变成"永远超时"——
+  而且会打到**原本绿色的既有测试**上。看到 cancel/worker 都递减时就该立刻意识到。
+
+- **Lesson 1123 — 一个测试自己也会 flaky，而且会骗人两次。**
+  我新写的 barrier 测试在修复前红、修复后仍红（3/6），第一版 watcher 甚至
+  在正确代码上就红（因为我去对拍 `registry.list()`，而 COMPLETED 状态
+  是**经 bridge listener 晚一点**才到 registry 的 —— 那测的是 bridge 延迟，不是调度器记账）。
+  变异测试的价值正在于此：**同一个测试必须在两个方向上都被验证过**。
+
+- **Lesson 1124 — hard-stop 与 error 是两个不同的集合。**
+  `cancelled` 是 deterministic hard stop（不许自动续跑）但不是 error
+  （不是用户没要的故障）。把两者合并会让用户按 Esc 变成一条错误告警。

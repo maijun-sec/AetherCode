@@ -771,6 +771,52 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
     was GBK-double-encoded once already, and that cleanup left `-?`
     where em dashes had been; they are now plain `-`.
 
+- **R366** (cross-transport method names become an executable rule):
+  R366 set out to wire an Ink workflow picker and stopped, because
+  `workflow/list` turned out not to exist on the daemon the TUI talks
+  to. Auditing every call site found **13 method names the TUI sends
+  that this daemon does not have** — 3 real bugs plus 10 genuine gaps.
+  Write-up: `docs/R366-rpc-name-contract.md`.
+  - First establish WHICH server the TUI reaches. `ac-tui.ts` spawns
+    `aethercode.jar --daemon`, i.e. `DaemonRunner` ->
+    `AetherCodeMethods.registerAll` + `MemoryMethods`. It does **not**
+    reach `SupervisorProcess` / `SupervisorRpcServer`
+    (`aethercode-tasks`), which only the standalone task CLI starts.
+    `workflow/list`, `workflow/run` and `task/pause|resume|kill` all
+    live on that other server.
+  - The three real bugs: `model/set` (DTOs exist under
+    `protocol/rpc/model/` from Phase 1.2 / T-1-19, but **no handler was
+    ever registered** — and a T-6-17 comment claimed "the daemon maps
+    both", which was false), plus `workflow/list` and `workflow/run`.
+    The real names are `setModel` and `runWorkflow`. **The param key
+    changes too**: `setModel` reads `model`, not `name`, so a
+    rename-only fix still throws.
+  - This is the third occurrence of one disease (after R364's
+    `setCwd` and R365's lying registry): a name that exists in *some*
+    layer, sent to a layer that lacks it. Invisible to the compiler,
+    uniformly `-32601` at runtime. **The only detection is to read the
+    registration point, never the call site.**
+  - `r366-rpc-names.test.mjs` turns "read the registration point" into
+    something `npm test` does every run: extract every method name the
+    TUI sends, check it against `registerAll` + `HttpJsonRpcServer`'s
+    switch, and fail with the offending call sites named.
+  - **An allowlist makes a gate only as trustworthy as the allowlist.**
+    The ten backend-missing names carry a reason each, and the mutation
+    battery deliberately deletes one and blanks another's reason to
+    prove the list is not a blanket suppressor. One mutation breaks the
+    extraction regex outright — if the main assertion were passing
+    because it matched nothing, that must go red.
+  - **`asRows()`'s envelope key list was missing two keys**, so
+    `panelCwdPick` (`listProjects` -> `{projects:[…]}`) and
+    `panelWorkflow` (`listWorkflows` -> `{workflows:[…]}`) rendered a
+    **successful, silent, empty** panel. A picker that lists nothing is
+    indistinguishable from one with nothing to list. The gate now pins
+    `asRows` against what the daemon actually returns.
+  - `phase-6-t6-17.test.mjs` had a test titled "`/model <name>` ->
+    `model/set` + `/workflow` -> `workflow/run`" — pinning two
+    nonexistent names as the contract. A source-pin that freezes a bug
+    is worse than no test at all.
+
 ## See also
 
 - `docs/R719-session-anchor.md`
@@ -781,6 +827,7 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - `docs/R363-tui-cancel-interrupt.md`
 - `docs/R364-cwd-rpc-name.md`
 - `docs/R365-panel-registry-truth.md`
+- `docs/R366-rpc-name-contract.md`
 - `D:\tmp\agent-experience-benchmark\agent-experience-gap-analysis-2026-10-21.md`
   (TUI agent-interaction benchmark vs OpenCode / Claude Code / Aider /
   Gemini; 12-dimension gap analysis + roadmap)
@@ -789,3 +836,45 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - `~/.aethercode/agent-memory/default/MEMORY.md` (per-agent
   project memory that AetherCode itself maintains via
   the user-level memory subsystem)
+
+- **R750d** (error-outcome taxonomy + `TaskScheduler.awaitIdle` barrier):
+  two independent fixes. (1) `StreamEvent.isErrorOutcome()` is now the
+  ONLY error classifier; `ClaudeStreamJsonEmitter`'s `OK_KINDS`
+  allowlist is deleted and `AetherCodeMethods.eventToMap(RunEnd)` emits
+  `isError:true` + `error`. An allowlist fails closed toward "error", so
+  every future stopReason looked like a failure until someone remembered
+  to update it. Note `cancelled` is a **deterministic hard stop but NOT
+  an error** — hard-stop answers "may nothing re-dispatch this?", error
+  answers "did this fail?"; merging them turns a user pressing Esc into an
+  alert. (2) `TaskScheduler.awaitIdle` was never a barrier: it polled
+  `queue` / `running` / `activeCount` one at a time, and a task moves
+  through four structures, so any interleaving with a worker could see
+  them all empty while a body had not run. Fixed with a single
+  `AtomicInteger outstanding` incremented in `schedule()` before any
+  collection becomes visible and decremented exactly once per accepted
+  task. Guarded by `TaskSchedulerAwaitIdleR750Test` (4 cases).
+- **Barriers must read ONE field, not a conjunction (Lesson 1120).**
+  `isEmpty()` is atomic; "read four fields and AND them" is not
+  observeable-consistent. Adding `pendingById.isEmpty()` to the predicate
+  closed two windows and left a third (`pendingById.remove` ->
+  `running.add`) — the test still failed 3 runs in 6. Adding a field moves
+  the window; it does not close it.
+- **Fixing a barrier can turn it into a hang (Lesson 1122).** With three
+  decrement sites (cancel / worker-dequeue / runItem-finally), a
+  cancelled item that is STILL in the queue gets decremented twice
+  unless `cancel()` guards on `pendingById.remove(id) != null` and the
+  worker guards on `wasPending`. Symptom flips from "returns too early" to
+  "times out forever", and it breaks previously-green cancel tests. Every
+  accepted task must be decremented exactly once.
+- **Two green variants mean you are testing the wrong thing (Lesson 1119).**
+  The first `awaitIdle` fix looked obviously right and its mutation run
+  printed `FIXED 5/0` and `REVERTED-BUG 5/0`. If "still green after
+  mutation" had been read as "the fix works", an unverified patch would
+  have shipped. Complement of Lesson 1117 ("mutation didn't go red"):
+  this one is "it went green either way".
+- **A test you just wrote will lie to you too (Lesson 1123).** The first
+  draft of the R750d watcher failed against CORRECT code because it
+  cross-checked `registry.list()`; COMPLETED reaches the registry via the
+  bridge listener slightly after `activeCount` drops, so it was measuring
+  bridge latency, not scheduler accounting. Validate a new gate in both
+  directions — red before the fix, green after.

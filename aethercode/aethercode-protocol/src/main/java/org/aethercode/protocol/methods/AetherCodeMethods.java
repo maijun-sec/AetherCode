@@ -7980,6 +7980,29 @@ public class AetherCodeMethods {
         } else if (ev instanceof StreamEvent.RunEnd re) {
             r.put("type",       "run_end");
             r.put("stopReason", re.stopReason());
+            // R750d: carry the failure bit on the wire.
+            //
+            // Pre-R750d this branch emitted type + stopReason and nothing
+            // else, so `isError` existed on the wire ONLY on the synthetic
+            // event that AetherCodeMethods' catch(Throwable) builds. That
+            // catch is unreachable for any throw raised INSIDE the engine:
+            // QueryEngine.tryAdvance catches it first (R735a) and returns a
+            // normal terminal RunEnd. So the single most common failure — an
+            // upstream 4xx/5xx mid-stream — arrived with no error flag at
+            // all.
+            //
+            // The desktop survived it only because its run_end handler also
+            // prefix-matches the stopReason (R735b). A third-party consumer
+            // of the stream-json protocol has no such fallback: Multica
+            // classifies success from `is_error` alone, so an upstream 500
+            // was reported as a completed run.
+            //
+            // Derived from StreamEvent's own taxonomy, not a hand-rolled
+            // startsWith — R743's lesson, applied to a fifth layer.
+            if (re.isErrorOutcome()) {
+                r.put("isError", true);
+                r.put("error", re.stopReason());
+            }
         } else if (ev instanceof StreamEvent.SideNote sn) {
             r.put("type",    "side_note");
             r.put("kind",    sn.kind());

@@ -207,10 +207,28 @@ class ClaudeStreamJsonEmitterR747Test {
     }
 
     @Test
-    void runEnd_cancelled_isClassifiedAsError() {
+    void runEnd_cancelled_isNotClassifiedAsError() {
+        // R750d contract change. The old emitter carried a hand-maintained
+        // OK_KINDS allowlist, and `cancelled` was simply not on it — so a
+        // user pressing Esc was reported to the scheduler as a FAILED run.
+        // That is wrong in both directions: it makes a deliberate user
+        // action look like an engine fault, and it poisons any retry /
+        // alerting built on `is_error`. `cancelled` IS a deterministic hard
+        // stop (isDeterministicHardStopOf) — it just is not an *error*.
+        //
+        // Note the two sets are deliberately different: hard-stop answers
+        // "must nothing downstream re-dispatch this?", error answers
+        // "did this run fail?". Collapsing them is what R743 warned about.
         emitter.accept(new StreamEvent.RunStart("r1", "m"));
         emitter.accept(new StreamEvent.RunEnd("cancelled", List.of()));
-        assertEquals(true, frameOfType("result").get("is_error"));
+
+        var result = frameOfType("result");
+        assertEquals(false, result.get("is_error"),
+                "a user-initiated cancel is not an engine failure");
+        assertEquals("success", result.get("subtype"));
+        assertEquals("cancelled", result.get("aethercode_stop_reason"),
+                "the stop reason still reaches the wire so the scheduler can tell "
+                        + "a cancel apart from a genuine completion");
     }
 
     @Test

@@ -71,14 +71,13 @@ public final class ClaudeStreamJsonEmitter {
     /** Marker greppable in the compiled class / daemon log. */
     public static final String MARKER = "R747: claude stream-json emitter";
 
-    /**
-     * Bare stop-reasons that represent a normal, non-error termination.
-     * Mirrors the {@code spanOk} set the Multica backend applies when it
-     * closes its own tracing span, so AetherCode's notion of "fine" and the
-     * consumer's notion of "fine" cannot drift apart.
-     */
-    private static final Set<String> OK_KINDS = Set.of(
-            "stop", "end_turn", "tool_calls", "awaiting_user_decision", "empty_input");
+    // R750d: there is deliberately NO local "which stopReasons are fine"
+    // set in this class any more. It used to be an `OK_KINDS` allowlist
+    // driving `!OK_KINDS.contains(kind)`, and it disagreed with the
+    // protocol layer's classification of the SAME event — `cancelled` came
+    // out as `is_error: true` here, though the user asked for it. The
+    // single definition now lives on StreamEvent.isErrorOutcome(); every
+    // layer asks that instead of re-deriving one.
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -134,14 +133,22 @@ public final class ClaudeStreamJsonEmitter {
             return emitUserToolResult(tr.id(), tr.content(), tr.isError());
         }
         if (ev instanceof StreamEvent.RunEnd re) {
-            // The engine reached its terminal event. Translate the decorated
-            // stopReason through the canonical classifier (R743) — never
-            // hand-roll a startsWith check here, that is exactly the bug
-            // class R735b/R743 exist to prevent.
-            String kind = StreamEvent.bareKindOf(re.stopReason());
+            // R750d: delegate to StreamEvent's ONE error taxonomy.
+            //
+            // This used to be `!OK_KINDS.contains(kind)` — an ALLOWLIST.
+            // Any stopReason the list did not name was reported as
+            // `is_error: true`, which mis-classified `cancelled` (the user
+            // asked for it; Claude Code reports a cancelled run as a normal
+            // exit) and would mis-classify every reason added later until
+            // somebody remembered to update this set.
+            //
+            // An allowlist fails open toward "error" and a denylist fails
+            // open toward "ok"; R743's lesson is that only ONE of them may
+            // exist, so both the protocol's `eventToMap` and this emitter
+            // now ask StreamEvent.isErrorOutcome().
             return emitResult(
                     collectText(re.finalBlocks()),
-                    !OK_KINDS.contains(kind),
+                    re.isErrorOutcome(),
                     null,
                     re.stopReason());
         }
