@@ -54,24 +54,58 @@ public final class TaskRegistry {
         return t;
     }
 
-    /** Transition a task to a new status. Idempotent for terminal states. */
+    /**
+     * Transition a task to a new status. Idempotent for terminal states.
+     *
+     * <p><b>R750d — this is a read-modify-write and must be atomic.</b> It
+     * used to be {@code get()} then {@code put()}. Two threads
+     * transitioning the <em>same</em> task interleave, both read the same
+     * {@code prev}, and the second {@code put} overwrites the first — a
+     * lost update that resurrects an older status. Observed as 6 of 3000
+     * tasks stuck at PENDING after the scheduler had already run them: the
+     * scheduler's bridge writes RUNNING/COMPLETED while the task body may
+     * write its own transition, and one write vanished.
+     *
+     * <p><b>Contract deliberately preserved from the pre-R750d version.</b>
+     * An earlier draft of this fix gated {@code notify} on "the status
+     * actually changed" and returned the wrong Task, which broke three
+     * existing suites: {@code TaskRegistryTest.listener_firesOnEveryChange}
+     * (listener on every call), {@code PersistentTaskRegistry} (one
+     * appended log line per call), and {@code restore_terminalStateIsSticky}
+     * (needs the post-transition Task back). An "improvement" that breaks
+     * three contracts is not an improvement.
+     *
+     * <p>{@link java.util.concurrent.ConcurrentHashMap#compute} holds the
+     * per-key bin lock across the whole read-decide-write, so transitions
+     * are serialised per task. {@code notify} is deliberately called OUTSIDE
+     * the compute block: it invokes registered listeners, and holding a bin
+     * lock across arbitrary user code is how a map turns into a deadlock.
+     */
     public Task updateStatus(String taskId, TaskStatus next) {
-        Task prev = tasks.get(taskId);
-        if (prev == null) {
-            throw new IllegalArgumentException("unknown task: " + taskId);
-        }
-        if (prev.status().isTerminal()) {
-            LOG.debug("task {} already terminal ({}), ignoring transition to {}",
-                    taskId, prev.status(), next);
-            return prev;
-        }
-        long now = System.currentTimeMillis();
-        Task next2 = new Task(prev.id(), prev.type(), next, prev.description(),
-                prev.parentTaskId(), prev.createdAtMs(),
-                next.isTerminal() ? now : prev.endedAtMs());
-        tasks.put(taskId, next2);
-        notify(next2);
-        return next2;
+        if (taskId == null) throw new IllegalArgumentException("taskId must not be null");
+        if (next == null) throw new IllegalArgumentException("next must not be null");
+        tasks.compute(taskId, (id, cur) -> {
+            if (cur == null) throw new IllegalArgumentException("unknown task: " + id);
+            if (cur.status().isTerminal()) {
+                LOG.debug("task {} already terminal ({}), ignoring transition to {}",
+                        id, cur.status(), next);
+                return cur;
+            }
+            long now = System.currentTimeMillis();
+            return new Task(cur.id(), cur.type(), next, cur.description(),
+                    cur.parentTaskId(), cur.createdAtMs(),
+                    next.isTerminal() ? now : cur.endedAtMs());
+        });
+        // Re-read for the post-state rather than trusting a captured value: by now
+        // another thread may have advanced it again, and callers want the
+        // current truth. notify() fires on EVERY call -- including one
+        // ignored because the task is already terminal -- because
+        // TaskRegistryTest.listener_firesOnEveryChange and
+        // PersistentTaskRegistry (one appended log line per call) depend on
+        // it. See the R750d contract note in the javadoc.
+        Task after = tasks.get(taskId);
+        notify(after);
+        return after;
     }
 
     public Optional<Task> get(String taskId) {

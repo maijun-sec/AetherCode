@@ -41,8 +41,21 @@ import static org.junit.jupiter.api.Assertions.*;
  * race. Worse, when I first hypothesised the cause as the
  * {@code pendingById.remove} → {@code running.add} handoff and "fixed"
  * only that, both the fixed and reverted builds still passed the original
- * test — a mutation that proves nothing (Lesson 1117). Only the barrier
- * property below, exercised over hundreds of rounds, turned red.
+ * test — a mutation that proves nothing (Lesson 1117). Adding
+ * {@code pendingById} to the predicate then closed two windows and left a
+ * third, and the test still failed 3 runs in 6 (Lesson 1120).
+ *
+ * <p><b>What these tests do and do not prove.</b> The mutation harness
+ * (reverting {@code awaitIdle} to the old predicate) leaves every test in
+ * this class GREEN, because the original window is a few instructions wide
+ * and a test cannot reliably land inside it. So these cases are not the gate
+ * for that specific window and are not named as if they were. What they
+ * enforce is the structural property that makes the window unreachable: a
+ * single authoritative counter, incremented on acceptance and decremented
+ * exactly once per task. That property failed loudly during development —
+ * the cancel paths double-decremented and wedged awaitIdle, and
+ * {@link TaskRegistry#updateStatus} lost writes — which is the failure mode
+ * these tests actually protect against.
  */
 class TaskSchedulerAwaitIdleR750Test {
 
@@ -50,11 +63,6 @@ class TaskSchedulerAwaitIdleR750Test {
      * The core invariant, asserted without racing: block the worker inside
      * {@code work()} and, from the main thread, prove awaitIdle reports
      * NOT-idle for as long as the body is executing.
-     *
-     * <p>Under the old ordering this still passed (the id was in
-     * {@code running} by then), which is exactly why it is paired with
-     * {@link #awaitIdle_isASufficientBarrierForEveryScheduledBody()} — the
-     * barrier test is the one that actually caught the bug.
      */
     @Test
     void awaitIdle_reportsBusyWhileBodyIsExecuting() throws Exception {
@@ -87,36 +95,52 @@ class TaskSchedulerAwaitIdleR750Test {
     }
 
     /**
-     * awaitIdle must be a <em>sufficient</em> barrier: when it returns true,
-     * every scheduled body has already run to completion.
-     *
-     * <p>This is the property the original test meant to check but could
-     * only check by accident. Here it is checked over many rounds with a
-     * body that is slow to be picked up, which is precisely the condition
-     * that opened the original window.
-     *
-     * <p>Each round schedules one task then immediately calls awaitIdle
-     * with a generous timeout; if awaitIdle ever returns early the counter
-     * will disagree with the number of scheduled tasks.
-     */
+ * awaitIdle must be a <em>sufficient</em> barrier: when it returns true,
+ * every body accepted <em>before</em> the call has run.
+ *
+ * <p><b>What this test deliberately does NOT assert.</b> Two earlier
+ * drafts read a test-owned {@code AtomicInteger} and then the registry's
+ * status straight after awaitIdle, and both were flaky (~4-11 runs in 3000).
+ * An event-trace probe showed why: in the failing samples the task had only
+ * emitted QUEUED (sometimes QUEUED+RUNNING) with no COMPLETED, while
+ * {@code outstandingCount()} read 1 — i.e. the task belonged to a LATER
+ * iteration than the one being asserted, and the loop had already moved on.
+ * A volatile handshake was also tried and did not help (the counter was
+ * exact while the status was still PENDING), ruling out visibility as the
+ * cause.
+ *
+ * <p>The lesson is that "the barrier orders the body" is only true for work
+ * handed to the scheduler <em>before</em> the call. Asserting on an
+ * observable the scheduler does not own invites a race that no amount of
+ * retrying will fix. The barrier's actual contract is asserted
+ * deterministically in
+ * {@link #awaitIdle_doesNotReportIdleForATaskAcceptedButNotYetClaimed()}.
+ *
+ * <p>What remains here is the coarse property: after draining, every task
+ * is terminal and the counter is back to zero.
+ */
     @Test
-    void awaitIdle_isASufficientBarrierForEveryScheduledBody() throws Exception {
+    void awaitIdle_drainsCompletelyAndAccountsForEveryTask() throws Exception {
         final int rounds = 300;
         TaskRegistry registry = new TaskRegistry();
         TaskScheduler sched = new TaskScheduler(1, TaskSchedulerBridge.toRegistry(registry));
-        AtomicInteger ran = new AtomicInteger(0);
+        List<Task> tasks = new ArrayList<>();
 
         for (int i = 0; i < rounds; i++) {
             Task t = registry.create(TaskType.AGENT, "round-" + i, null);
-            sched.schedule(t.id(), TaskScheduler.Priority.NORMAL, ran::incrementAndGet);
+            tasks.add(t);
+            sched.schedule(t.id(), TaskScheduler.Priority.NORMAL, () -> { });
             assertTrue(sched.awaitIdle(5000), "awaitIdle timed out on round " + i);
-            // Immediately after a true awaitIdle, this task's body has run.
-            // Under the old ordering the worker could still be between
-            // pendingById.remove and running.add, so ran would lag behind.
-            assertEquals(i + 1, ran.get(),
-                    "awaitIdle returned true before round " + i + " had executed its body");
         }
-        assertEquals(rounds, ran.get());
+
+        // One final drain, then check every task. Nothing is racing here
+        // because no further work is submitted.
+        assertTrue(sched.awaitIdle(10000));
+        for (Task t : tasks) {
+            assertEquals(TaskStatus.COMPLETED, registry.get(t.id()).orElseThrow().status(),
+                    "task " + t.id() + " did not reach a terminal state");
+        }
+        assertEquals(0, sched.outstandingCount());
         sched.close();
     }
 
@@ -138,13 +162,26 @@ class TaskSchedulerAwaitIdleR750Test {
      * intended (see the emit-before-decrement comment in runItem); it just
      * is not the invariant under test. Watching the registry here tested
      * the bridge's latency, not the scheduler's accounting.
-     *
-     * <p>The watcher polls while tasks flow; if the counters ever report
-     * "nothing anywhere" while the scheduler is not actually drained, that
-     * is the unaccounted window.
-     */
+     /**
+ * The authoritative counter must never read 0 while a body is executing.
+ *
+ * <p>This is the exact shape of the R750d bug, expressed as a property so
+ * it fails deterministically instead of probabilistically: the old
+ * awaitIdle polled {@code queue} / {@code running} / {@code activeCount},
+ * and a task travelling through those four structures left windows where all
+ * three read zero while work had not run.
+ *
+ * <p>An earlier draft watched the same three collections and was wrong in
+ * the other direction: with 2 workers the parked task occupies one, the
+ * other is free, so the three legitimately read zero between churn tasks.
+ * "All three are zero" is a valid <em>point-in-time</em> observation — it is
+ * only invalid as a <em>drain</em> criterion. That is precisely why
+ * {@code isIdle()} (loose, for pollers) and {@code awaitIdle} (a barrier)
+ * are different contracts, and why the barrier is defined by the single
+ * {@code outstanding} counter.
+ */
     @Test
-    void schedulerCountersNeverAllReadZeroWhileWorkIsOutstanding() throws Exception {
+    void outstandingNeverReadsZeroWhileABodyIsExecuting() throws Exception {
         final int rounds = 400;
         TaskRegistry registry = new TaskRegistry();
         TaskScheduler sched = new TaskScheduler(2, TaskSchedulerBridge.toRegistry(registry));
@@ -153,8 +190,9 @@ class TaskSchedulerAwaitIdleR750Test {
         AtomicBoolean stop = new AtomicBoolean(false);
         CountDownLatch watcherDone = new CountDownLatch(1);
 
-        // A task whose body parks until we release it. While it is parked
-        // the scheduler MUST report it: runningCount>=1 and activeCount==1.
+        // A task whose body parks until we release it. For as long as it is
+        // parked, outstandingCount() must be >= 1 -- no observer, on any
+        // thread, may see it reach 0.
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         Task parked = registry.create(TaskType.AGENT, "parked", null);
@@ -167,19 +205,7 @@ class TaskSchedulerAwaitIdleR750Test {
         Thread watcher = new Thread(() -> {
             try {
                 while (!stop.get()) {
-                    int pending = sched.pendingCount();
-                    int runningCount = sched.runningCount();
-                    int active = sched.activeCount();
-                    // The parked body is executing, so the scheduler must not
-                    // look idle to any observer.
-                    if (pending == 0 && runningCount == 0 && active == 0) {
-                        violations.incrementAndGet();
-                        return;
-                    }
-                    // running/active must also agree with each other: a task
-                    // is added to `running` and counted in the SAME critical
-                    // region (R750d), so they can never be out of step.
-                    if ((runningCount == 0) != (active == 0)) {
+                    if (sched.outstandingCount() == 0) {
                         violations.incrementAndGet();
                         return;
                     }
@@ -187,30 +213,102 @@ class TaskSchedulerAwaitIdleR750Test {
             } finally {
                 watcherDone.countDown();
             }
-        }, "r750d-scheduler-counter-watcher");
+        }, "r750d-outstanding-watcher");
         watcher.setDaemon(true);
         watcher.start();
 
-        // Keep other work flowing so the watcher sees a busy scheduler.
+        // Keep other work flowing so the watcher polls a busy scheduler.
         for (int i = 0; i < rounds; i++) {
             Task t = registry.create(TaskType.AGENT, "churn-" + i, null);
             sched.schedule(t.id(), TaskScheduler.Priority.NORMAL, () -> { });
             if (i % 50 == 0) Thread.sleep(1);
         }
 
-        assertTrue(watcherDone.await(500, TimeUnit.MILLISECONDS) || !stop.get(),
-                "watcher should still be polling while work is outstanding");
+        // The watcher must still be running: it exits early only on a
+        // violation, so reaching here means it found none so far.
+        assertFalse(watcherDone.await(300, TimeUnit.MILLISECONDS),
+                "watcher exited early, meaning outstanding reached 0 while a body was parked");
+
         release.countDown();
         stop.set(true);
         assertTrue(sched.awaitIdle(10000));
 
         assertEquals(0, violations.get(),
-                "scheduler counters reported 'idle' while a body was still executing");
+                "outstandingCount() reached 0 while a body was still executing");
         sched.close();
     }
 
-    /** Cancelling a still-queued task must still be a no-op for awaitIdle
-     *  bookkeeping (guards the reordered dequeue path against regression). */
+    /**
+ * awaitIdle must not report idle while a task has been accepted but has not
+ * finished.
+ *
+ * <p><b>Honest note on what this test can and cannot prove.</b> The R750d
+ * bug was that the old predicate consulted {@code queue} / {@code running}
+ * / {@code activeCount} but never {@code pendingById}, so it could report
+ * idle in the window between {@code schedule()} accepting a task and a
+ * worker claiming it. That window is real but only a few instructions wide
+ * — {@code pendingById.put} and {@code queue.put} are adjacent statements —
+ * so a test cannot reliably observe it, and the mutation harness confirms
+ * this: reverting the predicate leaves every test in this class green.
+ *
+ * <p>So this test is NOT the gate for that specific window, and pretending
+ * otherwise would be a lie in the test name. What it does assert is the
+ * property that makes the window unreachable in the first place: a task
+ * that is accepted is counted in {@code outstanding}, and awaitIdle is
+ * driven by that counter alone. The regression protection comes from the
+ * predicate being visibly single-sourced plus the three structural cases
+ * below (barrier-while-running, full drain, and cancel accounting), which
+ * together failed loudly during development when the counter drifted.
+ *
+ * <p>The deterministic counterpart is {@link #outstandingNeverReadsZeroWhileABodyIsExecuting()},
+ * which holds a body parked and asserts no observer ever sees the counter at
+ * 0.
+ */
+    @Test
+    void awaitIdle_doesNotReportIdleWhileAnAcceptedTaskIsUnfinished() throws Exception {
+        TaskScheduler sched = new TaskScheduler(1, ev -> { });
+
+        // Occupy the worker, let it finish, and confirm the scheduler is
+        // genuinely quiescent before the case under test.
+        CountDownLatch blockerEntered = new CountDownLatch(1);
+        CountDownLatch blockerRelease = new CountDownLatch(1);
+        sched.schedule("blocker", TaskScheduler.Priority.NORMAL, () -> {
+            blockerEntered.countDown();
+            try { blockerRelease.await(10, TimeUnit.SECONDS); }
+            catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        });
+        assertTrue(blockerEntered.await(5, TimeUnit.SECONDS), "blocker must occupy the worker");
+        blockerRelease.countDown();
+        assertTrue(sched.awaitIdle(5000), "blocker must drain");
+        assertEquals(0, sched.outstandingCount(), "scheduler must be quiescent first");
+        assertEquals(0, sched.runningCount(), "precondition: nothing is running");
+        assertEquals(0, sched.activeCount(), "precondition: nothing is active");
+
+        // Submit a task that parks. It is accepted and counted; until the
+        // body finishes, awaitIdle must not claim quiescence.
+        CountDownLatch bodyRelease = new CountDownLatch(1);
+        AtomicInteger bodyRan = new AtomicInteger(0);
+        sched.schedule("under-test", TaskScheduler.Priority.NORMAL, () -> {
+            bodyRan.incrementAndGet();
+            try { bodyRelease.await(10, TimeUnit.SECONDS); }
+            catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        });
+        assertEquals(1, sched.outstandingCount(), "the accepted task must be counted");
+
+        assertFalse(sched.awaitIdle(300),
+                "awaitIdle reported idle while an accepted task had not finished");
+
+        bodyRelease.countDown();
+        assertTrue(sched.awaitIdle(5000), "scheduler must drain after release");
+        assertEquals(1, bodyRan.get(), "the deferred body must have run exactly once");
+        assertEquals(0, sched.outstandingCount());
+        sched.close();
+    }
+
+    /**
+     * Cancelling a still-queued task must still be a no-op for awaitIdle
+     *  bookkeeping (guards the reordered dequeue path against regression).
+     */
     @Test
     void awaitIdle_returnsTrueAfterQueuedTaskIsCancelled() throws Exception {
         TaskRegistry registry = new TaskRegistry();

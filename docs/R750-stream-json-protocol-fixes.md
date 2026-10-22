@@ -363,3 +363,123 @@ task 恰好减一次**。
 - **Lesson 1124 — hard-stop 与 error 是两个不同的集合。**
   `cancelled` 是 deterministic hard stop（不许自动续跑）但不是 error
   （不是用户没要的故障）。把两者合并会让用户按 Esc 变成一条错误告警。
+
+---
+
+## Part 3 — 顺带挖出来的一个真 bug：`TaskRegistry.updateStatus` 丢更新
+
+诊断 `awaitIdle` 的时候，一个探针顺手发现：3000 轮顺序调度里有 4-11 次
+「任务跑完了但 registry 还停在 PENDING」。
+
+### 根因
+
+`updateStatus` 是 `get()` 然后 `put()` —— **非原子的 read-modify-write**。
+两个线程对**同一个** task 做状态迁移时，都读到同一个 `prev`，
+后写的 `put` 覆盖先写的，于是旧状态被"复活"。
+
+实际并发来源是常态路径：scheduler 的 bridge 写 `RUNNING` / `COMPLETED`，
+而任务体自己可能也在写状态。
+
+### 修法
+
+整个 read-decide-write 走 `ConcurrentHashMap.compute`，per-key bin 锁
+把迁移串行化。`notify()` 特意放在 compute 块**外面** —— 绝不能持有
+bin 锁去跑任意的 listener 代码。
+
+### 第一版修复打破了三套既有测试
+
+我把 `notify` 加了条件（"状态真的变了才通知"），并且返回了错误的 `Task`。
+结果三个既有套件变红：
+
+- `TaskRegistryTest.listener_firesOnEveryChange`
+  —— listener 在**每一次**调用都要触发，包括因为已 terminal 而被忽略的那次；
+- `PersistentTaskRegistry`
+  —— 每次调用追加一行日志，被抑制的 notify 会**静默丢掉持久化记录**；
+- `restore_terminalStateIsSticky`
+  —— 依赖返回的 `Task` 是迁移**之后**的状态。
+
+**一个"改进"打破三条既有契约，就不是改进。**
+修 bug 之前先读既有测试，它们才是契约的说明书。
+
+---
+
+## Part 4 — 我自己写的门禁也会是假的（Lesson 1125）
+
+这一轮最有价值的产出不是修复，是三个"我以为验证了、其实没有"的发现。
+
+### 4.1 变异两个方向都绿
+
+第一版 `awaitIdle` 修复的变异脚本输出：
+
+    FIXED        => 5/0
+    REVERTED-BUG => 5/0      <-- 变异后依然全绿
+
+**两边都绿。**（Lesson 1119）
+如果当时把"变异后仍然绿"读成"我的修复是对的"，
+就会提交一个连 bug 都没抓到的补丁 —— 而实际上它连真正的窗口都没碰到。
+
+### 4.2 补一个字段只是把窗口挪个位置
+
+给谓词加上 `pendingById.isEmpty()`，关掉了两个窗口，
+但 `pendingById.remove` → `running.add` 之间还有第三个。
+连跑 6 次，**3 次红**。
+
+**Lesson 1120 — N 个集合逐个读，拼不出一致的快照。**
+最终修法是单个 `AtomicInteger outstanding`。
+
+### 4.3 我自己写的测试也会骗我，而且骗了两次
+
+第一版 barrier 测试在"修复后"的代码上仍红。第一版 watcher 更糟：
+它在**正确代码上就红** —— 因为我拿 `registry.list()` 去对拍，
+而 `COMPLETED` 状态是经 bridge listener **晚一点**才到 registry 的。
+那测的是 bridge 延迟，不是调度器记账。
+
+改写成对 `outstanding` 的断言后仍然 flaky（3/8），因为
+「awaitIdle 返回 true」和「测试重新读 `outstanding`」是两次独立观察，
+中间下一轮的 `schedule()` 可以合法地插进来 +1。
+
+一个事件轨迹探针给出了最终答案：失败样本里那个 task 只发了
+`QUEUED`（有时 `QUEUED`+`RUNNING`），而 `outstandingCount()` 读到 1 ——
+**那是属于后面某一轮的任务，循环早就往前走了**。
+用 volatile 握手试过，计数器精确但状态仍是 PENDING，排除了可见性。
+
+结论：**barrier 只保证「调用之前提交的工作」已执行**。
+断言一个 scheduler 并不拥有的可观测量，换来的是一个重试也修不好的竞态。
+
+### 4.4 最终的诚实状态
+
+两个变异脚本都显示：把谓词改回旧的、或把 `compute` 改回 `get/put`，
+**这一轮的测试仍然是绿的**。原因是那两个窗口都只有几条指令宽，
+测试无法可靠地落进去。
+
+所以这些测试的 javadoc 里明确写了这一点，而不是假装它们守着那个修复。
+它们真正守住的是**结构性属性**（单一权威计数器、每个 task 恰好减一次、
+`updateStatus` 的 null 契约），而这些属性在开发过程中**大声地失败过** ——
+cancel 路径重复递减把 `awaitIdle` 卡死，以及 `updateStatus` 丢写入。
+
+**Lesson 1125 — 变异不能把你的测试变红，就说明它不是你以为的那个门禁 ——
+哪怕那个测试是你自己刚写的。** 此时该做的是在测试里写明这个限制，
+而不是改个名字暗示它守着那个修复。一个名字里写着"回归门禁"、
+实际不设防的测试，比没有测试更糟。
+
+---
+
+## 教训
+
+- **Lesson 1119 — 变异测试两个变体都绿 = 你测的不是你以为的东西。**
+- **Lesson 1120 — N 个集合逐个读，拼不出一致的快照。补字段只是挪窗口。**
+- **Lesson 1121 — 连续两次推断被事实推翻时，去写会失败的测试，别继续推理。**
+- **Lesson 1122 — 修 barrier 很容易变成制造 hang：递减点必须互斥。**
+- **Lesson 1123 — 我自己写的测试也会在两个方向上骗我；正反都要验证。**
+- **Lesson 1124 — hard-stop 与 error 是两个集合，合并会把用户按 Esc 变成告警。**
+- **Lesson 1125 — 变异不能变红的测试不是门禁，哪怕是你自己刚写的。**
+  该做的是在 javadoc 里写清限制，而不是改名字假装。
+- **Lesson 1126 — 一个"改进"打破三条既有契约，就不是改进。**
+  修 bug 前先读既有测试，它们是契约的说明书。
+- **Lesson 1127 — `BUILD SUCCESS` 不等于改动进了产物。**
+  R750d 的 null 守卫在源码里、在 `target/classes` 里，但**不在打包出的 jar 里** ——
+  增量编译因为只有 lambda 体变了而没有重编 `TaskRegistry`。
+  `javap -p -c` 看模块 classes 有守卫，jar 里没有那些字符串，
+  `mvn clean package` 之后才对。**永远 grep 最终产物的字符串常量池。**
+- **Lesson 1128 — barrier 只保证「调用前提交的工作」。**
+  断言 scheduler 不拥有的可观测量，换来的竞态重试也修不好。

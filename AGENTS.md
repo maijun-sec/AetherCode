@@ -878,3 +878,164 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   bridge listener slightly after `activeCount` drops, so it was measuring
   bridge latency, not scheduler accounting. Validate a new gate in both
   directions — red before the fix, green after.
+
+- **R367** (grant RPC reachability + a second-transport fix): `PermissionMethods`
+  and `GrantMethods` were complete, unit-tested, had their Maven deps
+  declared in both poms, and **`DaemonRunner` never called either
+  `registerAll`**. The TUI's `/consents` panel rendered for months while
+  every RPC it called returned `-32601`. Third same-shape defect after
+  R720 `memory/*` (Lesson 1022) and R366 `model/set`. Full write-up:
+  `docs/R367-grant-rpc-reachability.md`. Load-bearing lessons:
+  - **A reachability gate must ask WHO CALLS `registerAll`, not just who
+    declares the name.** `r366-rpc-names.test.mjs` asked "is
+    `permission/list` in `PermissionMethods.java`?" — yes, green. It never
+    asked whether the daemon wired the class. That model gives a free pass
+    to every "implemented but never connected" feature. Ask BOTH: which
+    class registers it, and which file calls that class's `registerAll`.
+  - **A method class reachable only through one transport is a
+    one-transport feature.** `GrantMethods` had exactly ONE public member,
+    `registerAll` — so `HttpJsonRpcServer`'s hand-rolled switch could not
+    route `grants/*` even in principle. Fixed with four passthroughs.
+    Adding to the dispatcher does nothing for the HTTP switch; do both.
+  - **`routePermission`/`routeGrant` in `HttpJsonRpcServer` THROW when
+    unwired; `routeMemory` RETURNS `{ok:false}`.** That asymmetry is
+    deliberate. A `{ok:false}` envelope for `permission/list` is a
+    LIST-SHAPED lie: `asRows()` sees an object with no array key, returns
+    `[]`, and `/consents` renders "0 stored grants" with no error.
+  - **`grants/list` returns `{grants:[...]}` (via `GrantHandlers` in
+    `aethercode-tasks`); `permission/list` returns a bare array.** Two
+    aliases for one feature, two different shapes. `line.ts`'s `asRows()`
+    envelope list is now pinned against BOTH sources, not just
+    `AetherCodeMethods`.
+  - **Wiring an endpoint can make the lie BIGGER (Lesson 1132).** Before
+    R367 `/consents` showed an honest "endpoint missing" banner. After
+    the daemon was fixed, `asRows` (never called before, therefore
+    broken all along) rendered a confident empty list. Re-audit every
+    assumption on the SUCCESS path whenever an endpoint flips from
+    unavailable to available.
+  - **The `javaCode()` comment stripper in the gate had the R364 bug
+    again, in Java.** `DaemonRunner.java` contains
+    `// ... (the stdio daemon's` — an apostrophe read as a char-literal
+    opener swallowed **2.4 KB of real code**, including the
+    `http.setPermissionMethods(...)` line the gate reads. R364's TS
+    stripper ate 916 lines of `line.ts` for the same reason (a `/*`
+    inside a string literal). Same mechanism, different language,
+    different file: **literal and comment delimiters leaking across
+    states.** Found by a BYPASS mutation that deliberately disabled the
+    stripper and got a red it should not have got.
+  - **`EXTRA_METHOD_CLASSES` is an allowlist and had to be tested like
+    one (Lesson 1120).** `declaredButUnwired` is built BY iterating it —
+    deleting a class from the list means that class is no longer checked,
+    and the gate stays green. Both deletion mutations passed until
+    `the extra-method-class list is itself complete` was added.
+  - **`src.contains(".resolve(\".aethercode\")")` was a DEAD GATE.** The
+    first R367 mutation (drop that `.resolve` from the root assignment)
+    left it GREEN: the same string occurs twice more in `DaemonRunner`
+    for unrelated paths. Same trap as `listProjects` matching
+    `listProjectsDISABLED`. Substring gates must be scoped to the
+    construct they claim to check; the fix is a structural two-hop
+    extraction, not a longer substring.
+  - **Mutation output must name the failing assertion, not count.**
+    `gate fail=1` sent me theorising about the wrong test for three
+    rounds; adding "print the failing test name + assertion message"
+    found the apostrophe bug in one run (Lesson 1134).
+  - `PermissionGrantWiringR367Test` (11 cases) uses `@TempDir`
+    everywhere — the first draft used `System.getProperty("user.home")`
+    and would have written to the developer's real grant audit log —
+    and a comment-stripping source pin, because a plain
+    `contains("permRpcs.registerAll(...)")` is satisfied by a
+    commented-out line.
+  - It also pins `-32604` (not-found) on both revoke paths.
+    `GrantHandlers.revoke` builds `{ok:true,id}` unconditionally and
+    only reports failure because `JsonRpcProtocolException` is a
+    `RuntimeException` propagating through a `Consumer<Map>`.
+
+- **Pre-existing flaky Java test (verified 2026-10-22):**
+  `WorkflowExecutorR375Test.parallelism_three_fansOut_andAggregates`
+  fails under full-reactor load and passes when run alone
+  (`-Dtest=WorkflowExecutorR375Test` → 7/7 green). It is a parallel
+  fan-out timing assertion in `aethercode-core`; do not attribute it to
+  unrelated changes.
+
+- **Pre-existing HANG, verified by mutation (2026-10-22):**
+  `aethercode-cli` `MainCliTest` never completes — it stalls the
+  reactor at module 24/24 indefinitely (observed 13 min and 480 s).
+  `call_acceptsPrintWithPrompt` deliberately spawns a thread that
+  "will fail or hang on a fake endpoint" and only bounds it with
+  `t.join(2_000)` on a **daemon** thread, so a non-daemon thread
+  somewhere in the booted engine keeps the forked JVM alive.
+  **Proven unrelated to R367:** with both `permRpcs.registerAll` and
+  `grantRpcs.registerAll` commented out in `DaemonRunner`, the test
+  still hangs. Note `Main.java:340` DOES route through
+  `DaemonRunner.run()`, so "it's not on my code path" was a wrong
+  assumption — the mutation is what settles it. Every other
+  `aethercode-cli` test class reports green:
+  `DaemonRunnerTest` 10/10, `DaemonRunnerR361V2Test` 4/4,
+  `DaemonRunnerR148Test` 5/5, `DaemonRunnerPaperCompatE2ETest` 4/4,
+  `DaemonProviderCascadeR343Test` 8/8,
+  `MainBuildEnginePaperCompatToolsTest` 3/3.
+  To run the CLI module's tests, exclude `MainCliTest`.
+
+- **`mvn -o -pl aethercode-cli test` alone FAILS to compile even when the
+  change is correct.** Without `-am`, `aethercode-cli` resolves
+  `aethercode-protocol` from the local repo, so a method added this
+  session "does not exist" — including `setMemoryMethods`, which has
+  shipped since R720. Use `-pl aethercode-protocol,aethercode-cli -am`.
+  `mvn install` is also unavailable here: `D:\cache\mvn_repo\...jar` is
+  locked by the running daemon.
+
+- **R750e** (TaskRegistry.updateStatus lost update + a lesson about "improvements"):
+  `updateStatus` was `get()` then `put()` — a non-atomic read-modify-write.
+  Two threads transitioning the SAME task both read the same `prev` and the
+  second `put` won, resurrecting an older status. Found by a probe while
+  diagnosing the `awaitIdle` barrier: 4-11 transitions lost per 3000
+  sequential rounds, leaving tasks stuck at PENDING after the scheduler had
+  already run them. Fixed by routing the whole read-decide-write through
+  `ConcurrentHashMap.compute`, with `notify()` deliberately OUTSIDE the
+  compute block (never hold a bin lock across arbitrary listener code).
+  **The first version of the fix broke three existing suites** by gating
+  `notify` on "status actually changed" and returning the wrong `Task`:
+  `TaskRegistryTest.listener_firesOnEveryChange` (listener fires on EVERY
+  call, including one ignored because the task is already terminal),
+  `PersistentTaskRegistry` (appends one log line per CALL, so a suppressed
+  notify silently dropped persistence records), and
+  `restore_terminalStateIsSticky`. **An "improvement" that breaks three
+  documented contracts is not an improvement** — read the existing tests for
+  the contract before assuming a fix is behaviour-preserving.
+
+- **A gate that cannot go red has not been tested — including when YOU wrote
+  it (Lesson 1125).** `TaskSchedulerAwaitIdleR750Test`'s concurrency cases
+  pass under the reverted (buggy) predicate; the original
+  `awaitIdle` window is a few instructions wide (`pendingById.put` and
+  `queue.put` are adjacent) and a test cannot reliably land inside it. Same
+  for the registry concurrency case: a `CyclicBarrier` releases threads
+  together but does NOT force a get/put interleaving. Both classes now say
+  so in their javadoc instead of implying they gate the fix. What the
+  registry class DOES gate (verified: reverting the null-guards turns it
+  red) is the null-argument contract. When a mutation cannot turn your test
+  red, say so in the test — a test named as a gate that is not one is worse
+  than no test.
+
+- **Reverting the predicate is not the only mutation; pick the mutation your
+  fix actually introduced.** Each round's gate must be checked against the
+  specific change under test, and a fix that is *only* reachable through a
+  specific interleaving should say that plainly.
+
+- **Pre-existing load-sensitive flakes in `aethercode-tasks`** (not caused by
+  R750d, verified by stashing the changes and re-running under identical CPU
+  load): `AsyncSubAgentMiddlewareTest.start_spawnsChild` and
+  `TaskHeartbeatTest.runningTaskIds_reflectsCurrentState` both time out when
+  the box is saturated, and pass 8/8 without load. Do not chase these when
+  validating an unrelated change. Also pre-existing and unrelated:
+  `MainCliTest` blocks indefinitely (300s+, no `Tests run` line) because it
+  enters the REPL; the CLI module must be run with `-Dtest=!MainCliTest`.
+
+- **A `mvn package` that reports BUILD SUCCESS can still ship a stale class
+  (re-confirmed on R750d).** The R750d null-guards were in the source and in
+  `aethercode-tasks/target/classes` but MISSING from the packaged jar —
+  incremental compilation had not recompiled `TaskRegistry` because only the
+  lambda body had changed. `javap -p -c` on the module's classes showed the
+  guards, the jar did not contain the strings, and `mvn clean package` fixed
+  it. **Always grep the string constant pool of the FINAL artifact**, not the
+  module's `target/classes`. Related to Lesson 1117: a green build is not
+  evidence the change is in the artifact.
