@@ -1,4 +1,4 @@
-﻿/**
+/**
  * the Ink-based TUI.
  *
  * Layout (top to bottom):
@@ -22,11 +22,22 @@
 
 import React, { useEffect, useReducer, useRef, useState } from "react";
 import { render, Box, Text, useApp, useInput, type Instance as InkInstance } from "ink";
+import Spinner from "ink-spinner";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { findJar } from "./ac-tui.js";
-import { reducer, INITIAL, type State, type Action, type PermissionAsk, type SddRunState } from "./state.js";
+import {
+  reducer, INITIAL, type State, type Action, type PermissionAsk, type SddRunState,
+  type PanelId, type PanelStatus, type MemoryScopeId, type MemoryRow, type ThreadRow,
+  type GrantRow,
+} from "./state.js";
 import { handleSlash, completeSlash } from "./commands.js";
+// R362 — the sentinel → intent contract. The slash dispatcher looks
+// intents up here instead of hand-writing an `if (local === "__X__")`
+// chain, so a sentinel can never be emitted without a declared owner
+// on this renderer.
+import { intentForSentinel, describeSentinel } from "./panelIntents.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
+import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { SddMode } from "./components/SddMode.js";
@@ -59,6 +70,22 @@ import * as os from "node:os";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { LogViewer } from "./components/LogViewer.js";
 import { Welcome } from "./components/Welcome.js";
+/* --- R362: the twelve previously-unmounted panels ------------------ */
+import { MemoryPanel, type CompactProgress } from "./components/MemoryPanel.js";
+import { ThreadSelector, type ThreadInfo } from "./components/ThreadSelector.js";
+import { AgentSelector, type AgentEntry } from "./components/AgentSelector.js";
+import { EffortPicker, type EffortEntry } from "./components/EffortPicker.js";
+import { CwdSwitcher, makeStatValidator } from "./components/CwdSwitcher.js";
+import {
+  GrantsManager,
+  filterGrants,
+  groupGrantsByScope,
+  formatGrantLine,
+  type Grant,
+} from "./components/permissions/GrantsManager.js";
+import { McpViewer, type ServerInfo } from "./components/McpViewer.js";
+import { NotificationCenter, type PendingNotification } from "./components/NotificationCenter.js";
+import * as fs from "node:fs";
 
 export interface TuiOptions {
   jar: string;
@@ -259,15 +286,414 @@ function insertSubagentResult(
   dispatch({ type: "pushToast", kind: "info", text: `inserted subagent ${jobId} result` });
 }
 
+/**
+ * R362 — one-line preview for a queued prompt in the strip above the input
+ * box. Collapses newlines so a multi-line prompt does not break the row, and
+ * clips to the terminal width so the strip never wraps into the transcript.
+ */
+function truncateForQueue(text: string, max = 56): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  return `${flat.slice(0, max - 1)}…`;
+}
+
+/* ===================================================================
+ * R362 — Ink panel host
+ *
+ * Twelve components sat behind slash-command sentinels that no
+ * renderer claimed, so `/memory` printed `__MEMORY_PANEL__:project`
+ * to the screen. This block is everything needed to mount them:
+ * a registry-driven claim in `handleSubmit`, one fetch effect, one
+ * shared modal shell, and the per-panel prop wiring.
+ * =================================================================== */
+
+/** `PanelIntent.id` (panelIntents.ts) → the `PanelId` the reducer
+ *  stores. Two tables keyed by the same string would be exactly the
+ *  drift the registry exists to prevent, so keep this next to it. */
+const PANEL_BY_INTENT: Record<string, PanelId> = {
+  "memory-panel": "memory",
+  "thread-selector": "threads",
+  "todo-board": "todos",
+  "agent-selector": "agents",
+  "effort-picker": "effort",
+  "cwd-switcher": "cwd",
+  "grants-manager": "grants",
+  "notification-center": "notifications",
+  "mcp-viewer": "mcp",
+};
+
+/** Per-panel chrome copy. The shell renders the `title` and
+ *  `hint`; `loading` names the RPC in flight so the pending row
+ *  says WHAT is loading, not just "loading". */
+const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string }> = {
+  memory: {
+    title: "Memory",
+    hint: "1/2/3 or ←/→ scope · ↑/↓ select · Enter edit · c compact",
+    loading: "reading memory",
+  },
+  threads: {
+    title: "Threads",
+    hint: "type to filter · ↑/↓ or j/k navigate · Enter switch · Esc cancel",
+    loading: "listing sessions",
+  },
+  todos: {
+    title: "TODO board",
+    hint: "j/k or ↑/↓ navigate · Enter expand · g/G top/bottom",
+    loading: "loading todos",
+  },
+  agents: {
+    title: "Agents",
+    hint: "type to filter · ↑/↓ or j/k navigate · Enter make active · Ctrl+S default",
+    loading: "listing agents",
+  },
+  effort: {
+    title: "Reasoning effort",
+    hint: "↑/↓ or j/k navigate · Enter set · Esc cancel",
+    loading: "loading effort levels",
+  },
+  cwd: {
+    title: "Working directory",
+    hint: "type an absolute path · Enter switch · Esc cancel",
+    loading: "validating path",
+  },
+  grants: {
+    title: "Consents",
+    hint: "↑/↓ or j/k navigate · r revoke · 1-4 scope filter",
+    loading: "listing grants",
+  },
+  notifications: {
+    title: "Notifications",
+    hint: "↑/↓ or j/k navigate · Enter select · Tab settings · Esc close",
+    loading: "loading notifications",
+  },
+  mcp: {
+    title: "MCP servers",
+    hint: "↑/↓ or j/k navigate · Enter sign in · Ctrl+R reconnect",
+    loading: "listing MCP servers",
+  },
+};
+
+/** Strip the argument suffix from a sentinel: `__MCP_LOGIN__:github`
+ *  → `__MCP_LOGIN__`. The registry keys on the bare token; several
+ *  commands pass a target after a colon. */
+function bareSentinel(s: string): string {
+  const i = s.indexOf(":");
+  return i < 0 ? s : s.slice(0, i);
+}
+
+/**
+ * MemoryPanel's scope union is `global | project | session`, but the
+ * daemon's `MemoryScope` enum is `USER | PROJECT | SESSION` — the
+ * cross-project layer is called "global" in the panel and "USER" on
+ * the wire. Anything sent as `"GLOBAL"` comes back as an unknown
+ * scope. This map is the only place the two vocabularies meet.
+ */
+const MEMORY_WIRE_SCOPE: Record<MemoryScopeId, string> = {
+  global: "USER",
+  project: "PROJECT",
+  session: "SESSION",
+};
+
+/** Panel width from the live terminal, minus the shell's own frame.
+ *  80 columns is the hard floor the layout is designed against; the
+ *  cap stops the panel from becoming a letterboxed island on a 4K
+ *  terminal. */
+function panelWidthFor(cols: number): number {
+  return Math.max(52, Math.min(cols - 4, 100));
+}
+
+/**
+ * Minimum terminal width at which `GrantsManager`'s 3-column layout
+ * still fits: left 36 + right 32 + both inner borders/padding +
+ * margins + the outer frame ≈ 112. Below it we render
+ * `GrantsCompact` instead.
+ */
+const GRANTS_WIDE_MIN_COLS = 112;
+
+/** Horizontal rule exactly `n` cells wide, for the shell dividers. */
+function rule(n: number): string {
+  return "─".repeat(Math.max(4, n));
+}
+
+/** Stable across renders — CwdSwitcher's validation effect lists
+ *  `validate` in its dependency array, so a fresh closure each
+ *  render would loop forever. */
+const CWD_VALIDATE = makeStatValidator((p: string) => {
+  try {
+    return fs.statSync(p);
+  } catch {
+    return null;
+  }
+});
+
+/** Static reasoning-effort catalog.
+ *
+ *  NOTE: the daemon exposes no effort RPC (verified against
+ *  `AetherCodeMethods`' method registry — there is neither a read
+ *  nor a write path for it), so this catalog cannot be model-
+ *  specific yet. It is the de-facto OpenAI/Anthropic ladder.
+ *  Flagged for a product decision rather than invented. */
+const EFFORT_CATALOG: ReadonlyArray<EffortEntry> = [
+  { label: "low", id: "low", description: "fastest, least reasoning" },
+  { label: "medium", id: "medium", description: "balanced" },
+  { label: "high", id: "high", description: "more reasoning, slower" },
+  { label: "xhigh", id: "xhigh", description: "maximum reasoning" },
+];
+
+/* ------------------------- wire normalisers ------------------------ */
+
+/** The daemon is the source of truth for the wire shape, but the
+ *  three "list" RPCs have grown optional fields over time. Each
+ *  normaliser therefore reads the canonical key first and falls
+ *  back rather than throwing — a renamed field should degrade one
+ *  column, not blank the panel. */
+
+function normalizeMemoryRow(raw: unknown, i: number): MemoryRow {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const k = String(r.kind ?? "fact");
+  const kind = k === "rule" || k === "change" || k === "breadcrumb" ? k : "fact";
+  return {
+    id: String(r.id ?? r.entryId ?? r.key ?? `mem-${i}`),
+    kind,
+    key: r.key == null ? undefined : String(r.key),
+    value: String(r.value ?? r.text ?? r.description ?? r.body ?? ""),
+    ts: Number(r.ts ?? r.updatedAt ?? r.createdAt ?? 0),
+    source: String(r.source ?? r.scope ?? r.origin ?? "—"),
+    tags: Array.isArray(r.tags) ? r.tags.map(String) : [],
+  };
+}
+
+function normalizeThreadRow(raw: unknown, i: number): ThreadRow {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    threadId: String(r.sessionId ?? r.id ?? r.threadId ?? `session-${i}`),
+    agentName: String(r.agentName ?? r.agent ?? "primary"),
+    messages: Number(r.messageCount ?? r.messages ?? r.count ?? 0) || 0,
+    createdAt: String(r.createdAt ?? ""),
+    updatedAt: String(r.updatedAt ?? r.lastActiveAt ?? ""),
+    prompt: String(r.title ?? r.prompt ?? r.summary ?? r.firstPrompt ?? ""),
+    cwd: String(r.cwd ?? r.workingDirectory ?? ""),
+    gitBranch: r.gitBranch == null ? undefined : String(r.gitBranch),
+  };
+}
+
+function normalizeGrantRow(raw: unknown, i: number): GrantRow {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const s = String(r.scope ?? "session");
+  const scope: GrantRow["scope"] = s === "project" || s === "user" ? s : "session";
+  return {
+    id: String(r.id ?? r.grantId ?? `grant-${i}`),
+    scope,
+    scopeId: String(r.scopeId ?? r.target ?? r.tool ?? "—"),
+    category: String(r.category ?? r.tool ?? "—"),
+    decision: String(r.decision ?? "allow") === "deny" ? "deny" : "allow",
+    reason: String(r.reason ?? ""),
+    createdAt: Number(r.createdAt ?? r.createdAtMs ?? r.ts ?? 0) || 0,
+    expiresAt: r.expiresAt == null ? null : Number(r.expiresAt),
+  };
+}
+
+/** Turn `{ ok: false, error }` daemon envelopes into a message
+ *  instead of rendering them as an empty list. */
+function envelopeError(v: unknown): string | null {
+  if (v && typeof v === "object") {
+    const r = v as Record<string, unknown>;
+    if (r.ok === false) return String(r.error ?? r.reason ?? "the daemon rejected the request");
+  }
+  return null;
+}
+
+/* --------------------------- the shell ---------------------------- */
+
+/**
+ * The shared modal chrome. Every R362 panel renders inside this so
+ * the twelve surfaces read as one family: same rounded frame, same
+ * brand title bar, same hint line, same pending / error / notice
+ * row, same Esc affordance.
+ *
+ * Esc is handled HERE as well as by each component. Two components
+ * (`GrantsManager`, `TodoBoard`) have no Esc branch of their own,
+ * and Ink's `useInput` fans every keystroke out to every mounted
+ * hook — so this is the safety net, and a component that also
+ * closes on Esc simply dispatches the same idempotent action twice.
+ */
+const PanelShell: React.FC<{
+  title: string;
+  /**
+   * Optional. Six of the nine components already print their own
+   * keymap line under their title, so passing their hint here would
+   * render the same sentence twice. The shell only supplies a hint
+   * for the component that has none (TodoBoard).
+   */
+  hint?: string;
+  width: number;
+  status: PanelStatus;
+  loadingLabel: string;
+  onClose: () => void;
+  children?: React.ReactNode;
+}> = ({ title, hint, width, status, loadingLabel, onClose, children }) => {
+  useInput((_input, key) => {
+    if (key.escape) onClose();
+  });
+  // frame = 2 border cells + 2 padding cells.
+  const inner = width - 4;
+  return (
+    <Box
+      flexDirection="column"
+      width={width}
+      borderStyle="round"
+      borderColor={t.dim}
+      paddingX={1}
+    >
+      <Box justifyContent="space-between">
+        <Text color={t.brand} bold>{`◆ ${title}`}</Text>
+        <Text dimColor>esc close</Text>
+      </Box>
+      {hint ? <Text dimColor>{hint}</Text> : null}
+      <Text color={t.dim}>{rule(inner)}</Text>
+      <Box flexDirection="column">{children}</Box>
+      <Text color={t.dim}>{rule(inner)}</Text>
+      {status.loading ? (
+        <Box>
+          <Text color={t.spinner}><Spinner type="dots" /></Text>
+          <Text color={t.warn}>{` ${loadingLabel}…`}</Text>
+        </Box>
+      ) : null}
+      {status.error ? <Text color={t.err}>{`✗ ${status.error}`}</Text> : null}
+      {status.notice && !status.error ? (
+        <Text color={t.warn}>{`! ${status.notice}`}</Text>
+      ) : null}
+    </Box>
+  );
+};
+
+/* ------------------ GrantsManager narrow-terminal fallback -------- */
+
+/**
+ * `GrantsManager` hard-codes a 3-column layout whose fixed columns
+ * (36 + 32 + borders + margins) need ~112 columns before the middle
+ * column gets any width. Below that it wraps into an unreadable
+ * mess, which breaks the 80-column floor the rest of the TUI is
+ * designed against.
+ *
+ * This is the same data and the same actions in a single column,
+ * reusing the component's own pure helpers so the filtering and
+ * grouping semantics cannot drift. The component itself needs a
+ * `width`-prop fix; this is the host-side mitigation.
+ */
+const GrantsCompact: React.FC<{
+  grants: Grant[];
+  width: number;
+  onRevoke: (id: string) => void;
+}> = ({ grants, width, onRevoke }) => {
+  const [focus, setFocus] = useState(0);
+  const [scope, setScope] = useState<"all" | "session" | "project" | "user">("all");
+  const filtered = React.useMemo(() => filterGrants(grants, scope, ""), [grants, scope]);
+  const grouped = React.useMemo(() => groupGrantsByScope(filtered), [filtered]);
+
+  // Flatten the grouped view so ↑/↓ walks what the user sees.
+  const flat = React.useMemo(() => grouped.flatMap((g) => g.items), [grouped]);
+  useEffect(() => {
+    if (focus >= flat.length) setFocus(Math.max(0, flat.length - 1));
+  }, [flat.length, focus]);
+
+  useInput((input, key) => {
+    if (key.upArrow || input === "k") {
+      setFocus((f) => Math.max(0, f - 1));
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      setFocus((f) => Math.min(flat.length - 1, f + 1));
+      return;
+    }
+    if (input === "r") {
+      const g = flat[focus];
+      if (g) onRevoke(g.id);
+      return;
+    }
+    if (input === "1") setScope("all");
+    else if (input === "2") setScope("session");
+    else if (input === "3") setScope("project");
+    else if (input === "4") setScope("user");
+  });
+
+  const label = (s: string) => (s === "all" ? `all (${filtered.length})` : s);
+  return (
+    <Box flexDirection="column" width={width}>
+      <Box>
+        <Text dimColor>scope: </Text>
+        {(["all", "session", "project", "user"] as const).map((s) => (
+          <Text key={s} color={scope === s ? t.accent : undefined} bold={scope === s}>
+            {` [${s === "all" ? 1 : s === "session" ? 2 : s === "project" ? 3 : 4}]${label(s)} `}
+          </Text>
+        ))}
+      </Box>
+      {flat.length === 0 ? (
+        <Text dimColor>
+          no grants stored yet — answer a permission prompt with P / U to remember one, or run /consents again
+        </Text>
+      ) : (
+        grouped.map(({ scope: gscope, items }) => (
+          <Box key={gscope} flexDirection="column" marginTop={1}>
+            <Text dimColor>{`▼ ${gscope}`}</Text>
+            {items.map((g) => {
+              const idx = flat.indexOf(g);
+              const on = idx === focus;
+              return (
+                <Text key={g.id} color={on ? t.accent : undefined} bold={on}>
+                  {on ? "▶ " : "  "}
+                  {g.decision === "allow" ? icon.ok : icon.err} {formatGrantLine(g)}
+                  <Text dimColor>{`  · ${g.scopeId}`}</Text>
+                </Text>
+              );
+            })}
+          </Box>
+        ))
+      )}
+      <Text dimColor>  {`${flat.length} shown · ↑/↓ navigate · r revoke · 1-4 scope`}</Text>
+    </Box>
+  );
+};
+
 const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.MutableRefObject<State> }> = ({
   client,
   cwd,
   stateRef,
 }) => {
   const { exit } = useApp();
-  const [state, dispatch] = useReducer(reducer, INITIAL);
+
+  // R364 — seed `state.cwd` from the launch directory ONCE, then let
+  // the daemon own it. Using a lazy useReducer initialiser rather than
+  // a mount effect: an effect would render one frame with an empty
+  // cwd, and every `currentCwd={currentCwd}` would flash.
+  // The prop is only a bootstrap value — from here on `state.cwd` is
+  // whatever the daemon last reported.
+  const [state, dispatch] = useReducer(reducer, INITIAL, (init) =>
+    cwd ? { ...init, cwd } : init,
+  );
   stateRef.current = state;
   const [h, setH] = useState(20);
+
+  // R364 — the ONE place the app reads its working directory from.
+  //
+  // Before this, `cwd` (the launch-time prop) was read in ~10 places:
+  // the Header pill, the Welcome card, the Sidebar, the SDD banner,
+  // the `/export` default path, the export frontmatter, and — worst —
+  // four `sdd.*` RPC payloads. After a `/cwd` switch all ten showed
+  // the OLD directory, and the SDD calls told the daemon to build
+  // against a directory the session had already left.
+  //
+  // `state.cwd || cwd` keeps the launch prop as the bootstrap value
+  // (the daemon may not have reported anything yet), and after the
+  // first `switchProject` / `cwd_changed` the state wins.
+  const currentCwd = state.cwd || cwd;
+
+  // R363 — "a cancel for THIS run has already been dispatched".
+  // Distinct from `state.cancelRequested` (which the reducer owns and
+  // which a failed cancel deliberately rolls back): this ref is the
+  // synchronous latch that makes a double-tap of Esc within one
+  // render frame a single RPC. Cleared on every run boundary.
+  const cancelSentRef = React.useRef(false);
 
   // T-422: aethercode-themes bridge. We instantiate a single
   // ThemeStore per TUI session and wrap the subtree in the
@@ -347,6 +773,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     lines: string[];
     previousLines: string[] | null;
   } | null>(null);
+  // R362: which TODO row the user expanded inside the /todos panel.
+  // Local, not in the reducer: it is pure view state that resets on
+  // every open and nothing else reads it.
+  const [todoSelectedId, setTodoSelectedId] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -391,8 +821,43 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   useEffect(() => {
     client.setNotificationHandler((method: string, params: RpcValue | undefined) => {
       switch (method) {
+        case "cwd_changed": {
+          // R364 — the daemon emits this on EVERY cwd change
+          // (`AetherCodeMethods.switchProject` → NOTIFY_CWD_CHANGED),
+          // not just the ones this window initiated. Pre-R364 the
+          // TUI had no case for it and dropped it on the floor, so a
+          // switch — even a successful one — left every cwd display
+          // showing the launch directory.
+          //
+          // The RPC response already covers "the user just clicked";
+          // this covers everything else: the desktop changing it, a
+          // second connected client, or a switch initiated by the
+          // `/cwd` slash command rather than the panel.
+          const p = (params ?? {}) as { newCwd?: string; oldCwd?: string; sessionId?: string };
+          if (p.newCwd) {
+            dispatch({ type: "setCurrentCwd", cwd: p.newCwd });
+            // Full path, not `shortCwd(...)` — that helper is local to
+            // line.ts and a sideNote already wraps/truncates for
+            // display. Copying it here would be a second copy to drift.
+            dispatch({
+              type: "sideNote",
+              kind: "cwd",
+              message: `cwd → ${p.newCwd}`,
+            });
+          }
+          break;
+        }
         case "stream_event": {
           const p = (params ?? {}) as { runId?: string; event?: Record<string, unknown> };
+          // R363 — runId fallback. `sendPrompt` captures the id from
+          // the `query` response, but that response can be lost (a
+          // reconnect between request and reply) while the stream
+          // keeps flowing. The notification carries the same id, so
+          // adopting it here keeps Esc functional instead of stranding
+          // the user in a run they cannot stop.
+          if (p.runId && stateRef.current.activeRunId !== p.runId) {
+            dispatch({ type: "setActiveRunId", runId: p.runId });
+          }
           handleStreamEvent(dispatch, p.event ?? {});
           break;
         }
@@ -519,6 +984,13 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             reason:    String(p.reason ?? ""),
             riskLevel: ((p.riskLevel as string) ?? "medium") as PermissionAsk["riskLevel"],
           };
+          // R363 — runId fallback #2. A permission ask is proof a run
+          // is live, and the daemon has already stamped it with the
+          // owning runId. This is the last opportunity to make Esc
+          // work before the first token arrives.
+          if (ask.runId && ask.runId !== "n/a" && stateRef.current.activeRunId !== ask.runId) {
+            dispatch({ type: "setActiveRunId", runId: ask.runId });
+          }
           // R344: REMOVED the ACCEPT_TASK auto-allow branch.
           // The previous behaviour silently allow'd every
           // permission_request when the user was in ACCEPT_TASK
@@ -634,6 +1106,37 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           // so we leave it undefined.
           provider: typeof stObj.provider === "string" ? stObj.provider : undefined,
         });
+
+        // R364 — reconcile the launch directory against the DAEMON's.
+        //
+        // The `cwd` prop is where the TUI was started, which is not
+        // necessarily where the engine is rooted (the desktop spawns
+        // the daemon with its own `--cwd`, and a daemon restarted by
+        // someone else keeps its binding). Until this, every cwd
+        // display showed the launch directory for the whole session,
+        // and the four `sdd.*` calls sent that wrong path to the
+        // daemon.
+        //
+        // `listProjects` is the read that already carries the truth —
+        // it returns `{cwd, name, active}` with `active: true` on the
+        // current binding (`AetherCodeMethods.listProjects`), and
+        // `panelCwdPick` already depends on that shape.
+        void (async () => {
+          try {
+            const projects = (await client.request("listProjects")) as
+              | Array<{ cwd?: string; active?: boolean }>
+              | null
+              | undefined;
+            const current = Array.isArray(projects)
+              ? projects.find((p) => p?.active) ?? projects[0]
+              : undefined;
+            const daemonCwd = String(current?.cwd ?? "").trim();
+            if (daemonCwd) dispatch({ type: "setCurrentCwd", cwd: daemonCwd });
+          } catch {
+            // Best-effort. The launch prop is still the fallback, so a
+            // daemon without `listProjects` still shows a sensible cwd.
+          }
+        })();
         // seed the skip-confirmation counter from
         // getState (R98 default-skip-from-config may have armed
         // a non-zero value at engine boot).
@@ -740,6 +1243,176 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     return () => { cancelled = true; clearInterval(id); };
   }, [state.sidebarVisible, client]);
 
+  // R362 — fetch the open panel's data.
+  //
+  // One effect for all nine panels, keyed on `activePanel` plus
+  // `memoryTab` (the memory panel re-fetches on a tab switch). Only
+  // the panels that actually issue an RPC set `panelStatus.loading`;
+  // the rest resolve synchronously so the shell never flashes a
+  // spinner over a local dataset.
+  useEffect(() => {
+    const panel = state.activePanel;
+    if (!panel) return;
+    let cancelled = false;
+    const begin = () =>
+      dispatch({ type: "setPanelStatus", status: { loading: true, error: null, notice: null } });
+    const done = () => {
+      if (!cancelled) {
+        dispatch({ type: "setPanelStatus", status: { loading: false, error: null, notice: null } });
+      }
+    };
+    const fail = (what: string, e: unknown) => {
+      if (cancelled) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      dispatch({
+        type: "setPanelStatus",
+        status: { loading: false, error: `${what} failed: ${msg}`, notice: null },
+      });
+    };
+    const notice = (n: string) => {
+      if (!cancelled) {
+        dispatch({ type: "setPanelStatus", status: { loading: false, error: null, notice: n } });
+      }
+    };
+
+    if (panel === "memory") {
+      // Each scope loads independently: a dead USER scope must not
+      // blank the PROJECT tab the user is actually looking at.
+      (["global", "project", "session"] as MemoryScopeId[]).forEach((scope) => {
+        dispatch({
+          type: "setMemorySlice",
+          scope,
+          // Fresh slice, NOT `{...state.memoryScopes[scope]}`:
+          // reading it here would put `memoryScopes` in the dep
+          // array, and the dispatch below would re-trigger this
+          // effect forever.
+          slice: { entries: [], totalTokens: 0, source: "file", loading: true, error: null },
+        });
+        void client
+          .request("memory/list", {
+            scope: MEMORY_WIRE_SCOPE[scope],
+            sessionId: state.sessionId,
+          } as RpcValue)
+          .then((raw) => {
+            if (cancelled) return;
+            const envErr = envelopeError(raw);
+            const r = (raw ?? {}) as { entries?: unknown[]; totalTokens?: number };
+            dispatch({
+              type: "setMemorySlice",
+              scope,
+              slice: {
+                entries: envErr
+                  ? []
+                  : (Array.isArray(r.entries) ? r.entries : []).map(normalizeMemoryRow),
+                totalTokens: Number(r.totalTokens ?? 0),
+                source: "file",
+                loading: false,
+                error: envErr,
+              },
+            });
+          })
+          .catch((e: unknown) => {
+            if (cancelled) return;
+            dispatch({
+              type: "setMemorySlice",
+              scope,
+              slice: {
+                entries: [],
+                totalTokens: 0,
+                source: "file",
+                loading: false,
+                error: e instanceof Error ? e.message : String(e),
+              },
+            });
+          });
+      });
+      return () => { cancelled = true; };
+    }
+
+    if (panel === "threads") {
+      begin();
+      void client
+        .request("listSessions", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          if (envErr) {
+            fail("listSessions", envErr);
+            dispatch({ type: "setThreads", threads: [] });
+            return;
+          }
+          // `listSessions` has returned both a bare array and
+          // `{sessions: [...]}` over its lifetime; accept both.
+          const arr = Array.isArray(raw)
+            ? raw
+            : ((raw as { sessions?: unknown[] })?.sessions ?? []);
+          dispatch({ type: "setThreads", threads: (arr as unknown[]).map(normalizeThreadRow) });
+          done();
+        })
+        .catch((e: unknown) => fail("listSessions", e));
+      return () => { cancelled = true; };
+    }
+
+    if (panel === "agents") {
+      begin();
+      void client
+        .request("listAgents", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          const arr = (raw as { agents?: unknown[] })?.agents;
+          const agents: AgentEntry[] = envErr || !Array.isArray(arr)
+            ? []
+            : (arr as Record<string, unknown>[]).map((a) => ({
+                name: String(a.name ?? a.displayName ?? "?"),
+                description: a.description == null ? undefined : String(a.description),
+                isDefault: Boolean(a.isDefault),
+              }));
+          dispatch({ type: "setAgents", agents });
+          dispatch({
+            type: "setDefaultAgent",
+            name: (raw as { defaultAgent?: string })?.defaultAgent ?? null,
+          });
+          if (envErr) fail("listAgents", envErr);
+          else done();
+        })
+        .catch((e: unknown) => fail("listAgents", e));
+      return () => { cancelled = true; };
+    }
+
+    if (panel === "grants") {
+      begin();
+      void client
+        .request("permission/list", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          if (envErr) {
+            dispatch({ type: "setGrants", grants: [] });
+            fail("permission/list", envErr);
+            return;
+          }
+          const arr = Array.isArray(raw)
+            ? raw
+            : ((raw as { grants?: unknown[] })?.grants ?? []);
+          dispatch({ type: "setGrants", grants: (arr as unknown[]).map(normalizeGrantRow) });
+          done();
+        })
+        .catch((e: unknown) => fail("permission/list", e));
+      return () => { cancelled = true; };
+    }
+
+    if (panel === "mcp") {
+      // No MCP RPC exists on the daemon. Rather than render an
+      // empty viewer that reads like "you have no servers", say so
+      // explicitly — a wrong empty state is worse than a gap.
+      notice("this daemon exposes no MCP RPC yet — /mcp shows the viewer shell only");
+    }
+    // "todos", "cwd", "effort" and "notifications" are served from
+    // local state; nothing to fetch, so nothing to await.
+    return () => { cancelled = true; };
+  }, [state.activePanel, state.memoryTab, state.sessionId, client]);
+
   useEffect(() => {
     // TUI flicker fix (R-2026-09-13-R-tui-flicker): the
     // `process.stdout.on("resize", ...)` handler was firing on
@@ -787,22 +1460,19 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   }, []);
 
   async function handleSubmit(text: string): Promise<void> {
-    // we no longer swallow Enter while a query is in flight
-    // — that produced the "TUI looks stuck" complaint. Instead
-    // we show a toast telling the user the prompt is queued. The
-    // daemon handles concurrent queries; the user gets clear
-    // feedback either way.
+    // R362 — the ordering here was the actual bug, not just the toast.
     //
-    // Slash commands stay local to the TUI and don't need a
-    // roundtrip, so we still run them even if the model is busy.
-    if (state.submitting) {
-      dispatch({
-        type: "pushToast",
-        kind: "info",
-        text: "model is still working — prompt queued",
-      });
-      return;
-    }
+    // Before: `if (state.submitting) { toast(...); return; }` sat at the
+    // TOP of the function, *above* the slash handling — so despite the
+    // comment claiming "Slash commands stay local to the TUI and don't need
+    // a roundtrip, so we still run them even if the model is busy", a
+    // streaming run silently swallowed every slash command too.
+    //
+    // Two real defects, one place:
+    //   1. slash commands were blocked while streaming (contradicts the comment)
+    //   2. prompts were dropped while streaming, after a toast claimed "queued"
+    //
+    // Now: slash first (local, no roundtrip, always allowed), then queue.
     const slash = handleSlash(text);
     if (slash?.local === "__EXIT__") {
       dispatch({ type: "exit" });
@@ -949,7 +1619,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const { mkdirSync } = await import("node:fs");
           const path = userPath && userPath.length > 0
             ? userPath
-            : defaultExportPath(cwd, state.sessionId, isJson ? "json" : "md");
+            : defaultExportPath(currentCwd, state.sessionId, isJson ? "json" : "md");
           // Ensure the exports/ directory exists. mkdirSync with
           // { recursive: true } is a no-op when the directory
           // already exists, so this is safe to call every time.
@@ -961,7 +1631,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           // round-trip it.
           const body = isJson
             ? exportToJson(state.turns)
-            : exportWithFrontmatter(state.turns, state.model, state.sessionId, { cwd });
+            : exportWithFrontmatter(state.turns, state.model, state.sessionId, { cwd: currentCwd });
           writeExport(path, body);
           dispatch({ type: "pushToast", kind: "ok", text: `exported ${state.turns.length} turns → ${path}` });
         } catch (e) {
@@ -1049,7 +1719,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       void (async () => {
         try {
           const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string }>(
-            "sdd.start", { intent, cwd } as RpcValue);
+            "sdd.start", { intent, cwd: currentCwd } as RpcValue);
           if (!resp.ok || !resp.state) {
             dispatch({ type: "sideNote", kind: "error", message: `sdd.start failed: ${resp.error ?? "unknown"}` });
             return;
@@ -1075,7 +1745,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         try {
           const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string; code?: string }>(
             "sdd.advance",
-            { slug: sddSlug, action: rpcAction, feedback: feedback || undefined, cwd } as RpcValue);
+            { slug: sddSlug, action: rpcAction, feedback: feedback || undefined, cwd: currentCwd } as RpcValue);
           if (!resp.ok || !resp.state) {
             dispatch({ type: "sideNote", kind: "error",
               message: `sdd.advance failed (${resp.code ?? "UNKNOWN"}): ${resp.error ?? "unknown"}` });
@@ -1099,7 +1769,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       }
       void (async () => {
         try {
-          await client.request("sdd.abort", { slug: sddSlug, cwd } as RpcValue);
+          await client.request("sdd.abort", { slug: sddSlug, cwd: currentCwd } as RpcValue);
           dispatch({ type: "sddRun.clear" });
           dispatch({ type: "sideNote", kind: "info", message: "📐 SDD run aborted" });
         } catch (e) {
@@ -1117,7 +1787,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       void (async () => {
         try {
           const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string }>(
-            "sdd.status", { slug: sddSlug, cwd } as RpcValue);
+            "sdd.status", { slug: sddSlug, cwd: currentCwd } as RpcValue);
           if (!resp.ok || !resp.state) {
             dispatch({ type: "sideNote", kind: "error",
               message: `sdd.status failed: ${resp.error ?? "unknown"}` });
@@ -1183,8 +1853,46 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       dispatch({ type: "sideNote", kind: "info", message: "📐 cleared sdd cache + viewer" });
       return;
     }
+    // R362 — panel claim. Lookup goes through `panelIntents.ts`
+    // instead of a hand-written `if (local === "__X__")` chain, so
+    // a sentinel emitted by `commands.ts` can never reach the
+    // fallback below without first being given a declared owner.
+    //
+    // `bareSentinel` strips the `:<arg>` suffix (`__MCP_LOGIN__:gh`)
+    // so the registry's bare-token keys resolve. Four intents have
+    // no component (`__UPDATE_*__`, `__WORKFLOW_PICKER__`,
+    // `__CONTEXT_METER__`) and deliberately fall through to the
+    // human-readable fallback.
+    const panelLocal = slash?.local;
+    if (panelLocal) {
+      const intent = intentForSentinel(bareSentinel(panelLocal));
+      const panelId = intent ? PANEL_BY_INTENT[intent.id] : undefined;
+      if (panelId) {
+        dispatch({ type: "openPanel", id: panelId });
+        return;
+      }
+    }
     if (slash?.local) {
-      dispatch({ type: "sideNote", kind: "info", message: slash.local });
+      // R362: the fallback must be a SENTENCE, never the raw
+      // token. Pre-R362 this printed `__MCP_VIEWER__` straight to
+      // the user; `describeSentinel` resolves the intent and
+      // renders its title plus why it is not available.
+      //
+      // `describeSentinel` returns its argument UNCHANGED when the
+      // token has no registry entry (a sentinel the registry does
+      // not own, e.g. `__PICK_MODE__`). Passing that through would
+      // re-introduce exactly the leak this branch exists to close,
+      // so anything still shaped like a token gets a fixed
+      // sentence instead.
+      const bare = bareSentinel(slash.local);
+      const described = describeSentinel(bare, "ink");
+      dispatch({
+        type: "sideNote",
+        kind: "info",
+        message: described.includes("__")
+          ? "no panel for that command in the TUI yet — /help lists what is supported"
+          : described,
+      });
       return;
     }
     if (slash?.rpcMethod) {
@@ -1491,9 +2199,62 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       }
       return;
     }
+    // R362 — a prompt typed while a run is in flight is QUEUED, not dropped.
+    // This is the path the old "model is still working - prompt queued" toast
+    // claimed to take. It now actually exists.
+    if (state.submitting) {
+      dispatch({ type: "enqueuePrompt", text });
+      const pos = state.pendingPrompts.length; // 0-based index of the entry just pushed
+      dispatch({
+        type: "pushToast",
+        kind: "info",
+        text: pos === 0
+          ? "model is still working - prompt queued (sends when this run ends)"
+          : `model is still working - prompt queued (#${pos + 1})`,
+      });
+      return;
+    }
+    void sendPrompt(text);
+  }
+
+  /**
+   * The single send path for a non-slash prompt, shared by the direct submit
+   * and the queue drain. Extracted in R362 so the queued-prompt path cannot
+   * drift away from the live one (they must produce identical turn history,
+   * status transitions and error handling — a queued prompt that renders or
+   * errors differently is worse than no queue).
+   */
+  async function sendPrompt(text: string): Promise<void> {
     dispatch({ type: "submit" });
     try {
-      await client.request<unknown>("query", { prompt: text });
+      // R363 — the `query` response carries `{runId, accepted}`. This
+      // is the ONLY reliable place the TUI learns the id it must hand
+      // back to `cancel`, so it has to be captured here rather than
+      // left to the notification fallback. A daemon that answers
+      // `{ok:false, busyRunId}` (session lock held) is also handled:
+      // we adopt `busyRunId` so Esc can stop the run that is actually
+      // blocking us instead of dead-ending on a cancel we can't send.
+      const resp = (await client.request<{
+        runId?: string;
+        accepted?: boolean;
+        ok?: boolean;
+        busyRunId?: string;
+        error?: string;
+      }>("query", { prompt: text })) ?? {};
+      const runId = resp.runId ?? resp.busyRunId ?? null;
+      if (runId) dispatch({ type: "setActiveRunId", runId });
+      if (resp.ok === false || resp.accepted === false) {
+        // The daemon refused the turn (session busy). Do NOT go into
+        // streaming: there is no run to watch. Surface the reason and
+        // leave the queue intact so the prompt retries after the live
+        // run ends.
+        dispatch({ type: "streamEnd", stopReason: "error" });
+        dispatch({
+          type: "pushToast",
+          kind: "warn",
+          text: resp.error ? `run refused: ${resp.error}` : "run refused by daemon",
+        });
+      }
       // The full lifecycle is observed via stream_event notifications.
     } catch (e) {
       dispatch({ type: "streamEnd", stopReason: "error" });
@@ -1507,12 +2268,120 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     }
   }
 
+  /**
+   * R363 — interrupt the run currently in flight.
+   *
+   * Wired to Esc (and Ctrl-C's non-exit sibling path). The daemon's
+   * cancel is R721-hard: thread interrupt + destroyForcibly on the
+   * recorded children + a 5s `Thread.stop` fallback, so it settles in
+   * milliseconds for a cooperative model and ≤5s for a wedged one.
+   *
+   * Three rules this function exists to enforce:
+   *
+   *  1. **Never fire blind.** `cancel` is keyed by runId and the daemon
+   *     hard-fails without one. If we don't have an id we say so in
+   *     human words instead of sending a request that is guaranteed to
+   *     error.
+   *  2. **Never fire twice.** `requestCancelRun` is a no-op the second
+   *     time, and the guard here makes it a no-op even before the
+   *     reducer has re-rendered.
+   *  3. **Never swallow the failure.** If the cancel RPC itself fails
+   *     (old daemon, transport drop) we must clear `cancelRequested`,
+   *     otherwise the strip shows "stopping..." forever on a run that
+   *     is still happily running.
+   */
+  async function cancelActiveRun(): Promise<void> {
+    if (cancelSentRef.current) return;
+    const runId = stateRef.current.activeRunId;
+    if (!runId) {
+      dispatch({
+        type: "pushToast",
+        kind: "warn",
+        text: "no cancellable run (daemon did not report a run id)",
+      });
+      return;
+    }
+    cancelSentRef.current = true;
+    dispatch({ type: "requestCancelRun" });
+    dispatch({ type: "pushToast", kind: "info", text: `stopping run ${runId}...` });
+    try {
+      await client.request("cancel", { runId });
+    } catch (e) {
+      // The daemon may not know this run (it already finished), or the
+      // transport dropped. Either way the run is not ours to stop, so
+      // release the latch and let the strip go back to normal.
+      cancelSentRef.current = false;
+      dispatch({ type: "setCancelSettled" });
+      dispatch({
+        type: "pushToast",
+        kind: "err",
+        text: `cancel failed: ${(e as Error).message}`,
+      });
+    }
+  }
+
+  /**
+   * R362 — drain the prompt queue.
+   *
+   * Fires whenever the run stops (`submitting` flips false) and the queue is
+   * non-empty: pops the oldest prompt and sends it through the SAME
+   * `sendPrompt` path the live submit uses.
+   *
+   * Deliberately an effect rather than a reducer side effect: the reducer is
+   * pure and cannot issue the `query` RPC. The reducer flips `submitting`;
+   * this reacts.
+   *
+   * Guarded on `state.submitting` so we never double-fire: React StrictMode
+   * double-invokes effects in development, and a double-dispatch would send
+   * the queued prompt twice.
+   */
+  useEffect(() => {
+    if (state.submitting) return;
+    const next = state.pendingPrompts[0];
+    if (!next) return;
+    dispatch({ type: "dequeuePrompt" });
+    dispatch({
+      type: "pushToast",
+      kind: "info",
+      text: state.pendingPrompts.length > 1
+        ? `sending queued prompt (${state.pendingPrompts.length - 1} still queued)`
+        : "sending queued prompt",
+    });
+    void sendPrompt(next);
+    // `state.pendingPrompts` is the trigger. Depending on the full state
+    // would re-enter this while a send is still in flight; the submitting
+    // guard covers that, so the narrow dep list is deliberate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.pendingPrompts, state.submitting]);
+
+  // R363 — re-arm the Esc latch at every run boundary.
+  //
+  // `cancelSentRef` is a synchronous latch (see its declaration). It
+  // has to be cleared when a run ENDS, not when a cancel succeeds —
+  // the two differ on the failure path, where a failed cancel must
+  // leave the latch closed only until the run actually ends. Keyed on
+  // `submitting` alone so it fires on both edges (start and end).
+  const prevSubmittingRef = React.useRef(state.submitting);
+  useEffect(() => {
+    if (prevSubmittingRef.current === state.submitting) return;
+    prevSubmittingRef.current = state.submitting;
+    if (!state.submitting) cancelSentRef.current = false;
+  }, [state.submitting]);
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       dispatch({ type: "exit" });
       exit();
       return;
     }
+    // R362 — an open panel owns the keyboard. Ink's `useInput` is
+    // NOT focus-scoped: every mounted hook receives every keystroke,
+    // so without this gate ↑/↓ would also drive the prompt history,
+    // `d` would expand a tool turn, `b` would bookmark, Tab would
+    // run slash completion and Esc would toggle the decision card —
+    // all while the user is trying to navigate the panel.
+    // Ctrl+C above stays live so the user is never trapped.
+    if (state.activePanel) return;
     // Ctrl+1..9 quick-switch between primary agent and
     // the most recent subagents. Ctrl+1 always returns to the
     // primary (current session) view. Ctrl+2..9 pick the
@@ -1561,6 +2430,26 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // Ctrl+Shift+B pops the view history.
       dispatch({ type: "viewHistoryPop" });
       return;
+    }
+
+    // R363 — the Esc ladder, resolved in strict priority order and
+    // placed BEFORE the permission/decision-card branches on purpose.
+    //
+    // Those branches sit at their current position because they
+    // predate cancel, and two of them `return` on Esc. Left alone,
+    // they would make a live run **structurally uncancellable**:
+    // pressing Esc with a pending permission ask would just collapse
+    // the decision card, and pressing Esc with no ask would
+    // re-expand it. The user would hold down Esc on a run they
+    // cannot stop — the exact defect R363 exists to close.
+    //
+    // Priority: overlays (close what you opened) > stop the live run
+    // > drop the queue. A run is never something Esc opened, so it
+    // never competes with rule 1.
+    if (key.escape) {
+      if (state.showSearch) { dispatch({ type: "showSearch", show: false }); return; }
+      if (state.helpVisible) { dispatch({ type: "showHelp", show: false }); return; }
+      if (state.submitting) { void cancelActiveRun(); return; }
     }
     // when a permission ask is on screen, route the decision
     // keys to replyPermission. The card is now INLINE in the
@@ -1617,8 +2506,23 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       return;
     }
     if (key.escape) {
-      if (state.showSearch) dispatch({ type: "showSearch", show: false });
-      if (state.helpVisible) dispatch({ type: "showHelp", show: false });
+      // R362 — Esc drops the queued prompts. The strip above the input box
+      // advertises this, so it has to actually work. Without it a queued
+      // prompt can only be sent, never cancelled, which is the same
+      // "no user control" defect the PM review flagged on the stale banner.
+      //
+      // R363: the search/help/`cancelActiveRun` cases moved UP into the
+      // unified Esc ladder, so by the time we get here `submitting` is
+      // false and no overlay is open. What is left is exactly the
+      // "nothing to stop, something queued" case.
+      if (state.pendingPrompts.length > 0) {
+        dispatch({ type: "clearPendingPrompts" });
+        dispatch({
+          type: "pushToast",
+          kind: "warn",
+          text: `dropped ${state.pendingPrompts.length} queued prompt${state.pendingPrompts.length === 1 ? "" : "s"}`,
+        });
+      }
       return;
     }
     if (state.helpVisible) {
@@ -1862,6 +2766,332 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
 
   const showWelcome = state.connected && state.turns.length === 0;
 
+  // R362 — panel geometry + the shared close handler.
+  const cols = typeof process.stdout.columns === "number" ? process.stdout.columns : 120;
+  const panelWidth = panelWidthFor(cols);
+  const meta = state.activePanel ? PANEL_META[state.activePanel] : null;
+  const closePanel = () => dispatch({ type: "closePanel" });
+  const setNotice = (n: string) =>
+    dispatch({ type: "setPanelStatus", status: { loading: false, error: null, notice: n } });
+  const setPanelError = (m: string) =>
+    dispatch({ type: "setPanelStatus", status: { loading: false, error: m, notice: null } });
+  const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  // The memory panel's compact action. Fires `memory/compact` with
+  // `force: true`, mirrors the outcome into `memoryCompact` so the
+  // panel's own footer can show the before/after token counts, and
+  // re-fetches by switching the tab (which the fetch effect keys on).
+  async function compactProjectMemory(): Promise<void> {
+    dispatch({ type: "setMemoryCompact", progress: { state: "running" } });
+    try {
+      const r = (await client.request("memory/compact", { force: true } as RpcValue)) as
+        Record<string, unknown> | null | undefined;
+      if (r?.skipped) {
+        dispatch({
+          type: "setMemoryCompact",
+          progress: { state: "skipped", reason: String(r.reason ?? "the daemon reported nothing to compress") },
+        });
+      } else {
+        dispatch({
+          type: "setMemoryCompact",
+          progress: {
+            state: "ok",
+            beforeTokens: Number(r?.beforeTokens ?? 0),
+            afterTokens: Number(r?.afterTokens ?? 0),
+            changesCompressed: Number(r?.changesCompressed ?? 0),
+            ms: Number(r?.ms ?? 0),
+          },
+        });
+      }
+      dispatch({ type: "setMemoryTab", tab: "project" });
+    } catch (e) {
+      dispatch({ type: "setMemoryCompact", progress: { state: "error", message: errMsg(e) } });
+    }
+  }
+
+  /**
+   * The open panel's body. Each branch owns its own props and its
+   * own action wiring; the surrounding chrome (frame, title, hint,
+   * pending / error row, Esc) comes from `PanelShell`.
+   *
+   * Three of these panels are honest about a missing daemon RPC
+   * rather than pretending to work:
+   *   - agents  — no `agent/setActive` exists
+   *   - effort  — no effort RPC at all
+   *   - mcp     — no MCP RPC at all
+   * Each surfaces the gap inside the panel rather than silently
+   * accepting the pick and doing nothing.
+   */
+  const panelBody = (): React.ReactNode => {
+    switch (state.activePanel) {
+      case "memory": {
+        const progress: CompactProgress =
+          state.memoryCompact.state === "running"
+            ? { state: "running", startedAt: state.panelOpenedAt || Date.now() }
+            : state.memoryCompact;
+        return (
+          <MemoryPanel
+            global={state.memoryScopes.global}
+            project={state.memoryScopes.project}
+            session={state.memoryScopes.session}
+            sessionId={state.sessionId}
+            activeTab={state.memoryTab}
+            onTabChange={(tab) => dispatch({ type: "setMemoryTab", tab })}
+            now={state.panelOpenedAt || Date.now()}
+            width={panelWidth - 6}
+            onEditFact={() =>
+              setNotice("editing a memory entry is not wired up — /memory is read-only for now")
+            }
+            onCompact={() => void compactProjectMemory()}
+            compactProgress={progress}
+            onClose={closePanel}
+          />
+        );
+      }
+
+      case "threads": {
+        const threads: ThreadInfo[] = state.threads.map((r) => ({
+          threadId: r.threadId,
+          agentName: r.agentName,
+          messages: r.messages,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
+          prompt: r.prompt,
+          cwd: r.cwd,
+          gitBranch: r.gitBranch,
+        }));
+        return (
+          <ThreadSelector
+            threads={threads}
+            currentCwd={currentCwd}
+            onSelect={(threadId, choice) => {
+              closePanel();
+              const target = state.threads.find((r) => r.threadId === threadId);
+              // A thread recorded under a different cwd is only
+              // usable if the daemon is pointed at it too.
+              //
+              // R364: this used to send `setCwd`, which is the
+              // DESKTOP's Tauri IPC command name (aethercode-desktop
+              // src/store/index.ts → rpc.setCwd(path, sid)). It was
+              // copied here as if it were a JSON-RPC method, and it
+              // is not one — the daemon has no such handler, so every
+              // cross-cwd thread switch died on `-32601 method not
+              // found` before it could do anything. The JSON-RPC
+              // name is `switchProject`
+              // (AetherCodeMethods.registerAll + HttpJsonRpcServer).
+              if (choice === "switch" && target?.cwd && target.cwd !== currentCwd) {
+                void client
+                  .request("switchProject", { cwd: target.cwd } as RpcValue)
+                  .then(() =>
+                    dispatch({ type: "pushToast", kind: "ok", text: `cwd → ${target.cwd}` })
+                  )
+                  .catch((e: unknown) =>
+                    dispatch({ type: "pushToast", kind: "warn", text: `switchProject failed: ${errMsg(e)}` })
+                  );
+              }
+              void client
+                .request("loadSession", { sessionId: threadId } as RpcValue)
+                .then(() =>
+                  dispatch({ type: "pushToast", kind: "ok", text: `switched to thread ${threadId}` })
+                )
+                .catch((e: unknown) =>
+                  dispatch({ type: "pushToast", kind: "err", text: `loadSession failed: ${errMsg(e)}` })
+                );
+            }}
+            onClose={closePanel}
+            title=""
+            maxVisible={10}
+          />
+        );
+      }
+
+      case "todos":
+        return (
+          <TodoBoard
+            todos={state.todos}
+            selectedId={todoSelectedId}
+            onSelect={(id) => setTodoSelectedId(id)}
+            currentTodoId={state.currentTodoId}
+            maxRows={14}
+            emptyLabel="(no todos yet — ask the model to plan something and they appear here)"
+            showHeader
+            progressBarWidth={Math.max(8, Math.min(28, panelWidth - 24))}
+          />
+        );
+
+      case "agents":
+        return (
+          <AgentSelector
+            agents={state.agents}
+            current={state.defaultAgent}
+            onSelect={(name) => {
+              // The daemon registers no "set active agent" method
+              // (checked against AetherCodeMethods' registry), so
+              // there is nothing to dispatch. Say so instead of
+              // accepting the pick and silently doing nothing.
+              setNotice(`this daemon has no "set active agent" RPC — ${name} was not applied`);
+              dispatch({
+                type: "pushToast",
+                kind: "warn",
+                text: "agent switching is not supported by this daemon",
+              });
+            }}
+            onClose={closePanel}
+            title=""
+            maxVisible={10}
+          />
+        );
+
+      case "effort":
+        return (
+          <Box flexDirection="column">
+            <Text color={t.warn}>
+              this daemon exposes no effort RPC — the level below is recorded locally only
+            </Text>
+            <EffortPicker
+              efforts={EFFORT_CATALOG}
+              current={state.effortCurrent}
+              defaultEffort="medium"
+              modelSpec={state.model}
+              onSelect={(id) => {
+                dispatch({ type: "setEffortCurrent", effort: id });
+                dispatch({ type: "pushToast", kind: "info", text: `reasoning effort → ${id}` });
+              }}
+              onClose={closePanel}
+              title=""
+              maxVisible={8}
+            />
+          </Box>
+        );
+
+      case "cwd":
+        return (
+          <CwdSwitcher
+            currentCwd={currentCwd}
+            validate={CWD_VALIDATE}
+            onSelect={(path) => {
+              closePanel();
+              // R364 — `switchProject`, not `setCwd`. See the
+              // ThreadSelector call site above for the full story:
+              // `setCwd` is a Tauri IPC command that does not exist
+              // on the JSON-RPC surface.
+              void client
+                .request("switchProject", { cwd: path } as RpcValue)
+                .then((r: unknown) => {
+                  // The RPC echoes the daemon's NORMALISED absolute
+                  // path. Adopt it rather than the user's raw string
+                  // so the panel shows what the engine actually
+                  // bound — `Paths.get(cwd).toAbsolutePath().normalize()`
+                  // resolves `.` and relative segments.
+                  const normalised = (r as { newCwd?: string } | null)?.newCwd;
+                  dispatch({ type: "setCurrentCwd", cwd: normalised || path });
+                  dispatch({ type: "pushToast", kind: "ok", text: `cwd → ${normalised || path}` });
+                })
+                .catch((e: unknown) =>
+                  dispatch({
+                    type: "pushToast",
+                    kind: "err",
+                    text: `switchProject failed: ${errMsg(e)}`,
+                  })
+                );
+            }}
+            onClose={closePanel}
+            title=""
+          />
+        );
+
+      case "grants": {
+        const grants = state.grants;
+        const onRevoke = (id: string) => {
+          dispatch({ type: "setPanelStatus", status: { loading: true, error: null, notice: null } });
+          void client
+            .request("permission/revoke", { id } as RpcValue)
+            .then(() => {
+              dispatch({ type: "setGrants", grants: state.grants.filter((g) => g.id !== id) });
+              setNotice(`revoked grant ${id}`);
+              dispatch({ type: "pushToast", kind: "ok", text: `revoked grant ${id}` });
+            })
+            .catch((e: unknown) => setPanelError(`permission/revoke failed: ${errMsg(e)}`));
+        };
+        // GrantsManager hard-codes a ~112-column 3-column layout;
+        // below that it wraps into unreadable columns. Swap in the
+        // single-column fallback rather than ship a broken frame.
+        return cols >= GRANTS_WIDE_MIN_COLS ? (
+          <GrantsManager grants={grants} onRevoke={onRevoke} />
+        ) : (
+          <GrantsCompact grants={grants} width={panelWidth - 4} onRevoke={onRevoke} />
+        );
+      }
+
+      case "notifications": {
+        // The daemon has no notification RPC; the pending notices the
+        // user actually has are the live toasts. Rendering them here
+        // gives the hub real content instead of a permanent "nothing
+        // pending" line.
+        const entries: PendingNotification[] = state.toasts.map((tst) => ({
+          key: String(tst.id),
+          title: `${tst.kind === "err" ? "✗" : tst.kind === "warn" ? "!" : "·"} ${tst.text}`,
+          body: new Date(tst.createdAt).toLocaleTimeString(),
+          actions: [{ actionId: { value: "dismiss" }, label: "Dismiss", primary: true }],
+        }));
+        return (
+          <Box flexDirection="column">
+            {/* Empty state done properly: NotificationCenter's own
+                blank line says "no pending notifications" without
+                telling the user what one IS or how to make one. */}
+            {entries.length === 0 ? (
+              <Box flexDirection="column" marginBottom={1}>
+                <Text dimColor>
+                  {"  nothing pending — notices appear here (and as toasts) when the daemon asks for a"}
+                </Text>
+                <Text dimColor>
+                  {"  permission decision, a background subagent finishes, or a tool call errors."}
+                </Text>
+              </Box>
+            ) : null}
+            <NotificationCenter
+              entries={entries}
+              onSelect={() =>
+                setNotice("notification actions are local-only — the daemon exposes no notification RPC")
+              }
+              onToggleWarning={(key, enabled) => {
+                dispatch({ type: "setNotificationToggle", key, enabled });
+                setNotice(`${key} ${enabled ? "enabled" : "suppressed"} (this session only — not persisted)`);
+              }}
+              onClose={closePanel}
+              title=""
+            />
+          </Box>
+        );
+      }
+
+      case "mcp": {
+        const servers: ServerInfo[] = state.mcpServers.map((s) => ({
+          name: s.name,
+          status: s.status,
+          tools: s.tools,
+        }));
+        return (
+          <McpViewer
+            servers={servers}
+            onSelect={(name) =>
+              setNotice(`signing in to ${name} needs an MCP RPC, which this daemon does not expose`)
+            }
+            onReconnect={() =>
+              setNotice("reconnect needs an MCP RPC, which this daemon does not expose")
+            }
+            onClose={closePanel}
+            title=""
+            maxVisible={10}
+          />
+        );
+      }
+
+      default:
+        return null;
+    }
+  };
+
   return (
     <Box flexDirection="column" flexGrow={1}>
       <ThemeProvider themeName={state.themeName}>
@@ -1895,7 +3125,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
           <Welcome
             model={state.model}
-            cwd={cwd}
+            cwd={currentCwd}
             sessionId={state.sessionId}
             mode={state.permissionMode}
             bankStatus={bankStatus ?? undefined}
@@ -1914,14 +3144,27 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         </Box>
       ) : (
         <Box flexDirection="row" flexGrow={1}>
+          {/* R362: the sidebar and the right column are suppressed
+              while a panel is open. Two reasons, both hard:
+              (1) the right column embeds its own TodoBoard, whose
+                  `useInput` would receive ↑/↓/j/k a second time and
+                  move a focus the user cannot see; (2) 26 + 30
+                  columns of chrome leaves the panel too narrow to
+                  honour the 80-column floor.
+              The `activePanel ? null :` guards sit INSIDE the
+              pinned `sidebarVisible ?` / `rightPanelVisible ?`
+              ternaries so both remain the single source of truth
+              for whether the column is toggled on. */}
           {state.sidebarVisible ? (
-            <Sidebar
-              width={26}
-              cwd={cwd}
-              sessionId={state.sessionId}
-              recentQueries={state.history}
-              tasks={state.recentTasks}
-            />
+            state.activePanel ? null : (
+              <Sidebar
+                width={26}
+                cwd={currentCwd}
+                sessionId={state.sessionId}
+                recentQueries={state.history}
+                tasks={state.recentTasks}
+              />
+            )
           ) : null}
           {state.subagentPanelOpen ? (
             // live list of recent subagent jobs.
@@ -1963,14 +3206,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 rendered. "full" = everything; "minimal" = no header
                 / statusbar; "focus" = scrollback + input only. */}
             {state.layout !== "focus" && state.layout !== "minimal" ? (
-              <Header state={state} cwd={cwd} />
+              <Header state={state} cwd={currentCwd} />
             ) : null}
             {/* R700 — SDD mode banner. Renders only when
                 state.sddRun is non-null (i.e. an active SDD run
                 exists). Sits above the scrollback so the user
                 always sees the current phase + chip strip. */}
             {state.sddRun ? (
-              <SddMode run={state.sddRun} cwd={cwd} />
+              <SddMode run={state.sddRun} cwd={currentCwd} />
             ) : null}
             {sddReview ? (
               <Box flexDirection="column" paddingX={1}>
@@ -1982,13 +3225,38 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 />
               </Box>
             ) : null}
+            {/* R362 — the open panel. Deliberately placed HERE,
+                above the scrollback and NOT as a full-screen
+                replacement: the Header, the scrollback, the input
+                box and the status bar all stay mounted and visible
+                underneath, which is the same contract the inline
+                permission card follows (see the `useInput` block
+                above). The user can always see their draft and that
+                the session is alive while a panel is open; only the
+                keyboard is handed over. */}
+            {state.activePanel && meta ? (
+              <Box flexDirection="column" paddingX={1}>
+                <PanelShell
+                  title={meta.title}
+                  // Only TodoBoard lacks a keymap line of its own;
+                  // for the other eight the component prints it.
+                  hint={state.activePanel === "todos" ? meta.hint : undefined}
+                  width={panelWidth}
+                  status={state.panelStatus}
+                  loadingLabel={meta.loading}
+                  onClose={closePanel}
+                >
+                  {panelBody()}
+                </PanelShell>
+              </Box>
+            ) : null}
             <Box flexDirection="row" flexGrow={1}>
               <Box flexDirection="column" flexGrow={1}>
                 <Scrollback
                   turns={state.turns}
                   height={1000}
                   showWelcome={showWelcome}
-                  welcomeCtx={{ model: state.model, cwd, sessionId: state.sessionId, mode: state.permissionMode }}
+                  welcomeCtx={{ model: state.model, cwd: currentCwd, sessionId: state.sessionId, mode: state.permissionMode }}
                   collapseAll={state.collapseAll}
                   onToggleTurn={(id) => dispatch({ type: "toggleTurn", id })}
                   lastStopReason={state.lastStopReason}
@@ -2034,6 +3302,67 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                     })}
                   />
                 ) : null}
+                {/*
+                  R362 — the queued-prompt strip.
+                  Claude Code's contract is explicit: it "lists the queued
+                  entries in the conversation until it sends them". A queue
+                  the user cannot see is a queue they will not trust — they
+                  will assume their prompt was lost and retype it. So the
+                  strip sits directly above the input box, shows position and
+                  a truncated preview, and offers a way to drop one.
+                */}
+                {/*
+                  R363 — the interrupt affordance.
+                  Claude Code's contract: "Esc explicitly stops the
+                  current response or tool call mid-turn so you can
+                  redirect." A stop control that exists only in a
+                  help screen is not a stop control — the user has to
+                  SEE that the turn is interruptible at the moment
+                  they might want to interrupt it.
+
+                  Two states, because the R721 cancel is asynchronous:
+                  `cancelRequested` means the RPC is in flight and the
+                  daemon is interrupting the worker thread. Showing
+                  "esc to interrupt" then would be a lie (Esc is
+                  latched) and showing nothing would look broken.
+                */}
+                {state.submitting && !state.pendingPrompts.length ? (
+                  <Box paddingX={1}>
+                    <Text color={state.cancelRequested ? t.warn : t.dim}>
+                      {state.cancelRequested
+                        ? "stopping... (interrupt sent)"
+                        : "esc to interrupt"}
+                    </Text>
+                  </Box>
+                ) : null}
+                {state.submitting && state.pendingPrompts.length > 0 ? (
+                  <Box paddingX={1}>
+                    <Text color={state.cancelRequested ? t.warn : t.dim}>
+                      {state.cancelRequested
+                        ? "stopping... (interrupt sent)"
+                        : "esc to interrupt (press again to drop the queue)"}
+                    </Text>
+                  </Box>
+                ) : null}
+                {state.pendingPrompts.length > 0 ? (
+                  <Box flexDirection="column" paddingX={1}>
+                    {state.pendingPrompts.map((p, i) => (
+                      <Box key={`${i}-${p.slice(0, 12)}`} flexDirection="row">
+                        <Text color={t.dim}>
+                          {i === 0 ? "queued next" : `queued ${i + 1}`}
+                          {"  "}
+                        </Text>
+                        <Text color={t.accent} bold>
+                          {truncateForQueue(p)}
+                        </Text>
+                        <Box flexGrow={1} />
+                        {i === 0 ? (
+                          <Text color={t.dim}>{"  (esc drops the queue)"}</Text>
+                        ) : null}
+                      </Box>
+                    ))}
+                  </Box>
+                ) : null}
                 <InputBox
                   state={state}
                   onChange={(t) => dispatch({ type: "setInput", text: t })}
@@ -2053,8 +3382,13 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 /> : null}
               </Box>
               {/* T-6-15: right column with session details +
-                  todo board + tokens. Toggleable with Ctrl+D. */}
+                  todo board + tokens. Toggleable with Ctrl+D.
+                  R362: hidden while a panel is open — it mounts a
+                  second TodoBoard whose keys would fight the panel's. */}
               {state.rightPanelVisible ? (
+                /* R362: the `activePanel` guard is nested inside the
+                   pinned ternary — see the note on the sidebar. */
+                state.activePanel ? null : (
                 <Box
                   flexDirection="column"
                   width={Math.max(28, Math.min(46, Math.floor((typeof process.stdout.columns === "number" ? process.stdout.columns : 120) * 0.25)))}
@@ -2065,7 +3399,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                     details={{
                       id: state.sessionId,
                       title: state.sessionId,
-                      cwd,
+                        cwd: currentCwd,
                       model: state.model,
                       // Use 0 as the sentinel for "unknown /
                       // not started yet" so the panel's
@@ -2088,6 +3422,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                   <Text dimColor>{"─".repeat(20)}</Text>
                   <TodoBoard todos={state.todos} currentTodoId={state.currentTodoId} maxRows={8} />
                 </Box>
+                )
               ) : null}
             </Box>
           </Box>

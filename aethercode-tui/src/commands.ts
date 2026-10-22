@@ -14,84 +14,13 @@ export interface SlashResult {
   rpcParams?: Record<string, unknown>;
 }
 
-export const SLASH_HELP = [
-  "/help               show this list",
-  "/clear              clear the scrollback",
-  "/exit, /quit        exit the TUI",
-  "/tools              list available tools",
-  "/tool-actions       R100: per-tool permission action (safe / ask / deny) + default op-kind",
-  "/state              show engine state",
-  "/ping               liveness check",
-  "/model <name>       change the model",
-  "/mode <name>        change permission mode (DEFAULT / ACCEPT_TASK / ACCEPT_EDITS / BYPASS_PERMISSIONS / PLAN / AUTO_READ_ONLY)",
-  "/no-confirm         shortcut: /mode BYPASS_PERMISSIONS (no prompts, every tool call auto-allowed)",
-  "/sessions           list saved sessions",
-  "/tasks              对应历史 round: list recent tool invocations",
-  "/projects           对应历史 round: list known projects (cwds)",
-  "/cwd <path>         对应历史 round: switch to another project",
-  "/stats              show session stats",
-  "/history            show input history",
-  "/agents             对应历史 round-sync: list Mavis agents with model column",
-  "/agent <name>       对应历史 round-sync: show an agent's body + frontmatter",
-  "/prompt              对应历史 round: show current system prompt sections (text, totalChars, sectionCount)",
-  "/prompt <name>      对应历史 round: drill into one section's full text (e.g. /prompt rules, /prompt identity)",
-  "/phase              对应历史 round: show current phase + per-phase tool-call budget",
-  "/phase <name>       对应历史 round: transition to a phase (plan / explore / implement / verify)",
-  "/budget <p> <calls> [usd]   对应历史 round: reconfigure a phase's cap (0 = unlimited)",
-  "/sessions-list      对应历史 round: list every session in the daemon (with the active one marked)",
-  "/session <id>       对应历史 round: switch the active session (must already exist)",
-  "/session-new <id>   对应历史 round: create a new session and switch to it",
-  "/session-del <id>   对应历史 round: delete a session (default is protected)",
-  "/skip <N|off>       R99: arm / clear skip-confirmation (N rounds)",
-  "/skip-stats         R106: show skip-confirmation adoption (consumed / armed / prompts)",
-  "/memory             T-080: open the MemoryPanel (Global / Project / Session tabs)",
-  "/memory [tab]       T-080: open MemoryPanel on a specific tab (global|project|session)",
-  "/memory-edit        T-083: edit the focused fact in the MemoryPanel",
-  "/memory-compact     T-084: force a project-memory compact (memory/compact force=true)",
-  "/agent-pick         T-420: open the agent picker (lists agents, type-to-filter, Ctrl+S to set default)",
-  "/effort-pick        T-421: open the reasoning-effort picker (low/medium/high/xhigh)",
-  "/cwd-pick           T-423: open the cwd switcher (path input, validates, then cwd/set RPC)",
-  "/mcp                T-428: open the MCP server + tool viewer",
-  "/mcp-login <name>   T-428: start the OAuth login flow for an MCP server",
-  "/mcp-reconnect      T-428: force a reconnect of the MCP registry",
-  "/threads            T-429: open the thread selector (filter, choose a thread to resume)",
-  "/update             T-430: show the update-available modal (if a new release is pending)",
-  "/update-deps        T-430: confirm a dependency refresh",
-  "/notifications      T-431: open the notification center (pending notices + warning toggles)",
-  "/demo               R344: walk through a canned conversation that exercises every visual surface (welcome banner, tool cards, permission modal, status changes, error path). No LLM round-trip — purely client-side.",
-  "/continue           T-6-17 / Phase 6.3: resume the active long-running task (task/resume)",
-  "/pause              T-6-17 / Phase 6.3: pause the active long-running task (task/pause)",
-  "/stop               T-6-17 / Phase 6.3: kill the active long-running task (task/kill)",
-  "/todos              T-6-17 / Phase 6.3: open the TodoBoard (live TODO list with j/k nav)",
-  "/tokens             T-6-17 / Phase 6.3: show current token usage (input / output / total / cost)",
-  "/consents           T-6-17 / Phase 6.3: open the GrantsManager (list + revoke + preset)",
-  "/grants             T-6-17 / Phase 6.3: alias for /consents",
-  "/model <name>       T-6-17 / Phase 6.3: switch the active model (model/set)",
-  "/workflow <name>    T-6-17 / Phase 6.3: run a workflow by name (workflow/run) or open the picker",
-  // R245.1 (O-10): daemon-side strategy bank read.
-  "/bank-stats        R245.1: show daemon's bank snapshot (size, kinds, ok / notOk ratio)",
-  "/bank-recall <k> [n]   R245.1: recall top-N (default 3) units for task kind <k>",
-  // R245.2 (O-6): cross-process self-eval audit.
-  "/memory-audit      R245.2: aggregate self-eval metrics across the daemon's bank (success rate, weakest/top kind, avg confidence)",
-  // R700 — SDD product integration. The TUI drives the
-  // 8-phase Spec-Driven Development workflow through the
-  // daemon's sdd.* RPC. Phase progress prints to chat as
-  // system messages; the active run's slug is remembered
-  // in store.sddRun so /sdd-modify / /sdd-skip / /sdd-abort
-  // don't have to repeat it. See SddMode.tsx for the banner.
-  "/sdd <intent>        R700: start an SDD run (enters SDD mode, runs phase 1)",
-  "/sdd-status          R700: show the current SDD run state",
-  "/sdd-list            R700: list every SDD run under the current cwd",
-  "/sdd-approve         R700: approve the current phase's artefact → next phase",
-  "/sdd-modify <fb>     R700: re-run the current phase with the user's feedback",
-  "/sdd-skip            R700: skip the current phase (REQUIRED phases refuse)",
-  "/sdd-abort           R700: abort the current SDD run",
-  // R700d — modify flow helpers (file:// link + diff viewer).
-  "/sdd-view [phase]     R700d: show the phase artefact (first 80 lines) + file:// link",
-  "/sdd-snapshot [phase] R700d: cache the current artefact body (for /sdd-diff later)",
-  "/sdd-diff [phase]     R700d: render diff between cached snapshot and on-disk artefact",
-  "/sdd-clear-cache      R700d: drop every cached per-phase snapshot",
-].join("\n");
+// /help text — generated from a curated group/description list
+// above. Source of truth for autocomplete is SLASH_COMMANDS_DETAILED;
+// this string is only the user-facing /help printout. To add a new
+// command, add an entry in SLASH_COMMANDS_DETAILED (which feeds Tab
+// completion) and optionally a row in the group below for the /help
+// blurb. /help is grouped so a user can scan it without a wall of text.
+
 
 /** the set of slash command names (without the leading "/" and
  *  without arguments). Used by the Tab-completion logic to find
@@ -169,7 +98,7 @@ export const SLASH_COMMANDS: string[] = [
   "bank-recall",      // recall top-N units for a task kind
   // R245.2 (O-6) — cross-process self-eval audit.
   "memory-audit",     // aggregate self-eval metrics from the daemon bank
-  // R700 — SDD product integration.
+  // Spec-driven development — 8-phase run with phase artefacts.
   "sdd",              // start SDD run with intent
   "sdd-status",       // show current SDD run state
   "sdd-list",         // list every SDD run under the cwd
@@ -177,7 +106,7 @@ export const SLASH_COMMANDS: string[] = [
   "sdd-modify",       // re-run current phase with feedback
   "sdd-skip",         // skip current phase (REQUIRED phases refuse)
   "sdd-abort",        // abort the current SDD run
-  // R700d — modify flow helpers.
+  // SDD modify-flow helpers (snapshot + diff the phase artefact).
   "sdd-view",          // show artefact + file:// link
   "sdd-snapshot",      // cache the current artefact for diff
   "sdd-diff",          // render diff between snapshot + on-disk
@@ -190,94 +119,179 @@ export const SLASH_COMMANDS: string[] = [
  *  Mirrors the entries in `SLASH_COMMANDS` above (the
  *  flat string array is kept for the legacy
  *  `completeSlash` consumer). */
-export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description: string }> = [
-  { name: "help",        description: "show the shortcut + command list" },
-  { name: "?",           description: "alias for /help" },
-  { name: "clear",       description: "clear the scrollback" },
-  { name: "exit",        description: "exit the TUI" },
-  { name: "quit",        description: "alias for /exit" },
-  { name: "q",           description: "alias for /exit" },
-  { name: "tools",       description: "list available tools" },
-  { name: "state",       description: "show the reducer state (debug)" },
-  { name: "ping",        description: "round-trip the daemon" },
-  { name: "model",       description: "show or switch the active model" },
-  { name: "mode",        description: "show or switch the permission mode" },
-  { name: "sessions",    description: "list recent sessions" },
-  { name: "tasks",       description: "list recent tasks" },
-  { name: "projects",    description: "list known projects" },
-  { name: "cwd",         description: "show or switch the working directory" },
-  { name: "stats",       description: "show session stats" },
-  { name: "history",     description: "show input history" },
-  { name: "lastplan",    description: "show the most recent plan" },
-  { name: "theme",       description: "show or set the active theme" },
-  { name: "theme-pick",  description: "open the interactive theme picker" },
-  { name: "layout",      description: "switch layout (full / focus / minimal)" },
-  { name: "budget",      description: "set a phase's tool-call / cost cap" },
-  { name: "rewind",      description: "rewind to a previous turn" },
-  { name: "snippet",     description: "save / load a snippet" },
-  { name: "export",      description: "export the session to markdown" },
-  { name: "tutorial",    description: "open the tutorial" },
-  { name: "bookmark",    description: "bookmark the current turn" },
-  { name: "metrics",     description: "show session metrics" },
-  { name: "trace",       description: "list recent traces" },
-  { name: "agents",      description: "list Mavis agents with model column" },
-  { name: "agent",       description: "show an agent's body + frontmatter" },
-  { name: "prompt",      description: "show current system prompt sections" },
-  { name: "phase",       description: "show / transition the current phase" },
+export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description: string; args?: string }> = [
+  { name: "help", description: "show the shortcut + command list (alias: /?)" },
+  { name: "?", description: "alias for /help" },
+  { name: "clear", description: "clear the scrollback" },
+  { name: "exit", description: "exit the TUI (aliases: /quit, /q)" },
+  { name: "quit", description: "alias for /exit" },
+  { name: "q", description: "alias for /exit" },
+  { name: "tools", description: "list available tools" },
+  { name: "state", description: "show the reducer state (debug)" },
+  { name: "ping", description: "round-trip the daemon" },
+  { name: "model", args: "<name>",       description: "show or switch the active model" },
+  { name: "mode", description: "show or switch the permission mode" },
+  { name: "sessions", description: "list recent sessions" },
+  { name: "tasks", description: "list recent tasks" },
+  { name: "projects", description: "list known projects" },
+  { name: "cwd", args: "<path>",         description: "show or switch the working directory" },
+  { name: "stats", description: "show session stats" },
+  { name: "history", description: "show input history" },
+  { name: "lastplan", description: "show the most recent plan" },
+  { name: "theme", args: "<name>",       description: "show or set the active theme" },
+  { name: "theme-pick", description: "open the interactive theme picker" },
+  { name: "layout", args: "<full|focus|minimal>",      description: "switch layout (full / focus / minimal)" },
+  { name: "budget", args: "<usd> [calls]",      description: "set a phase's tool-call / cost cap" },
+  { name: "rewind", description: "rewind to a previous turn" },
+  { name: "snippet", args: "<save|load|list|delete> <name>",     description: "save / load a snippet" },
+  { name: "export", description: "export the session to markdown or json" },
+  { name: "tutorial", description: "re-show the welcome overlay" },
+  { name: "bookmark", args: "[N]",    description: "bookmark the current turn" },
+  { name: "metrics", description: "show session metrics" },
+  { name: "trace", description: "list recent traces" },
+  { name: "agents", description: "list Mavis agents with model column" },
+  { name: "agent", args: "<name>",       description: "show an agent's body + frontmatter" },
+  { name: "prompt", args: "[section]",      description: "show current system prompt sections" },
+  { name: "phase", args: "<name>",       description: "show / transition the current phase" },
   { name: "sessions-list", description: "list every session in the daemon" },
-  { name: "session",     description: "switch the active session" },
-  { name: "session-new", description: "create a new session and switch to it" },
-  { name: "session-del", description: "delete a session (default is protected)" },
-  { name: "skip",        description: "arm / clear skip-confirmation (N rounds)" },
-  { name: "skip-stats",  description: "show skip-confirmation adoption" },
+  { name: "session", args: "<id>",     description: "switch the active session" },
+  { name: "session-new", args: "<id>", description: "create a new session and switch to it" },
+  { name: "session-del", args: "<id>", description: "delete a session (default is protected)" },
+  { name: "skip", args: "<N|off>",        description: "arm / clear skip-confirmation (N rounds)" },
+  { name: "skip-stats", description: "show skip-confirmation adoption" },
   { name: "tool-actions", description: "list recent tool actions" },
-  { name: "memory",      description: "open the MemoryPanel (Global / Project / Session)" },
-  { name: "memory-edit", description: "edit the focused fact in the MemoryPanel" },
+  { name: "memory", description: "open the memory panel (global / project / session)" },
+  { name: "memory-edit", description: "edit the focused fact in the memory panel" },
   { name: "memory-compact", description: "force a project-memory compact" },
-  { name: "agent-pick",  description: "open the agent picker" },
-  { name: "effort-pick", description: "open the reasoning-effort picker" },
-  { name: "cwd-pick",    description: "open the cwd switcher" },
-  { name: "mcp",         description: "open the MCP server + tool viewer" },
-  { name: "mcp-login",   description: "start the OAuth login flow for an MCP server" },
+  { name: "agent-pick", description: "open the agent picker (type to filter)" },
+  { name: "effort-pick", description: "set reasoning effort (low / medium / high / xhigh)" },
+  { name: "cwd-pick", description: "switch the daemon working directory" },
+  { name: "mcp", description: "open the MCP server + tool viewer" },
+  { name: "mcp-login", args: "<name>",   description: "start the OAuth login flow for an MCP server" },
   { name: "mcp-reconnect", description: "force a reconnect of the MCP registry" },
-  { name: "threads",     description: "open the thread selector" },
-  { name: "update",      description: "show the update-available modal" },
+  { name: "threads", description: "switch to another session thread" },
+  { name: "update", description: "review an available update" },
   { name: "update-deps", description: "confirm a dependency refresh" },
   // R344: /demo walks the user through a canned conversation
   // that exercises every visual surface (welcome banner, tool
   // cards, permission modal, status changes, error path). It's
   // the fastest way to evaluate the TUI without needing a real
   // model round-trip.
-  { name: "demo",        description: "run a canned demo conversation (no LLM round-trip)" },
+  { name: "demo", description: "walk a canned conversation (no LLM round-trip)" },
   { name: "notifications", description: "open the notification center" },
   // Phase 6.3 (T-6-17) — long-running + must-have commands.
-  { name: "continue",    description: "resume the active long-running task (task/resume)" },
-  { name: "pause",       description: "pause the active long-running task (task/pause)" },
-  { name: "stop",        description: "kill the active long-running task (task/kill)" },
-  { name: "todos",       description: "open the TodoBoard (live TODO list with j/k nav)" },
-  { name: "tokens",      description: "show current token usage (input / output / total / cost)" },
-  { name: "consents",    description: "open the GrantsManager (list + revoke + preset)" },
-  { name: "grants",      description: "alias for /consents" },
-  { name: "workflow",    description: "run a workflow by name (workflow/run) or open the picker" },
+  { name: "continue", description: "resume the active long-running task (task/resume)" },
+  { name: "pause", description: "pause the active long-running task (task/pause)" },
+  { name: "stop", description: "kill the active long-running task (task/kill)" },
+  { name: "todos", description: "open the live TODO board (j/k nav)" },
+  { name: "tokens", description: "show current token usage (input / output / total / cost)" },
+  { name: "consents", description: "open the grants manager (alias: /grants)" },
+  { name: "grants", description: "alias for /consents" },
+  { name: "workflow", description: "run a workflow by name, or open the picker" },
   // R245.1 (O-10) — daemon bank read commands.
-  { name: "bank-stats",  description: "show the daemon's strategy-bank snapshot" },
-  { name: "bank-recall", description: "recall top-N units for a task kind (default N=3)" },
+  { name: "bank-stats", description: "snapshot the daemon strategy bank" },
+  { name: "bank-recall", args: "<kind> [n]", description: "recall top-N units for a task kind (default N=3)" },
   // R245.2 (O-6) — cross-process self-eval audit.
-  { name: "memory-audit", description: "aggregate self-eval metrics across the daemon bank" },
-  // R700 — SDD product integration.
-  { name: "sdd",          description: "R700: start an 8-phase SDD run with intent" },
-  { name: "sdd-status",   description: "R700: show current SDD run state" },
-  { name: "sdd-list",     description: "R700: list every SDD run under the current cwd" },
-  { name: "sdd-approve",  description: "R700: approve the current phase → advance" },
-  { name: "sdd-modify",   description: "R700: re-run current phase with feedback" },
-  { name: "sdd-skip",     description: "R700: skip the current phase (REQUIRED refuses)" },
-  { name: "sdd-abort",    description: "R700: abort the current SDD run" },
-  // R700d — modify flow helpers.
-  { name: "sdd-view",         description: "R700d: show the artefact + file:// link" },
-  { name: "sdd-snapshot",     description: "R700d: cache the current artefact for diff" },
-  { name: "sdd-diff",         description: "R700d: render diff between snapshot and on-disk" },
-  { name: "sdd-clear-cache",  description: "R700d: drop every cached per-phase snapshot" },
+  { name: "memory-audit", description: "aggregate self-eval metrics from the daemon bank" },
+  // Spec-driven development — 8-phase run with phase artefacts.
+  { name: "sdd", args: "<intent>",          description: "start an 8-phase spec-driven run with an intent" },
+  { name: "sdd-status", description: "show the current SDD run state" },
+  { name: "sdd-list", description: "list every SDD run under the current cwd" },
+  { name: "sdd-approve", description: "approve the current phase and advance" },
+  { name: "sdd-modify", args: "<feedback>",   description: "re-run the current phase with your feedback" },
+  { name: "sdd-skip", description: "skip the current phase (required phases refuse)" },
+  { name: "sdd-abort", description: "abort the current SDD run" },
+  // SDD modify-flow helpers (snapshot + diff the phase artefact).
+  { name: "sdd-view", args: "[phase]",         description: "show the phase artefact and its path" },
+  { name: "sdd-snapshot", args: "[phase]",     description: "cache the current artefact for a later diff" },
+  { name: "sdd-diff", args: "[phase]",         description: "diff the cached snapshot against the file on disk" },
+  { name: "sdd-clear-cache", description: "drop every cached per-phase snapshot" },
 ];
+
+/**
+ * `/help` grouping + renderer.
+ *
+ * R362: SLASH_HELP used to be a hand-maintained 88-line string literal that
+ * had drifted from SLASH_COMMANDS (76) — the two disagreed, `/help`
+ * advertised commands autocomplete could not reach, and the user-facing text
+ * carried development notes ("T-080:", "对应历史 round:", "R700:").
+ *
+ * It is now derived from SLASH_COMMANDS_DETAILED, which is also what feeds
+ * the Tab autocomplete dropdown, so `/help` and the dropdown can never
+ * disagree and the descriptions are literally the same strings.
+ *
+ * SLASH_COMMAND_GROUPS controls grouping and display order only. A command
+ * in the catalog but in no group does not appear in `/help` (it still
+ * completes) — scripts/test/r362-help-derived.test.mjs makes that an
+ * explicit, asserted decision rather than an accident.
+ *
+ * Declared after SLASH_COMMANDS_DETAILED on purpose: the renderer reads it
+ * at module-eval time, so an earlier declaration would be a TDZ crash that
+ * `tsc` does NOT catch.
+ */
+
+const SLASH_COMMAND_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["session", ["help", "clear", "exit", "history", "session", "session-new", "session-del", "sessions-list", "sessions", "threads", "lastplan", "tutorial", "rewind", "bookmark", "snippet", "export", "demo"]],
+  ["context", ["memory", "memory-edit", "memory-compact", "memory-audit", "bank-stats", "bank-recall", "todos", "tokens", "metrics", "trace"]],
+  ["config", ["model", "mode", "tool-actions", "theme", "theme-pick", "layout", "budget", "agent-pick", "effort-pick", "cwd-pick", "agents", "agent", "prompt", "phase", "skip", "skip-stats"]],
+  ["mcp & integrations", ["mcp", "mcp-login", "mcp-reconnect", "consents", "notifications"]],
+  ["workflows & sdd", ["workflow", "continue", "pause", "stop", "sdd", "sdd-status", "sdd-list", "sdd-approve", "sdd-modify", "sdd-skip", "sdd-abort", "sdd-view", "sdd-snapshot", "sdd-diff", "sdd-clear-cache"]],
+  ["diagnostics", ["tools", "state", "stats", "ping", "tasks", "projects", "cwd", "update", "update-deps"]],
+];
+
+/**
+ * Render the `/help` blurb.
+ *
+ * R362: this used to be a hand-maintained 88-line string literal that
+ * drifted away from {@link SLASH_COMMANDS} (76) — the two disagreed, and
+ * `/help` advertised commands the autocomplete could not reach while
+ * carrying development notes like "T-080:" and "对应历史 round:" into the
+ * user-facing text.
+ *
+ * It is now derived, so the drift is structurally impossible: a command
+ * appears in `/help` iff it is in SLASH_COMMANDS_DETAILED, and the
+ * descriptions are the SAME strings the autocomplete dropdown shows.
+ *
+ * SLASH_COMMAND_GROUPS controls grouping and display order only. A command
+ * that is in the catalog but in no group simply does not appear in `/help`
+ * (it still completes); the test below makes that an explicit decision
+ * rather than an accident.
+ */
+function renderSlashHelp(): string {
+  const byName = new Map(SLASH_COMMANDS_DETAILED.map((c) => [c.name, c]));
+  const out: string[] = [];
+  out.push("TUI command reference — grouped below. Tab completes; the autocomplete");
+  out.push("dropdown shows the same one-line hints. <arg> is required, [arg] optional.");
+
+  // Longest "/name <arg>" label across the whole catalog, so every group
+  // aligns its description column on the same gutter.
+  let gutter = 0;
+  for (const c of SLASH_COMMANDS_DETAILED) {
+    const label = `/${c.name}${c.args ? " " + c.args : ""}`;
+    if (label.length > gutter) gutter = label.length;
+  }
+  gutter += 2;
+
+  for (const [group, names] of SLASH_COMMAND_GROUPS) {
+    const rows: string[] = [];
+    for (const name of names) {
+      const entry = byName.get(name);
+      // A group row with no catalog entry means the two lists drifted again.
+      // Skip rather than print a blank row — the test makes that an explicit
+      // decision instead of an accident.
+      if (!entry) continue;
+      const label = `/${name}${entry.args ? " " + entry.args : ""}`;
+      rows.push(`${label.padEnd(gutter)}${entry.description}`.trimEnd());
+    }
+    if (rows.length === 0) continue;
+    out.push("");
+    out.push(`# ${group}`);
+    out.push(...rows);
+  }
+  return out.join("\n");
+}
+
+export const SLASH_HELP = renderSlashHelp();
 
 /** tab-completion result.
  *  - completed: the new input value to set (may equal `partial` if no match)
@@ -397,14 +411,23 @@ export function handleSlash(input: string): SlashResult | null {
     case "ping":
       return { rpcMethod: "ping" };
     case "model":
-      // T-6-17: the new spec routes `/model <name>` to
-      // `model/set` (the mid-session switch RPC, see
-      // design.md §3.7). We keep the legacy `setModel`
-      // method as a secondary alias so older daemons
-      // still respond. The Phase 6.3 form wins when the
-      // daemon supports it.
+      // R366: this used to send `model/set`, on the strength of a
+      // T-6-17 comment saying "the daemon maps both" (and keeping
+      // `setModel` as a "legacy alias"). **Neither half was true.**
+      //
+      //   * `model/set` is not registered. The DTOs exist
+      //     (`protocol/rpc/model/ModelSetParams` + `ModelSetResult`,
+      //     Phase 1.2 / T-1-19) but no handler was ever wired, so
+      //     every `/model <name>` died on -32601.
+      //   * `setModel` is the real handler
+      //     (`AetherCodeMethods.registerAll`), and it is not an
+      //     alias — it is the only one.
+      //
+      // The parameter key changes too: `setModel` reads `model`
+      // (`stringOrThrow(p, "model")`), the dead `model/*` DTOs used
+      // `name`. A name-only fix would still have thrown.
       if (rest.length === 0) return { local: "usage: /model <name>" };
-      return { rpcMethod: "model/set", rpcParams: { name: String(rest[0]) } };
+      return { rpcMethod: "setModel", rpcParams: { model: String(rest[0]) } };
     case "mode":
       // R352: bare `/mode` triggers the in-process picker so the
       // user can arrow-key through modes instead of typing the
@@ -936,15 +959,23 @@ export function handleSlash(input: string): SlashResult | null {
       return { local: "__GRANTS_MANAGER__" };
     }
     case "workflow": {
-      // T-6-17: with no args, open the WorkflowPicker. With
-      // one arg, run the named workflow via `workflow/run`.
-      // Inputs are intentionally not exposed on the CLI —
-      // the picker is the UI surface for input prompts.
+      // R366: `workflow/run` is registered on **SupervisorRpcServer**
+      // (aethercode-tasks), which is only started by the standalone
+      // task CLI. The daemon the TUI spawns is DaemonRunner ->
+      // AetherCodeMethods, which registers the FLAT name `runWorkflow`.
+      // So `/workflow <name>` was a -32601.
+      //
+      // Param shapes happen to match ({name}), so the rename alone is
+      // the whole fix here. (It does NOT for `setModel` — see the
+      // `/model` case.)
+      //
+      // Inputs are intentionally not exposed on the CLI; the picker is
+      // the UI surface for input prompts.
       if (rest.length === 0) {
         return { local: "__WORKFLOW_PICKER__" };
       }
       return {
-        rpcMethod: "workflow/run",
+        rpcMethod: "runWorkflow",
         rpcParams: { name: String(rest[0]) },
       };
     }

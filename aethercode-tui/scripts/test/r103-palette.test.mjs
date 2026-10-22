@@ -53,10 +53,32 @@ test("R103: commands.ts has a /tool-actions handler that calls listToolActions R
   assert.match(src, /listToolActions/);
 });
 
-test("R103: SLASH_HELP mentions /skip and /tool-actions", () => {
+test("R103: /help output mentions /skip and /tool-actions", () => {
+  // R362: SLASH_HELP is no longer a hand-written literal in commands.ts — it is
+  // rendered at module-eval time from SLASH_COMMANDS_DETAILED (the same catalog
+  // that feeds the Tab dropdown) plus the SLASH_COMMAND_GROUPS table. That is
+  // what killed the drift where `/help` advertised 88 commands while
+  // autocomplete knew 76.
+  //
+  // So the meaningful source-level assertion is: the command is in the catalog
+  // AND appears in a group row. That pair is exactly what the renderer walks,
+  // so this test now guards the real input rather than a dead literal.
   const src = readFileSync(join(root, "src", "commands.ts"), "utf-8");
-  assert.match(src, /\/skip <N\|off>/);
-  assert.match(src, /\/tool-actions/);
+  const catalog = src.slice(
+    src.indexOf("export const SLASH_COMMANDS_DETAILED"),
+    src.indexOf("];", src.indexOf("export const SLASH_COMMANDS_DETAILED")),
+  );
+  const groups = src.slice(
+    src.indexOf("const SLASH_COMMAND_GROUPS"),
+    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
+  );
+  assert.match(catalog, /name: "skip"/, "skip missing from the autocomplete catalog");
+  assert.match(groups, /"skip"/, "skip missing from the /help group table");
+  assert.match(catalog, /name: "tool-actions"/, "tool-actions missing from the catalog");
+  assert.match(groups, /"tool-actions"/, "tool-actions missing from the /help group table");
+  // argument placeholder must survive into the rendered help
+  assert.match(catalog, /name: "skip"[^}]*args: "<N\|off>"/,
+    "skip must carry the <N|off> argument hint so /help shows it");
 });
 
 test("R103: CommandPalette.tsx describeCommand covers skip + tool-actions", () => {

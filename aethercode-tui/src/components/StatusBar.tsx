@@ -133,7 +133,11 @@ export const StatusBar: React.FC<Props> = ({
     ? <Text color={color} bold>connecting…</Text>
     : <Text color={color} bold>{label}</Text>;
   const skipNode = state.skipConfirmationRemaining > 0 ? (
-    <Text color={t.warn}> · ⏩ {state.skipConfirmationRemaining}</Text>
+    // R362: R350 collapsed the bar to one line and shortened this badge to
+    // `⏩ 5`, which dropped the word "skip" — a user glancing at the status
+    // strip had no way to tell what the counter meant. Put the label back.
+    // It costs 5 columns and makes the badge self-describing.
+    <Text color={t.warn}> · ⏩ skip {state.skipConfirmationRemaining}</Text>
   ) : null;
 
   return (

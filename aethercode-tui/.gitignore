@@ -4,3 +4,57 @@ dist/
 .DS_Store
 .env
 .env.local
+
+# R362: every node:test file in scripts/test/ compiles into a throwaway
+# `tmp-*-tsc/` (or `tmp-rNNN*/`) directory next to the package root. Most
+# of them never clean up, so a full `npm test` leaves ~80 untracked dirs
+# that bury real changes in `git status`. Ignore the whole shape rather
+# than playing whack-a-mole with each test's naming scheme.
+tmp-*-tsc/
+tmp-*-tsc2/
+tmp-r362/
+tmp-r362-view/
+tmp-r196-cmds-tsc/
+tmp-r456-e2e/
+tmp-test/
+tmp-test-r86/
+tmp-test-r91d/
+tmp-test-r94e/
+tmp-test-r112/
+tmp-r49-tsc/
+tmp-r56-tsc2/
+tmp-r42-tsc2/
+tmp-r41-tsc2/
+tmp-r43-tsc2/
+tmp-r47-tsc2/
+tmp-r48-tsc2/
+tmp-r50-tsc2/
+tmp-r51-tsc2/
+tmp-r77-tsc/
+dist/
+node_modules/
+
+# R363: test shims written into src/ by node:test suites. Fifteen suites
+# (t433, t457, t6-09..t6-17, t7-03, t7-06, t7-12, t7-14, r169, r196-*)
+# drop a `_...` re-export file next to the component they exercise and
+# delete it when they finish. That is a race with the full-project
+# `tsc --noEmit` in phase-7-t7-10.test.mjs, which globs src/ — hence the
+# matching `exclude` in tsconfig.json. Ignore the whole `_` shape rather
+# than whack-a-mole with each suite's filename.
+src/**/_*.ts
+src/**/_*.tsx
+
+# R363: the throwaway compile dirs the shim suites now use (the shims
+# moved out of src/ so they can't race the full-project compile).
+tmp-r196-notif-tsc/
+tmp-r196-threads-tsc/
+tmp-r196-updates-tsc/
+tmp-r363-cancel/
+tmp-r362-queue/
+tmp-r363-shim-trash/
+tmp-r364-cwd/
+tmp-r364-probe-trash/
+tmp-r365-panel-truth/
+tmp-r365-probe-trash/
+tmp-r366-rpc-names/
+tmp-r366-probe-trash/

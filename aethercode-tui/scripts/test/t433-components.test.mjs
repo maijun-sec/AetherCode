@@ -584,21 +584,38 @@ test("T-431: NotificationCenter / Detail / Settings all compile via shim", () =>
 // T-432: Wire all new components into commands.ts
 // =====================================================================
 
-test("T-432: commands.ts has SLASH_HELP entries for every §5.3 command", () => {
+test("T-432: commands.ts lists every §5.3 command for /help", () => {
+  // R362: SLASH_HELP is derived at module-eval time from
+  // SLASH_COMMANDS_DETAILED + SLASH_COMMAND_GROUPS, so the old
+  // "does the source literally contain `/agent-pick`" assertion no longer
+  // describes how /help is built. The meaningful source-level check is that
+  // each command is BOTH in the catalog AND assigned to a group — that pair
+  // is precisely what the renderer walks.
   const src = read("src/commands.ts");
-  for (const line of [
-    "/agent-pick",
-    "/effort-pick",
-    "/cwd-pick",
-    "/mcp",
-    "/mcp-login",
-    "/mcp-reconnect",
-    "/threads",
-    "/update",
-    "/update-deps",
-    "/notifications",
+  const catalog = src.slice(
+    src.indexOf("export const SLASH_COMMANDS_DETAILED"),
+    src.indexOf("];", src.indexOf("export const SLASH_COMMANDS_DETAILED")),
+  );
+  const groups = src.slice(
+    src.indexOf("const SLASH_COMMAND_GROUPS"),
+    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
+  );
+  for (const cmd of [
+    "agent-pick",
+    "effort-pick",
+    "cwd-pick",
+    "mcp",
+    "mcp-login",
+    "mcp-reconnect",
+    "threads",
+    "update",
+    "update-deps",
+    "notifications",
   ]) {
-    assert.ok(src.includes(line), `SLASH_HELP missing entry for ${line}`);
+    assert.ok(catalog.includes(`name: "${cmd}"`),
+      `/help catalog missing entry for ${cmd}`);
+    assert.ok(groups.includes(`"${cmd}"`),
+      `/help group table missing entry for ${cmd}`);
   }
 });
 

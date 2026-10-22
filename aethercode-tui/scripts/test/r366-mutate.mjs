@@ -1,0 +1,217 @@
+// Mutation harness for r366-rpc-names.test.mjs — NOT part of npm test.
+// Run:  node scripts/test/r366-mutate.mjs
+//
+// Four kinds of case live here, and the fourth is the one that matters:
+//
+//   1. put back the exact bugs this round fixed (setCwd, model/set,
+//      workflow/*, the asRows envelopes);
+//   2. aim at the allowlist itself — a gate with a reasoned allowlist
+//      is only trustworthy if the allowlist is under test;
+//   3. aim at the R367 seam: un-wire PermissionMethods / GrantMethods
+//      from DaemonRunner and confirm the gate notices. These are the
+//      pre-R367 state verbatim: classes complete, registerAll never
+//      called, every TUI call -32601;
+//   4. aim at the DISCRIMINATOR ITSELF. Cases 3 prove the gate is
+//      sensitive to the real bug — but only if something other than
+//      "the name appears in the Java file" is doing the work. So we
+//      combine each bypass with a real mutation and require the
+//      gate to go green (i.e. STOP noticing). A gate that goes green
+//      under the bypass has a dead discriminator, and that is a hole
+//      even though every other case passes.
+//
+// Case 4 inverts the pass criterion on purpose: for those cases,
+// `fail === 0` is the CORRECT outcome and we report what we mean.
+
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, "..", "..");
+const T = {
+  commands: join(root, "src", "commands.ts"),
+  line: join(root, "src", "line.ts"),
+  tui: join(root, "src", "tui.tsx"),
+  // R367: the daemon the TUI actually spawns.
+  runner: join(root, "..", "aethercode", "aethercode-cli", "src", "main", "java",
+    "org", "aethercode", "cli", "DaemonRunner.java"),
+  // R367: the OTHER transport. Editing the daemon alone leaves the
+  // desktop broken and every TUI-observable assertion green.
+  http: join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java",
+    "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+};
+const GATE = join(here, "r366-rpc-names.test.mjs");
+
+const PATHS = { ...T, gate: GATE };
+
+const original = Object.fromEntries(
+  Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
+);
+
+function runGate() {
+  const r = spawnSync(process.execPath, ["--test", GATE], { encoding: "utf-8", cwd: root });
+  const out = (r.stdout ?? "") + (r.stderr ?? "");
+  const m = out.match(/^ℹ fail (\d+)$/m);
+  return { fail: m ? Number(m[1]) : -1, out };
+}
+
+/**
+ * @param name    human label
+ * @param edits   [key, mutateFn][] — applied together
+ * @param expect  "red"   → the gate must fail (default)
+ *                "green" → the gate must pass (bypass proved: the
+ *                          mutation is no longer detected)
+ */
+const CASES = [
+  ["re-introduce the R364-era setCwd (Tauri name over JSON-RPC)", "red",
+    [["tui", (s) => s.replace('.request("switchProject", { cwd: path } as RpcValue)',
+      '.request("setCwd", { cwd: path } as RpcValue)')]]],
+  ["re-introduce setCwd in line mode", "red",
+    [["line", (s) => s.replace('probe(ctx, "switchProject", { cwd: picked } as RpcValue)',
+      'probe(ctx, "setCwd", { cwd: picked } as RpcValue)')]]],
+  ["re-introduce model/set (DTOs exist, handler never wired)", "red",
+    [["commands", (s) => s.replace('rpcMethod: "setModel", rpcParams: { model: String(rest[0]) }',
+      'rpcMethod: "model/set", rpcParams: { name: String(rest[0]) }')]]],
+  ["fix the NAME but leave the wrong param key on setModel", "red",
+    [["commands", (s) => s.replace('rpcMethod: "setModel", rpcParams: { model: String(rest[0]) }',
+      'rpcMethod: "setModel", rpcParams: { name: String(rest[0]) }')]]],
+  ["re-introduce workflow/run (SupervisorRpcServer name)", "red",
+    [["line", (s) => s.replace('probe(ctx, "runWorkflow", { name: picked }',
+      'probe(ctx, "workflow/run", { name: picked }')]]],
+  ["re-introduce workflow/list in the picker", "red",
+    [["line", (s) => s.replace('probe(ctx, "listWorkflows")', 'probe(ctx, "workflow/list")')]]],
+  ["drop `workflows` back out of the asRows envelope list", "red",
+    [["line", (s) => s.replace('"todos", "data", "projects", "workflows"', '"todos", "data", "projects"')]]],
+  ["drop `projects` back out of the asRows envelope list", "red",
+    [["line", (s) => s.replace('"todos", "data", "projects", "workflows", "grants"', '"todos", "data", "workflows", "grants"')]]],
+  ["R367: drop `grants` back out of the asRows envelope list", "red",
+    // The bug the R367 wiring would have SHIPPED: endpoint reachable,
+    // panel confident and empty. Wiring is only half a feature.
+    [["line", (s) => s.replace('"workflows", "grants"', '"workflows"')]]],
+
+  // --- aimed at the allowlist itself ---
+  ["delete an allowlist entry (must surface as an unknown method)", "red",
+    [["gate", (s) => s.replace(/\["rewind",[^\]]*\],\n/, "")]]],
+  ["blank an allowlist reason (the reason gate must bite)", "red",
+    [["gate", (s) => s.replace('"no rewind handler; transcript rollback is unimplemented daemon-side"', '""')]]],
+  ["make the extraction pattern stop matching (must fail the floor)", "red",
+    // Break the character class the four extraction patterns share, so every
+    // one of them stops matching method names. If the `sent.size >= 40` floor
+    // is real this must go red — otherwise the gate's main assertion was
+    // passing because it matched nothing.
+    [["gate", (s) => s.split("[\\w/.]").join("[zzz]")]]],
+
+  // --- R367: the seam ---
+  ["R367: comment out PermissionMethods.registerAll in DaemonRunner", "red",
+    [["runner", (s) => s.replace("        permRpcs.registerAll(server.dispatcher());",
+      "        // permRpcs.registerAll(server.dispatcher());")]]],
+  ["R367: comment out GrantMethods.registerAll in DaemonRunner", "red",
+    [["runner", (s) => s.replace("        grantRpcs.registerAll(server.dispatcher());",
+      "        // grantRpcs.registerAll(server.dispatcher());")]]],
+  ["R367: delete the GrantMethods entry from EXTRA_METHOD_CLASSES", "red",
+    [["gate", (s) => s.replace(/\n\s*\{ type: "GrantMethods"[^\n]*\n/, "\n")]]],
+  ["R367: delete the PermissionMethods entry from EXTRA_METHOD_CLASSES", "red",
+    [["gate", (s) => s.replace(/\n\s*\{ type: "PermissionMethods"[^\n]*\n/, "\n")]]],
+  // The stdio-only fix: everything the TUI can observe stays green and
+  // only the desktop breaks. These mutate the JAVA, never the gate —
+  // deleting an assertion from the gate proves nothing about the gate.
+  ["R367: drop the HTTP `grants/revoke` case arm", "red",
+    [["http", (s) => s.replace(/\n\s*case "grants\/revoke"[^\n]*\n/, "\n")]]],
+  ["R367: drop the HTTP `permission/list` case arm", "red",
+    [["http", (s) => s.replace(/\n\s*case "permission\/list"[^\n]*\n/, "\n")]]],
+  ["R367: drop http.setGrantMethods from DaemonRunner", "red",
+    [["runner", (s) => s.replace(/\n\s*http\.setGrantMethods\([^)]*\);/, "")]]],
+  ["R367: drop http.setPermissionMethods from DaemonRunner", "red",
+    [["runner", (s) => s.replace(/\n\s*http\.setPermissionMethods\([^)]*\);/, "")]]],
+  ["R367: delete setPermissionMethods from HttpJsonRpcServer", "red",
+    [["http", (s) => s.replace(/public void setPermissionMethods\(\s*[\r\n][\s\S]*?\)\s*\{\s*\r?\n\s*this\.permissionMethods = pm;\s*\r?\n\s*\}/, "")]]],
+
+  // --- the discriminators themselves: these MUST go green ---
+  ["BYPASS: isWired := true, then un-wire PermissionMethods", "green",
+    [["gate", (s) => s.replace("const isWired = !!varName && daemonRunnerCode.includes(`${varName}.registerAll(`);",
+      "const isWired = true;")],
+     ["runner", (s) => s.replace("        permRpcs.registerAll(server.dispatcher());",
+      "        // permRpcs.registerAll(server.dispatcher());")]]],
+  ["BYPASS: javaCode stops blanking block comments", "red",
+    // R364 Lesson 1112, in Java. A comment-stripper that stops
+    // understanding comments does not merely stop blanking them —
+    // it misreads them. The apostrophe test is the one that bites:
+    // "the stdio daemon's" opens a char literal that never closes and
+    // swallows the next 2.4 KB of real code, including the
+    // http.setPermissionMethods call this gate reads. Requiring RED
+    // here because a broken scanner that still returns plausible
+    // output is the most dangerous failure this gate has.
+    [["gate", (s) => s.replace('if (c === "/" && src[i + 1] === "*") {', 'if (false) {')]]],
+  ["BYPASS: javaCode blanks string literals along with comments", "red",
+    [["gate", (s) => s.replace('      const q = c;\n      out += c;', '      const q = c;\n      for (let z = i; z < n && src[z] !== "\\n"; z++) out += " ";\n      out += c;')]]],
+  ["BYPASS: the R367 regression test is deleted", "green",
+    // If removing the assertion entirely leaves the gate green, then the
+    // R367 case was never actually load-bearing — it was decoration.
+    [["gate", (s) => s.replace(/test\("REGRESSION R367: the permission\/grant surfaces the TUI uses are live"[\s\S]*?\n\}\);\n/, "")]]],
+];
+
+console.log(`r366 mutation battery — ${CASES.length} cases\n`);
+
+let holes = 0;
+for (const [name, expect, edits] of CASES) {
+  const applied = [];
+  let noop = false;
+  for (const [key, mutate] of edits) {
+    const before = original[key];
+    const after = mutate(before);
+    if (after === before) {
+      console.log(`  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`);
+      noop = true;
+      break;
+    }
+    applied.push([key, before, after]);
+  }
+  if (noop) { holes++; restore(applied); continue; }
+
+  for (const [key, , after] of applied) writeFileSync(PATHS[key], after, "utf-8");
+  const { fail, out } = runGate();
+  restore(applied);
+
+  // "red"   → fail > 0 is correct
+  // "green" → fail === 0 is correct (and it means the bypass is real)
+  const ok = expect === "red" ? fail > 0 : fail === 0;
+  if (!ok) holes++;
+  const tag = ok ? "ok  " : "HOLE";
+  const why = expect === "red"
+    ? "gate must go red"
+    : "gate must go green (bypass proven load-bearing)";
+  console.log(`  ${tag}  ${name}\n      gate fail=${fail}  — ${why}`);
+  if (!ok) {
+    // Say WHICH assertion moved AND why. A count is not a diagnosis:
+    // `gate fail=1` sent me off theorising about the wrong test once
+    // already this round, and theorising is how you "fix" the wrong
+    // thing convincingly.
+    const lines = out.split(/\r?\n/);
+    lines.forEach((l, i) => {
+      const m = /^✖ (.+?) \(/.exec(l);
+      if (!m) return;
+      console.log(`        ✖ ${m[1]}`);
+      for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
+        if (/^\s*AssertionError/.test(lines[k])) {
+          console.log(`            ${lines[k].trim().slice(0, 220)}`);
+          break;
+        }
+      }
+    });
+  }
+}
+
+function restore(applied) {
+  for (const [key, before] of applied) writeFileSync(PATHS[key], before, "utf-8");
+}
+
+for (const [k, p] of Object.entries(PATHS)) {
+  if (readFileSync(p, "utf-8") !== original[k]) {
+    writeFileSync(p, original[k], "utf-8");
+    console.log(`  !! restored ${p}`);
+  }
+}
+
+console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+process.exit(holes === 0 ? 0 : 1);

@@ -114,20 +114,35 @@ test("T-6-17: /consents and /grants both → __GRANTS_MANAGER__", () => {
 
 // ----- 6. /model + /workflow -------------------------------------------
 
-test("T-6-17: /model <name> → model/set + /workflow [name] → picker or workflow/run", () => {
-  // /model uses the new model/set RPC.
+test("T-6-17: /model <name> → setModel + /workflow [name] → picker or runWorkflow", () => {
+  // R366: this test pinned `model/set` and `workflow/run`, and its
+  // title advertised them as the contract. **Both names do not exist
+  // on the daemon the TUI spawns**, so the test was protecting two
+  // broken commands rather than documenting two working ones.
+  //
+  //   * `model/set` has DTOs (protocol/rpc/model/ModelSetParams,
+  //     Phase 1.2 / T-1-19) but no handler was ever registered.
+  //   * `workflow/run` is registered on `SupervisorRpcServer`
+  //     (aethercode-tasks), a separate CLI the TUI never starts.
+  //
+  // The real names are `setModel` and `runWorkflow`, both registered in
+  // `AetherCodeMethods.registerAll`. Note the param key changes too:
+  // `setModel` reads `model`, not `name`.
+  // `r366-rpc-names.test.mjs` now verifies the names against the
+  // daemon's registration list rather than against this file.
   const r1 = handleSlash("/model claude-opus-4-1");
-  assert.equal(r1.rpcMethod, "model/set");
-  assert.deepEqual(r1.rpcParams, { name: "claude-opus-4-1" });
+  assert.equal(r1.rpcMethod, "setModel");
+  assert.deepEqual(r1.rpcParams, { model: "claude-opus-4-1" });
   // /model without an arg is still a usage hint.
   const r2 = handleSlash("/model");
   assert.match(r2.local, /usage:/);
   // /workflow with no args → picker.
   const r3 = handleSlash("/workflow");
   assert.equal(r3.local, "__WORKFLOW_PICKER__");
-  // /workflow with a name → workflow/run.
+  // /workflow with a name → runWorkflow. (Params happen to match, so
+  // the rename alone was the whole fix here.)
   const r4 = handleSlash("/workflow tdd-feature");
-  assert.equal(r4.rpcMethod, "workflow/run");
+  assert.equal(r4.rpcMethod, "runWorkflow");
   assert.deepEqual(r4.rpcParams, { name: "tdd-feature" });
 });
 

@@ -151,6 +151,63 @@ public final class HttpJsonRpcServer {
         return memoryMethods;
     }
 
+    // ------------------------------------------------------------------
+    //  R367 — permission/* and grants/*, second transport.
+    //
+    //  The R720 memory/* lesson verbatim: a method class with a
+    //  registerAll hook is only reachable if the daemon ALSO tells
+    //  this hand-rolled switch about it. DaemonRunner wires both.
+    //
+    //  Note the deliberate difference from routeMemory: memory/*
+    //  returns `{ok:false, reason:"not configured"}`, but a
+    //  "not configured" envelope for permission/list would be a
+    //  LIST-SHAPED LIE — asRows() sees an object with no array key,
+    //  returns [], and /consents renders "0 stored grants" with no
+    //  error anywhere. Failing loudly is the only honest answer.
+    // ------------------------------------------------------------------
+
+    private volatile org.aethercode.protocol.methods.PermissionMethods permissionMethods;
+    private volatile org.aethercode.protocol.methods.GrantMethods grantMethods;
+
+    public void setPermissionMethods(
+            org.aethercode.protocol.methods.PermissionMethods pm) {
+        this.permissionMethods = pm;
+    }
+
+    public void setGrantMethods(org.aethercode.protocol.methods.GrantMethods gm) {
+        this.grantMethods = gm;
+    }
+
+    /** Route a permission/* RPC, or fail loudly when unwired. */
+    private <T> T routePermission(
+            java.util.function.Function<
+                    org.aethercode.protocol.methods.PermissionMethods, T> handler) {
+        org.aethercode.protocol.methods.PermissionMethods pm = permissionMethods;
+        if (pm == null) {
+            throw new JsonRpcProtocolException(
+                    "permission/* not configured on this daemon",
+                    JsonRpcError.of(JsonRpcError.INTERNAL_ERROR,
+                            "permission/* not configured — the daemon did not wire "
+                                    + "PermissionMethods into its HTTP transport"));
+        }
+        return handler.apply(pm);
+    }
+
+    /** Route a grants/* RPC, or fail loudly when unwired. */
+    private <T> T routeGrant(
+            java.util.function.Function<
+                    org.aethercode.protocol.methods.GrantMethods, T> handler) {
+        org.aethercode.protocol.methods.GrantMethods gm = grantMethods;
+        if (gm == null) {
+            throw new JsonRpcProtocolException(
+                    "grants/* not configured on this daemon",
+                    JsonRpcError.of(JsonRpcError.INTERNAL_ERROR,
+                            "grants/* not configured — the daemon did not wire "
+                                    + "GrantMethods into its HTTP transport"));
+        }
+        return handler.apply(gm);
+    }
+
     private final Consumer<JsonRpcNotification> broadcastNotifier = notif -> {
         // R83 fix: Javalin 5.6.3's WsContext#send(String) drops
         // messages when called from a thread other than the WS
@@ -1070,6 +1127,21 @@ public final class HttpJsonRpcServer {
             case "memory/readProjectMemory"      -> routeMemory(m -> m.readProjectMemory(params));
             case "memory/compact"                -> routeMemory(m -> m.compact(params));
             case "memory/switchProject"          -> routeMemory(m -> m.switchProject(params));
+
+            // --- R367: permission/* + grants/* over HTTP+WS ---------------
+            // Wired by DaemonRunner alongside the stdio `registerAll`
+            // calls. Both are needed: a method reachable on stdio and
+            // missing here is a desktop-only -32601, which is exactly
+            // how the memory/* surface shipped broken in R720.
+            case "permission/check"                  -> routePermission(m -> m.check(params));
+            case "permission/prompt"                 -> routePermission(m -> m.prompt(params));
+            case "permission/list"                   -> routePermission(m -> m.list(params));
+            case "permission/revoke"                 -> routePermission(m -> m.revoke(params));
+            case "permission/clear"                  -> routePermission(m -> m.clear(params));
+            case "grants/list"                       -> routeGrant(m -> m.list(params));
+            case "grants/revoke"                     -> routeGrant(m -> m.revoke(params));
+            case "grants/clear"                      -> routeGrant(m -> m.clear(params));
+            case "grants/setPreset"                  -> routeGrant(m -> m.setPreset(params));
             default -> throw new JsonRpcProtocolException(
                     "unknown method: " + method,
                     JsonRpcError.of(JsonRpcError.METHOD_NOT_FOUND, method));

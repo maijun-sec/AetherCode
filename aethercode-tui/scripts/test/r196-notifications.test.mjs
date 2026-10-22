@@ -10,7 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,11 +25,24 @@ if (existsSync(tmp)) {
     process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
 }
 mkdirSync(tmp, { recursive: true });
-const shimPath = join(root, "src", "components", "_r196_notif_helpers.ts");
+//
+// R363 — the shim lives in the TEMP dir, not in `src/`.
+//
+// It used to be written to `src/components/_r196_notif_helpers.ts` and
+// `unlinkSync`'d at the bottom of this file. That made the full-project
+// `tsc --noEmit` in `phase-7-t7-10.test.mjs` race us: `node --test`
+// runs files in parallel, so that check globbed `src/` and hit
+// TS6053 "File ... not found" in the window between our write and our
+// delete. A test that mutates the directory another test compiles is a
+// test-ordering landmine — the fix is to stop mutating `src/` at all.
+//
+// `--rootDir` therefore moves up to the package root so the shim can
+// import `./src/components/...` by relative path.
+const shimPath = join(tmp, "_r196_notif_helpers.ts");
 const shim = [
-  `export { buildActionResult, pendingCount } from "./NotificationCenter.js";`,
-  `export { buildDetailResult, formatDetailTitle } from "./NotificationDetail.js";`,
-  `export { labelFor, flipToggle, defaultToggleState, countEnabled, WARNING_TOGGLES } from "./NotificationSettings.js";`,
+  `export { buildActionResult, pendingCount } from "../src/components/NotificationCenter.js";`,
+  `export { buildDetailResult, formatDetailTitle } from "../src/components/NotificationDetail.js";`,
+  `export { labelFor, flipToggle, defaultToggleState, countEnabled, WARNING_TOGGLES } from "../src/components/NotificationSettings.js";`,
   "",
 ].join("\n");
 writeFileSync(shimPath, shim, "utf-8");
@@ -38,7 +51,7 @@ const tscArgs = [
   "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
   "--moduleResolution", "bundler", "--jsx", "react",
   "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--rootDir", root,
 ];
 const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
 if (r.status !== 0) {
@@ -46,7 +59,7 @@ if (r.status !== 0) {
   process.exit(1);
 }
 const helpers = await import(
-  "file:///" + join(tmp, "out", "components", "_r196_notif_helpers.js").replace(/\\/g, "/")
+  "file:///" + join(tmp, "out", "tmp-r196-notif-tsc", "_r196_notif_helpers.js").replace(/\\/g, "/")
 );
 const { buildActionResult, pendingCount, buildDetailResult, formatDetailTitle,
   labelFor, flipToggle, defaultToggleState, countEnabled, WARNING_TOGGLES } = helpers;
@@ -162,4 +175,6 @@ test("R196: countEnabled — missing keys default to enabled", () => {
   assert.equal(countEnabled({}), WARNING_TOGGLES.length);
 });
 
-try { unlinkSync(shimPath); } catch { /* ignore */ }
+// R363: no unlinkSync here. The shim is inside `tmp/`, which is already
+// wiped at the top of this file on the next run, and deleting it is no
+// longer load-bearing for anything outside this test.

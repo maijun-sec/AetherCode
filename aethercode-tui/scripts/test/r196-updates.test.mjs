@@ -25,11 +25,15 @@ if (existsSync(tmp)) {
     process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
 }
 mkdirSync(tmp, { recursive: true });
-const shimPath = join(root, "src", "components", "_r196_updates_helpers.ts");
+// R363: the shim lives in `tmp/`, never in `src/`. Writing it into
+// `src/components/` made the full-project `tsc --noEmit` in
+// phase-7-t7-10.test.mjs race us (TS6053 in the write→unlink window);
+// see the identical note in r196-notifications.test.mjs.
+const shimPath = join(tmp, "_r196_updates_helpers.ts");
 const shim = [
-  `export { dismissAction, dismissChangelog, dismissUpdateCancel } from "./UpdateAvailable.js";`,
-  `export { updateConfirmResult, chooseUpdateKind } from "./UpdateConfirm.js";`,
-  `export { appendLineTail, markSuccessStatus, markFailureStatus, markWarningStatus } from "./UpdateProgress.js";`,
+  `export { dismissAction, dismissChangelog, dismissUpdateCancel } from "../src/components/UpdateAvailable.js";`,
+  `export { updateConfirmResult, chooseUpdateKind } from "../src/components/UpdateConfirm.js";`,
+  `export { appendLineTail, markSuccessStatus, markFailureStatus, markWarningStatus } from "../src/components/UpdateProgress.js";`,
   "",
 ].join("\n");
 writeFileSync(shimPath, shim, "utf-8");
@@ -38,7 +42,7 @@ const tscArgs = [
   "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
   "--moduleResolution", "bundler", "--jsx", "react",
   "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--rootDir", root,
 ];
 const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
 if (r.status !== 0) {
@@ -46,7 +50,7 @@ if (r.status !== 0) {
   process.exit(1);
 }
 const helpers = await import(
-  "file:///" + join(tmp, "out", "components", "_r196_updates_helpers.js").replace(/\\/g, "/")
+  "file:///" + join(tmp, "out", "tmp-r196-updates-tsc", "_r196_updates_helpers.js").replace(/\\/g, "/")
 );
 const { dismissAction, dismissChangelog, dismissUpdateCancel,
   updateConfirmResult, chooseUpdateKind,

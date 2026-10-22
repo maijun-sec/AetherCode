@@ -91,9 +91,27 @@ test("R169: commands.ts exposes agent-pick / effort-pick / cwd-pick", () => {
   assert.match(src, /"effort-pick"/);
   assert.match(src, /"cwd-pick"/);
   // SLASH_HELP strings.
-  assert.match(src, /\/agent-pick/);
-  assert.match(src, /\/effort-pick/);
-  assert.match(src, /\/cwd-pick/);
+  //
+  // R362: SLASH_HELP is no longer a hand-written literal. It is rendered at
+  // module-eval time from SLASH_COMMANDS_DETAILED + SLASH_COMMAND_GROUPS, so
+  // "/agent-pick" never appears as a source literal — the slash is added by
+  // the renderer at runtime. The assertion that actually matters is that each
+  // command is in the catalog AND assigned to a group, because that pair is
+  // exactly what renderSlashHelp walks.
+  const catalog = src.slice(
+    src.indexOf("export const SLASH_COMMANDS_DETAILED"),
+    src.indexOf("];", src.indexOf("export const SLASH_COMMANDS_DETAILED")),
+  );
+  const groups = src.slice(
+    src.indexOf("const SLASH_COMMAND_GROUPS"),
+    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
+  );
+  for (const cmd of ["agent-pick", "effort-pick", "cwd-pick"]) {
+    assert.ok(catalog.includes(`name: "${cmd}"`),
+      `${cmd} missing from the /help catalog`);
+    assert.ok(groups.includes(`"${cmd}"`),
+      `${cmd} missing from the /help group table`);
+  }
   // The cases themselves.
   assert.match(src, /case "agent-pick":/);
   assert.match(src, /case "effort-pick":/);

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * line-mode renderer (no Ink / no full-screen UI).
  *
  * R345 visual upgrade:
@@ -14,6 +14,7 @@ import * as readline from "node:readline";
 import { LineInput } from "./lineInput.js";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { handleSlash, SLASH_HELP } from "./commands.js";
+import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 
 export interface LineOptions {
   jar: string;
@@ -479,13 +480,11 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
         // Top border ╭─╮.
         out.push(border("\u256D", "\u252C", "\u256E", RULE_LIGHT));
         // Header row — bold + cyan, ┃ dividers, padding per align.
-        const renderCell = (content: string, w: number, align: "left" | "right" | "center" | null): string => {
-          const visible = stripAnsi(content);
-          const pad = w - visible.length;
-          const left = align === "right" ? pad : align === "center" ? Math.floor(pad / 2) : 0;
-          const right = align === "right" ? 0 : pad - left;
-          return " ".repeat(left) + content + " ".repeat(right);
-        };
+        const renderCell = (
+          content: string,
+          w: number,
+          align: "left" | "right" | "center" | null,
+        ): string => padCell(content, w, align);
         const headerRow =
           "  " +
           colorize("\u2503", C.dim, noColor) + " " +
@@ -646,6 +645,23 @@ function renderSplash(state: DisplayState, noColor: boolean): string {
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/**
+ * R362: pad a (possibly coloured) cell to `w` VISIBLE columns.
+ *
+ * Hoisted out of `renderInlineMarkdown` so the slash-command
+ * panels below build their tables from the exact same alignment
+ * primitive the GFM table renderer uses. One padder = the two
+ * surfaces cannot drift apart on padding rules, which is the
+ * failure mode that makes a "consistent" UI look inconsistent.
+ */
+function padCell(content: string, w: number, align: "left" | "right" | "center" | null = "left"): string {
+  const pad = w - stripAnsi(content).length;
+  if (pad <= 0) return content;
+  const left = align === "right" ? pad : align === "center" ? Math.floor(pad / 2) : 0;
+  const right = align === "right" ? 0 : pad - left;
+  return " ".repeat(left) + content + " ".repeat(right);
 }
 
 interface ToolTrack {
@@ -1354,6 +1370,1759 @@ async function pickMode(
   }
 }
 
+// =====================================================================
+//  R362 — slash-command panels for line mode.
+//
+//  Before this block `handlePrompt` had a five-way if-chain and a
+//  fallback that printed `slash.local` verbatim, so every sentinel
+//  it did not recognise reached the user as literal text —
+//  `__MEMORY_PANEL__:project` and friends. `SLASH_HELP` advertised
+//  all of them.
+//
+//  This is line mode's answer to the same contract tui.tsx answers
+//  with React components: no component tree, no hooks, no reducer —
+//  just RPC calls turned into framed text by `renderPanel`.
+//
+//  Three rules govern everything below:
+//
+//    1. NEVER print a `__X__` token. Every unknown token exits
+//       through `humanizeSentinelLine`, which asks the shared
+//       `panelIntents` registry for a sentence first.
+//    2. Reuse, don't reimplement. Selectors go through the
+//       existing `pickFromList`; alignment goes through the
+//       `padCell` the markdown table renderer uses; the box
+//       characters are the ones R358 already proved render in
+//       cmd.exe.
+//    3. Say the truth about missing data. When the daemon has no
+//       endpoint for a panel, name the endpoint and the reason.
+//       A blank is a bug; a sentence with the reason is a feature.
+// =====================================================================
+
+const PANEL_DEFAULT_W = 80;
+const PANEL_MIN_W = 56;
+const PANEL_MAX_W = 96;
+
+/** Terminal width for panels, clamped so tables never wrap. */
+function panelWidth(): number {
+  const cols = process.stdout.columns;
+  if (typeof cols !== "number" || !Number.isFinite(cols) || cols <= 0) return PANEL_DEFAULT_W;
+  return Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, Math.floor(cols)));
+}
+
+function clipCell(s: string, w: number): string {
+  const plain = stripAnsi(s);
+  if (plain.length <= w) return s;
+  if (w <= 1) return "\u2026";
+  return plain.slice(0, w - 1) + "\u2026";
+}
+
+function wrapText(s: string, w: number): string[] {
+  const out: string[] = [];
+  for (const para of s.split(/\r?\n/)) {
+    if (para.trim() === "") {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      if (line === "") {
+        line = word.length > w ? word.slice(0, w) : word;
+      } else if (line.length + 1 + word.length <= w) {
+        line += " " + word;
+      } else {
+        out.push(line);
+        line = word.length > w ? word.slice(0, w) : word;
+      }
+    }
+    if (line !== "") out.push(line);
+  }
+  return out;
+}
+
+/** `MM-DD HH:MM`, or an em dash when the timestamp is absent. */
+function fmtStamp(ts: unknown): string {
+  const n = typeof ts === "number" ? ts : Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "\u2014";
+  const d = new Date(n);
+  const p = (x: number): string => String(x).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** First present field out of `names` — RPC payload shapes drift
+ *  between daemon versions, so every read goes through this rather
+ *  than hard-coding one key and silently rendering a column of
+ *  em dashes when the daemon renames it. */
+function field(o: unknown, names: string[]): unknown {
+  if (!o || typeof o !== "object") return undefined;
+  const r = o as Record<string, unknown>;
+  for (const n of names) {
+    if (r[n] !== undefined && r[n] !== null) return r[n];
+  }
+  return undefined;
+}
+
+function fieldStr(o: unknown, names: string[], dflt: string = "\u2014"): string {
+  const v = field(o, names);
+  if (typeof v === "string") return v.length > 0 ? v : dflt;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return dflt;
+}
+
+/** Tolerant array unwrap: a bare array, or the usual envelope keys.
+ *
+ * R366: `projects` and `workflows` were missing from this list, so
+ * `panelCwdPick` and `panelWorkflow` both got `[]` from a SUCCESSFUL
+ * call and rendered an empty panel with no error anywhere. A picker
+ * that lists nothing is indistinguishable from a picker that has
+ * nothing to list.
+ *
+ * The keys are matched against what the daemon actually returns:
+ *   listSessions  -> { sessions: [...] }
+ *   listAgents    -> { ok, count, agents: [...] }
+ *   listProjects  -> { projects: [...], current }
+ *   listWorkflows -> { workflows: [...], count, dir }
+ *   grants/list   -> { grants: [...] }        (R367)
+ *
+ * `grants/list` is the sharp one. R367 made `grants/*` reachable for
+ * the first time, and `GrantHandlers.list` answers `{grants: [...]}`
+ * — NOT a bare array. Without "grants" in this list, `/consents`
+ * rendered an empty panel with "no stored grants" as its empty-state
+ * message and no error anywhere, even with grants on disk. So the fix
+ * that made the endpoint honest would have made the panel lie: before
+ * it, the user got an honest "endpoint missing" banner; after it, a
+ * confident empty list. Wiring is only half a feature.
+ *
+ * `r366-rpc-names.test.mjs` pins each of those five against this
+ * list, so a new envelope key has to be added here deliberately. */
+function asRows(v: unknown): unknown[] {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === "object") {
+    const r = v as Record<string, unknown>;
+    for (const k of ["items", "entries", "rows", "results", "sessions", "agents",
+                     "servers", "todos", "data", "projects", "workflows", "grants"]) {
+      if (Array.isArray(r[k])) return r[k] as unknown[];
+    }
+  }
+  return [];
+}
+
+// -------------------------------------------------------------------------
+//  Panel table primitives
+// -------------------------------------------------------------------------
+
+type PanelTone = "plain" | "strong" | "ok" | "warn" | "err" | "muted";
+
+interface PanelCell { text: string; tone?: PanelTone }
+
+interface PanelColumn {
+  header: string;
+  align?: "left" | "right";
+  /** Hard minimum visible width (default: the header's width, min 3). */
+  min?: number;
+  /** Hard maximum for a flexible column. */
+  max?: number;
+  /** Share of the leftover width. Default 1. */
+  flex?: number;
+}
+
+const PANEL_TONE_COLOR: Record<PanelTone, string> = {
+  plain: "",
+  strong: C.bold,
+  ok: C.green,
+  warn: C.yellowBright,
+  err: C.red,
+  muted: C.dim,
+};
+
+function tone(s: string, t: PanelTone, noColor: boolean): string {
+  const c = PANEL_TONE_COLOR[t];
+  return c ? colorize(s, c, noColor) : s;
+}
+
+/**
+ * Split the cell budget across the columns.
+ *
+ * Two kinds of column:
+ *   - fixed  (`flex` unset or 0): sized to its CONTENT, the same
+ *     way the GFM table renderer sizes columns (widest of header
+ *     and cells). A label column should not have to share space
+ *     with the prose beside it.
+ *   - flexible (`flex: n`): starts at its minimum and absorbs the
+ *     remaining width in proportion to `n`. This is the column
+ *     that gets clipped with an ellipsis, so it is the one the
+ *     author has decided can be truncated.
+ *
+ * Overhead is `3 * n + 2`: each column costs its own width plus a
+ * one-space gutter on each side plus the `│` separator
+ * (`n + (n + 1)` spaces/separators, `n + 2` for the leading indent
+ * and the two outer bars), which is exactly the width the box
+ * builder emits — so the frame and the rows always agree.
+ */
+function allocatePanelWidths(cols: PanelColumn[], rows: PanelCell[][], total: number): number[] {
+  const n = cols.length;
+  if (n === 0) return [];
+  const budget = Math.max(n * 3, total - (3 * n + 2));
+  // A single very long cell must not eat the table: cap any fixed
+  // column at half the budget.
+  const fixedCap = Math.max(12, Math.floor(budget / 2));
+
+  const isFixed = cols.map((c) => (c.flex ?? 0) <= 0);
+  const out = cols.map((c, i) => {
+    const lo = Math.max(3, c.min ?? stripAnsi(c.header).length);
+    const hi = c.max ?? Number.MAX_SAFE_INTEGER;
+    if (!isFixed[i]) return lo;
+    let natural = stripAnsi(c.header).length;
+    for (const r of rows) natural = Math.max(natural, stripAnsi(r[i]?.text ?? "").length);
+    return Math.max(lo, Math.min(hi, fixedCap, natural));
+  });
+
+  let used = out.reduce((a, b) => a + b, 0);
+  const flex = cols
+    .map((c, i) => ({ i, share: c.flex ?? 0, max: c.max ?? Number.MAX_SAFE_INTEGER }))
+    .filter((x) => x.share > 0 && out[x.i] < x.max);
+
+  if (used >= budget) {
+    // Over-subscribed: shave flexible columns first (they are the
+    // ones the author agreed can lose characters), then the fixed
+    // ones, and never below 3 so a column never collapses to `…`.
+    let overflow = used - budget;
+    for (const x of flex.slice().sort((a, b) => out[b.i] - out[a.i])) {
+      if (overflow <= 0) break;
+      const take = Math.min(overflow, out[x.i] - 3);
+      out[x.i] -= take;
+      overflow -= take;
+    }
+    for (let i = 0; i < out.length && overflow > 0; i++) {
+      if (!isFixed[i]) continue;
+      const take = Math.min(overflow, out[i] - 3);
+      out[i] -= take;
+      overflow -= take;
+    }
+    return out;
+  }
+
+  let leftover = budget - used;
+  const totalShare = flex.reduce((a, x) => a + x.share, 0) || 1;
+  for (const x of flex) {
+    const give = Math.max(0, Math.min(Math.floor((leftover * x.share) / totalShare), x.max - out[x.i]));
+    out[x.i] += give;
+    leftover -= give;
+  }
+  // Hand the integer-division remainder to whichever column still
+  // has room, so the table always fills the requested width.
+  for (const x of flex) {
+    if (leftover <= 0) break;
+    const give = Math.min(leftover, x.max - out[x.i]);
+    out[x.i] += give;
+    leftover -= give;
+  }
+  return out;
+}
+
+interface PanelOpts {
+  title: string;
+  subtitle?: string;
+  columns: PanelColumn[];
+  rows: PanelCell[][];
+  noColor: boolean;
+  width?: number;
+  /** Rendered inside the frame when `rows` is empty. */
+  empty?: string[];
+  /** Dim line printed under the box. */
+  hint?: string;
+  /** Right-aligned dim counter on the title line. */
+  note?: string;
+}
+
+/**
+ * Framed table. Same box vocabulary as the GFM table in
+ * `renderInlineMarkdown` (R358) so a slash-command panel and a
+ * markdown table in the same scrollback read as one system.
+ */
+function renderPanel(o: PanelOpts): string[] {
+  const nc = o.noColor;
+  const total = o.width ?? panelWidth();
+  const out: string[] = [];
+
+  // Title line — the heaviest weight in the block.
+  let head =
+    "  " + colorize("\u25B8 ", C.dim, nc) +
+    colorize(o.title, C.bold + C.cyanBright, nc);
+  if (o.subtitle) head += colorize("  \u00B7  " + o.subtitle, C.dim, nc);
+  if (o.note) {
+    const gap = total - stripAnsi(head).length - stripAnsi(o.note).length;
+    if (gap >= 2) head += " ".repeat(gap) + colorize(o.note, C.dim, nc);
+  }
+  out.push(head);
+
+  const width = allocatePanelWidths(o.columns, o.rows, total);
+  const bar = (l: string, mid: string, r: string): string =>
+    colorize("  " + l + width.map((w) => "\u2500".repeat(w + 2)).join(mid) + r, C.dim, nc);
+  const pipe = colorize("\u2503", C.dim, nc);
+
+  if (o.rows.length === 0) {
+    // Empty state: a single full-width cell. Drawing the column
+    // grid here would advertise headers ("# | status | item")
+    // that no row ever fills in, which reads as a broken table
+    // rather than an empty one. Same frame vocabulary, no columns.
+    const inner = Math.max(24, width.reduce((a, b) => a + b, 0) + 3 * (width.length - 1));
+    const fill = Math.max(0, total - 5);
+    out.push(colorize("  \u256D\u2500" + "\u2500".repeat(fill) + "\u2500\u256E", C.dim, nc));
+    for (const line of o.empty ?? []) {
+      out.push("  " + pipe + " " + colorize(clipCell(line, inner), C.dim, nc));
+    }
+    out.push(colorize("  \u2570" + "\u2500".repeat(fill) + "\u2500\u256F", C.dim, nc));
+    if (o.hint) out.push(colorize("    " + o.hint, C.dim, nc));
+    return out;
+  }
+
+  out.push(bar("\u256D", "\u252C", "\u256E"));
+  out.push(
+    "  " + pipe + " " +
+    o.columns
+      .map((c, i) => padCell(colorize(c.header, C.bold + C.cyan, nc), width[i], c.align))
+      .join(" " + pipe + " ") +
+    " " + pipe,
+  );
+  out.push(bar("\u251C", "\u253C", "\u2524"));
+
+  for (const row of o.rows) {
+    const cells = o.columns.map((c, i) => {
+      const cell = row[i] ?? { text: "" };
+      const text = clipCell(cell.text, width[i]);
+      return padCell(tone(text, cell.tone ?? "plain", nc), width[i], c.align);
+    });
+    out.push("  " + pipe + " " + cells.join(" " + pipe + " ") + " " + pipe);
+  }
+
+  out.push(bar("\u2570", "\u2534", "\u256F"));
+  if (o.hint) out.push(colorize("    " + o.hint, C.dim, nc));
+  return out;
+}
+
+/** One-line verdict for a failed probe. "not implemented" and
+ *  "no answer" are different diagnoses and the user can act on
+ *  them differently, so they must not collapse into one string. */
+function probeStatus(r: ProbeResult): string {
+  if (r.missing) return "not implemented by this daemon";
+  if (/timed?\s*out|timeout/i.test(r.reason)) return `no answer within ${PANEL_PROBE_TIMEOUT_MS / 1000}s`;
+  return "the daemon returned an error";
+}
+
+/**
+ * "the daemon has no endpoint for this" panel. Names the endpoint
+ * that is missing so the gap is actionable instead of mysterious.
+ */
+function panelMissingEndpoint(
+  nc: boolean,
+  o: { title: string; subtitle?: string; endpoint: string; instead: string[]; hint?: string; status?: string },
+): string[] {
+  return renderPanel({
+    title: o.title,
+    subtitle: o.subtitle,
+    noColor: nc,
+    columns: [
+      { header: "endpoint", min: 9 },
+      { header: "status", flex: 1 },
+    ],
+    rows: [
+      [{ text: o.endpoint, tone: "strong" }, { text: o.status ?? "not available", tone: "err" }],
+      [{ text: "use instead", tone: "muted" }, { text: o.instead[0] ?? "", tone: "plain" }],
+      ...o.instead.slice(1).map((line): PanelCell[] => [
+        { text: "", tone: "plain" },
+        { text: line, tone: "plain" },
+      ]),
+    ],
+    hint: o.hint,
+  });
+}
+
+/**
+ * "line mode cannot do this" panel. Carries the reason and the
+ * concrete alternative so the user is never left guessing.
+ */
+function panelUnavailable(
+  nc: boolean,
+  o: { title: string; subtitle?: string; reason: string; instead: string[] },
+): string[] {
+  return renderPanel({
+    title: o.title,
+    subtitle: o.subtitle,
+    noColor: nc,
+    columns: [
+      { header: "line mode", min: 10 },
+      { header: "detail", flex: 1 },
+    ],
+    rows: [
+      [{ text: "not available", tone: "warn" }, { text: o.reason, tone: "plain" }],
+      ...o.instead.map((line): PanelCell[] => [
+        { text: "", tone: "plain" },
+        { text: line, tone: "plain" },
+      ]),
+    ],
+    hint: "run `ac-tui` without --line for the full panel",
+  });
+}
+
+/** Pre-formatted multi-line text (bank reports, audit summaries). */
+function panelReport(
+  nc: boolean,
+  o: { title: string; subtitle?: string; text: string; hint?: string },
+): string[] {
+  const width = panelWidth();
+  const inner = Math.max(24, width - 8);
+  const body = wrapText(o.text, inner);
+  return renderPanel({
+    title: o.title,
+    subtitle: o.subtitle,
+    noColor: nc,
+    columns: [{ header: "", min: inner }],
+    rows: body.map((line): PanelCell[] => [{ text: line, tone: line ? "plain" : "muted" }]),
+    hint: o.hint,
+  });
+}
+
+/**
+ * One RPC call, normalised. `missing` is the signal that the
+ * method is not registered at all (JSON-RPC -32601), which is a
+ * different user-facing story from "the call failed".
+ *
+ * Deliberately a flat object rather than a discriminated union:
+ * every caller wants `reason` / `missing` on the failure branch
+ * and `value` on the success branch, and a union forces TS's
+ * control-flow narrowing to survive every intervening closure.
+ * A flat shape keeps the 16 call sites readable and immune to
+ * which `tsc` flags the caller happens to compile with.
+ */
+interface ProbeResult {
+  ok: boolean;
+  value: unknown;
+  reason: string;
+  missing: boolean;
+}
+
+/**
+ * Ceiling on a single panel probe. The daemon is supposed to
+ * answer an unknown method with -32601, but a method it *routes*
+ * to a subsystem that is down (the MCP servers, the updater) can
+ * simply never reply. A panel must never hang the prompt on that,
+ * so every probe is bounded and reported as a timeout.
+ */
+const PANEL_PROBE_TIMEOUT_MS = 8000;
+
+async function probe(ctx: PanelCtx, method: string, params?: RpcValue): Promise<ProbeResult> {
+  try {
+    const value = await ctx.client.request<unknown>(method, params, {
+      timeoutMs: PANEL_PROBE_TIMEOUT_MS,
+    });
+    return { ok: true, value, reason: "", missing: false };
+  } catch (e) {
+    const reason = (e as Error)?.message ?? String(e);
+    return {
+      ok: false,
+      value: undefined,
+      reason,
+      missing: /-32601|method not found|not implemented/i.test(reason),
+    };
+  }
+}
+
+/**
+ * Run a list picker after a panel, then act on the choice.
+ *
+ * `pickFromList` returns `null` for two very different reasons —
+ * the user pressed Esc, or stdin is not a TTY (piped / CI). They
+ * get different messages: a cancel is the user's choice, a
+ * non-TTY stdin is a capability the user needs told about.
+ */
+async function choose<T>(
+  ctx: PanelCtx,
+  o: { options: { label: string; value: T }[]; initial: number; title: string; alt: string },
+): Promise<T | null> {
+  if (o.options.length === 0) {
+    ctx.logAbove(colorize("  nothing to choose from", C.dim, ctx.noColor));
+    return null;
+  }
+  const pick = await runPicker(() =>
+    pickFromList(
+      ctx.lineInput,
+      o.options,
+      o.initial,
+      o.title,
+      "\u2191/\u2193 move  \u00B7  Enter select  \u00B7  Esc cancel",
+      ctx.noColor,
+    ),
+  );
+  if (pick) return pick.value;
+  ctx.logAbove(
+    colorize(
+      process.stdout.isTTY
+        ? "  (\u00B7 cancelled)"
+        : `  (\u00B7 picker needs an interactive terminal \u2014 ${o.alt})`,
+      C.dim,
+      ctx.noColor,
+    ),
+  );
+  return null;
+}
+
+/** Ping a no-op so the input area repaints after a picker. */
+function repaint(ctx: PanelCtx): void {
+  ctx.repaint();
+}
+
+// -------------------------------------------------------------------------
+//  Panel context
+// -------------------------------------------------------------------------
+
+type LineTurn = { id: number; role: "user" | "assistant"; text: string; ts: number };
+
+interface LineTodo {
+  id: string;
+  title: string;
+  status: string;
+  owner?: string;
+  detail?: string;
+}
+
+interface LineNotice {
+  ts: number;
+  level: "info" | "warn" | "err";
+  source: string;
+  text: string;
+}
+
+interface PanelCtx {
+  client: JsonRpcClient;
+  noColor: boolean;
+  lineInput: LineInput;
+  logAbove: (text: string) => void;
+  repaint: () => void;
+  sessionId: string;
+  cwd: string;
+  /** Live snapshot the splash / status surfaces read from. */
+  state: DisplayState;
+  /** Live references owned by `runLineMode`. */
+  todos: LineTodo[];
+  notices: LineNotice[];
+  turns: LineTurn[];
+  snippets: Map<string, string>;
+  bookmarks: Set<number>;
+}
+
+function emitPanel(ctx: PanelCtx, lines: string[]): void {
+  for (const l of lines) ctx.logAbove(l);
+}
+
+// -------------------------------------------------------------------------
+//  /memory  and  /memory-edit
+// -------------------------------------------------------------------------
+
+function memorySummary(e: unknown): string {
+  const k = fieldStr(e, ["key"], "");
+  const v = fieldStr(e, ["value", "text", "description", "message"], "");
+  if (k !== "" && v !== "") return `${k} = ${v}`;
+  return v;
+}
+
+async function panelMemory(ctx: PanelCtx, scopeRaw: string): Promise<void> {
+  const nc = ctx.noColor;
+  const scopes = ["global", "project", "session"];
+  const asked = scopes.includes(scopeRaw) ? scopeRaw : "project";
+
+  const lists = await Promise.all(
+    scopes.map(async (scope) => {
+      const r = await probe(ctx, "memory/list", { scope, sessionId: ctx.sessionId } as RpcValue);
+      return { scope, entries: r.ok ? asRows(field(r.value, ["entries", "items"])) : [] };
+    }),
+  );
+  const counts = lists.map((l) => `${l.scope} ${l.entries.length}`);
+  const active = lists.find((l) => l.scope === asked);
+
+  const SHOWN = 40;
+  const rows: PanelCell[][] = (active?.entries ?? [])
+    .slice(0, SHOWN)
+    .map((e, i) => [
+      { text: String(i + 1), tone: "muted" },
+      { text: fieldStr(e, ["kind"]), tone: "strong" },
+      { text: fieldStr(e, ["source"]), tone: "muted" },
+      { text: memorySummary(e), tone: "plain" },
+      { text: fmtStamp(field(e, ["ts", "createdAt", "timestamp"])), tone: "muted" },
+    ]);
+
+  const total = active?.entries.length ?? 0;
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "memory",
+      subtitle: `${asked} layer`,
+      note: counts.join("  \u00B7  "),
+      noColor: nc,
+      columns: [
+        { header: "#", align: "right", min: 2 },
+        { header: "kind", min: 5 },
+        { header: "source", min: 5 },
+        { header: "entry", flex: 3 },
+        { header: "updated", min: 11 },
+      ],
+      rows,
+      empty: [
+        `counts \u2014 ${counts.join("  \u00B7  ")}`,
+        "",
+        `nothing in the ${asked} layer yet. the daemon appends entries as the model`,
+        "calls its memory tools (fact / rule / change / breadcrumb), and the",
+        "extractor promotes them at turn end \u2014 nothing to configure up front.",
+      ],
+      hint: rows.length < total ? `showing ${rows.length} of ${total}` : undefined,
+    }),
+  );
+}
+
+function panelMemoryEdit(ctx: PanelCtx): void {
+  emitPanel(
+    ctx,
+    panelUnavailable(ctx.noColor, {
+      title: "memory editor",
+      subtitle: "add / edit / remove a single entry",
+      reason: "there is no update or delete RPC on memory/* \u2014 only append, get and list.",
+      instead: [
+        "/memory           list entries per layer",
+        "/memory-compact   let the daemon compress the change log",
+        "memory tools      ask the model to remember / forget something",
+      ],
+    }),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /mcp  /mcp-login  /mcp-reconnect
+// -------------------------------------------------------------------------
+
+async function panelMcp(
+  ctx: PanelCtx,
+  action: "view" | "login" | "reconnect",
+  target: string,
+): Promise<void> {
+  const nc = ctx.noColor;
+  const spec =
+    action === "login"
+      ? { endpoint: "mcp/login", params: { name: target }, subtitle: target === "" ? "login" : `login \u00B7 ${target}` }
+      : action === "reconnect"
+        ? { endpoint: "mcp/reconnect", params: target === "" ? {} : { name: target }, subtitle: target === "" ? "reconnect all" : `reconnect \u00B7 ${target}` }
+        : { endpoint: "mcp/listServers", params: undefined, subtitle: "servers and tools" };
+
+  const r = await probe(ctx, spec.endpoint, spec.params as RpcValue | undefined);
+
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: action === "view" ? "MCP servers and their tools" : `MCP ${action}`,
+        subtitle: spec.subtitle,
+        endpoint: spec.endpoint,
+        status: probeStatus(r),
+        instead: [
+          `the daemon answered: ${r.reason}`,
+          action === "view"
+            ? "mcp.json is still read from disk \u2014 edit it directly to add a server."
+            : "restart the daemon after editing mcp.json to pick the change up.",
+        ],
+      }),
+    );
+    return;
+  }
+
+  if (action !== "view") {
+    emitPanel(
+      ctx,
+      renderPanel({
+        title: `MCP ${action}`,
+        subtitle: spec.subtitle,
+        noColor: nc,
+        columns: [{ header: "endpoint", min: 14 }, { header: "result", flex: 1 }],
+        rows: [[{ text: spec.endpoint, tone: "strong" }, { text: "accepted", tone: "ok" }]],
+        hint: "re-run /mcp to see the refreshed server list",
+      }),
+    );
+    return;
+  }
+
+  const servers = asRows(r.value);
+  const rows: PanelCell[][] = servers.map((s) => {
+    const tools = asRows(field(s, ["tools", "capabilities"]));
+    const status = fieldStr(s, ["status", "state", "connected"], "unknown");
+    const tone: PanelTone =
+      /connected|ready|ok/i.test(status) ? "ok" : /error|fail|disconn/i.test(status) ? "err" : "warn";
+    return [
+      { text: fieldStr(s, ["name", "id", "server"]), tone: "strong" },
+      { text: status, tone },
+      { text: String(tools.length), align: "right", tone: "muted" },
+      { text: fieldStr(s, ["transport", "url", "command"]), tone: "muted" },
+    ];
+  });
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "MCP servers and their tools",
+      subtitle: "servers and tools",
+      noColor: nc,
+      columns: [
+        { header: "server", min: 10 },
+        { header: "status", min: 8 },
+        { header: "tools", align: "right", min: 5 },
+        { header: "transport", flex: 1 },
+      ],
+      rows,
+      empty: ["no servers registered \u2014 add one to mcp.json and restart the daemon"],
+    }),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /threads
+// -------------------------------------------------------------------------
+
+async function panelThreads(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "listSessions");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "session threads",
+        endpoint: "listSessions",
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`],
+      }),
+    );
+    return;
+  }
+  const sessions = asRows(r.value);
+  const idOf = (s: unknown): string => fieldStr(s, ["id", "sessionId", "engineId"]);
+  const rows: PanelCell[][] = sessions.map((s) => [
+    { text: idOf(s), tone: idOf(s) === ctx.sessionId ? "ok" : "plain" },
+    { text: fieldStr(s, ["state", "status"]), tone: "muted" },
+    { text: fieldStr(s, ["model"]), tone: "muted" },
+    { text: fieldStr(s, ["cwd", "project"]), tone: "muted" },
+    { text: fmtStamp(field(s, ["updatedAt", "lastActiveAt", "ts"])), tone: "muted" },
+  ]);
+  const live = sessions.filter((s) => idOf(s) === ctx.sessionId).length;
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "session threads",
+      subtitle: "switch the daemon to another thread",
+      note: `${sessions.length} known`,
+      noColor: nc,
+      columns: [
+        { header: "id", min: 8 },
+        { header: "state", min: 6 },
+        { header: "model", min: 8 },
+        { header: "cwd", flex: 2 },
+        { header: "last seen", min: 11 },
+      ],
+      rows,
+      empty: ["the daemon reports no sessions yet \u2014 start one with a prompt"],
+    }),
+  );
+  if (live === 0 && sessions.length > 0) {
+    ctx.logAbove(
+      colorize("    the current thread is not in this list; picking one will switch it", C.dim, nc),
+    );
+  }
+  const picked = await choose(ctx, {
+    options: sessions.map((s) => ({ label: `${idOf(s)}  ${fieldStr(s, ["state", "cwd"], "")}`, value: idOf(s) })),
+    initial: Math.max(0, sessions.findIndex((s) => idOf(s) === ctx.sessionId)),
+    title: "Switch session thread",
+    alt: "use `/session <id>` instead",
+  });
+  repaint(ctx);
+  if (picked === null) return;
+  const res = await probe(ctx, "loadSession", { id: picked } as RpcValue);
+  ctx.logAbove(
+    res.ok
+      ? colorize(`  \u2713 switched to session ${picked}`, C.green, nc)
+      : colorize(`  \u2717 loadSession failed: ${res.reason}`, C.red, nc),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /consents  (grants)
+// -------------------------------------------------------------------------
+
+async function panelConsents(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  // `grants/*` is the daemon's own surface; `permission/*` is the
+  // older alias the TUI's typed helper still speaks. Try both so
+  // the panel works against either daemon vintage.
+  let method = "grants/list";
+  let r = await probe(ctx, method);
+  if (!r.ok && r.missing) {
+    method = "permission/list";
+    r = await probe(ctx, method);
+  }
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "stored tool grants",
+        subtitle: "review and revoke",
+        endpoint: "grants/list, permission/list",
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`],
+      }),
+    );
+    return;
+  }
+  const grants = asRows(r.value);
+  const idOf = (g: unknown): string => fieldStr(g, ["id", "grantId"], "");
+  const rows: PanelCell[][] = grants.map((g) => {
+    const decision = fieldStr(g, ["decision"], "allow");
+    return [
+      { text: idOf(g), tone: "muted" },
+      { text: fieldStr(g, ["scope"]), tone: "muted" },
+      { text: fieldStr(g, ["category"]), tone: "strong" },
+      { text: decision, tone: decision === "deny" ? "err" : "ok" },
+      { text: fieldStr(g, ["reason", "tool"]), tone: "plain" },
+      { text: fmtStamp(field(g, ["createdAt", "ts"])), tone: "muted" },
+    ];
+  });
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "stored tool grants",
+      subtitle: "review and revoke",
+      note: `${grants.length} stored`,
+      noColor: nc,
+      columns: [
+        { header: "id", min: 6 },
+        { header: "scope", min: 6 },
+        { header: "category", min: 8 },
+        { header: "decision", min: 8 },
+        { header: "reason", flex: 2 },
+        { header: "created", min: 11 },
+      ],
+      rows,
+      empty: ["no stored grants \u2014 nothing has been auto-allowed yet"],
+      hint: "revoking re-prompts on the next matching tool call",
+    }),
+  );
+  const picked = await choose(ctx, {
+    options: grants.map((g) => ({
+      label: `${fieldStr(g, ["category"])}  ${fieldStr(g, ["decision"])}  ${fieldStr(g, ["reason", "tool"], "")}`,
+      value: idOf(g),
+    })),
+    initial: 0,
+    title: "Revoke a grant",
+    alt: "clear them all with /consents in the full TUI",
+  });
+  repaint(ctx);
+  if (picked === null) return;
+  const res = await probe(ctx, "grants/revoke", { id: picked } as RpcValue);
+  ctx.logAbove(
+    res.ok
+      ? colorize(`  \u2713 revoked ${picked}`, C.green, nc)
+      : colorize(`  \u2717 revoke failed: ${res.reason}`, C.red, nc),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /notifications
+// -------------------------------------------------------------------------
+
+const NOTICE_TONE: Record<LineNotice["level"], PanelTone> = {
+  info: "plain",
+  warn: "warn",
+  err: "err",
+};
+
+function panelNotifications(ctx: PanelCtx): void {
+  const nc = ctx.noColor;
+  const rows: PanelCell[][] = ctx.notices.slice(-40).reverse().map((n) => [
+    { text: fmtStamp(n.ts), tone: "muted" },
+    { text: n.level, tone: NOTICE_TONE[n.level] },
+    { text: n.source, tone: "muted" },
+    { text: n.text, tone: "plain" },
+  ]);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "notification center",
+      subtitle: "notices this session",
+      note: `${ctx.notices.length} captured`,
+      noColor: nc,
+      columns: [
+        { header: "time", min: 11 },
+        { header: "level", min: 5 },
+        { header: "source", min: 7 },
+        { header: "notice", flex: 3 },
+      ],
+      rows,
+      empty: [
+        "no notices captured this session.",
+        "",
+        "line mode records only what the daemon pushes (log / task_state /",
+        "a failed run). it cannot page or badge in the background the way the",
+        "full TUI does \u2014 this list is the audit trail for the current run.",
+      ],
+      hint: "kept in memory only \u2014 it is cleared when the TUI exits",
+    }),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /agent-pick
+// -------------------------------------------------------------------------
+
+async function panelAgentPick(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "listAgents");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "active agent",
+        endpoint: "listAgents",
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`, "/agents   list them as raw JSON"],
+      }),
+    );
+    return;
+  }
+  const agents = asRows(r.value);
+  const nameOf = (a: unknown): string => fieldStr(a, ["name", "id", "agent"], "");
+  const rows: PanelCell[][] = agents.map((a) => [
+    { text: nameOf(a), tone: "strong" },
+    { text: fieldStr(a, ["role", "kind"]), tone: "muted" },
+    { text: fieldStr(a, ["model"]), tone: "muted" },
+    { text: fieldStr(a, ["description", "summary"]), tone: "plain" },
+  ]);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "active agent",
+      subtitle: "pick the agent for this session",
+      note: `${agents.length} installed`,
+      noColor: nc,
+      columns: [
+        { header: "agent", min: 10 },
+        { header: "role", min: 6 },
+        { header: "model", min: 8 },
+        { header: "description", flex: 3 },
+      ],
+      rows,
+      empty: ["no agents installed \u2014 create one with /init"],
+    }),
+  );
+  const picked = await choose(ctx, {
+    options: agents.map((a) => ({ label: nameOf(a), value: nameOf(a) })),
+    initial: 0,
+    title: "Pick active agent",
+    alt: "use `/agent <name>` instead",
+  });
+  repaint(ctx);
+  if (picked === null) return;
+  const res = await probe(ctx, "agent/setDefault", { name: picked } as RpcValue);
+  ctx.logAbove(
+    res.ok
+      ? colorize(`  \u2713 default agent \u2192 ${picked}`, C.green, nc)
+      : colorize(`  \u2717 agent/setDefault failed: ${res.reason}`, C.red, nc),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /effort-pick
+// -------------------------------------------------------------------------
+
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh"] as const;
+
+const EFFORT_EFFECT: Record<string, string> = {
+  low: "fastest and cheapest; mechanical edits, lookups",
+  medium: "balanced \u2014 the default for most work",
+  high: "thorough; multi-file reasoning and architecture",
+  xhigh: "slowest, priciest; only for genuinely hard problems",
+};
+
+async function pickEffort(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const rows: PanelCell[][] = EFFORT_LEVELS.map((lv) => [
+    { text: lv, tone: "strong" },
+    { text: EFFORT_EFFECT[lv], tone: "muted" },
+  ]);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "reasoning effort",
+      subtitle: "how hard the model should think",
+      noColor: nc,
+      columns: [
+        { header: "level", min: 8 },
+        { header: "effect", flex: 1 },
+      ],
+      rows,
+      hint: "the engine records the level per run; /effort <level> sets it without a prompt",
+    }),
+  );
+  const picked = await choose(ctx, {
+    options: EFFORT_LEVELS.map((lv) => ({ label: `${lv}  \u2014  ${EFFORT_EFFECT[lv]}`, value: lv })),
+    initial: 1,
+    title: "Pick reasoning effort",
+    alt: "use `/effort low|medium|high|xhigh` instead",
+  });
+  repaint(ctx);
+  if (picked === null) return;
+  const res = await probe(ctx, "effort/set", { effort: picked } as RpcValue);
+  ctx.logAbove(
+    res.ok
+      ? colorize(`  \u2713 effort \u2192 ${picked}`, C.green, nc)
+      : colorize(`  \u2717 effort/set failed: ${res.reason}`, C.red, nc),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /cwd-pick
+// -------------------------------------------------------------------------
+
+async function panelCwdPick(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "listProjects");
+  const fromDaemon = r.ok ? asRows(r.value).map((p) => fieldStr(p, ["path", "cwd", "project", "id"], "")) : [];
+  const here = ctx.cwd || process.cwd();
+  const parent = here.replace(/[\\/]+$/, "").split(/[\\/]/).slice(0, -1).join("/") || "/";
+  const candidates = [...new Set([here, parent, process.env.HOME ?? "", ...fromDaemon])].filter(Boolean);
+
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "daemon working directory",
+      subtitle: "switch project",
+      note: `current ${here}`,
+      noColor: nc,
+      columns: [
+        { header: "path", flex: 1 },
+        { header: "", min: 4 },
+      ],
+      rows: candidates.map((c): PanelCell[] => [
+        { text: shortCwd(c, 60), tone: c === here ? "ok" : "plain" },
+        { text: c === here ? "here" : "", tone: "muted" },
+      ]),
+      empty: ["no candidates \u2014 pass an explicit path with `/cwd <path>`"],
+    }),
+  );
+  const picked = await choose(ctx, {
+    options: candidates.map((c) => ({ label: c, value: c })),
+    initial: 0,
+    title: "Switch daemon working directory",
+    alt: "use `/cwd <path>` instead",
+  });
+  repaint(ctx);
+  if (picked === null) return;
+  if (picked === here) {
+    ctx.logAbove(colorize("  \u00B7 already there", C.dim, nc));
+    return;
+  }
+  const res = await probe(ctx, "switchProject", { cwd: picked } as RpcValue);
+  if (res.ok) {
+    ctx.logAbove(colorize(`  \u2713 cwd \u2192 ${picked}`, C.green, nc));
+  } else {
+    ctx.logAbove(colorize(`  \u2717 switchProject failed: ${res.reason}`, C.red, nc));
+  }
+}
+
+// -------------------------------------------------------------------------
+//  /todos
+// -------------------------------------------------------------------------
+
+const TODO_TONE: Record<string, PanelTone> = {
+  completed: "ok",
+  in_progress: "warn",
+  cancelled: "muted",
+  pending: "muted",
+};
+
+const TODO_MARK: Record<string, string> = {
+  completed: "[x]",
+  in_progress: "[>]",
+  cancelled: "[-]",
+  pending: "[ ]",
+};
+
+function panelTodos(ctx: PanelCtx): void {
+  const nc = ctx.noColor;
+  const done = ctx.todos.filter((t) => t.status === "completed").length;
+  const rows: PanelCell[][] = ctx.todos.map((t, i) => [
+    { text: String(i + 1), align: "right", tone: "muted" },
+    { text: TODO_MARK[t.status] ?? "[ ]", tone: TODO_TONE[t.status] ?? "muted" },
+    { text: t.status.replace(/_/g, " "), tone: "muted" },
+    { text: t.title, tone: t.status === "in_progress" ? "strong" : "plain" },
+    { text: t.owner ?? "", tone: "muted" },
+  ]);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "TODO board",
+      subtitle: "the model's current plan",
+      note: ctx.todos.length > 0 ? `${done}/${ctx.todos.length} done` : undefined,
+      noColor: nc,
+      columns: [
+        { header: "#", align: "right", min: 2 },
+        { header: "", min: 3 },
+        { header: "status", min: 8 },
+        { header: "item", flex: 3 },
+        { header: "owner", min: 5 },
+      ],
+      rows,
+      empty: [
+        "no plan yet.",
+        "",
+        "the todo list is written by the model through its todo_write tool.",
+        "ask for a plan (\"draft a 4-step plan for X\") and it appears here as",
+        "the run progresses \u2014 the daemon re-sends the whole list on each",
+        "update, so this view is always the current snapshot.",
+      ],
+    }),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /workflow
+// -------------------------------------------------------------------------
+
+async function panelWorkflow(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "listWorkflows");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "workflow picker",
+        endpoint: "listWorkflows",
+        status: probeStatus(r),
+        instead: [
+          `the daemon answered: ${r.reason}`,
+          "/workflow <name>   run one by name without a picker",
+        ],
+      }),
+    );
+    return;
+  }
+  const flows = asRows(r.value);
+  const nameOf = (w: unknown): string => fieldStr(w, ["name", "id"], "");
+  const rows: PanelCell[][] = flows.map((w) => [
+    { text: nameOf(w), tone: "strong" },
+    { text: fieldStr(w, ["description", "summary"]), tone: "plain" },
+    { text: String(asRows(field(w, ["steps"])).length), align: "right", tone: "muted" },
+  ]);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "workflow picker",
+      subtitle: "run a workflow by name",
+      note: `${flows.length} defined`,
+      noColor: nc,
+      columns: [
+        { header: "workflow", min: 12 },
+        { header: "description", flex: 3 },
+        { header: "steps", align: "right", min: 5 },
+      ],
+      rows,
+      empty: ["no workflows defined \u2014 drop a .yaml under the workflows directory"],
+    }),
+  );
+  const picked = await choose(ctx, {
+    options: flows.map((w) => ({ label: nameOf(w), value: nameOf(w) })),
+    initial: 0,
+    title: "Run a workflow",
+    alt: "use `/workflow <name>` instead",
+  });
+  repaint(ctx);
+  if (picked === null) return;
+  const res = await probe(ctx, "runWorkflow", { name: picked } as RpcValue);
+  ctx.logAbove(
+    res.ok
+      ? colorize(`  \u2713 started workflow ${picked}`, C.green, nc)
+      : colorize(`  \u2717 workflow/run failed: ${res.reason}`, C.red, nc),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /update  /update-deps
+// -------------------------------------------------------------------------
+
+async function panelUpdate(ctx: PanelCtx, deps: boolean): Promise<void> {
+  const nc = ctx.noColor;
+  const endpoint = deps ? "update/refreshDeps" : "update/check";
+  const r = await probe(ctx, endpoint);
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: deps ? "dependency refresh" : "available update",
+        endpoint,
+        status: probeStatus(r),
+        instead: [
+          `the daemon answered: ${r.reason}`,
+          deps
+            ? "npm outdated   in the tui directory shows what moved"
+            : "npm outdated   in the tui directory shows what moved",
+        ],
+        hint: "line mode has no updater \u2014 it reports, it never writes",
+      }),
+    );
+    return;
+  }
+  const obj = (r.value ?? {}) as Record<string, unknown>;
+  const entries = Object.entries(obj).filter(([, v]) => typeof v !== "object" || v === null);
+  const rows: PanelCell[][] = entries.map(([k, v]) => [
+    { text: k, tone: "strong" },
+    { text: String(v), tone: /err|fail/i.test(String(v)) ? "err" : "plain" },
+  ]);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: deps ? "dependency refresh" : "available update",
+      subtitle: endpoint,
+      noColor: nc,
+      columns: [
+        { header: "field", min: 12 },
+        { header: "value", flex: 1 },
+      ],
+      rows,
+      empty: [`${endpoint} reported nothing to do`],
+    }),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  SDD family
+// -------------------------------------------------------------------------
+
+async function panelSddStatus(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "sdd.status");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "SDD run status",
+        endpoint: "sdd.status",
+        status: probeStatus(r),
+        instead: [
+          `the daemon answered: ${r.reason}`,
+          "/sdd <intent>   start a spec-driven run",
+        ],
+      }),
+    );
+    return;
+  }
+  const obj = (r.value ?? {}) as Record<string, unknown>;
+  const state = (field(obj, ["state", "run"]) ?? obj) as Record<string, unknown>;
+  const phase = fieldStr(state, ["phase", "currentPhase"], "not started");
+  const slug = fieldStr(state, ["slug", "id"], "");
+  const rows: PanelCell[][] = [
+    [{ text: "slug", tone: "muted" }, { text: slug, tone: "strong" }],
+    [{ text: "phase", tone: "muted" }, { text: phase, tone: "plain" }],
+    [{ text: "intent", tone: "muted" }, { text: fieldStr(state, ["intent", "title"]), tone: "plain" }],
+    [{ text: "updated", tone: "muted" }, { text: fmtStamp(field(state, ["updatedAt", "ts"])), tone: "muted" }],
+  ];
+  const history = asRows(field(state, ["history", "phases", "steps"]));
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "SDD run status",
+      subtitle: slug === "" ? "no active run" : slug,
+      noColor: nc,
+      columns: [
+        { header: "field", min: 9 },
+        { header: "value", flex: 1 },
+      ],
+      rows,
+      hint:
+        history.length > 0
+          ? undefined
+          : "/sdd-approve  approve the current phase  \u00B7  /sdd-modify <note>  send feedback",
+    }),
+  );
+  for (const h of history.slice(-8)) {
+    ctx.logAbove(
+      "  " +
+        colorize("\u2503 ", C.dim, nc) +
+        colorize(
+          `${fieldStr(h, ["phase", "name"], "?")}  ${fieldStr(h, ["status", "decision"], "")}`,
+          C.dim,
+          nc,
+        ),
+    );
+  }
+}
+
+async function panelSddAction(
+  ctx: PanelCtx,
+  o: { title: string; method: string; params: RpcValue },
+): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, o.method, o.params);
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: o.title,
+        endpoint: o.method,
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`],
+      }),
+    );
+    return;
+  }
+  const obj = (r.value ?? {}) as Record<string, unknown>;
+  const ok = field(obj, ["ok"]) !== false;
+  ctx.logAbove(
+    ok
+      ? colorize(`  \u2713 ${o.title} \u2014 ${fieldStr(obj, ["state", "phase", "status"], "accepted")}`, C.green, nc)
+      : colorize(`  \u2717 ${o.title} \u2014 ${fieldStr(obj, ["error"], "rejected")}`, C.red, nc),
+  );
+}
+
+// -------------------------------------------------------------------------
+//  /bank-stats  /bank-recall  /memory-audit
+//
+//  The bank lives in a separate process, so these three read it
+//  directly out of `aethercode-memory` exactly as tui.tsx does —
+//  no JSON-RPC hop.
+// -------------------------------------------------------------------------
+
+async function panelBank(ctx: PanelCtx, recall: boolean, kind: string, n: number): Promise<void> {
+  const nc = ctx.noColor;
+  try {
+    const mod = (await import("aethercode-memory")) as unknown as {
+      readBankStats?: () => Promise<{ text?: string }>;
+      readBankRecall?: (kind: string, n: number) => Promise<{ text?: string }>;
+    };
+    const summary = recall
+      ? await mod.readBankRecall!(kind, n)
+      : await mod.readBankStats!();
+    emitPanel(
+      ctx,
+      panelReport(nc, {
+        title: recall ? "bank recall" : "strategy bank",
+        subtitle: recall ? `${kind} \u00B7 top ${n}` : "size and per-kind outcomes",
+        text: summary?.text ?? "(no report)",
+      }),
+    );
+  } catch (e) {
+    emitPanel(
+      ctx,
+      panelReport(nc, {
+        title: recall ? "bank recall" : "strategy bank",
+        text: `error \u2014 ${(e as Error).message}`,
+        hint: "the bank server lives beside the daemon; is it running?",
+      }),
+    );
+  }
+}
+
+async function panelMemoryAudit(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  try {
+    const mod = (await import("aethercode-memory")) as unknown as {
+      auditSelfEval?: () => Promise<{ text?: string }>;
+    };
+    const summary = await mod.auditSelfEval!();
+    emitPanel(
+      ctx,
+      panelReport(nc, {
+        title: "memory audit",
+        subtitle: "cross-process self-eval",
+        text: summary?.text ?? "(no report)",
+      }),
+    );
+  } catch (e) {
+    emitPanel(
+      ctx,
+      panelReport(nc, {
+        title: "memory audit",
+        text: `error \u2014 ${(e as Error).message}`,
+        hint: "the bank server lives beside the daemon; is it running?",
+      }),
+    );
+  }
+}
+
+// -------------------------------------------------------------------------
+//  /tutorial  /bookmark  /snippet
+// -------------------------------------------------------------------------
+
+function panelTutorial(ctx: PanelCtx): void {
+  const nc = ctx.noColor;
+  emitPanel(ctx, renderSplash(ctx.state, nc).split("\n"));
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "quick reference",
+      subtitle: "the commands worth memorising",
+      noColor: nc,
+      columns: [
+        { header: "key", min: 12 },
+        { header: "does", flex: 1 },
+      ],
+      rows: [
+        [{ text: "/help", tone: "strong" }, { text: "every slash command, grouped", tone: "plain" }],
+        [{ text: "/mode", tone: "strong" }, { text: "pick the permission mode (arrow keys)", tone: "plain" }],
+        [{ text: "/memory", tone: "strong" }, { text: "browse the 3-layer memory", tone: "plain" }],
+        [{ text: "/todos", tone: "strong" }, { text: "the model's current plan", tone: "plain" }],
+        [{ text: "/threads", tone: "strong" }, { text: "switch session thread", tone: "plain" }],
+        [{ text: "/consents", tone: "strong" }, { text: "review and revoke stored tool grants", tone: "plain" }],
+        [{ text: "/export md", tone: "strong" }, { text: "write this session to markdown", tone: "plain" }],
+        [{ text: "/exit", tone: "strong" }, { text: "leave (Ctrl+C works too)", tone: "plain" }],
+      ],
+      hint: "line mode is the cmd.exe path: no full-screen UI, same daemon",
+    }),
+  );
+}
+
+function panelBookmark(ctx: PanelCtx, target: string): void {
+  const nc = ctx.noColor;
+  const assistantTurns = ctx.turns.filter((t) => t.role === "assistant");
+  if (assistantTurns.length === 0) {
+    ctx.logAbove(colorize("  nothing to bookmark yet \u2014 let one turn complete first", C.dim, nc));
+    return;
+  }
+  const idx = target === "" ? assistantTurns.length : Number(target);
+  if (!Number.isInteger(idx) || idx < 1 || idx > assistantTurns.length) {
+    emitPanel(
+      ctx,
+      renderPanel({
+        title: "bookmark",
+        subtitle: `/bookmark ${target}`,
+        noColor: nc,
+        columns: [{ header: "field", min: 8 }, { header: "value", flex: 1 }],
+        rows: [
+          [{ text: "turn", tone: "muted" }, { text: target, tone: "err" }],
+          [{ text: "valid", tone: "muted" }, { text: `1 \u2013 ${assistantTurns.length} assistant turns`, tone: "plain" }],
+        ],
+        hint: "/bookmark with no argument marks the most recent turn",
+      }),
+    );
+    return;
+  }
+  const turn = assistantTurns[idx - 1];
+  const wasSet = ctx.bookmarks.has(turn.id);
+  if (wasSet) ctx.bookmarks.delete(turn.id);
+  else ctx.bookmarks.add(turn.id);
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "bookmark",
+      subtitle: wasSet ? "removed" : "marked",
+      noColor: nc,
+      columns: [
+        { header: "turn", min: 6 },
+        { header: "when", min: 11 },
+        { header: "first line", flex: 2 },
+      ],
+      rows: [[
+        { text: `${idx}/${assistantTurns.length}`, tone: "strong" },
+        { text: fmtStamp(turn.ts), tone: "muted" },
+        { text: turn.text.replace(/\s+/g, " ").trim(), tone: "plain" },
+      ]],
+      hint: wasSet
+        ? "removed"
+        : "line mode keeps bookmarks for this session only \u2014 run /bookmark <n> again to clear",
+    }),
+  );
+}
+
+function panelSnippet(ctx: PanelCtx, op: string, name: string): void {
+  const nc = ctx.noColor;
+  switch (op) {
+    case "list": {
+      const names = [...ctx.snippets.keys()].sort();
+      emitPanel(
+        ctx,
+        renderPanel({
+          title: "snippets",
+          subtitle: "saved this session",
+          note: `${names.length} saved`,
+          noColor: nc,
+          columns: [
+            { header: "name", min: 12 },
+            { header: "body", flex: 3 },
+          ],
+          rows: names.map((n): PanelCell[] => [
+            { text: n, tone: "strong" },
+            { text: ctx.snippets.get(n)!.replace(/\s+/g, " ").trim(), tone: "plain" },
+          ]),
+          empty: [
+            "no snippets saved this session.",
+            "",
+            "/snippet save <name>   stores the last assistant turn",
+            "/snippet load <name>   prints it back",
+          ],
+        }),
+      );
+      return;
+    }
+    case "save": {
+      const last = [...ctx.turns].reverse().find((t) => t.role === "assistant" && t.text.trim().length > 0);
+      if (!last) {
+        ctx.logAbove(colorize("  nothing to save yet \u2014 let one turn complete first", C.dim, nc));
+        return;
+      }
+      ctx.snippets.set(name, last.text);
+      ctx.logAbove(
+        colorize(`  \u2713 snippet \u201c${name}\u201d \u2192 ${last.text.length} chars from the last reply`, C.green, nc),
+      );
+      return;
+    }
+    case "load": {
+      const body = ctx.snippets.get(name);
+      if (body === undefined) {
+        ctx.logAbove(colorize(`  \u2717 no snippet \u201c${name}\u201d \u2014 /snippet list`, C.red, nc));
+        return;
+      }
+      ctx.logAbove(renderInlineMarkdown(body, nc));
+      return;
+    }
+    case "delete": {
+      if (!ctx.snippets.delete(name)) {
+        ctx.logAbove(colorize(`  \u2717 no snippet \u201c${name}\u201d \u2014 /snippet list`, C.red, nc));
+        return;
+      }
+      ctx.logAbove(colorize(`  \u2713 deleted snippet \u201c${name}\u201d`, C.green, nc));
+      return;
+    }
+    default:
+      ctx.logAbove(colorize(`  unknown snippet op: ${op}`, C.red, nc));
+  }
+}
+
+// -------------------------------------------------------------------------
+//  Sentinel dispatch
+// -------------------------------------------------------------------------
+
+/** `__MEMORY_PANEL__:project` -> `__MEMORY_PANEL__` / `project`. */
+function splitSentinel(local: string): { base: string; payload: string } {
+  const i = local.indexOf(":");
+  return i < 0 ? { base: local, payload: "" } : { base: local.slice(0, i), payload: local.slice(i + 1) };
+}
+
+/** Only `__X__`-shaped tokens get sanitised; see the fallback. */
+const SENTINEL_SHAPE = /^__[A-Z_0-9]+__(?::|$)/;
+
+/**
+ * The last-resort branch.
+ *
+ * `handleSlash` overloads `local` for two different things: an
+ * internal sentinel (`__MEMORY_PANEL__:project`) AND a
+ * user-facing sentence (`usage: /model <name>`). So this only
+ * rewrites tokens that actually look like sentinels and passes
+ * every other string through verbatim — otherwise we would
+ * "sanitise" the usage text into noise.
+ */
+/**
+ * panelIntents.ts's separator was round-tripped through a GBK
+ * decode: the em dash in `describeSentinel` landed in the source
+ * as U+9225 followed by a literal "?" (its own comments use
+ * U+922B for the same original character, so the corruption is not
+ * even self-consistent). Normalise it here rather than editing the
+ * shared registry, which another change owns.
+ *
+ * Replacement is `U+9225 + "?" -> em dash + space`, because the
+ * registry emits a space BEFORE the dash and none after it.
+ */
+const MOJIBAKE_DASH = "\u9225?";
+
+function humanizeSentinelLine(local: string, noColor: boolean): string {
+  if (!SENTINEL_SHAPE.test(local)) {
+    return colorize(local, C.dim, noColor);
+  }
+  const { base, payload } = splitSentinel(local);
+  const sentence = describeSentinel(base, "line").split(MOJIBAKE_DASH).join("\u2014 ");
+  const where = payload === "" || intentForSentinel(base) === undefined
+    ? ""
+    : `  (${payload})`;
+  return colorize("  \u00B7 " + sentence + where, C.dim, noColor);
+}
+
+/**
+ * Route one sentinel token to a line-mode renderer.
+ *
+ * Returns `false` for anything this block does not own, which is
+ * the caller's signal to fall back to `humanizeSentinelLine`.
+ * The `base` comparison is exhaustive against the token set in
+ * `commands.ts`; unknown tokens fall through so a future command
+ * degrades to a sentence instead of a raw token.
+ */
+async function renderPanelSentinel(
+  ctx: PanelCtx,
+  local: string,
+  rpcParams: RpcValue | undefined,
+): Promise<boolean> {
+  const { base, payload } = splitSentinel(local);
+  const nc = ctx.noColor;
+
+  switch (base) {
+    // --- context -----------------------------------------------------
+    case "__MEMORY_PANEL__":
+      await panelMemory(ctx, payload || "project");
+      return true;
+    case "__MEMORY_EDIT__":
+      panelMemoryEdit(ctx);
+      return true;
+
+    // --- session -----------------------------------------------------
+    case "__THREAD_SELECTOR__":
+      await panelThreads(ctx);
+      return true;
+    case "__TODO_BOARD__":
+      panelTodos(ctx);
+      return true;
+
+    // --- config ------------------------------------------------------
+    case "__AGENT_PICK__":
+      await panelAgentPick(ctx);
+      return true;
+    case "__EFFORT_PICK__":
+      await pickEffort(ctx);
+      return true;
+    case "__CWD_PICK__":
+      await panelCwdPick(ctx);
+      return true;
+    case "__GRANTS_MANAGER__":
+      await panelConsents(ctx);
+      return true;
+    case "__NOTIFICATION_CENTER__":
+      panelNotifications(ctx);
+      return true;
+
+    // --- mcp ---------------------------------------------------------
+    case "__MCP_VIEWER__":
+      await panelMcp(ctx, "view", "");
+      return true;
+    case "__MCP_LOGIN__":
+      await panelMcp(ctx, "login", payload);
+      return true;
+    case "__MCP_RECONNECT__":
+      await panelMcp(ctx, "reconnect", payload);
+      return true;
+
+    // --- workflow ----------------------------------------------------
+    case "__WORKFLOW_PICKER__":
+      await panelWorkflow(ctx);
+      return true;
+
+    // --- system ------------------------------------------------------
+    case "__UPDATE_AVAILABLE__":
+      await panelUpdate(ctx, false);
+      return true;
+    case "__UPDATE_INSTALL__":
+      await panelUpdate(ctx, false);
+      return true;
+    case "__UPDATE_DEPS__":
+      await panelUpdate(ctx, true);
+      return true;
+
+    // --- SDD ---------------------------------------------------------
+    case "__SDD_STATUS__":
+      await panelSddStatus(ctx);
+      return true;
+    case "__SDD_START__":
+      await panelSddAction(ctx, {
+        title: "sdd start",
+        method: "sdd.start",
+        params: (rpcParams ?? { intent: payload }) as RpcValue,
+      });
+      return true;
+    case "__SDD_ADVANCE__":
+      await panelSddAction(ctx, {
+        title: `sdd ${payload || "advance"}`,
+        method: "sdd.advance",
+        params: (rpcParams ?? { action: payload }) as RpcValue,
+      });
+      return true;
+    case "__SDD_ABORT__":
+      await panelSddAction(ctx, { title: "sdd abort", method: "sdd.abort", params: {} as RpcValue });
+      return true;
+    case "__SDD_VIEW__":
+    case "__SDD_DIFF__":
+    case "__SDD_SNAPSHOT__":
+    case "__SDD_CLEAR_CACHE__": {
+      const what =
+        base === "__SDD_DIFF__" ? "diff a phase" :
+        base === "__SDD_SNAPSHOT__" ? "snapshot a phase" :
+        base === "__SDD_CLEAR_CACHE__" ? "clear the phase cache" :
+        "view a phase";
+      emitPanel(
+        ctx,
+        panelUnavailable(nc, {
+          title: `SDD ${base === "__SDD_CLEAR_CACHE__" ? "cache" : "phase"}`,
+          subtitle: what,
+          reason: `\`${what}\` reads and writes spec files under the run directory, which only the full TUI's file actions do.`,
+          instead: ["/sdd-status   read the run state the daemon already tracks"],
+        }),
+      );
+      return true;
+    }
+
+    // --- bank / audit ------------------------------------------------
+    case "__BANK_STATS__":
+      await panelBank(ctx, false, "", 0);
+      return true;
+    case "__BANK_RECALL__": {
+      const i = payload.lastIndexOf(":");
+      const kind = i >= 0 ? payload.slice(0, i) : payload;
+      const n = i >= 0 ? Math.max(1, Number(payload.slice(i + 1)) || 3) : 3;
+      await panelBank(ctx, true, kind, n);
+      return true;
+    }
+    case "__MEMORY_AUDIT__":
+      await panelMemoryAudit(ctx);
+      return true;
+
+    // --- local conveniences -------------------------------------------
+    case "__TUTORIAL__":
+      panelTutorial(ctx);
+      return true;
+    case "__BOOKMARK_LAST__":
+      panelBookmark(ctx, "");
+      return true;
+    case "__BOOKMARK__":
+      panelBookmark(ctx, payload);
+      return true;
+    case "__SNIPPET_LIST__":
+      panelSnippet(ctx, "list", "");
+      return true;
+    case "__SNIPPET_SAVE__":
+      panelSnippet(ctx, "save", payload);
+      return true;
+    case "__SNIPPET_LOAD__":
+      panelSnippet(ctx, "load", payload);
+      return true;
+    case "__SNIPPET_DELETE__":
+      panelSnippet(ctx, "delete", payload);
+      return true;
+
+    // --- Ink-only surfaces line mode has no concept of ----------------
+    case "__THEMES_PICK__":
+    case "__THEME__":
+    case "__LAYOUT__":
+    case "__BUDGET__":
+      emitPanel(
+        ctx,
+        panelUnavailable(nc, {
+          title: base.replace(/^__|__$/g, "").replace(/_/g, " ").toLowerCase(),
+          subtitle: payload || undefined,
+          reason: "line mode's palette is fixed at startup \u2014 there is no theme, layout or budget state to change here.",
+          instead: ["/mode   permission mode does change in line mode"],
+        }),
+      );
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 export async function runLineMode(opts: LineOptions): Promise<number> {
   const noColor = opts.noColor || !process.stdout.isTTY;
   const client = new JsonRpcClient({
@@ -1390,6 +3159,34 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     return 2;
   }
 
+  // R364 — reconcile the launch directory against the DAEMON's.
+  //
+  // `opts.cwd` is where the TUI was started, which is not necessarily
+  // where the engine is rooted (the desktop spawns the daemon with its
+  // own `--cwd`; a daemon restarted by someone else keeps its
+  // binding). `getState` does NOT return a cwd, so before this every
+  // cwd surface in line mode showed the launch directory forever.
+  //
+  // `listProjects` is the read that carries the truth — it returns
+  // `{cwd, name, active}` with `active: true` on the current binding
+  // (`AetherCodeMethods.listProjects`), and `panelCwdPick` already
+  // depends on that exact shape.
+  void (async () => {
+    try {
+      const projects = (await client.request("listProjects")) as
+        | Array<{ cwd?: string; active?: boolean }>
+        | null
+        | undefined;
+      const current = Array.isArray(projects)
+        ? projects.find((p) => p?.active) ?? projects[0]
+        : undefined;
+      const daemonCwd = String(current?.cwd ?? "").trim();
+      if (daemonCwd && daemonCwd !== displayState.cwd) displayState.cwd = daemonCwd;
+    } catch {
+      // Best-effort: the launch dir stays as the fallback.
+    }
+  })();
+
   let runState: "idle" | "streaming" | "running-tool" = "idle";
   let textBuffer = "";
   let textFlushTimer: NodeJS.Timeout | null = null;
@@ -1399,13 +3196,29 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   // export helper can render Markdown. Power users can hit
   // /export and get something useful; the Ink TUI keeps the
   // richer turn model.
-  type LineTurn = { id: number; role: "user" | "assistant"; text: string; ts: number };
   const turnsBuffer: LineTurn[] = [];
   let turnCounter = 0;
   let currentUserPrompt = "";
   let currentTool: ToolTrack | null = null;
   let lastToolWas = "\u2014";
   let lastToolDigest = "";
+
+  // R362: state the slash-command panels render from. The Ink TUI
+  // keeps this in its reducer; line mode has no reducer, so the
+  // two live arrays are owned here and the notification handler
+  // writes into them directly.
+  const todos: LineTodo[] = [];
+  const notices: LineNotice[] = [];
+  const snippets = new Map<string, string>();
+  const bookmarks = new Set<number>();
+
+  /** Ring-buffer the daemon's notices so /notifications has
+   *  something real to show. The daemon pushes log / task_state /
+   *  failure summaries; there is no query endpoint for history. */
+  function recordNotice(level: LineNotice["level"], source: string, text: string): void {
+    notices.push({ ts: Date.now(), level, source, text });
+    if (notices.length > 200) notices.splice(0, notices.length - 200);
+  }
 
   function flushText(): void {
     if (textBuffer.length === 0) return;
@@ -1419,9 +3232,30 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     textFlushTimer = setTimeout(flushText, delayMs);
   }
 
+  /**
+   * R363 — the daemon-side run id of the turn in flight, and the
+   * latch that keeps Esc from firing the `cancel` RPC twice.
+   *
+   * `cancel` is keyed by runId and the daemon hard-fails without one
+   * (`AetherCodeMethods.cancel` reads `params.runId` unconditionally).
+   * So we have to persist the id we get back from `query`, with the
+   * stream notifications as a fallback.
+   *
+   * Line mode has no reducer, so both live as plain locals closed
+   * over by the notification handler, `handlePrompt` and `onEscape`.
+   */
+  let activeRunId: string | null = null;
+  let cancelSent = false;
+
   const onRunEnd = () => {
     sawRunEnd = true;
     inFlight = Math.max(0, inFlight - 1);
+    // R363 — the run is over, so its id is no longer cancellable and
+    // a pending cancel is moot. Clearing BOTH here is what re-arms
+    // Esc for the next turn; leaving `cancelSent` set would make the
+    // first Esc of the following run a silent no-op.
+    activeRunId = null;
+    cancelSent = false;
     if (!rlClosed) {
       lineInput.redraw();
     }
@@ -1431,9 +3265,16 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
 
   client.setNotificationHandler((method: string, params: RpcValue | undefined) => {
     if (method === "stream_event") {
-      const p = (params ?? {}) as { event?: Record<string, unknown> };
+      const p = (params ?? {}) as { event?: Record<string, unknown>; runId?: string };
       const ev = p.event ?? {};
       const t = ev.type as string | undefined;
+      // R363 — runId fallback. `handlePrompt` captures the id from the
+      // `query` response, but that reply can be lost (transport drop
+      // between request and response) while the stream keeps flowing.
+      // The notification carries the same id, so adopting it here keeps
+      // Esc functional instead of stranding the user in a run they
+      // cannot stop.
+      if (p.runId) activeRunId = p.runId;
       if (t === "run_start") {
         runState = "streaming";
         textBuffer = "";
@@ -1498,6 +3339,12 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         } else if (kind === "error") {
           logAbove(colorize("  (check the daemon log on stderr for details)", C.dim, noColor));
         }
+        // R362: a non-clean stop is the one thing a user genuinely
+        // wants to find later, so it goes into the /notifications
+        // ring buffer as well as the scrollback.
+        if (kind !== "ok" && kind !== null) {
+          recordNotice(kind === "error" ? "err" : "warn", "run", `stopped \u2014 ${stopReason}`);
+        }
         const usage = (ev as { usage?: { input?: number; output?: number; costUsd?: number } }).usage;
         if (usage) {
           displayState.inputTokens = usage.input ?? displayState.inputTokens;
@@ -1552,12 +3399,53 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         logAbove(colorize(`\u2731 Plan (${items.length} item${items.length === 1 ? "" : "s"}):`, C.cyan, noColor));
         for (const l of lines) logAbove(l);
       }
+    } else if (method === "cwd_changed") {
+      // R364 — the daemon emits this on EVERY cwd change
+      // (`AetherCodeMethods.switchProject` → NOTIFY_CWD_CHANGED).
+      // Pre-R364 line mode had no case for it, so a `/cwd-pick` that
+      // SUCCEEDED left the status bar's cwd pill showing the old
+      // directory for the rest of the session — the user switched
+      // project and the UI insisted nothing had moved.
+      //
+      // This is not redundant with the `switchProject` response: the
+      // notification also covers changes this window did not
+      // initiate (the `/cwd` slash command, the desktop, another
+      // connected client).
+      const p = (params ?? {}) as { newCwd?: string; oldCwd?: string };
+      if (p.newCwd) {
+        displayState.cwd = p.newCwd;
+        logAbove(colorize(`  cwd \u2192 ${p.newCwd}`, C.green, noColor));
+        if (!rlClosed) lineInput.redraw();
+      }
     } else if (method === "log") {
       const p = (params ?? {}) as { message?: string };
       logAbove(colorize(`  [log] ${p.message ?? ""}`, C.gray, noColor));
+      recordNotice("info", "log", String(p.message ?? ""));
     } else if (method === "task_state") {
-      const p = (params ?? {}) as { taskId?: string; status?: string };
-      logAbove(colorize(`  [task ${p.taskId ?? "?"} \u2192 ${p.status ?? "?"}]`, C.dim, noColor));
+      // R362: the daemon multiplexes two things onto `task_state`
+      // — ordinary task transitions, and the full todo snapshot
+      // the model writes (`kind=todo_update`). The snapshot is
+      // STATE, not an event: the model re-sends the whole list on
+      // every change, so logging it produced a `[task ? -> ?]`
+      // line per update and left /todos with nothing to render.
+      const p = (params ?? {}) as { taskId?: string; status?: string; kind?: string; params?: { todos?: unknown } };
+      if (p.kind === "todo_update") {
+        const incoming = asRows(p.params?.todos);
+        todos.length = 0;
+        for (const t of incoming) {
+          todos.push({
+            id: fieldStr(t, ["id"], String(todos.length + 1)),
+            title: fieldStr(t, ["title", "content", "text"]),
+            status: fieldStr(t, ["status"], "pending"),
+            owner: fieldStr(t, ["owner"], "") || undefined,
+            detail: fieldStr(t, ["detail"], "") || undefined,
+          });
+        }
+        return;
+      }
+      const line = `${p.taskId ?? "?"} \u2192 ${p.status ?? "?"}`;
+      logAbove(colorize(`  [task ${line}]`, C.dim, noColor));
+      recordNotice("info", "task", line);
     } else if (method === "permission_request") {
       const p = (params ?? {}) as Record<string, unknown>;
       const tool = String(p.tool ?? "(unknown)");
@@ -1566,6 +3454,13 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       const risk = String(p.riskLevel ?? "medium").toUpperCase();
       const requestId = String(p.requestId ?? "");
       const argDigest = inputDigest(input);
+      // R363 — runId fallback #2. A permission ask is proof a run is
+      // live and the daemon has already stamped it with the owning
+      // runId. This is the last chance to make Esc work before the
+      // first token arrives. The daemon's legacy placeholder is "n/a"
+      // (see AetherCodeMethods.askPermission), which is not a real id.
+      const askRunId = String(p.runId ?? "");
+      if (askRunId && askRunId !== "n/a") activeRunId = askRunId;
       const guidance = (() => {
         switch (risk) {
           case "CRITICAL":
@@ -1626,8 +3521,47 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   // counts visual cells (CJK = 2) and re-paints the whole input area
   // on every change.
   let rlClosed = false;
+
+  /**
+   * R363 — interrupt the run in flight. Same three rules as the Ink
+   * TUI's `cancelActiveRun`:
+   *   1. never fire blind (no runId => say so, don't send a doomed RPC)
+   *   2. never fire twice (`cancelSent` latch)
+   *   3. never swallow a failed cancel (release the latch, report it)
+   */
+  async function cancelActiveRun(): Promise<void> {
+    if (cancelSent) return;
+    if (!activeRunId) {
+      logAbove(colorize("  no cancellable run (daemon did not report a run id)", C.yellow, noColor));
+      return;
+    }
+    cancelSent = true;
+    const target = activeRunId;
+    logAbove(colorize(`  stopping run ${target}...`, C.dim, noColor));
+    if (!rlClosed) lineInput.redraw();
+    try {
+      await client.request("cancel", { runId: target });
+      logAbove(colorize(`  interrupt sent for run ${target}`, C.dim, noColor));
+    } catch (e) {
+      // Either the daemon never saw this run or the transport dropped.
+      // The run is not ours to stop, so release the latch — otherwise
+      // Esc is dead for the rest of the session.
+      cancelSent = false;
+      activeRunId = null;
+      logAbove(colorize(`  cancel failed: ${(e as Error).message}`, C.red, noColor));
+    }
+    if (!rlClosed) lineInput.redraw();
+  }
+
   const lineInput = new LineInput(
     {
+      // R363 — Esc interrupts the live run. `LineInput` fires this
+      // only for a BARE Esc (not a CSI sequence), so arrow keys are
+      // unaffected; and `pickFromList` calls `lineInput.pause()` while
+      // a picker owns the keyboard, so closing a picker still wins.
+      onEscape: () => {
+        if (inFlight > 0) void cancelActiveRun();
+      },
       onSubmit: (submitted: string) => {
         if (submitted.endsWith("\\")) {
           pendingLines.push(submitted.slice(0, -1));
@@ -1793,11 +3727,12 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         const { mkdirSync } = await import("node:fs");
         const path = userPath && userPath.length > 0
           ? userPath
-          : defaultExportPath(opts.cwd || process.cwd(), displayState.sessionId, isJson ? "json" : "md");
+          // R364: displayState.cwd is daemon-owned and updated on cwd_changed.
+        : defaultExportPath(displayState.cwd || opts.cwd || process.cwd(), displayState.sessionId, isJson ? "json" : "md");
         mkdirSync(path.replace(/[\\/][^\\/]+$/, ""), { recursive: true });
         const body = isJson
           ? exportToJson(turnsBuffer as unknown as Parameters<typeof exportToJson>[0])
-          : exportWithFrontmatter(turnsBuffer as unknown as Parameters<typeof exportWithFrontmatter>[0], displayState.model, displayState.sessionId, { cwd: opts.cwd || process.cwd() });
+          : exportWithFrontmatter(turnsBuffer as unknown as Parameters<typeof exportWithFrontmatter>[0], displayState.model, displayState.sessionId, { cwd: displayState.cwd || opts.cwd || process.cwd() });
         writeExport(path, body);
         logAbove(colorize(`  ✓ exported ${turnsBuffer.length} turns → ${path}`, C.green, noColor));
       } catch (e) {
@@ -1830,7 +3765,50 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       return;
     }
     if (slash?.local) {
-      logAbove(colorize(slash.local, C.dim, noColor));
+      // R362: `handleSlash` returns either an internal sentinel
+      // (`__MEMORY_PANEL__:project`) or an already-human sentence
+      // (`usage: /model <name>`). Only the former is sanitised —
+      // rewriting the latter would turn useful copy into noise.
+      if (!SENTINEL_SHAPE.test(slash.local)) {
+        logAbove(colorize(slash.local, C.dim, noColor));
+        return;
+      }
+      // Register the panel as in-flight for the same reason
+      // /demo and /export do: a piped run gets EOF the moment the
+      // command is consumed, and without this the RPC result
+      // would be cut off mid-flight by the 5s close handler.
+      inFlight++;
+      let handled = false;
+      try {
+        handled = await renderPanelSentinel(
+          {
+            client,
+            noColor,
+            lineInput,
+            logAbove,
+            repaint: () => { if (!rlClosed) lineInput.redraw(); },
+            sessionId: displayState.sessionId,
+            cwd: displayState.cwd,
+            state: displayState,
+            todos,
+            notices,
+            turns: turnsBuffer,
+            snippets,
+            bookmarks,
+          },
+          slash.local,
+          slash.rpcParams as RpcValue | undefined,
+        );
+      } finally {
+        inFlight = Math.max(0, inFlight - 1);
+      }
+      if (!rlClosed) lineInput.redraw();
+      tryExit();
+      if (handled) return;
+      // The fallback MUST NOT print the token. describeSentinel
+      // turns it into a sentence naming what the panel was and
+      // that line mode cannot open it.
+      logAbove(humanizeSentinelLine(slash.local, noColor));
       return;
     }
     if (slash?.rpcMethod) {
@@ -1850,7 +3828,32 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     // user's question even if the model never does.
     turnsBuffer.push({ id: ++turnCounter, role: "user", text: currentUserPrompt, ts: Date.now() });
     try {
-      await client.request("query", { prompt: text });
+      // R363 — the `query` response carries `{runId, accepted}`; this
+      // is where we learn the id that `cancel` needs. A daemon refusal
+      // (`{ok:false, busyRunId}`) is adopted too, so Esc stops the run
+      // that is actually blocking us instead of dead-ending.
+      const resp = (await client.request<{
+        runId?: string;
+        accepted?: boolean;
+        ok?: boolean;
+        busyRunId?: string;
+        error?: string;
+      }>("query", { prompt: text })) ?? {};
+      if (resp.runId) activeRunId = resp.runId;
+      else if (resp.busyRunId) {
+        activeRunId = resp.busyRunId;
+        logAbove(colorize(`  \u26A0 ${resp.error ?? "session busy"}`, C.yellow, noColor));
+        logAbove(colorize(`  esc interrupts run ${resp.busyRunId}`, C.dim, noColor));
+      }
+      if (resp.ok === false || resp.accepted === false) {
+        // The daemon refused the turn. Do NOT count it as in-flight —
+        // there is no run to watch, so leaving inFlight at 1 would hang
+        // the close handler's 5s wait on every subsequent EOF.
+        activeRunId = null;
+        inFlight--;
+        if (!rlClosed) lineInput.redraw();
+        tryExit();
+      }
     } catch (e) {
       logAbove(colorize(`query failed: ${(e as Error).message}`, C.red, noColor));
       inFlight--;

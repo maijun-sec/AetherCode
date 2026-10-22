@@ -48,7 +48,12 @@ test("R33: theme.ts has pill icons (model, mode, path, id, live, dead)", () => {
 
 test("R33: tui.tsx passes cwd to Header", () => {
   const tui = readFileSync(join(root, "src", "tui.tsx"), "utf-8");
-  assert.match(tui, /<Header\s+state=\{state\}\s+cwd=\{cwd\}\s*\/>/);
+  // R364: this used to pin `cwd={cwd}` — the launch-time prop, fixed at
+  // startup. That is precisely what made the Header lie after a `/cwd`
+  // switch, so pinning the prop name was pinning the bug. `currentCwd`
+  // is `state.cwd || cwd`: the daemon-reported directory, falling back
+  // to the launch prop before the first notification arrives.
+  assert.match(tui, /<Header\s+state=\{state\}\s+cwd=\{currentCwd\}\s*\/>/);
 });
 
 test("R33: dist/ac-tui.js is fresh (was rebuilt after Pill.tsx was added)", () => {

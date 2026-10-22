@@ -126,10 +126,29 @@ test("T-085: commands.ts exposes /memory, /memory-edit, /memory-compact", () => 
   assert.match(cmds, /force:\s*true/);
 });
 
-test("T-085: SLASH_HELP documents the new /memory commands", () => {
+test("T-085: /help documents the new /memory commands", () => {
+  // R362: the assertion used to pin the literal "/memory<TAB>T-080: open the
+  // MemoryPanel" — i.e. it was pinning a DEVELOPMENT NOTE leaking into
+  // user-facing copy. P0.3 removed those on purpose ("T-080:", "对应历史
+  // round:", "R700:"), so the test now asserts the same commands are present
+  // with clean copy instead.
+  //
+  // SLASH_HELP is derived from SLASH_COMMANDS_DETAILED at module-eval time, so
+  // the meaningful check is catalog + group membership.
   const cmds = readFileSync(cmdsPath, "utf-8");
-  assert.match(cmds, /\/memory\s+T-080: open the MemoryPanel/);
-  assert.match(cmds, /\/memory-compact\s+T-084/);
+  assert.match(cmds, /name: "memory"/);
+  assert.match(cmds, /name: "memory-edit"/);
+  assert.match(cmds, /name: "memory-compact"/);
+  const groups = cmds.slice(
+    cmds.indexOf("const SLASH_COMMAND_GROUPS"),
+    cmds.indexOf("];", cmds.indexOf("const SLASH_COMMAND_GROUPS")),
+  );
+  assert.match(groups, /"memory"/);
+  assert.match(groups, /"memory-edit"/);
+  assert.match(groups, /"memory-compact"/);
+  // and the user-facing copy must no longer carry the round tag
+  assert.doesNotMatch(cmds, /description: "[^"]*T-08\d/,
+    "user-facing descriptions must not leak T-0xx round tags");
 });
 
 test("T-085: SLASH_COMMANDS includes the new /memory commands for tab-completion", () => {

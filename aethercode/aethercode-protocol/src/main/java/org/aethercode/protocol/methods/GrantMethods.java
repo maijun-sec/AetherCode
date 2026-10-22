@@ -52,6 +52,41 @@ public final class GrantMethods {
         dispatcher.register(METHOD_SET_PRESET, handlers::setPreset);
     }
 
+    // ------------------------------------------------------------------
+    //  R367 — direct passthroughs.
+    //
+    //  Until this round the ONLY public member was registerAll, so
+    //  `grants/*` was reachable exclusively through a
+    //  JsonRpcDispatcher. The HTTP+WS daemon does not use a
+    //  dispatcher — it has a hand-rolled switch — which meant there
+    //  was literally no way to route grants/* over HTTP even after
+    //  the daemon was fixed. A method class that can only be reached
+    //  through one transport is a one-transport feature.
+    //
+    //  These four mirror registerAll exactly: same handler, same
+    //  arguments, no behaviour of their own.
+    // ------------------------------------------------------------------
+
+    /** {@code grants/list}. */
+    public java.util.Map<String, Object> list(Object params) {
+        return handlers.list(params);
+    }
+
+    /** {@code grants/revoke}. */
+    public java.util.Map<String, Object> revoke(Object params) {
+        return handlers.revoke(params);
+    }
+
+    /** {@code grants/clear}. */
+    public java.util.Map<String, Object> clear(Object params) {
+        return handlers.clear(params);
+    }
+
+    /** {@code grants/setPreset}. */
+    public java.util.Map<String, Object> setPreset(Object params) {
+        return handlers.setPreset(params);
+    }
+
     /**
      * Convenience: build a {@link GrantMethods} that
      * delegates to the given {@link PermissionMethods}. The

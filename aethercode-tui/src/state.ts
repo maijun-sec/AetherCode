@@ -80,6 +80,131 @@ export interface Turn {
 
 export type ToolCategory = "read" | "write" | "search" | "run" | "agent" | "other";
 
+/* ===================================================================
+ * R362 — Ink panel host state
+ *
+ * Fifteen slash-command sentinels (`__MEMORY_PANEL__`,
+ * `__AGENT_PICK__`, …) were emitted by `commands.ts` and claimed by
+ * NEITHER renderer, so the user saw the literal token
+ * `__MEMORY_PANEL__:project` in the scrollback. Behind 12 of them sat
+ * complete, working components that had never been mounted — 5,859
+ * lines of dead code.
+ *
+ * `panelIntents.ts` is the contract; this block is the reducer side
+ * of it. The renderer dispatches `openPanel` with a `PanelId` and the
+ * App fetches the panel's data, mirrors it here, and mounts the
+ * component. `activePanel` is the SINGLE overlay slot: opening a
+ * panel closes every other modal so the user can never end up with
+ * two of them fighting over the keyboard.
+ *
+ * These types are declared locally rather than imported from the
+ * components on purpose — `components/InputBox.tsx` and
+ * `components/StatusBar.tsx` import `State` from this module, so
+ * importing back would create a cycle. The renderer converts at the
+ * call site.
+ * =================================================================== */
+
+/** The Ink panels mounted in R362. One id per `PanelIntent.id`. */
+export type PanelId =
+  | "memory"
+  | "threads"
+  | "todos"
+  | "agents"
+  | "effort"
+  | "cwd"
+  | "grants"
+  | "notifications"
+  | "mcp";
+
+/** Loading / error / notice triple shared by every panel. Drives
+ *  the shell's pending row and its red error row so a failed RPC is
+ *  never swallowed silently. */
+export interface PanelStatus {
+  loading: boolean;
+  error: string | null;
+  notice: string | null;
+}
+
+/** The three memory scopes, matching `MemoryScope` in MemoryPanel. */
+export type MemoryScopeId = "global" | "project" | "session";
+
+/** One memory row, normalised from the daemon's `memory/list`
+ *  wire shape (`id / kind / key / value / ts / source / tags`). */
+export interface MemoryRow {
+  id: string;
+  kind: "fact" | "rule" | "change" | "breadcrumb";
+  key?: string;
+  value: string;
+  ts: number;
+  source: string;
+  tags: string[];
+}
+
+/** Per-scope slice the MemoryPanel renders. Each scope loads
+ *  independently so a failure in one tab does not blank the other
+ *  two. */
+export interface MemorySlice {
+  entries: MemoryRow[];
+  totalTokens: number;
+  source?: "cache" | "sqlite" | "file";
+  loading: boolean;
+  error?: string | null;
+}
+
+/** Live progress of the last `memory/compact` call. Mirrors
+ *  MemoryPanel's `CompactProgress`. */
+export type MemoryCompactProgress =
+  | { state: "idle" }
+  | { state: "running" }
+  | { state: "ok"; beforeTokens: number; afterTokens: number; changesCompressed: number; ms: number }
+  | { state: "skipped"; reason: string }
+  | { state: "error"; message: string };
+
+/** One row of the thread picker, normalised from `listSessions`. */
+export interface ThreadRow {
+  threadId: string;
+  agentName: string;
+  messages: number;
+  createdAt: string;
+  updatedAt: string;
+  prompt: string;
+  cwd: string;
+  gitBranch?: string;
+}
+
+/** One stored consent grant, normalised from `permission/list`.
+ *  Field names match `GrantsManager.Grant` so the component can
+ *  consume the array without a conversion step. */
+export interface GrantRow {
+  id: string;
+  scope: "session" | "project" | "user";
+  scopeId: string;
+  category: string;
+  decision: "allow" | "deny";
+  reason: string;
+  createdAt: number;
+  expiresAt?: number | null;
+}
+
+/** One MCP server, normalised from the (not-yet-existing) daemon
+ *  MCP surface. Kept so the McpViewer mounts against a real type
+ *  instead of `any` when the RPC lands. */
+export interface McpServerRow {
+  name: string;
+  status: "ok" | "unauthenticated" | "awaiting-reconnect" | "error" | "disabled";
+  tools: Array<{ name: string; description?: string }>;
+}
+
+export const EMPTY_PANEL_STATUS: PanelStatus = { loading: false, error: null, notice: null };
+
+export const EMPTY_MEMORY_SLICE: MemorySlice = {
+  entries: [],
+  totalTokens: 0,
+  source: "file",
+  loading: false,
+  error: null,
+};
+
 export interface State {
   sessionId: string;
   model: string;
@@ -91,6 +216,76 @@ export interface State {
   history: string[];
   historyCursor: number;       // index into history, -1 = current draft
   submitting: boolean;
+  /**
+   * R362 — prompts the user typed while a run was in flight.
+   *
+   * Before R362 this did not exist. `handleSubmit` saw
+   * `submitting === true`, pushed a toast reading
+   * "model is still working - prompt queued", and then
+   * `return`ed — **discarding the prompt the user had just
+   * typed**. The toast claimed a queue; there was no queue.
+   * That is a toast asserting a state the code does not
+   * implement, which is worse than no toast: the user
+   * believes their prompt is safe.
+   *
+   * Now it is a real FIFO. `tui.tsx` drains it on every
+   * `streamEnd`, so the promise the toast makes is kept.
+   *
+   * Claude Code's contract for reference: "Type a message and
+   * press Enter while Claude is working. Claude Code queues the
+   * message instead of interrupting the turn, and lists the
+   * queued entries in the conversation until it sends them."
+   * We match both halves — the queue AND the listing.
+   */
+  pendingPrompts: string[];
+  /**
+   * R363 — the daemon-side run id of the turn currently in flight.
+   *
+   * The `cancel` RPC is keyed by `runId` and the daemon refuses
+   * to guess (`AetherCodeMethods.cancel` reads `params.runId`
+   * and hard-fails when it is absent). So the TUI must persist
+   * the id, which it only gets from the `query` **response**
+   * (`{runId, accepted}`) or, as a fallback, from the
+   * `stream_event` / `permission_request` notification params.
+   *
+   * `null` means "no run we can cancel" — either nothing is in
+   * flight, or the id never arrived. Esc must degrade to a
+   * readable notice in that case rather than firing a cancel
+   * that is guaranteed to fail.
+   */
+  activeRunId: string | null;
+  /**
+   * R364 — the session's working directory, as the DAEMON sees it.
+   *
+   * This has to be state rather than a launch-time prop. Pre-R364
+   * `App` took `cwd` as a prop, fixed at startup, and rendered it
+   * into `CwdSwitcher currentCwd={...}`. So a successful `/cwd`
+   * switch left the panel still claiming "you are in <the old
+   * directory>" — the switch worked and the UI lied about it.
+   *
+   * Fed by two sources:
+   *   1. the `switchProject` RPC response (`{newCwd}`), so the
+   *      panel updates on the path the user just chose, and
+   *   2. the `cwd_changed` notification, which the daemon emits on
+   *      EVERY cwd change including ones the user did not initiate
+   *      here (e.g. the desktop, or another connected client).
+   *      Source (1) alone is not enough: it misses every change
+   *      that did not originate in this window.
+   */
+  cwd: string;
+  /**
+   * R363 — true from the moment Esc is pressed on a live run
+   * until its terminal `streamEnd` lands.
+   *
+   * The cancel RPC is asynchronous and R721-hard (thread
+   * interrupt + destroyForcibly + a 5s Thread.stop fallback),
+   * so it can take up to `CANCEL_FORCE_DEFAULT_MS` to settle.
+   * Without this flag the spinner would keep pretending the run
+   * is healthy for those seconds. The flag is what lets the
+   * InputBox strip switch to "stopping..." and what makes a
+   * second Esc a no-op instead of a duplicate cancel.
+   */
+  cancelRequested: boolean;
   connected: boolean;
   /**
    * detailed daemon-connection state. Distinct from
@@ -485,6 +680,66 @@ export interface State {
    * and dispatches `cwd/set` on submit.
    */
   cwdSwitcherOpen: boolean;
+
+  /* --- R362: Ink panel host ------------------------------------ */
+
+  /**
+   * R362: which panel is open, or `null` for none. This is the
+   * single overlay slot — `openPanel` closes every other modal
+   * (`helpVisible`, `paletteOpen`, `themePickerOpen`,
+   * `logViewerOpen`, `tutorialOpen`, `subagentPanelOpen`,
+   * `showSearch`) so two surfaces can never compete for the
+   * keyboard.
+   *
+   * It supersedes the T-420/421/423 booleans above for rendering
+   * purposes; `openPanel` keeps those three in sync so any future
+   * reader of `agentPickerOpen` still sees the truth.
+   */
+  activePanel: PanelId | null;
+  /**
+   * R362: `Date.now()` captured when the panel opened. Panels that
+   * render relative timestamps (MemoryPanel's `now`) read this
+   * instead of calling `Date.now()` inline — a fresh value on every
+   * render would re-render the whole panel subtree and make Ink
+   * repaint the row (same trap as the SubagentPanel's `now` prop,
+   * see the note at tui.tsx's `onView` prop).
+   */
+  panelOpenedAt: number;
+  /** R362: shared pending / error / notice triple for the panel. */
+  panelStatus: PanelStatus;
+  /**
+   * R362: the prompt draft captured at `openPanel` time, restored
+   * by `closePanel`.
+   *
+   * Why: `InputBox` owns an unconditional `useInput`, so every
+   * keystroke typed into a panel's filter box (AgentSelector's
+   * type-to-filter, CwdSwitcher's path input) also lands in the
+   * prompt. Without the snapshot the user closes the panel and
+   * finds their draft polluted with the filter text. Restoring on
+   * close is the standard modal contract and keeps the input box
+   * visible throughout (we never hide it while a panel is open).
+   */
+  panelInputBefore: string;
+  /** R362: which memory tab the MemoryPanel is showing. The panel
+   *  is driven (controlled) so switching tabs re-fetches the new
+   *  scope through the App. */
+  memoryTab: MemoryScopeId;
+  /** R362: the three memory scopes, fetched independently. */
+  memoryScopes: Record<MemoryScopeId, MemorySlice>;
+  /** R362: live progress of the last `memory/compact` call. */
+  memoryCompact: MemoryCompactProgress;
+  /** R362: thread-picker rows, from `listSessions`. */
+  threads: ThreadRow[];
+  /** R362: consent grants, from `permission/list`. */
+  grants: GrantRow[];
+  /** R362: MCP servers. Empty until the daemon grows an MCP RPC. */
+  mcpServers: McpServerRow[];
+  /** R362: the active reasoning-effort id. The daemon exposes no
+   *  effort RPC, so this is renderer-local. */
+  effortCurrent: string | null;
+  /** R362: notification-hub warning toggles. Local only — there
+   *  is no persistence RPC for them. */
+  notificationToggles: Record<string, boolean>;
   /**
    * T-441: the model's effective input window (maxTokens -
    * maxOutputFloor). Updated by the daemon's `model/info`
@@ -697,6 +952,22 @@ export type Action =
   | { type: "historyUp" }
   | { type: "historyDown" }
   | { type: "submit" }
+  // R362 — real prompt queue. See State.pendingPrompts for why this
+  // exists (the previous behaviour toasted "prompt queued" and then
+  // threw the prompt away).
+  | { type: "enqueuePrompt"; text: string }
+  | { type: "dequeuePrompt" }
+  | { type: "clearPendingPrompts" }
+  // R363 — run-id tracking so Esc can reach the `cancel` RPC.
+  // See State.activeRunId for why this is not optional.
+  | { type: "setActiveRunId"; runId: string | null }
+  | { type: "requestCancelRun" }
+  | { type: "setCancelSettled" }
+  // R364 — the session cwd. Named `setCurrentCwd`, NOT `setCwd`,
+  // because `setCwd` is the desktop's Tauri IPC command name and
+  // using it here is exactly the confusion that produced R364
+  // (see State.cwd).
+  | { type: "setCurrentCwd"; cwd: string }
   | { type: "streamStart" }
   | { type: "streamText"; text: string }
   | { type: "streamToolStart"; name: string; args?: string }
@@ -783,6 +1054,19 @@ export type Action =
   | { type: "viewHistoryPop" } // R214: pop one entry from viewHistory (the "back" affordance)
   | { type: "addSubagentSpawnCard"; eventId: string; subagentId: string; role: string; description: string; status: string; ts: number } // R214: inline card in the chat transcript
   | { type: "removeSubagentSpawnCard"; eventId: string } // R214: dismiss the spawn card (e.g. the user cleared the chat)
+
+  /* --- R362: Ink panel host ------------------------------------ */
+  | { type: "openPanel"; id: PanelId }                       // R362: mount a panel; closes every other overlay
+  | { type: "closePanel" }                                    // R362: unmount + restore the prompt draft
+  | { type: "setPanelStatus"; status: PanelStatus }            // R362: pending / error / notice
+  | { type: "setMemoryTab"; tab: MemoryScopeId }               // R362: switch tab (App re-fetches the scope)
+  | { type: "setMemorySlice"; scope: MemoryScopeId; slice: MemorySlice }  // R362: `memory/list` result
+  | { type: "setMemoryCompact"; progress: MemoryCompactProgress }        // R362: `memory/compact` result
+  | { type: "setThreads"; threads: ThreadRow[] }              // R362: `listSessions` result
+  | { type: "setGrants"; grants: GrantRow[] }                 // R362: `permission/list` result
+  | { type: "setMcpServers"; servers: McpServerRow[] }        // R362: MCP listing
+  | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
+  | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
   ;
 
 let turnIdSeq = 1;
@@ -801,6 +1085,11 @@ export const INITIAL: State = {
   history: [],
   historyCursor: -1,
   submitting: false,
+  pendingPrompts: [],
+  activeRunId: null,
+  cancelRequested: false,
+  // R364 — seeded from the launch cwd by `tui.tsx` on first render.
+  cwd: "",
   connected: false,
   // connection-state machine. The reducer is updated
   // by the App component's useEffect that wires the
@@ -911,6 +1200,24 @@ export const INITIAL: State = {
   defaultEffort: null,
   // T-423: cwd switcher.
   cwdSwitcherOpen: false,
+  // R362: panel host. Nothing is open at boot; the first
+  // `openPanel` fills the rest in.
+  activePanel: null,
+  panelOpenedAt: 0,
+  panelStatus: EMPTY_PANEL_STATUS,
+  panelInputBefore: "",
+  memoryTab: "project",
+  memoryScopes: {
+    global: EMPTY_MEMORY_SLICE,
+    project: EMPTY_MEMORY_SLICE,
+    session: EMPTY_MEMORY_SLICE,
+  },
+  memoryCompact: { state: "idle" },
+  threads: [],
+  grants: [],
+  mcpServers: [],
+  effortCurrent: null,
+  notificationToggles: {},
   // T-441: embedded ContextMeter. `contextMaxTokens`
   // starts null (the StatusBar falls back to 200_000
   // until the daemon publishes `model/info`); the
@@ -1134,6 +1441,61 @@ export function reducer(state: State, action: Action): State {
           ? ""
           : state.history[state.historyCursor + 1] ?? "",
       };
+    case "enqueuePrompt": {
+      // R362. A prompt typed while a run is in flight goes here instead of
+      // being dropped. Deduplicated against an identical consecutive entry
+      // so a double-tap of Enter does not queue the same line twice.
+      const text = action.text.trim();
+      if (!text) return state;
+      if (state.pendingPrompts[state.pendingPrompts.length - 1] === text) return state;
+      // Cap the queue. Claude Code allows several; an unbounded queue on a
+      // misbehaving daemon would grow until the process dies, and every
+      // entry is rendered in the UI.
+      const next = [...state.pendingPrompts, text].slice(-20);
+      return {
+        ...state,
+        pendingPrompts: next,
+        history: state.history.includes(text)
+          ? state.history
+          : [...state.history, text].slice(-200),
+      };
+    }
+    case "dequeuePrompt": {
+      if (state.pendingPrompts.length === 0) return state;
+      return { ...state, pendingPrompts: state.pendingPrompts.slice(1) };
+    }
+    case "clearPendingPrompts":
+      return state.pendingPrompts.length === 0 ? state : { ...state, pendingPrompts: [] };
+    case "setActiveRunId":
+      // R363 — ignore a null over a known id. The `query` response
+      // and the stream notifications can race: whichever lands last
+      // wins, and a late `streamEnd`-driven clear must not be
+      // overwritten by a stale in-flight clear.
+      if (action.runId === state.activeRunId) return state;
+      return { ...state, activeRunId: action.runId };
+    case "requestCancelRun": {
+      // R363 — a second Esc must not fire a second cancel. The
+      // daemon's cancel is idempotent-ish (done.cancel(true) on an
+      // already-completed future is a no-op) but a duplicate RPC
+      // in flight is still noise in the daemon log and, worse, it
+      // re-arms the 5s Thread.stop fallback timer.
+      if (state.cancelRequested) return state;
+      return { ...state, cancelRequested: true, status: "thinking" };
+    }
+    // R363 — a cancel RPC that failed must not leave the strip
+    // claiming "stopping..." on a run that is still running.
+    case "setCancelSettled":
+      return state.cancelRequested ? { ...state, cancelRequested: false } : state;
+    case "setCurrentCwd": {
+      // R364 — the daemon normalises to an absolute, `.`-stripped
+      // path before echoing it back (`switchProject` does
+      // `Paths.get(cwd).toAbsolutePath().normalize()`). Compare the
+      // normalised form so a re-notification of the SAME directory
+      // does not re-render the whole panel tree.
+      const next = String(action.cwd ?? "").trim();
+      if (!next || next === state.cwd) return state;
+      return { ...state, cwd: next };
+    }
     case "submit": {
       if (state.input.trim().length === 0 || state.submitting) return state;
       const prompt = state.input;
@@ -1154,6 +1516,11 @@ export function reducer(state: State, action: Action): State {
         lastStopKind: null,
         // a new run starts — clear the previous error too.
         lastError: null,
+        // R363 — the previous run's id is dead. Holding it would
+        // let a stray Esc cancel a run that already finished (or,
+        // once run ids restart, cancel the wrong one).
+        activeRunId: null,
+        cancelRequested: false,
         turns: [
           ...state.turns,
           {
@@ -1382,6 +1749,13 @@ export function reducer(state: State, action: Action): State {
         totalCostUsd: action.usage?.costUsd ?? state.totalCostUsd,
         lastStopReason: action.stopReason,
         lastStopKind: kind,
+        // R363 — the run is over, so its id is no longer
+        // cancellable and a pending cancel request is moot.
+        // Clearing `cancelRequested` here is what re-arms Esc for
+        // the next turn; leaving it set would make the first Esc
+        // of the following run a silent no-op.
+        activeRunId: null,
+        cancelRequested: false,
         // drop the lookahead and reset mode — there's no
         // next delta in this run. A future streamStart will
         // re-initialise both.
@@ -1773,6 +2147,95 @@ export function reducer(state: State, action: Action): State {
     case "setCwdSwitcherOpen":
       // T-423: open or close the CwdSwitcher modal.
       return { ...state, cwdSwitcherOpen: action.open };
+
+    /* --- R362: Ink panel host ---------------------------------- */
+
+    case "openPanel": {
+      // Mount a panel and close every OTHER overlay in the same
+      // transition. Two mounted surfaces would both receive every
+      // keystroke (Ink's `useInput` is global, not focus-scoped),
+      // so ↑/↓/Enter/j/k would be applied twice and Esc would fire
+      // two different closes. One slot, one owner.
+      //
+      // `panelInputBefore` snapshots the prompt so `closePanel` can
+      // hand it back untouched — see the field's doc comment.
+      const { id } = action;
+      return {
+        ...state,
+        activePanel: id,
+        panelOpenedAt: Date.now(),
+        panelStatus: EMPTY_PANEL_STATUS,
+        panelInputBefore: state.input,
+        memoryCompact: { state: "idle" },
+        // exclusive overlay set
+        helpVisible: false,
+        paletteOpen: false,
+        themePickerOpen: false,
+        logViewerOpen: false,
+        tutorialOpen: false,
+        subagentPanelOpen: false,
+        showSearch: false,
+        decisionCardExpanded: true,
+        // keep the T-420/421/423 booleans truthful
+        agentPickerOpen: id === "agents",
+        effortPickerOpen: id === "effort",
+        cwdSwitcherOpen: id === "cwd",
+      };
+    }
+
+    case "closePanel":
+      // Guard the draft restore on `activePanel !== null`: a stray
+      // `closePanel` after the panel is already gone would
+      // otherwise clobber the user's prompt with a stale snapshot.
+      if (state.activePanel === null) return state;
+      return {
+        ...state,
+        activePanel: null,
+        panelStatus: EMPTY_PANEL_STATUS,
+        memoryCompact: { state: "idle" },
+        input: state.panelInputBefore,
+        agentPickerOpen: false,
+        effortPickerOpen: false,
+        cwdSwitcherOpen: false,
+      };
+
+    case "setPanelStatus":
+      return { ...state, panelStatus: action.status };
+
+    case "setMemoryTab":
+      // Re-opening /memory on the tab the user left is the common
+      // case; keep the tab sticky across closes.
+      return { ...state, memoryTab: action.tab };
+
+    case "setMemorySlice":
+      return {
+        ...state,
+        memoryScopes: { ...state.memoryScopes, [action.scope]: action.slice },
+      };
+
+    case "setMemoryCompact":
+      return { ...state, memoryCompact: action.progress };
+
+    case "setThreads":
+      return { ...state, threads: action.threads };
+
+    case "setGrants":
+      return { ...state, grants: action.grants };
+
+    case "setMcpServers":
+      return { ...state, mcpServers: action.servers };
+
+    case "setEffortCurrent":
+      return { ...state, effortCurrent: action.effort };
+
+    case "setNotificationToggle":
+      return {
+        ...state,
+        notificationToggles: {
+          ...state.notificationToggles,
+          [action.key]: action.enabled,
+        },
+      };
     case "pushCost":
       // append a cost entry (called on run_end). Bounded at
       // 64 entries so the sparkline has bounded memory.

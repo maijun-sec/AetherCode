@@ -256,6 +256,51 @@ final class DaemonRunner {
         memoryRpcs.registerAll(server.dispatcher());
         LOG.info("R720: memory/* RPCs registered on stdio dispatcher (9 methods)");
 
+        // R367: register the permission/* and grants/* RPC surfaces.
+        //
+        // Exactly the R720 story, one module over. Both classes were
+        // written, tested (PermissionMethodsTest, GrantMethodsT118Test,
+        // GrantsRpcDtosT118Test), had their Maven dependencies declared
+        // in this very pom (aethercode-protocol depends on
+        // aethercode-permission and aethercode-tasks), and their
+        // `dispatcher.register(...)` calls were never reached — because
+        // nothing ever called `registerAll` on them.
+        //
+        // The consequence was that every grant surface was -32601:
+        //   - the TUI's /consents panel opened, called permission/list,
+        //     got method-not-found, and rendered an EMPTY grants list
+        //     (its title promises "Review and revoke stored tool
+        //     grants");
+        //   - its revoke button called permission/revoke — also -32601;
+        //   - line mode's /consents called grants/revoke — also -32601.
+        //
+        // The TUI's method NAMES were correct the whole time
+        // (PermissionMethods registers permission/{check,prompt,list,
+        // revoke,clear}; GrantMethods registers grants/{list,revoke,
+        // clear,setPreset}). Only the wiring was missing.
+        //
+        // `PermissionMethods.defaults` takes the conventional
+        // `~/.aethercode` ROOT (not `~`), a project label, and the cwd
+        // the grant files are relative to.
+        java.nio.file.Path aethercodeHome = java.nio.file.Path
+                .of(System.getProperty("user.home"))
+                .resolve(".aethercode");
+        java.nio.file.Path projectDir = engine.appState().cwd();
+        String projectLabel = projectDir.getFileName() == null
+                ? "default"
+                : projectDir.getFileName().toString();
+        org.aethercode.protocol.methods.PermissionMethods permRpcs =
+                org.aethercode.protocol.methods.PermissionMethods.defaults(
+                        aethercodeHome, projectLabel, projectDir);
+        permRpcs.registerAll(server.dispatcher());
+        LOG.info("R367: permission/* RPCs registered on stdio dispatcher (5 methods)");
+
+        org.aethercode.protocol.methods.GrantMethods grantRpcs =
+                org.aethercode.protocol.methods.GrantMethods.from(
+                        permRpcs, aethercodeHome.resolve("permissions.json"));
+        grantRpcs.registerAll(server.dispatcher());
+        LOG.info("R367: grants/* RPCs registered on stdio dispatcher (4 methods)");
+
         // wire the MemoryLifecycle orchestrator. The
         // engine's query() flow now calls onQueryStart / onQueryEnd
         // / onMemoryRecallHit so the experience store, audit log,
@@ -551,6 +596,39 @@ final class DaemonRunner {
             // is replaced with a hand-rolled switch).
             http.setMemoryMethods(new MemoryMethods(httpMemoryStore));
             LOG.info("R720: memory/* RPCs registered on http path (9 methods)");
+            // R367: same second-transport lesson for the permission and
+            // grant surfaces. The stdio `registerAll` calls in
+            // runInternal make these work for the TUI; the HTTP+WS
+            // daemon has a hand-rolled switch instead of a
+            // dispatcher, so without these two setters the desktop
+            // gets METHOD_NOT_FOUND for the entire permission/* and
+            // grants/* namespaces while the same daemon answers them
+            // over stdio. This is the R720 memory/* gap, one module
+            // over, and the shape is identical.
+            //
+            // runHttp and runInternal are separate entry points and
+            // only one runs per daemon, so the surfaces are built
+            // here rather than shared. Both are constructed from the
+            // SAME `~/.aethercode` root and the SAME cwd — if the two
+            // paths ever disagreed, a grant written over stdio would
+            // be invisible over HTTP.
+            java.nio.file.Path httpAethercodeHome = java.nio.file.Path
+                    .of(System.getProperty("user.home"))
+                    .resolve(".aethercode");
+            java.nio.file.Path httpProjectDir = engine.appState().cwd();
+            String httpProjectLabel = httpProjectDir.getFileName() == null
+                    ? "default"
+                    : httpProjectDir.getFileName().toString();
+            org.aethercode.protocol.methods.PermissionMethods httpPermRpcs =
+                    org.aethercode.protocol.methods.PermissionMethods.defaults(
+                            httpAethercodeHome, httpProjectLabel, httpProjectDir);
+            org.aethercode.protocol.methods.GrantMethods httpGrantRpcs =
+                    org.aethercode.protocol.methods.GrantMethods.from(
+                            httpPermRpcs,
+                            httpAethercodeHome.resolve("permissions.json"));
+            http.setPermissionMethods(httpPermRpcs);
+            http.setGrantMethods(httpGrantRpcs);
+            LOG.info("R367: permission/* (5) + grants/* (4) registered on http path");
         } catch (Exception memEx) {
             LOG.warn("R266d: memory store install failed on http path: {}",
                     memEx.getMessage());

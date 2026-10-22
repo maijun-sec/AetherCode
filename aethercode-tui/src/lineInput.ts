@@ -73,6 +73,16 @@ export interface LineInputCallbacks {
   onSubmit: (text: string) => void;
   /** Called when the user requests close (Ctrl+C / Ctrl+D on empty input). */
   onClose: () => void;
+  /**
+   * R363 — called on a BARE Esc (0x1B not followed by `[`).
+   *
+   * CSI sequences (arrow keys, Home/End, F-keys) all start with the
+   * same 0x1B byte, so the distinction has to be made by peeking at
+   * the next char. A bare Esc is the interrupt key: the host wires
+   * it to the daemon's `cancel` RPC. Absent => Esc is swallowed,
+   * which is the pre-R363 behaviour.
+   */
+  onEscape?: () => void;
 }
 
 /** Visual cell width for the most common CJK + emoji ranges.
@@ -554,14 +564,25 @@ export class LineInput {
         continue;
       }
 
-      // ESC: consume one full CSI sequence if present, otherwise ignore.
-      // Arrow keys send ESC [ A/B/C/D — we don't act on them yet.
+      // ESC: consume one full CSI sequence if present, otherwise
+      // treat it as the interrupt key (R363). Arrow keys send
+      // ESC [ A/B/C/D — we consume the whole sequence and act on
+      // none of them.
       if (code === 0x1B) {
         i++;
         if (text[i] === "[") {
           i++;
           while (i < text.length && text.charCodeAt(i) < 0x40) i++;
           if (i < text.length) i++;
+          continue;
+        }
+        // Bare ESC. R363: only fire when nobody else has claimed
+        // it — the picker uses Esc to close itself, and it owns the
+        // keyboard while it is open.
+        if (this.cbs.onEscape) {
+          try { this.cbs.onEscape(); } catch (e) {
+            process.stderr.write(`lineInput.onEscape threw: ${(e as Error).message}\n`);
+          }
         }
         continue;
       }
