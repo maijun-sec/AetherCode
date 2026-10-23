@@ -984,6 +984,50 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   `mvn install` is also unavailable here: `D:\cache\mvn_repo\...jar` is
   locked by the running daemon.
 
+- **R368** (R362 gate audit — the same defect shape a fourth and fifth
+  time): auditing `r362-panel-intents.test.mjs` while writing its
+  missing doc found two holes in a gate I wrote. Docs:
+  `docs/R362-panel-intents-and-prompt-queue.md`.
+  - **`INLINE_OK` was an unchecked regex allowlist.** Sixteen sentinel
+    families were excused from the registry requirement and never
+    checked against a renderer. Proven by mutation: disabling the
+    `__HISTORY__` handler in `tui.tsx` left all 22 assertions GREEN.
+    Fixed by making the families a real array (single owner,
+    iterable) plus two assertions — every exempt sentinel must be
+    claimed by a renderer, and no family may match nothing.
+  - **`emittedSentinels()` missed every PARAMETERISED sentinel.** Its
+    two regexes both required a closing quote right after `__X__`, so
+    `local: "__BUDGET__:0"` was invisible to the whole file. Measured
+    before/after: emitted 35 → **44**, INLINE_OK matches 20 → **29**,
+    unused families 3 → **0**. The nine invisible ones
+    (`__BUDGET__`, `__LAYOUT__`, `__SNIPPET_SAVE__`, `__BOOKMARK__`,
+    `__MCP_LOGIN__`, `__MCP_RECONNECT__`, `__BANK_RECALL__`,
+    `__THEME__`, `__MEMORY_PANEL__`) are all user-typeable.
+  - **Lesson 1120, fourth occurrence, and the general form: a gate that
+    models a NARROWER world than the code produces goes green on
+    everything in the gap.** An allowlist, a regex, and a capture
+    pattern are three shapes of the same mistake.
+  - **A source pin cannot see a dead branch.** `claimedBy` first used
+    `src.includes(sentinel)`; disabling a handler with
+    `false && slash.local === "__X__"` left the literal in the text and
+    the gate green. No text-based gate can catch that — it is a
+    structural limit. The failure worth pinning is **the token
+    disappearing**, which is the one that actually ships.
+  - **R362 never had a mutation battery, which is why the hole lived.**
+    `r362-mutate.mjs` added: 4 cases, all caught.
+  - **Measure thresholds, never guess them.** I wrote a floor of
+    `relevant.length >= 25` when the real value was 29 and it went red
+    for a reason I had not anticipated (Set vs Array). Same lesson as
+    R750c's `WINDOW=4000`.
+
+- **Pre-existing load-sensitive flake (verified 2026-10-23):**
+  `aethercode-tui` `rpc-t6-client.test.mjs` `T-6-01: per-request timeout
+  rejects with RpcCallError` fails under a loaded full-suite run
+  ("timeout took too long: 229ms") and passes 9/9 alone. It is a wall
+  clock assertion in a file that `git diff HEAD` shows untouched.
+  Same family as `WorkflowExecutorR375Test` above. Baseline is **47**
+  failures in 14 files; a 48th is this flake, not a regression.
+
 - **R750e** (TaskRegistry.updateStatus lost update + a lesson about "improvements"):
   `updateStatus` was `get()` then `put()` — a non-atomic read-modify-write.
   Two threads transitioning the SAME task both read the same `prev` and the

@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { codeOf } from "./strip-comments.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -64,15 +65,80 @@ const {
   helpByGroup,
 } = mod;
 
-const commandsSrc = readFileSync(join(root, "src", "commands.ts"), "utf-8");
+const commandsSrc = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8"), "commands.ts");
 
-/** Sentinel PREFIXES that intentionally render as text, not as a UI surface. */
-const INLINE_OK = /__(EXIT|CLEAR|HISTORY|DEMO|THEME|LAYOUT|BUDGET|BOOKMARK|SNIPPET|EXPORT|THEMES_PICK|TUTORIAL|BANK|SDD|MEMORY_AUDIT|PICK_MODE)/;
+/**
+ * Sentinel FAMILIES that intentionally render inline — a toast, a
+ * toggle, an export path — rather than as a panel surface.
+ *
+ * <p>This is an ALLOWLIST, and allowlists rot into suppress-all unless
+ * something checks them. The first version of this file had it as a
+ * bare regex, and a mutation proved the consequence: disabling the
+ * `__HISTORY__` handler in `tui.tsx` left all 22 assertions green. A
+ * name matching any family was excused forever, whether or not a
+ * renderer had ever heard of it.
+ *
+ * <p>So the families are a real array (one owner, iterable by the test
+ * below) rather than a pattern embedded in one assertion. New families
+ * are now visible to the coverage test instead of invisible inside a
+ * regex. — Lesson 1120, fourth occurrence.
+ */
+const INLINE_FAMILIES = [
+  "EXIT", "CLEAR", "HISTORY", "DEMO", "THEME", "LAYOUT", "BUDGET",
+  "BOOKMARK", "SNIPPET", "EXPORT", "THEMES_PICK", "TUTORIAL", "BANK",
+  "SDD", "MEMORY_AUDIT", "PICK_MODE",
+];
+const INLINE_OK = new RegExp(`__(${INLINE_FAMILIES.join("|")})`);
+
+/**
+ * Every sentinel token commands.ts can put on a `local:`.
+ *
+ * <p>One regex, and it deliberately ignores whatever follows the
+ * token. The first version used two patterns, one requiring a closing
+ * quote right after `__X__` and one for backticks only — so every
+ * PARAMETERISED sentinel was invisible to this whole file:
+ * `__BUDGET__:0`, `__LAYOUT__:name`, `__SNIPPET_SAVE__:path`,
+ * `__BOOKMARK__:n`, `__MCP_LOGIN__:name`, `__BANK_RECALL__:kind:n`,
+ * `__THEME__:name`, `__MCP_RECONNECT__:target`. Nine sentinels the user
+ * can trigger by typing a command, none of them covered.
+ *
+ * <p>Same defect shape as the INLINE_OK regex: the gate modelled a
+ * narrower world than the code produces, and everything in the gap was
+ * silently fine. Capture the token, not the whole literal.
+ */
+function emittedSentinels() {
+  const emitted = new Set();
+  for (const m of commandsSrc.matchAll(/local:\s*[`'"](__[A-Z_0-9]+__)/g)) emitted.add(m[1]);
+  return emitted;
+}
+
+/**
+ * Does this renderer actually CLAIM the token, rather than merely
+ * mention it?
+ *
+ * <p>First attempt was `src.includes(sentinel)`, and a mutation showed
+ * why that is worthless: short-circuiting the branch with
+ * `false && slash.local === "__HISTORY__"` leaves the literal in the
+ * text and the gate green. (No text-based gate can catch that — a dead
+ * branch is invisible to source pins by construction. What a source
+ * pin CAN catch is the token disappearing, which is the failure that
+ * actually ships: the handler is deleted during a refactor and the
+ * sentinel starts printing itself at the user.)
+ *
+ * <p>So the match is tightened to the four forms renderers actually
+ * use to route a sentinel: `case "__X__":`, `=== "__X__"`,
+ * `=== '__X__'`, and `startsWith("__X__:")` for the parameterised ones.
+ * A bare mention in a comment or a help string no longer counts.
+ */
+function claimedBy(src, sentinel) {
+  const esc = sentinel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?:case\\s+['"\`]${esc}['"\`]|===\\s*['"\`]${esc}|\\.startsWith\\(\\s*['"\`]${esc})`,
+  ).test(src);
+}
 
 test("every panel sentinel commands.ts can emit has a registry entry", () => {
-  const emitted = new Set();
-  for (const m of commandsSrc.matchAll(/local:\s*[`'"](__[A-Z_0-9]+__)[`'"]/g)) emitted.add(m[1]);
-  for (const m of commandsSrc.matchAll(/local:\s*`(__[A-Z_0-9]+__)/g)) emitted.add(m[1]);
+  const emitted = emittedSentinels();
 
   assert.ok(emitted.size > 0, "sanity: commands.ts should emit sentinels");
 
@@ -81,6 +147,39 @@ test("every panel sentinel commands.ts can emit has a registry entry", () => {
   );
   assert.deepEqual(missing, [],
     `panel sentinels with no PANEL_INTENTS entry: ${missing.join(", ")}`);
+});
+
+test("every INLINE_OK sentinel is actually claimed by a renderer", () => {
+  // The check the regex never got. A sentinel that commands.ts can emit
+  // and that no renderer names is exactly the R750 bug: the user types
+  // `/history`, and the token comes back printed at them.
+  const lineSrc = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
+  const tuiSrc = codeOf(readFileSync(join(root, "src", "tui.tsx"), "utf-8"), "tui.tsx");
+
+  // Families that produced at least one emitted sentinel, so an unused
+  // family cannot pass by matching nothing. The floor is MEASURED, not
+  // guessed: 29 of 44 emitted sentinels match INLINE_OK as of
+  // 2026-10-23, after the capture was widened to include the
+  // parameterised ones. (Guessing 25 here is exactly how a threshold
+  // becomes a lie — Lesson 1117.)
+  const relevant = [...emittedSentinels()].filter((s) => INLINE_OK.test(s));
+  assert.ok(relevant.length >= 29,
+    `only ${relevant.length} sentinels matched INLINE_OK — the family list probably ` +
+    "stopped matching, which would make every assertion below vacuous");
+
+  const unclaimed = relevant.filter((s) => !claimedBy(lineSrc, s) && !claimedBy(tuiSrc, s));
+  assert.deepEqual(unclaimed, [],
+    "these sentinels are excused by INLINE_OK but NO renderer names them, so " +
+    `they leak the raw token to the user: ${unclaimed.join(", ")}`);
+
+  // And a family nobody emits is dead weight in an allowlist — it is
+  // pure future suppression.
+  const unused = INLINE_FAMILIES.filter(
+    (f) => !relevant.some((s) => s.includes(f)),
+  );
+  assert.deepEqual(unused, [],
+    `INLINE_FAMILIES entries that match no emitted sentinel: ${unused.join(", ")}. ` +
+    "An allowlist entry for a sentinel nobody can emit is suppression waiting to happen.");
 });
 
 test("every unavailable entry carries a gapNote", () => {
