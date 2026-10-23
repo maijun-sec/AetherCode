@@ -120,8 +120,22 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   for the legacy TUI.
 - `docs/` — R-number design docs. Each round adds a
   `R###-<short-title>.md` to the root of this folder.
-- `r###-commit-msg.txt` — the commit message used for that
-  round. Keep these in git for posterity.
+- `r###-commit-msg.txt` — a SCRATCH DRAFT of the commit message for
+  that round, written when the message is long enough that typing it
+  inline is awkward. Use it as `git commit -F <file>` and then
+  DELETE it. These are NOT tracked, and must not be.
+
+  This entry used to say "Keep these in git for posterity", which was
+  wrong on both counts and is corrected here (2026-10-23). The real
+  convention was written into the rule itself on 2026-09-26
+  (`2feb4b4`): *"git commit messages are written inline at commit
+  time, not stored as files"*. No commit-msg file has ever been
+  tracked, in any casing. The bad line arrived 23 days later, used the
+  LOWERCASE spelling that the then-uppercase-only rule did not match,
+  and so inferred "these are tracked" from a file that merely appeared
+  in `git status`. **Lesson: read the intent where it is stated, not
+  inferred from a behaviour that may be accidental.** The rule now
+  matches both casings (`.gitignore` `*-commit-msg.txt`).
 
 ## Daemon deploy cycle
 
