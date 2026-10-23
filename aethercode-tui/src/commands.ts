@@ -137,7 +137,7 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "ping", description: "round-trip the daemon" },
   { name: "model", args: "<name>",       description: "show or switch the active model" },
   { name: "mode", description: "show or switch the permission mode" },
-  { name: "sessions", description: "list recent sessions" },
+  { name: "sessions", description: "this project's sessions — pick one to continue" },
   { name: "tasks", description: "list recent tasks" },
   { name: "projects", description: "list known projects" },
   { name: "cwd", args: "<path>",         description: "show or switch the working directory" },
@@ -479,7 +479,19 @@ export function routeSlash(input: string): SlashResult | null {
       // often they're using the feature.
       return { rpcMethod: "getSkipStats" };
     case "sessions":
-      return { rpcMethod: "listSessions" };
+      // R370: was `{ rpcMethod: "listSessions" }`, which printed the
+      // RAW WIRE PAYLOAD (id / lastUsedAt / sizeBytes / trashedAt /
+      // messageCount / preview) with no way to pick a session. The
+      // user asked for "list this cwd's sessions and continue one".
+      //
+      // The sentinel opens the SAME picker as `/threads`; the only
+      // difference is `State.panelCwdOnly`, which the host sets
+      // because this intent id is `session-picker`. Keep them as two
+      // intents rather than one command with an argument: `/sessions`
+      // is the one a user reaches for without knowing that "threads"
+      // means "sessions", and it must be discoverable in `/help`
+      // under its own name.
+      return { local: "__SESSION_PICKER__" };
     case "stats":
       return { local: "session stats: see the status bar for token / cost counters; /state for the full snapshot" };
     case "history":

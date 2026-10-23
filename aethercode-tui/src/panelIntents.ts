@@ -181,6 +181,30 @@ export const PANEL_INTENTS: PanelIntent[] = [
     line: 'rendered', // R365: was 'unavailable'; line.ts has a __THREAD_SELECTOR__ arm.
   },
   {
+    id: 'session-picker',
+    sentinels: ['__SESSION_PICKER__'],
+    command: '/sessions',
+    title: "This project's sessions — pick one to keep working",
+    group: 'session',
+    // Deliberately the SAME component as `thread-selector`. The two
+    // commands differ by exactly one thing — whether the row list
+    // is filtered to the active cwd (`State.panelCwdOnly`) — and a
+    // second PanelId would have meant a second fetch, a second
+    // component instance and a third copy of the loadSession call
+    // to keep in sync. R370 pins that they resolve to the same
+    // PanelId.
+    component: 'components/ThreadSelector.tsx',
+    ink: 'mounted',
+    line: 'rendered',
+    // R370: `/sessions` used to return `{rpcMethod:"listSessions"}`,
+    // which printed the RAW WIRE PAYLOAD — id / lastUsedAt /
+    // sizeBytes / trashedAt / messageCount / preview, unformatted,
+    // with no way to pick anything. `/threads` has been a real
+    // picker all along; `/sessions` was the raw dump. Now both
+    // open the picker and `/sessions` additionally scopes it to
+    // the current cwd.
+  },
+  {
     id: 'todo-board',
     sentinels: ['__TODO_BOARD__'],
     command: '/todos',

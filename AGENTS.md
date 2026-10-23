@@ -1149,3 +1149,72 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   it. **Always grep the string constant pool of the FINAL artifact**, not the
   module's `target/classes`. Related to Lesson 1117: a green build is not
   evidence the change is in the artifact.
+
+## Watch out for (R370 additions)
+
+- **A path is not a string.** src/cwdMatch.ts owns `sameCwd` /
+  `partitionByCwd` / `cwdBasename`; the session picker and every cwd
+  comparison on the /threads and /sessions` paths read it. Raw `===`
+  on a cwd is wrong four ways (case folding on Windows, a trailing
+  separator, separator style, and the row with no `cwd` key at all), and
+  each one empties the list it is filtering. `listSessions` OMITS `cwd`
+  for sessions it cannot attribute (`AetherCodeMethods.java:5592`), so
+  "unknown" must be its own state, not folded into "different" — the
+  picker renders `cwd unrecorded` for it, distinct from `cwd≠`. Note
+  that stripping the trailing separator off `C:\` yields `C:`, which
+  Windows reads as *the current directory on drive C*; the canonicaliser
+  refuses to shorten a bare drive root.
+- **A param key must be read off the handler, never remembered.** R370 is
+  the third instance of one mistake: `line.ts` sent `loadSession { id }`
+  while `AetherCodeMethods.loadSession` reads
+  `stringOrThrow(p, "sessionId")`, so every cmd.exe thread switch died
+  on `-32602` AFTER printing the table it invited the user to pick from.
+  Ink sent `{ sessionId }` all along, which is why only the non-TTY path
+  was broken. R364 was `setCwd` (a Tauri IPC name used as a JSON-RPC
+  method), R366 was `workflow/list` (a `SupervisorRpcServer` method).
+  `r370-session-picker.test.mjs` now DERIVES the key out of the Java
+  source instead of restating it.
+- **Scope every source extraction to the block you mean.** The first R370
+  gate scanned the whole file and took the first `request("loadSession"…)`
+  match — which is `viewPrimary`'s at `tui.tsx:2398`, 600 lines before
+  the picker — so reverting the PICKER to `{ id }` went green. Same
+  failure, sixth occurrence (R362's regex, R368's `matchAll`, R1114's
+  unreachable branch): an extraction that silently resolves to a different
+  instance of what it is looking for. Every bounded read uses brace
+  matching or `matchAll` with an explicit counted floor. The threads
+  fetch dispatches `setThreads` TWICE (`[]` on the error path, the real
+  rows on success); a bare `.exec` reads the error one.
+- **Do not locate things by a guessed character window.** The first R370
+  gate draft used `[\s\S]{0,400}?`. Two of the three assertions using
+  it were wrong for reasons unrelated to the code under test. A guessed
+  threshold fails by going GREEN. Lesson 1138, applied to a gate instead of
+  a threshold — use `block()` (brace matching) in the R370 gate.
+- **A gate mutation that edits the gate alone must not be expected to go
+  red.** "Weaken this assertion, then require the weakened assertion to
+  complain" is a category error, and it manufactures phantom holes. The
+  R370 battery's `GATE:` cases pair the gate edit with a REAL product
+  defect and pass when ANOTHER assertion still catches it. One such case
+  was deleted rather than fixed: the renderers' params-key assertion is
+  the only thing that asks "do WE send the daemon's key", while the Java
+  cross-check asks "what does the daemon want" — demanding redundancy
+  there is demanding a second copy of the same question.
+- **A panel claim can be false about the CODE and true about the FEATURE.**
+  `adoptSession` clears `turns` on a session switch because this
+  renderer has NO messages→`Turn` converter (`getTranscript` is
+  registered on `HttpJsonRpcServer:1018` but nothing consumes it).
+  Keeping the old turns would show session A's history while the model
+  answers in session B. The switch toast says so explicitly:
+  "history is not replayed here". Hydration is tracked as its own round in
+  `docs/R370-cwd-session-picker.md`.
+- **Moving a helper out of a gate invalidates that gate's mutations.**
+  `javaCode` moved from `r366-rpc-names.test.mjs` to
+  `scripts/test/java-strip.mjs` in R370 so the new gate could reuse it
+  instead of keeping a second untested copy. The two r366 `javaCode`
+  BYPASS mutations went NO-OP on the day it moved — the same lesson as
+  `BACKEND_MISSING` moving to `rpcCapabilities.ts`, second occurrence.
+  The harness's no-op detector is what caught it; keep reporting NO-OP
+  separately from PASS.
+- **A blanket invariant about panels is false.** "Every mapped panel must
+  have a fetch branch" failed on `todo-board`, which is correctly fed by
+  `todo_update` notifications off the event stream rather than by an RPC.
+  Scope such claims to the panel under test.

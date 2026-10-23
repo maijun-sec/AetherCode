@@ -18,6 +18,10 @@ import { handleSlash, SLASH_HELP } from "./commands.js";
 // with `handleSlash` and with the R366 gate.
 import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
 import { describeSentinel, intentForSentinel } from "./panelIntents.js";
+// R370 — `/sessions` filters rows by cwd with the same comparator
+// Ink uses. See src/cwdMatch.ts for the four ways string equality
+// gets a path wrong.
+import { partitionByCwd } from "./cwdMatch.js";
 
 export interface LineOptions {
   jar: string;
@@ -2085,7 +2089,7 @@ async function panelMcp(
 //  /threads
 // -------------------------------------------------------------------------
 
-async function panelThreads(ctx: PanelCtx): Promise<void> {
+async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
   const nc = ctx.noColor;
   const r = await probe(ctx, "listSessions");
   if (!r.ok) {
@@ -2100,22 +2104,35 @@ async function panelThreads(ctx: PanelCtx): Promise<void> {
     );
     return;
   }
-  const sessions = asRows(r.value);
+  const all = asRows(r.value);
   const idOf = (s: unknown): string => fieldStr(s, ["id", "sessionId", "engineId"]);
+  // R370 — `/sessions` is "this project's sessions". Same lookup as
+  // Ink, same reason (`sameCwd`, not `===`), and the unattributed
+  // remainder is COUNTED rather than dropped so the panel does not
+  // report "0 sessions" next to `/threads`'s 20 with no explanation.
+  const { mine, other } = partitionByCwd(all, (s) => fieldStr(s, ["cwd", "project"]), ctx.cwd);
+  const sessions = cwdOnly ? mine : all;
   const rows: PanelCell[][] = sessions.map((s) => [
     { text: idOf(s), tone: idOf(s) === ctx.sessionId ? "ok" : "plain" },
     { text: fieldStr(s, ["state", "status"]), tone: "muted" },
     { text: fieldStr(s, ["model"]), tone: "muted" },
     { text: fieldStr(s, ["cwd", "project"]), tone: "muted" },
-    { text: fmtStamp(field(s, ["updatedAt", "lastActiveAt", "ts"])), tone: "muted" },
+    // R370: `lastUsedAt` is the field `listSessions` actually sends
+    // (epoch millis from SessionInfo.lastModified()). The old
+    // reader asked for `updatedAt` / `lastActiveAt`, neither of
+    // which the daemon emits, so this column was blank on every row
+    // in every run.
+    { text: fmtStamp(field(s, ["lastUsedAt", "updatedAt", "lastActiveAt", "ts"])), tone: "muted" },
   ]);
   const live = sessions.filter((s) => idOf(s) === ctx.sessionId).length;
   emitPanel(
     ctx,
     renderPanel({
-      title: "session threads",
-      subtitle: "switch the daemon to another thread",
-      note: `${sessions.length} known`,
+      title: cwdOnly ? `sessions in ${ctx.cwd || "(no cwd)"}` : "session threads",
+      subtitle: cwdOnly ? "continue one of this project's sessions" : "switch the daemon to another thread",
+      note: cwdOnly && other.length > 0
+        ? `${sessions.length} of ${all.length} attributed here · ${other.length} have no recorded directory (/threads shows all)`
+        : `${sessions.length} known`,
       noColor: nc,
       columns: [
         { header: "id", min: 8 },
@@ -2125,7 +2142,9 @@ async function panelThreads(ctx: PanelCtx): Promise<void> {
         { header: "last seen", min: 11 },
       ],
       rows,
-      empty: ["the daemon reports no sessions yet \u2014 start one with a prompt"],
+      empty: cwdOnly
+        ? [`no session is recorded under ${ctx.cwd || "the current directory"}`, "use /threads to see every session"]
+        : ["the daemon reports no sessions yet \u2014 start one with a prompt"],
     }),
   );
   if (live === 0 && sessions.length > 0) {
@@ -2133,18 +2152,40 @@ async function panelThreads(ctx: PanelCtx): Promise<void> {
       colorize("    the current thread is not in this list; picking one will switch it", C.dim, nc),
     );
   }
+  if (sessions.length === 0) return;
   const picked = await choose(ctx, {
     options: sessions.map((s) => ({ label: `${idOf(s)}  ${fieldStr(s, ["state", "cwd"], "")}`, value: idOf(s) })),
     initial: Math.max(0, sessions.findIndex((s) => idOf(s) === ctx.sessionId)),
-    title: "Switch session thread",
+    title: cwdOnly ? "Continue a session" : "Switch session thread",
     alt: "use `/session <id>` instead",
   });
   repaint(ctx);
   if (picked === null) return;
-  const res = await probe(ctx, "loadSession", { id: picked } as RpcValue);
+  // R370 — this sent `{ id: picked }` and the daemon has never
+  // accepted it. `AetherCodeMethods.loadSession` opens with
+  // `stringOrThrow(p, "sessionId")`, so every line-mode thread or
+  // session switch died on `-32602 invalid params` — after printing
+  // a table the user was invited to pick from. The Ink path has sent
+  // `{ sessionId }` all along, which is why only cmd.exe mode was
+  // broken. Same class as R364's `setCwd`: a DTO key copied by name
+  // instead of read off the handler.
+  const res = await probe(ctx, "loadSession", { sessionId: picked } as RpcValue);
+  if (res.ok) {
+    // R370 — the daemon's active session changed, so line mode's
+    // own `ctx.sessionId` is stale: the status line and every later
+    // `idOf(s) === ctx.sessionId` "this is you" marker would keep
+    // pointing at the session we just left. Take the id off the
+    // response when the daemon sent one.
+    const back = (res.value as { sessionId?: unknown } | null | undefined)?.sessionId;
+    if (typeof back === "string" && back.length > 0) ctx.sessionId = back;
+  }
   ctx.logAbove(
     res.ok
-      ? colorize(`  \u2713 switched to session ${picked}`, C.green, nc)
+      ? colorize(
+        `  \u2713 now working in ${ctx.sessionId} \u2014 the next prompt continues it (history is not replayed here)`,
+        C.green,
+        nc,
+      )
       : colorize(`  \u2717 loadSession failed: ${res.reason}`, C.red, nc),
   );
 }
@@ -2992,7 +3033,14 @@ async function renderPanelSentinel(
 
     // --- session -----------------------------------------------------
     case "__THREAD_SELECTOR__":
-      await panelThreads(ctx);
+      await panelThreads(ctx, false);
+      return true;
+    // R370 — `/sessions`. Same panel, same continuation, scoped to
+    // the current cwd. The R362 gate requires BOTH renderers to claim
+    // a sentinel, so an arm here is not optional: without it, typing
+    // `/sessions` under cmd.exe prints the raw token.
+    case "__SESSION_PICKER__":
+      await panelThreads(ctx, true);
       return true;
     case "__TODO_BOARD__":
       panelTodos(ctx);

@@ -18,6 +18,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
+// R370 — path equality, not string equality. See src/cwdMatch.ts.
+import { sameCwd } from "../cwdMatch.js";
 
 /** One thread row. Mirrors the Java record. */
 export interface ThreadInfo {
@@ -49,6 +51,23 @@ export interface ThreadSelectorProps {
   onClose: () => void;
   /** Optional title override. */
   title?: string;
+  /**
+   * R370: shown under the title. `/sessions` uses it to print the
+   * absolute cwd being filtered on, because the title only carries
+   * the basename and two projects can share a leaf name.
+   */
+  subtitle?: string;
+  /**
+   * R370: the zero-rows message.
+   *
+   * The default is the component's historical "no threads found",
+   * which is a LIE for `/sessions`: a cwd-scoped list that is empty
+   * because nothing is attributed there is a different fact from a
+   * daemon that has no sessions at all, and the host can tell those
+   * apart. An empty panel that gives the same sentence for both is a
+   * successful-but-uninformative panel.
+   */
+  emptyLabel?: string;
   /** Cap visible rows. Default 9. */
   maxVisible?: number;
   /** When `true`, show a "branch" column in each row. */
@@ -61,6 +80,8 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
   onSelect,
   onClose,
   title = "Select Thread",
+  subtitle,
+  emptyLabel = "no threads found",
   maxVisible = 9,
   showBranch = false,
 }) => {
@@ -110,7 +131,7 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
       // default to "stay" if the cwds match, otherwise
       // "switch" (the host can re-prompt via the modal if
       // it wants explicit user input).
-      const choice: CwdSwitchChoice = t.cwd === currentCwd ? "stay" : "switch";
+      const choice: CwdSwitchChoice = chooseCwd(t.cwd, currentCwd);
       onSelect(t.threadId, choice);
       return;
     }
@@ -136,6 +157,7 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
         <Text color="cyan" bold>◆ {title}</Text>
         <Text dimColor>  type to filter  ↑/↓ (j/k): navigate  Enter: select  Esc: cancel</Text>
       </Box>
+      {subtitle ? <Text dimColor>  {subtitle}</Text> : null}
       <Text> </Text>
       <Box>
         <Text color="yellow">{">"}</Text>
@@ -148,14 +170,21 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
       </Box>
       <Text> </Text>
       {threads.length === 0 ? (
-        <Text dimColor>  no threads found</Text>
+        <Text dimColor>  {emptyLabel}</Text>
       ) : filtered.length === 0 ? (
         <Text dimColor>  no matches for "{filter}"</Text>
       ) : (
         visible.map((t, i) => {
           const realIndex = start + i;
           const isHighlighted = realIndex === highlight;
-          const cwdMismatch = t.cwd !== currentCwd;
+          // R370: three states, not a boolean. `sameCwd`, not `!==` —
+          // a row differing only in case or a trailing separator is
+          // the SAME directory on Windows. And "unknown" is not
+          // "different": `listSessions` omits `cwd` entirely when it
+          // cannot attribute a session, and marking that row `cwd≠`
+          // promised a project switch that the host cannot perform.
+          const cwdUnknown = t.cwd.trim().length === 0;
+          const cwdMismatch = !cwdUnknown && !sameCwd(t.cwd, currentCwd);
           return (
             <Box key={t.threadId} flexDirection="column">
               <Box flexDirection="row">
@@ -170,6 +199,11 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
                   <Text color="magenta">  ·  {t.gitBranch}</Text>
                 ) : null}
                 {cwdMismatch ? <Text color="yellow">  ·  cwd≠</Text> : null}
+                {cwdUnknown ? <Text dimColor>  ·  cwd unrecorded</Text> : null}
+                {/* R370: `updatedAt` was carried on every row and
+                    rendered nowhere, so "which one did I leave" was
+                    unanswerable in a list whose ids are timestamps. */}
+                {t.updatedAt ? <Text dimColor>  ·  {t.updatedAt}</Text> : null}
               </Box>
               {t.prompt ? (
                 <Text dimColor>     {truncate(t.prompt, 80)}</Text>
@@ -194,7 +228,10 @@ function truncate(s: string, n: number): string {
  *  pick. Mirrors `ThreadSelectorScreen.chooseCwd` in
  *  deepagents-code. */
 export function chooseCwd(threadCwd: string, currentCwd: string): CwdSwitchChoice {
-  if (threadCwd === currentCwd) return "stay";
+  // R370: `sameCwd`, not `===`. Two spellings of one directory were
+  // asking for a project switch that resolved to the project the
+  // daemon is already in.
+  if (sameCwd(threadCwd, currentCwd)) return "stay";
   return "switch";
 }
 

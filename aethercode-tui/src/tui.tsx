@@ -36,6 +36,10 @@ import { handleSlash, completeSlash } from "./commands.js";
 // chain, so a sentinel can never be emitted without a declared owner
 // on this renderer.
 import { intentForSentinel, describeSentinel } from "./panelIntents.js";
+// R370 — `sameCwd` / `partitionByCwd` for `/sessions`. String `===`
+// on a path is not a cwd comparison: it is case- and separator-
+// sensitive, which on Windows empties the list it is filtering.
+import { partitionByCwd, cwdBasename, sameCwd } from "./cwdMatch.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
@@ -313,6 +317,11 @@ function truncateForQueue(text: string, max = 56): string {
 const PANEL_BY_INTENT: Record<string, PanelId> = {
   "memory-panel": "memory",
   "thread-selector": "threads",
+  // R370: same panel as `thread-selector` on purpose. `/threads`
+  // lists everything the daemon knows; `/sessions` lists this
+  // cwd's sessions. The difference is `State.panelCwdOnly`, not the
+  // component, not the fetch, and not the continuation.
+  "session-picker": "threads",
   "todo-board": "todos",
   "agent-selector": "agents",
   "effort-picker": "effort",
@@ -321,6 +330,12 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   "notification-center": "notifications",
   "mcp-viewer": "mcp",
 };
+
+/** Intents whose panel row list is scoped to the active cwd. Kept as
+ *  an explicit set rather than an `id === "session-picker"` test at
+ *  the call site, so adding a third cwd-scoped intent is a one-line
+ *  change and the `openPanel` call site stays a lookup. */
+const CWD_SCOPED_INTENTS = new Set(["session-picker"]);
 
 /** Per-panel chrome copy. The shell renders the `title` and
  *  `hint`; `loading` names the RPC in flight so the pending row
@@ -463,15 +478,39 @@ function normalizeMemoryRow(raw: unknown, i: number): MemoryRow {
   };
 }
 
-function normalizeThreadRow(raw: unknown, i: number): ThreadRow {
+/** R370 — `listSessions` sends `lastUsedAt` as EPOCH MILLIS (a JSON
+ *  number, from `SessionInfo.lastModified()`), not a formatted
+ *  string, and sends NO `updatedAt` / `lastActiveAt` at all. The old
+ *  reader (`r.updatedAt ?? r.lastActiveAt`) therefore resolved to
+ *  `""` for every row, every time — a field that is structurally
+ *  incapable of being non-empty. Render it as an age instead, and
+ *  only when the wire actually carried one. */
+function formatAge(raw: unknown, now: number): string {
+  const ms = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const d = now - ms;
+  if (d < 0) return "just now";
+  const min = Math.floor(d / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const mo = Math.floor(day / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
+
+function normalizeThreadRow(raw: unknown, i: number, now: number): ThreadRow {
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
     threadId: String(r.sessionId ?? r.id ?? r.threadId ?? `session-${i}`),
     agentName: String(r.agentName ?? r.agent ?? "primary"),
     messages: Number(r.messageCount ?? r.messages ?? r.count ?? 0) || 0,
-    createdAt: String(r.createdAt ?? ""),
-    updatedAt: String(r.updatedAt ?? r.lastActiveAt ?? ""),
-    prompt: String(r.title ?? r.prompt ?? r.summary ?? r.firstPrompt ?? ""),
+    createdAt: formatAge(r.createdAt, now),
+    updatedAt: formatAge(r.lastUsedAt ?? r.updatedAt ?? r.lastActiveAt, now),
+    prompt: String(r.title ?? r.prompt ?? r.summary ?? r.firstPrompt ?? r.preview ?? ""),
     cwd: String(r.cwd ?? r.workingDirectory ?? ""),
     gitBranch: r.gitBranch == null ? undefined : String(r.gitBranch),
   };
@@ -1346,8 +1385,30 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const arr = Array.isArray(raw)
             ? raw
             : ((raw as { sessions?: unknown[] })?.sessions ?? []);
-          dispatch({ type: "setThreads", threads: (arr as unknown[]).map(normalizeThreadRow) });
-          done();
+          const now = stateRef.current.panelOpenedAt || Date.now();
+          const all = (arr as unknown[]).map((r, i) => normalizeThreadRow(r, i, now));
+          // R370 — `/sessions` is "this project's sessions", so the
+          // row list is scoped to the active cwd. `/threads` keeps
+          // everything and lets the picker offer `switchProject`.
+          //
+          // The ATTRIBUTED count goes in `threads` and the rest is
+          // reported as a notice rather than dropped: `listSessions`
+          // omits `cwd` entirely for sessions it cannot attribute,
+          // and a panel that quietly shows 0 rows next to `/threads`'s
+          // 20 reads as a bug instead of an honest answer.
+          const { mine, other } = partitionByCwd(all, (r) => r.cwd, currentCwd);
+          const scoped = stateRef.current.panelCwdOnly;
+          dispatch({ type: "setThreads", threads: scoped ? mine : all });
+          if (scoped && other.length > 0) {
+            setNotice(
+              `${mine.length} of ${all.length} sessions are recorded under ` +
+              `${cwdBasename(currentCwd) || currentCwd || "(no cwd)"} — ` +
+              `the other ${other.length} have no recorded directory. ` +
+              `Use /threads to see everything.`,
+            );
+          } else {
+            done();
+          }
         })
         .catch((e: unknown) => fail("listSessions", e));
       return () => { cancelled = true; };
@@ -1411,7 +1472,13 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     // "todos", "cwd", "effort" and "notifications" are served from
     // local state; nothing to fetch, so nothing to await.
     return () => { cancelled = true; };
-  }, [state.activePanel, state.memoryTab, state.sessionId, client]);
+  // R370: `state.panelCwdOnly` is a DEP, not an afterthought.
+  // `/threads` and `/sessions` both resolve to `activePanel ===
+  // "threads"`, so opening one straight after closing the other can
+  // leave `activePanel` unchanged while the filter flips — without
+  // this dep the panel would re-render showing the previous
+  // command's row list with the new command's title.
+  }, [state.activePanel, state.memoryTab, state.sessionId, state.panelCwdOnly, client]);
 
   useEffect(() => {
     // TUI flicker fix (R-2026-09-13-R-tui-flicker): the
@@ -1868,7 +1935,16 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       const intent = intentForSentinel(bareSentinel(panelLocal));
       const panelId = intent ? PANEL_BY_INTENT[intent.id] : undefined;
       if (panelId) {
-        dispatch({ type: "openPanel", id: panelId });
+        // R370: cwd-scoped intents (today: `session-picker` =
+        // `/sessions`) get their filter flag here, once, at the only
+        // place a panel is opened. Every other consumer reads
+        // `state.panelCwdOnly` and does not re-derive it, so the
+        // filter cannot disagree between the fetch and the header.
+        dispatch({
+          type: "openPanel",
+          id: panelId,
+          cwdOnly: intent ? CWD_SCOPED_INTENTS.has(intent.id) : false,
+        });
         return;
       }
     }
@@ -2879,7 +2955,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
               // found` before it could do anything. The JSON-RPC
               // name is `switchProject`
               // (AetherCodeMethods.registerAll + HttpJsonRpcServer).
-              if (choice === "switch" && target?.cwd && target.cwd !== currentCwd) {
+              // R370: `choice` is decided by ThreadSelector from a
+              // strict `t.cwd === currentCwd`, but we gate the actual
+              // `switchProject` on `sameCwd`. The two disagreed
+              // before: a row whose cwd differed only in case
+              // (`d:\work` vs `D:\Work`) was labelled "cwd≠" and
+              // would have fired a project switch for a directory
+              // the daemon is already in.
+              if (choice === "switch" && target?.cwd && !sameCwd(target.cwd, currentCwd)) {
                 void client
                   .request("switchProject", { cwd: target.cwd } as RpcValue)
                   .then(() =>
@@ -2891,15 +2974,53 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
               }
               void client
                 .request("loadSession", { sessionId: threadId } as RpcValue)
-                .then(() =>
-                  dispatch({ type: "pushToast", kind: "ok", text: `switched to thread ${threadId}` })
-                )
+                .then((res: unknown) => {
+                  // R370 — the daemon swapped its active session, so
+                  // the TUI's own sessionId is now a lie (it still
+                  // names the session we just left, and it is what
+                  // the Header pill and `/export` show). Take the id
+                  // back off the response rather than assuming the
+                  // request succeeded into the one we asked for.
+                  const sid =
+                    (res as { sessionId?: unknown } | null)?.sessionId;
+                  const adopted = typeof sid === "string" && sid.length > 0 ? sid : threadId;
+                  dispatch({ type: "adoptSession", sessionId: adopted });
+                  dispatch({
+                    type: "pushToast",
+                    kind: "ok",
+                    // Say what actually happened. The scrollback is
+                    // NOT the picked session's history (there is no
+                    // transcript hydration in this renderer), and a
+                    // toast that implies otherwise is the R369 class
+                    // of lie one layer up.
+                    text: `now working in ${adopted} — the next prompt continues it (history is not replayed here)`,
+                  });
+                })
                 .catch((e: unknown) =>
                   dispatch({ type: "pushToast", kind: "err", text: `loadSession failed: ${errMsg(e)}` })
                 );
             }}
             onClose={closePanel}
-            title=""
+            // R370: this was `title=""`, which rendered a bare `◆ `
+            // with nothing after it — a modal with no name, on BOTH
+            // `/threads` and (new) `/sessions`. Two commands share
+            // this panel now, so the heading has to say which one is
+            // open or the user cannot tell whether the row list is
+            // filtered.
+            title={
+              state.panelCwdOnly
+                ? `Sessions in ${cwdBasename(currentCwd) || currentCwd || "(no cwd)"}`
+                : "All sessions"
+            }
+            emptyLabel={
+              state.panelCwdOnly
+                ? `no sessions recorded under ${cwdBasename(currentCwd) || currentCwd || "the current directory"} — /threads shows every session`
+                : "no sessions yet — start one with a prompt"
+            }
+            // The title carries the leaf name; two checkouts can
+            // share one. Print the absolute path under it so the
+            // filter target is never a guess.
+            subtitle={state.panelCwdOnly ? currentCwd : undefined}
             maxVisible={10}
           />
         );

@@ -697,6 +697,25 @@ export interface State {
    */
   activePanel: PanelId | null;
   /**
+   * R370: when true, the session/thread panel lists ONLY rows whose
+   * `cwd` matches the active working directory.
+   *
+   * <p>Two commands open the SAME panel and differ only here:
+   * `/threads` browses every session the daemon knows about (and the
+   * host offers to `switchProject` when the pick is from another cwd),
+   * while `/sessions` means "the sessions of THIS project".
+   *
+   * <p>A flag rather than a second PanelId on purpose: the fetch, the
+   * component and the `loadSession` continuation are identical, and
+   * duplicating a PanelId would duplicate all three plus a second place
+   * for the cross-cwd branch to drift out of sync.
+   *
+   * <p>It is not stored per-panel because `activePanel` is a single
+   * slot — the flag is written at `openPanel` and cleared when the
+   * panel closes, so it can never describe a panel that is not up.
+   */
+  panelCwdOnly: boolean;
+  /**
    * R362: `Date.now()` captured when the panel opened. Panels that
    * render relative timestamps (MemoryPanel's `now`) read this
    * instead of calling `Date.now()` inline — a fresh value on every
@@ -1056,7 +1075,7 @@ export type Action =
   | { type: "removeSubagentSpawnCard"; eventId: string } // R214: dismiss the spawn card (e.g. the user cleared the chat)
 
   /* --- R362: Ink panel host ------------------------------------ */
-  | { type: "openPanel"; id: PanelId }                       // R362: mount a panel; closes every other overlay
+  | { type: "openPanel"; id: PanelId; cwdOnly?: boolean } // R362: mount a panel; R370: `cwdOnly` filters the session list to the active cwd
   | { type: "closePanel" }                                    // R362: unmount + restore the prompt draft
   | { type: "setPanelStatus"; status: PanelStatus }            // R362: pending / error / notice
   | { type: "setMemoryTab"; tab: MemoryScopeId }               // R362: switch tab (App re-fetches the scope)
@@ -1067,6 +1086,7 @@ export type Action =
   | { type: "setMcpServers"; servers: McpServerRow[] }        // R362: MCP listing
   | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
   | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
+  | { type: "adoptSession"; sessionId: string }                          // R370: the daemon swapped its active session
   ;
 
 let turnIdSeq = 1;
@@ -1203,6 +1223,10 @@ export const INITIAL: State = {
   // R362: panel host. Nothing is open at boot; the first
   // `openPanel` fills the rest in.
   activePanel: null,
+  // R370: `/threads` is the unfiltered default; `/sessions` passes
+  // `cwdOnly: true`. No panel is open at boot, so false is the only
+  // honest value here.
+  panelCwdOnly: false,
   panelOpenedAt: 0,
   panelStatus: EMPTY_PANEL_STATUS,
   panelInputBefore: "",
@@ -2163,6 +2187,9 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         activePanel: id,
+        // R370: written here and cleared on close, so the flag can
+        // never outlive the panel it describes.
+        panelCwdOnly: action.cwdOnly === true,
         panelOpenedAt: Date.now(),
         panelStatus: EMPTY_PANEL_STATUS,
         panelInputBefore: state.input,
@@ -2191,6 +2218,8 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         activePanel: null,
+        // R370: cleared with the panel, so reopening always re-decides.
+        panelCwdOnly: false,
         panelStatus: EMPTY_PANEL_STATUS,
         memoryCompact: { state: "idle" },
         input: state.panelInputBefore,
@@ -2201,6 +2230,43 @@ export function reducer(state: State, action: Action): State {
 
     case "setPanelStatus":
       return { ...state, panelStatus: action.status };
+
+    // R370 — the daemon's active session changed under us
+    // (`loadSession` swaps `engine`'s in-memory transcript).
+    //
+    // The TUI cannot replay the newly-adopted session's history:
+    // there is no messages -> Turn converter anywhere in this
+    // renderer (the desktop has one; the TUI's `init` action only
+    // carries sessionId/model/mode). So we do the honest thing
+    // rather than the convenient thing:
+    //
+    //   KEEP the old turns  -> the user reads session A's history
+    //                         while the model answers in session
+    //                         B. That is a lie with a UI on it.
+    //   CLEAR the turns    -> the scrollback is empty, the header
+    //                         names the right session, and the
+    //                         NEXT prompt genuinely continues
+    //                         there (the TUI sends `query` with no
+    //                         sessionId, so the daemon's active
+    //                         session is the one that answers).
+    //
+    // See docs/R370-cwd-session-picker.md for the hydration gap.
+    case "adoptSession": {
+      if (action.sessionId === state.sessionId && state.turns.length === 0) return state;
+      return {
+        ...state,
+        sessionId: action.sessionId,
+        turns: [],
+        todos: [],
+        // `status` is this renderer's streaming flag (`AppStatus`),
+        // not a separate `streaming` boolean.
+        status: state.connected ? "ready" : state.status,
+        viewingSubagentId: null,
+        viewHistory: [],
+        lastStopReason: null,
+        lastStopKind: null,
+      };
+    }
 
     case "setMemoryTab":
       // Re-opening /memory on the tab the user left is the common

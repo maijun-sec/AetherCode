@@ -46,6 +46,13 @@ const T = {
   // desktop broken and every TUI-observable assertion green.
   http: join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java",
     "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+  // R370: the Java comment stripper moved here (out of the gate) so
+  // the R370 gate could reuse it instead of keeping a second,
+  // untested copy. The two `javaCode` BYPASS cases below used to edit
+  // `gate` and went NO-OP on the day it moved — the same lesson the
+  // `caps` note above records, the second occurrence. They now edit
+  // this file.
+  javastrip: join(here, "java-strip.mjs"),
 };
 const GATE = join(here, "r366-rpc-names.test.mjs");
 
@@ -148,9 +155,9 @@ const CASES = [
     // http.setPermissionMethods call this gate reads. Requiring RED
     // here because a broken scanner that still returns plausible
     // output is the most dangerous failure this gate has.
-    [["gate", (s) => s.replace('if (c === "/" && src[i + 1] === "*") {', 'if (false) {')]]],
+    [["javastrip", (s) => s.replace('if (c === "/" && src[i + 1] === "*") {', 'if (false) {')]]],
   ["BYPASS: javaCode blanks string literals along with comments", "red",
-    [["gate", (s) => s.replace('      const q = c;\n      out += c;', '      const q = c;\n      for (let z = i; z < n && src[z] !== "\\n"; z++) out += " ";\n      out += c;')]]],
+    [["javastrip", (s) => s.replace('      const q = c;\n      out += c;', '      const q = c;\n      for (let z = i; z < n && src[z] !== "\\n"; z++) out += " ";\n      out += c;')]]],
   ["BYPASS: the R367 regression test is deleted", "green",
     // If removing the assertion entirely leaves the gate green, then the
     // R367 case was never actually load-bearing — it was decoration.

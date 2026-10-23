@@ -62,8 +62,36 @@ test("R196: chooseCwd — different cwd → switch", () => {
   assert.equal(chooseCwd("/work/other", "/work/proj"), "switch");
 });
 
-test("R196: chooseCwd — case-sensitive (Windows shares case-insensitive paths but we compare literally)", () => {
-  assert.equal(chooseCwd("/Work/Proj", "/work/proj"), "switch");
+test("R196/R370: chooseCwd folds case on Windows, compares literally elsewhere", () => {
+  // R370 changed this. The test used to be:
+  //
+  //   test("chooseCwd — case-sensitive (Windows shares case-insensitive
+  //         paths but we compare literally)", () => {
+  //     assert.equal(chooseCwd("/Work/Proj", "/work/proj"), "switch");
+  //   });
+  //
+  // i.e. it PINNED THE BUG and named the bug in its own title. On
+  // Windows `/Work/Proj` and `/work/proj` are the same directory, so
+  // answering "switch" told the user their project was about to move
+  // when it was not — and the host, which gated `switchProject` on
+  // `!sameCwd(...)`, then correctly declined to move it. The label and
+  // the action disagreed.
+  //
+  // `chooseCwd` now reads `sameCwd` from `src/cwdMatch.ts`, which
+  // case-folds on win32 only. A POSIX filesystem is case-sensitive, so
+  // the literal comparison is still correct there and this assertion
+  // must stay platform-aware rather than simply being deleted.
+  const expected = process.platform === "win32" ? "stay" : "switch";
+  assert.equal(chooseCwd("/Work/Proj", "/work/proj"), expected);
+
+  // Different directories must differ on every platform — the fix must
+  // not have turned case folding into "everything matches".
+  assert.equal(chooseCwd("/work/other", "/work/proj"), "switch");
+});
+
+test("R370: chooseCwd ignores a trailing separator", () => {
+  assert.equal(chooseCwd("/work/proj/", "/work/proj"), "stay");
+  assert.equal(chooseCwd("/work/proj", "/work/proj/"), "stay");
 });
 
 // ----- 2. formatThreadRow ------------------------------------------

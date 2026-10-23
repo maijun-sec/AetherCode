@@ -57,6 +57,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codeOf } from "./strip-comments.mjs";
+// R370: the Java scanner moved to its own module so the R370 gate can
+// reuse it. A second copy would be a second UNTESTED scanner, and the
+// self-test below (`javaCodeHandlesTheApostropheTrap`) is the only
+// reason to trust any of them.
+import { javaCode } from "./java-strip.mjs";
 
 /**
  * Compile `src/rpcCapabilities.ts` and import the real value out of
@@ -165,43 +170,11 @@ const declaredButUnwired = [];
  * DaemonRunner, including the http.setPermissionMethods call the
  * gate reads. The R366 bypass mutation turned this exact failure
  * on: see `javaCodeHandlesTheApostropheTrap` below.
+ *
+ * R370 moved the body to `./java-strip.mjs`; the self-test below
+ * stays here, because a scanner with no self-test is the thing this
+ * comment has been warning about since R364.
  */
-function javaCode(src) {
-  let out = "";
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === '"' || c === "'") {
-      const q = c;
-      out += c;
-      i++;
-      while (i < n) {
-        const d = src[i];
-        out += d;
-        i++;
-        if (d === "\\" && i < n) { out += src[i]; i++; }
-        else if (d === q) break;
-      }
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "/") {
-      while (i < n && src[i] !== "\n") { out += " "; i++; }
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "*") {
-      const close = src.indexOf("*/", i + 2);
-      const end = close < 0 ? n : close + 2;
-      for (let k = i; k < end; k++) out += src[k] === "\n" ? "\n" : " ";
-      i = end;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
-
 const daemonRunnerCode = javaCode(daemonRunnerSrc);
 
 for (const cls of EXTRA_METHOD_CLASSES) {
