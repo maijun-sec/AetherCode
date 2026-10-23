@@ -152,21 +152,30 @@ export const PANEL_INTENTS: PanelIntent[] = [
     id: 'context-meter',
     sentinels: ['__CONTEXT_METER__'],
     command: '/context',
-    title: 'Show what is occupying the context window, itemised',
+    title: 'What is filling the context window, itemised',
     group: 'context',
     component: 'components/ContextMeter.tsx',
-    ink: 'unavailable',
-    line: 'unavailable',
-    blocker: 'no-command',
-    gapNote:
-      'R362 declared this row without noticing that `/context` is not a ' +
-      'command - handleSlash answers "unknown slash command", so nothing ' +
-      'emits __CONTEXT_METER__. R365 re-derived reachability from the ' +
-      'renderers and found /help was advertising a dead command. This row ' +
-      'is a placeholder for ContextMeter.tsx, not a gap in an existing ' +
-      'command; it stays out of /help until the command exists, because ' +
-      'advertising a command that does not exist is worse than omitting it.',
-    advertised: false,
+    // R371: this row was `unavailable`/`unavailable` with
+    // `blocker: 'no-command'` and `advertised: false`, because
+    // `handleSlash` had no `case "context"` and answered "unknown
+    // slash command" while 251 lines of ContextMeter sat unmounted
+    // behind it.
+    //
+    // Three separate half-finished rounds were involved:
+    //
+    //   1. T-441 wrote ContextMeter.tsx, added three State fields,
+    //      and wrote six source-pin assertions — but never imported
+    //      the component into StatusBar and never gave anything a
+    //      way to WRITE those three fields. Three of its six
+    //      assertions have been red ever since.
+    //   2. Nothing called `CompactMethods.registerAll` outside the
+    //      test that constructed the object itself, so
+    //      `compact/status` was `-32601` on every daemon.
+    //   3. Nothing ever emitted `__CONTEXT_METER__`.
+    //
+    // All three are now closed. The panel is real on both renderers.
+    ink: 'mounted',
+    line: 'rendered',
   },
 
   // --- session -----------------------------------------------------

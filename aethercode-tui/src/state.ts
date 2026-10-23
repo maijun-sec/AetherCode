@@ -114,7 +114,8 @@ export type PanelId =
   | "cwd"
   | "grants"
   | "notifications"
-  | "mcp";
+  | "mcp"
+  | "context";   // R371 — /context, the row R362 shipped as a placeholder
 
 /** Loading / error / notice triple shared by every panel. Drives
  *  the shell's pending row and its red error row so a failed RPC is
@@ -770,6 +771,27 @@ export interface State {
    */
   contextMaxTokens: number | null;
   /**
+   * R371: the full `getContextInfo` snapshot, or null when the daemon
+   * has not answered (or answered an error envelope) yet.
+   *
+   * <p>The three scalar fields below were declared in T-441 and had
+   * NO action that wrote them — they sat at their INITIAL values
+   * forever, so the ContextMeter would have rendered 0% against a
+   * hard-coded 200_000 window regardless of the real model. Keeping
+   * the raw snapshot alongside them is what lets `/context` show
+   * WHICH model and window the number belongs to, instead of a
+   * percentage with nothing to anchor it.
+   */
+  contextInfo: {
+    provider: string;
+    model: string;
+    contextWindow: number;
+    maxOutputTokens: number;
+    transcriptChars: number;
+    estimatedTokens: number;
+    usagePercent: number;
+  } | null;
+  /**
    * T-441: timestamp (epoch ms) of the last compact event.
    * Mirrors the same field on the embedded ContextMeter's
    * ContextInfo. The StatusBar forwards it so the meter
@@ -1087,6 +1109,8 @@ export type Action =
   | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
   | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
   | { type: "adoptSession"; sessionId: string }                          // R370: the daemon swapped its active session
+  | { type: "setContextInfo"; info: State["contextInfo"] }            // R371: `getContextInfo` answered
+  | { type: "setCompactStatus"; autoCompactDisabled: boolean; lastEventTs: number | null } // R371: `compact/status` answered
   ;
 
 let turnIdSeq = 1;
@@ -1248,6 +1272,7 @@ export const INITIAL: State = {
   // other two default to "no event yet" / "auto-compact
   // on".
   contextMaxTokens: null,
+  contextInfo: null,
   lastCompactTs: null,
   autoCompactDisabled: false,
 };
@@ -2230,6 +2255,31 @@ export function reducer(state: State, action: Action): State {
 
     case "setPanelStatus":
       return { ...state, panelStatus: action.status };
+
+    // R371 — the two writes T-441 declared but never made.
+    //
+    // `contextMaxTokens` is set from the daemon's OWN answer, not the
+    // 200_000 fallback. `fallback ?? 200_000` in a component is fine
+    // when the real value arrives; it is a lie when nothing ever
+    // delivers it, which was the case for every round between T-441
+    // and here.
+    case "setContextInfo": {
+      const info = action.info;
+      if (info === null) return { ...state, contextMaxTokens: null };
+      return { ...state, contextInfo: info, contextMaxTokens: info.contextWindow };
+    }
+
+    // R371 — `lastCompactTs` only ever MOVES FORWARD. A status poll
+    // that fails, or answers with an older event, must not rewind the
+    // meter's "↓ compacted" hint into the past and pin it on.
+    case "setCompactStatus": {
+      const next = action.lastEventTs;
+      const lastCompactTs =
+        next != null && (state.lastCompactTs == null || next > state.lastCompactTs)
+          ? next
+          : state.lastCompactTs;
+      return { ...state, autoCompactDisabled: action.autoCompactDisabled, lastCompactTs };
+    }
 
     // R370 — the daemon's active session changed under us
     // (`loadSession` swaps `engine`'s in-memory transcript).

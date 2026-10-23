@@ -29,6 +29,15 @@ import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
 import type { State } from "../state.js";
 import { t, formatCost, formatTokens } from "../theme.js";
+// R371: T-441 declared this integration and shipped the component, the
+// state fields and six source-pin assertions — but never imported or
+// rendered it. The three `T-441: StatusBar.tsx …` cases have been red
+// in the full suite ever since, which is the only reason anyone
+// noticed. The fields it reads were equally dead: `contextMaxTokens`,
+// `lastCompactTs` and `autoCompactDisabled` had no action that wrote
+// them, so even a mounted meter would have shown a confident 0% against
+// a hard-coded 200_000 window.
+import { ContextMeter, type ContextInfo } from "./ContextMeter.js";
 import { SessionControl, type SessionState } from "./session/SessionControl.js";
 import { isStale, staleLabel } from "./session/SessionDetailsPanel.js";
 
@@ -140,6 +149,27 @@ export const StatusBar: React.FC<Props> = ({
     <Text color={t.warn}> · ⏩ skip {state.skipConfirmationRemaining}</Text>
   ) : null;
 
+  // R371 — T-441's ContextInfo, finally wired.
+  //
+  // `inputTokens` is passed through NULLABLE, not coerced. It is the
+  // live prompt cost off the last usage event, so before the first
+  // turn of a session there is no measurement at all — and
+  // `state.contextMaxTokens` is null for the same window, meaning
+  // `maxTokens` is the 200_000 fallback rather than the model's real
+  // window. Rendering `0 / 200000 = 0%` there produces a bar that
+  // looks measured and is invented, so the meter shows `—` instead
+  // (ContextInfo.inputTokens became `number | null` for this).
+  const ctxInfo: ContextInfo = {
+    inputTokens: state.inputTokens,
+    maxTokens: state.contextMaxTokens ?? 200_000,
+    lastCompactTs: state.lastCompactTs,
+    autoCompactDisabled: state.autoCompactDisabled,
+  };
+  // No point sampling a bar whose input cannot change while a run is
+  // live — and a 4 s timer that keeps firing behind a modal is a
+  // re-render nobody asked for. 1e6 ms parks it until the bar unmounts.
+  const ctxPaused = state.submitting;
+
   return (
     <Box flexDirection="column" paddingX={1}>
       {showControl ? (
@@ -182,6 +212,14 @@ export const StatusBar: React.FC<Props> = ({
           <Text>{jarName(state.jarPath)}</Text>
         </Box>
       </Box>
+      {/* R371: the one-line strip stays one line; the meter gets its
+          own row rather than 24 columns inside the strip, which would
+          have squeezed the token counters off an 80-column terminal. */}
+      <ContextMeter
+        info={ctxInfo}
+        width={24}
+        sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000}
+      />
     </Box>
   );
 };

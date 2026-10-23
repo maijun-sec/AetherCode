@@ -208,6 +208,56 @@ public final class HttpJsonRpcServer {
         return handler.apply(gm);
     }
 
+    // ------------------------------------------------------------------
+    //  R371 — compact/*, the THIRD instance of the same defect.
+    //
+    //  `CompactMethods` was written in T-190..T-193 with a
+    //  `registerAll` hook, and `CrossCuttingMethodsT500Test` asserts
+    //  all four names are on the dispatcher — by calling
+    //  `new CompactMethods().registerAll(d)` ITSELF. The test built
+    //  the object under test, so the assertion was structurally
+    //  incapable of failing: no production code has ever
+    //  instantiated CompactMethods, so `compact/status`,
+    //  `compact/run`, `compact/reset` and `compact/history` answered
+    //  `-32601 method not found` on EVERY daemon, and
+    //  `src/compact-rpc.ts`'s remote mode has been dead since it
+    //  was written.
+    //
+    //  This is the gate-shape sibling of R1121: the check matched,
+    //  but it never asked whether the wiring happened in production.
+    //  The TUI's `/context` depends on `compact/status` for
+    //  `autoCompactDisabled` + `lastCompactTs`.
+    //
+    //  Same "fail loudly" rule as routePermission: a
+    //  `{ok:false}` envelope here would let the TUI render a
+    //  confident "auto-compact on" that nothing verified.
+    // ------------------------------------------------------------------
+
+    private volatile org.aethercode.protocol.methods.CompactMethods compactMethods;
+
+    public void setCompactMethods(org.aethercode.protocol.methods.CompactMethods cm) {
+        this.compactMethods = cm;
+    }
+
+    public org.aethercode.protocol.methods.CompactMethods compactMethods() {
+        return compactMethods;
+    }
+
+    /** Route a compact/* RPC, or fail loudly when unwired. */
+    private <T> T routeCompact(
+            java.util.function.Function<
+                    org.aethercode.protocol.methods.CompactMethods, T> handler) {
+        org.aethercode.protocol.methods.CompactMethods cm = compactMethods;
+        if (cm == null) {
+            throw new JsonRpcProtocolException(
+                    "compact/* not configured on this daemon",
+                    JsonRpcError.of(JsonRpcError.INTERNAL_ERROR,
+                            "compact/* not configured — the daemon did not wire "
+                                    + "CompactMethods into its HTTP transport"));
+        }
+        return handler.apply(cm);
+    }
+
     private final Consumer<JsonRpcNotification> broadcastNotifier = notif -> {
         // R83 fix: Javalin 5.6.3's WsContext#send(String) drops
         // messages when called from a thread other than the WS
@@ -1142,6 +1192,17 @@ public final class HttpJsonRpcServer {
             case "grants/revoke"                     -> routeGrant(m -> m.revoke(params));
             case "grants/clear"                      -> routeGrant(m -> m.clear(params));
             case "grants/setPreset"                  -> routeGrant(m -> m.setPreset(params));
+
+            // --- R371: compact/* over HTTP+WS ---------------------------
+            // Same reason as R367 above. These four have been
+            // `-32601` on every daemon since T-193, because nothing
+            // ever called `CompactMethods.registerAll` outside the
+            // test that constructed the object itself.
+            case "compact/run"                        -> routeCompact(m -> m.run(params));
+            case "compact/status"                     -> routeCompact(m -> m.status(params));
+            case "compact/reset"                      -> routeCompact(m -> m.reset(params));
+            case "compact/history"                    -> routeCompact(m -> m.history(params));
+
             default -> throw new JsonRpcProtocolException(
                     "unknown method: " + method,
                     JsonRpcError.of(JsonRpcError.METHOD_NOT_FOUND, method));

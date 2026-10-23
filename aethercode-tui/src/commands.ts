@@ -59,6 +59,7 @@ export const SLASH_COMMANDS: string[] = [
   "tutorial",
   "bookmark",
   "metrics",
+  "context",      // R371 — the command the context-meter placeholder needed
   "trace",
   "agents",
   "agent",
@@ -154,6 +155,7 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "tutorial", description: "re-show the welcome overlay" },
   { name: "bookmark", args: "[N]",    description: "bookmark the current turn" },
   { name: "metrics", description: "show session metrics" },
+  { name: "context", description: "what is filling the context window, itemised" },
   { name: "trace", description: "list recent traces" },
   { name: "agents", description: "list Mavis agents with model column" },
   { name: "agent", args: "<name>",       description: "show an agent's body + frontmatter" },
@@ -238,7 +240,7 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
 
 const SLASH_COMMAND_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["session", ["help", "clear", "exit", "history", "session", "session-new", "session-del", "sessions-list", "sessions", "threads", "lastplan", "tutorial", "rewind", "bookmark", "snippet", "export", "demo"]],
-  ["context", ["memory", "memory-edit", "memory-compact", "memory-audit", "bank-stats", "bank-recall", "todos", "tokens", "metrics", "trace"]],
+  ["context", ["memory", "memory-edit", "memory-compact", "memory-audit", "bank-stats", "bank-recall", "todos", "context", "tokens", "metrics", "trace"]],
   ["config", ["model", "mode", "tool-actions", "theme", "theme-pick", "layout", "budget", "agent-pick", "effort-pick", "cwd-pick", "agents", "agent", "prompt", "phase", "skip", "skip-stats"]],
   ["mcp & integrations", ["mcp", "mcp-login", "mcp-reconnect", "consents", "notifications"]],
   ["workflows & sdd", ["workflow", "continue", "pause", "stop", "sdd", "sdd-status", "sdd-list", "sdd-approve", "sdd-modify", "sdd-skip", "sdd-abort", "sdd-view", "sdd-snapshot", "sdd-diff", "sdd-clear-cache"]],
@@ -967,6 +969,16 @@ export function routeSlash(input: string): SlashResult | null {
       // TodoBoard modal; the user navigates with j/k (the
       // board itself owns the keyboard handler).
       return { local: "__TODO_BOARD__" };
+    }
+    case "context":
+    case "ctx": {
+      // R371: this command did not exist. `panelIntents.ts` had a
+      // `context-meter` row marked `no-command` + `advertised:false`
+      // precisely because `handleSlash` fell through to
+      // "unknown slash command: /context" — and 251 lines of
+      // ContextMeter sat behind a placeholder. Now the command exists,
+      // so the row is a real surface (see panelIntents.ts).
+      return { local: "__CONTEXT_METER__" };
     }
     case "tokens":
     case "token": {

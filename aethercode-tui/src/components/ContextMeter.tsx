@@ -39,8 +39,15 @@ export interface ContextSample {
  *  meter needs to render. The TUI pulls this from `state.ts`
  *  on every poll; tests pass a static object. */
 export interface ContextInfo {
-  /** Token count of the current input prompt. */
-  inputTokens: number;
+  /**
+   * Token count of the current input prompt.
+   *
+   * R371: nullable on purpose. `null` means the daemon has not
+   * reported usage yet — a DIFFERENT fact from "zero tokens used",
+   * and collapsing the two makes an empty bar look like a real
+   * measurement. The meter renders `—` for null.
+   */
+  inputTokens: number | null;
   /** Effective input window (maxTokens - maxOutputFloor). */
   maxTokens: number;
   /** Optional timestamp of the last compact event — used to
@@ -139,7 +146,11 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
 }) => {
   const clock = now ?? (() => Date.now());
   const [samples, setSamples] = useState<ContextSample[]>(() => [
-    { ts: clock(), inputTokens: info.inputTokens },
+    // R371: the seed sample carries the same null-as-0 rule as the
+    // poll below — `info.inputTokens` is nullable and a seed of `0`
+    // would make the very first `detectCompactDrop` comparison run
+    // against a value that was never measured.
+    { ts: clock(), inputTokens: info.inputTokens ?? 0 },
   ]);
   const [buttonFocused, setButtonFocused] = useState(false);
   const lastCompactEventRef = useRef<number | null>(info.lastCompactTs ?? null);
@@ -158,7 +169,11 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
       const ts = clock();
       setSamples((prev) => {
         const last = prev.length > 0 ? prev[prev.length - 1] : null;
-        const next: ContextSample = { ts, inputTokens: info.inputTokens };
+        // R371: a null sample is stored as 0. `detectCompactDrop` guards on
+        // `prev.inputTokens <= 0`, so a run of nulls can never fake a
+        // compact event — and the SAMPLES are only for drop detection;
+        // the rendered bar reads `info`, not this array.
+        const next: ContextSample = { ts, inputTokens: info.inputTokens ?? 0 };
         const drop = detectCompactDrop(last, next);
         if (drop) {
           // Fire the event AFTER state update so the meter can
@@ -198,11 +213,16 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
     }
   });
 
-  const ratio = info.maxTokens > 0 ? info.inputTokens / info.maxTokens : 0;
+  // R371: `null` input is not `0`. A bar at 0% against a 200_000
+  // fallback window is a confident-looking measurement of nothing;
+  // `—` is what "the daemon has not told us yet" actually looks like.
+  const known = typeof info.inputTokens === "number" && Number.isFinite(info.inputTokens);
+  const inputTokens = known ? (info.inputTokens as number) : 0;
+  const ratio = info.maxTokens > 0 ? inputTokens / info.maxTokens : 0;
   const color = bandColor(ratio);
   const { filled, partial, empty } = fillBar(ratio, width);
   const pct = Math.round(ratio * 100);
-  const showButton = ratio >= RECOMMEND_BUTTON_THRESHOLD;
+  const showButton = known && ratio >= RECOMMEND_BUTTON_THRESHOLD;
   const hint =
     lastCompactEventRef.current != null
     && clock() - lastCompactEventRef.current < 5_000
@@ -219,11 +239,16 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
         <Text color={color}>{"]"}</Text>
       </Text>
       {showLabel ? (
-        <Text>
-          <Text dimColor>  </Text>
-          <Text color={color}>{pct}%</Text>
-          <Text dimColor> ({info.inputTokens}/{info.maxTokens})</Text>
-        </Text>
+        known ? (
+          <Text>
+            <Text dimColor>  </Text>
+            <Text color={color}>{pct}%</Text>
+            <Text dimColor> ({inputTokens}/{info.maxTokens})</Text>
+          </Text>
+        ) : (
+          // No measurement yet. Say so rather than print 0%.
+          <Text dimColor>  — (no usage reported yet)</Text>
+        )
       ) : null}
       {hint ? <Text color="green">  {hint}</Text> : null}
       {info.autoCompactDisabled ? (

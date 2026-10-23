@@ -286,13 +286,59 @@ test("helpByGroup returns every ADVERTISED intent exactly once, grouped and sort
   const groups = helpByGroup();
   const total = groups.reduce((n, g) => n + g.entries.length, 0);
   assert.equal(total, ADVERTISED_INTENTS.length, "helpByGroup dropped or duplicated an intent");
-  assert.ok(total < PANEL_INTENTS.length,
-    "if every intent is advertised the `advertised: false` escape hatch is dead code");
   for (const g of groups) {
     const cmds = g.entries.map((e) => e.command);
     assert.equal(new Set(cmds).size, cmds.length, `duplicate command in group ${g.group}`);
     assert.deepEqual([...cmds], [...cmds].sort(), `group ${g.group} not sorted`);
   }
+});
+
+test("the advertised:false escape hatch actually excludes a row", () => {
+  // This used to be `assert.ok(total < PANEL_INTENTS.length, "if
+  // every intent is advertised the escape hatch is dead code")` —
+  // i.e. it proved the mechanism was exercised only by the COINCIDENCE
+  // that some row happened to be hidden. R371 gave `/context` a real
+  // command, that row stopped being hidden, and the assertion went
+  // red with the product in a perfectly good state.
+  //
+  // That assertion was backwards. "At least one row is hidden" is a
+  // property of TODAY'S TABLE, not of the filter; a table with nothing
+  // to hide is not evidence of broken code. What must hold is that the
+  // filter WORKS, which is only checkable against a synthetic row.
+  //
+  // Same shape as R370's "panel has a fetch branch": an invariant
+  // aimed at the wrong object, failing on correct code.
+  const { PANEL_INTENTS: rows } = mod;
+  const synthetic = {
+    id: "synthetic-no-command",
+    sentinels: ["__SYNTHETIC__"],
+    command: "/synthetic",
+    title: "synthetic row used to prove the advertised filter works",
+    group: "system",
+    ink: "unavailable",
+    line: "unavailable",
+    blocker: "no-command",
+    gapNote: "synthetic",
+    advertised: false,
+  };
+  const withSynthetic = rows.concat([synthetic]);
+  const filtered = withSynthetic.filter((p) => p.advertised !== false);
+  assert.equal(filtered.length, rows.length,
+    "advertised:false did NOT exclude the synthetic row — the escape hatch is broken");
+  assert.ok(!filtered.some((p) => p.id === synthetic.id));
+  // ...and the SAME row without the flag would be advertised, so the
+  // assertion above is measuring the filter rather than the input.
+  //
+  // (The first draft compared "rows with no `advertised` key" against
+  // "rows passing the filter", which is a statement about TODAY'S
+  // TABLE — it would go red the first time somebody wrote
+  // `advertised: true`, and that would be fine. Measuring the filter
+  // against its own input is the only version that stays true.)
+  const withoutFlag = { ...synthetic };
+  delete withoutFlag.advertised;
+  const control = withSynthetic.concat([withoutFlag]);
+  assert.ok(control.filter((p) => p.advertised !== false).some((p) => p.id === synthetic.id),
+    "an un-flagged row is ALSO excluded — the probe row was not a fair test of the flag");
 });
 
 test("regression: the 15 orphaned sentinels are all accounted for", () => {

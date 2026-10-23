@@ -64,6 +64,28 @@ if (r.status !== 0) {
 const mod = await import(pathToFileURL(join(tmp, "out", "panelIntents.js")).href);
 const { PANEL_INTENTS, ADVERTISED_INTENTS, helpByGroup, intentForCommand } = mod;
 
+/** R371: compile `commands.ts` too, so `/help` can be checked against
+ *  the commands that actually exist. Previously this file only asked
+ *  "is the row advertised?", which is half the contract — the half
+ *  that mattered was "does typing it do anything?", and the one row
+ *  that proved the point (`/context`) was pinned by NAME rather than
+ *  by the rule behind it. */
+const commandsOut = join(tmp, "out", "commands.js");
+if (!existsSync(commandsOut)) {
+  const rc = spawnSync(`"${tscBin}"`, [
+    "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
+    "--moduleResolution", "bundler", "--jsx", "react",
+    "--esModuleInterop", "true", "--skipLibCheck", "true",
+    "--rootDir", join(root, "src"),
+    `"${join(root, "src", "commands.ts")}"`,
+  ], { encoding: "utf-8", shell: true });
+  if (rc.status !== 0) {
+    console.error("tsc (commands.ts) failed:\n" + rc.stdout + "\n" + rc.stderr);
+    process.exit(1);
+  }
+}
+const { routeSlash } = await import(pathToFileURL(commandsOut).href);
+
 const tuiCode = codeOf(readFileSync(join(root, "src", "tui.tsx"), "utf-8"), "tui.tsx");
 const lineCode = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
 const commandsCode = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8"), "commands.ts");
@@ -221,11 +243,38 @@ test("helpByGroup excludes non-advertised rows and keeps the rest", () => {
   assert.equal(total, ADVERTISED_INTENTS.length,
     "helpByGroup must list exactly the advertised rows");
   const cmds = helpByGroup().flatMap((g) => g.entries.map((e) => e.command));
-  assert.ok(!cmds.includes("/context"),
-    "/context has no command behind it and must not be advertised");
+
+  // Was: `assert.ok(!cmds.includes("/context"))`, named after the one
+  // row that used to be a placeholder. R371 gave `/context` a real
+  // command, so the special case died — and a rule that is really
+  // about "a row with no command behind it must not be advertised"
+  // should have been written against the BLOCKER, not the command.
+  //
+  // Special-casing one row is how a general rule stops being checked
+  // the moment that row changes: the assertion goes red, someone
+  // deletes it, and the next placeholder ships advertised.
+  for (const p of PANEL_INTENTS) {
+    if (p.blocker === "no-command") {
+      assert.ok(!cmds.includes(p.command),
+        `${p.command} is declared \`no-command\` and must not be advertised in /help`);
+    }
+  }
   // ...and the advertised ones are still there.
   for (const p of ADVERTISED_INTENTS) {
     assert.ok(cmds.includes(p.command), `${p.command} went missing from /help`);
+  }
+});
+
+test("every advertised row has a command that actually answers", () => {
+  // The rule R365 was written for, stated positively. `/help` must
+  // never list a command whose only outcome is "unknown slash
+  // command"; that is the R362/R365 defect class.
+  for (const p of ADVERTISED_INTENTS) {
+    const r = routeSlash(p.command);
+    assert.ok(r !== null && r !== undefined,
+      `${p.command} is advertised in /help but handleSlash does not recognise it`);
+    assert.ok(!(typeof r.local === "string" && /^unknown slash command/.test(r.local)),
+      `${p.command} is advertised but answers "unknown slash command"`);
   }
 });
 

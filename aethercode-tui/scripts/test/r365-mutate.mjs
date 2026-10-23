@@ -38,10 +38,24 @@ const CASES = [
   ["re-assert the R362 lie: mcp-viewer unavailable",
     (s) => s.replace(/(id: 'mcp-viewer',[\s\S]*?)ink: 'mounted',\n\s*line: 'rendered'/,
       "$1ink: 'unavailable',\n    line: 'unavailable'")],
-  ["re-advertise /context (the live user-facing bug)",
-    (s) => s.replace(/\n    advertised: false,/, "")],
+  // R371: this used to REMOVE `advertised: false` from /context — the
+  // one row that carried both it and `blocker: 'no-command'`, and the
+  // live user-facing bug R365 was written for. R371 gave /context a
+  // real command, so the pattern stopped matching and the harness
+  // reported a NO-OP rather than a pass. Correct.
+  //
+  // It was then retargeted at `workflow-picker` (`not-wired`) and
+  // SURVIVED — because hiding a row that is genuinely unavailable from
+  // /help is correct behaviour, not a bug. The invariant is not "no
+  // row may be hidden"; it is "a row whose COMMAND DOES NOT EXIST may
+  // not be advertised", and there is no such row left to mutate.
+  //
+  // Rather than invent a defect to fit the case, the mechanism is
+  // covered by a synthetic row in r371-context-meter.test.mjs, which
+  // can construct one. Deleting the case here is honest; keeping a
+  // case that measures nothing is not.
   ["drop the blocker from a blocked row (back to prose-only)",
-    (s) => s.replace(/\n    blocker: 'no-command',/, "")],
+    (s) => s.replace(/(id: 'workflow-picker',[\s\S]*?)\n    blocker: 'not-wired',/, "$1")],
   ["claim a blocker on a fully-mounted row",
     (s) => s.replace(/(id: 'cwd-switcher',[\s\S]*?)ink: 'mounted',\n    line: 'rendered',/,
       "$1ink: 'mounted',\n    line: 'rendered',\n    blocker: 'backend-missing',")],

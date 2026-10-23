@@ -2190,6 +2190,76 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
   );
 }
 
+async function panelContext(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "getContextInfo");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "context window",
+        endpoint: "getContextInfo",
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`],
+      }),
+    );
+    return;
+  }
+  const v = (r.value ?? {}) as Record<string, unknown>;
+  if (v.ok === false) {
+    emitPanel(ctx, [colorize(`  \u2717 getContextInfo refused: ${String(v.error ?? "no engine")}`, C.red, nc)]);
+    return;
+  }
+  const n = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+  const window = n(v.contextWindow);
+  if (window <= 0) {
+    // An `ok:true` answer with a zero window would render "0 / 0",
+    // which reads as "you have no context at all" rather than "the
+    // daemon did not know". Same reasoning as the Ink side.
+    emitPanel(ctx, [colorize("  \u2014 the daemon reported no context window for this model", C.dim, nc)]);
+    return;
+  }
+  const compact = await probe(ctx, "compact/status");
+  const cv = (compact.ok ? compact.value : null) as Record<string, unknown> | null;
+  const disabled = cv?.autoCompactDisabled === true;
+  const ev = (cv?.lastEvent ?? null) as Record<string, unknown> | null;
+  const lastCompact = ev && typeof ev.ts === "number" && ev.ts > 0
+    ? new Date(ev.ts).toLocaleTimeString()
+    : "";
+
+  const rows: PanelCell[][] = [
+    [{ text: "model", tone: "muted" }, { text: `${String(v.provider ?? "—")}/${String(v.model ?? "—")}` }],
+    [{ text: "window", tone: "muted" }, { text: `${window.toLocaleString()} tokens (max output ${n(v.maxOutputTokens).toLocaleString()})` }],
+    [{ text: "in use", tone: "muted" }, { text: `~${n(v.estimatedTokens).toLocaleString()} tokens — ${n(v.usagePercent)}%` }],
+    [{ text: "transcript", tone: "muted" }, { text: `${n(v.transcriptChars).toLocaleString()} characters` }],
+    [
+      { text: "auto-compact", tone: "muted" },
+      {
+        text: compact.ok
+          ? (disabled ? "OFF — the window fills until the provider rejects the turn" : "on")
+          : "unknown (compact/status unavailable)",
+        tone: disabled ? "err" : "muted",
+      },
+    ],
+  ];
+  if (lastCompact) rows.push([{ text: "last compact", tone: "muted" }, { text: lastCompact }]);
+
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "context window",
+      subtitle: "what is filling the window",
+      noColor: nc,
+      columns: [{ header: "field", min: 13 }, { header: "value", flex: 3 }],
+      rows,
+      empty: ["the daemon reported nothing about the context window"],
+    }),
+  );
+  ctx.logAbove(
+    colorize("    token count is the daemon's estimate (transcript characters ÷ 4)", C.dim, nc),
+  );
+}
+
 // -------------------------------------------------------------------------
 //  /consents  (grants)
 // -------------------------------------------------------------------------
@@ -3029,6 +3099,14 @@ async function renderPanelSentinel(
       return true;
     case "__MEMORY_EDIT__":
       panelMemoryEdit(ctx);
+      return true;
+    // R371: the sentinel R362's registry declared with a
+    // `no-command` blocker, because nothing ever emitted it. Now
+    // `/context` does, so line mode has to claim it — otherwise the
+    // R362 gate fails and, worse, cmd.exe users would see the raw
+    // token.
+    case "__CONTEXT_METER__":
+      await panelContext(ctx);
       return true;
 
     // --- session -----------------------------------------------------

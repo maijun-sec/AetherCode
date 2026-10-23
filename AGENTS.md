@@ -1218,3 +1218,52 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   have a fetch branch" failed on `todo-board`, which is correctly fed by
   `todo_update` notifications off the event stream rather than by an RPC.
   Scope such claims to the panel under test.
+
+## Watch out for (R371 additions)
+
+- **A method class with a `registerAll` hook is not wired until
+  PRODUCTION CODE CALLS IT.** `CompactMethods` has been dead since
+  T-193: `CrossCuttingMethodsT500Test` asserts all four `compact/*`
+  names are registered — by calling `new CompactMethods()` itself on
+  a dispatcher it built. The assertion is green and structurally
+  incapable of failing. So `compact/status` / `run` / `reset` /
+  `history` answered `-32601` on every daemon, `src/compact-rpc.ts`'s
+  remote mode had never worked, and `/context` had nothing to read.
+  R371 wires it in `DaemonRunner.runInternal` + `runHttp` and adds
+  four `HttpJsonRpcServer` case arms. **Lesson 1156: the check must
+  ask "does a production path call X", not "does X exist".** Same
+  family as R1121's substring anchor.
+- **A method-overload chain makes `indexOf` a trap.** `runHttp`
+  has THREE overloads and two are one-line delegates; the real one is
+  25 000 characters. `javaMethod(src, "static int runHttp(")`
+  returned the 72-char delegate, so the R371 gate reported a defect
+  that did not exist — twice. `java-strip.mjs`'s `javaMethod`
+  takes an `occurrence` for this. **Lesson 1157: "the extraction
+  succeeded" and "it read the right thing" are different claims.**
+- **A source pin cannot see a dead branch.** `if (false) { throw … }`
+  keeps the token and passes a `/throw/` assertion while the unwired
+  daemon answers a value the TUI reads as real. `routeCompact`'s
+  gate is POSITIONAL: the `cm == null` guard must still exist and
+  the throw must be within reach behind it.
+- **Coercing `null` to `0` fabricates a measurement.**
+  `ContextInfo.inputTokens` became `number | null`; the meter
+  renders `— (no usage reported yet)`. Before the first usage event
+  there is no reading, and `0%` against a fallback window looks
+  measured. Same rule on the poll: an `ok:true` answer carrying
+  `contextWindow: 0` is rejected, not divided by.
+- **An assertion naming one command records an EVENT, not a RULE.**
+  Three pre-existing gates turned red when `/context` stopped being a
+  placeholder. r365's `!cmds.includes("/context")` is now written
+  against `blocker === "no-command"` plus a POSITIVE check that
+  every advertised row answers. r362's `total < PANEL_INTENTS.length`
+  asserted "today's table happens to hide a row", not that the filter
+  works — replaced by a synthetic row plus a control. **Lesson 1158.**
+- **A mutation aimed at a shape that no longer exists is DELETED, not
+  retargeted.** r365-mutate's "re-advertise /context" became
+  unexpressible when `/context` was fixed. Pointing it at a
+  `not-wired` row survived — hiding a genuinely-unavailable row from
+  `/help` is CORRECT, so the retarget silently swapped the rule.
+  The four no-ops the harness caught were all real measurement holes.
+- **Seven of R371's fixes were to the TEST, not the product.** A gate
+  that has just been shown to fail on correct code needs its own
+  scrutiny; run its mutation battery before trusting the new version.

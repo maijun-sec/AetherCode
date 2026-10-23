@@ -173,7 +173,12 @@ test("regression: the R362 rewrite kept every command that used to be listed", (
 
 test("SLASH_COMMANDS (the flat array) is unchanged in size", () => {
   // Sanity that the R362 edit did not disturb the legacy completion array
-  // other tests depend on. 76 as of the R362 baseline.
-  assert.equal(SLASH_COMMANDS.length, 76,
-    "SLASH_COMMANDS length changed 鈥?update this baseline deliberately, not by accident");
+  // other tests depend on. 76 as of the R362 baseline, 77 as of R371
+  // (which added `/context` — the command the context-meter placeholder
+  // had been advertising without one since R362).
+  assert.equal(SLASH_COMMANDS.length, 77,
+    "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident");
+  assert.ok(SLASH_COMMANDS.includes("context"),
+    "R371 added /context; the completion array must know about it or it " +
+    "is unreachable by tab-completion");
 });

@@ -301,6 +301,28 @@ final class DaemonRunner {
         grantRpcs.registerAll(server.dispatcher());
         LOG.info("R367: grants/* RPCs registered on stdio dispatcher (4 methods)");
 
+        // R371 — compact/* (T-190..T-193), the third unwired method
+        // class after memory/* (R720) and permission+grants (R367).
+        // `CompactMethods` has had a `registerAll` hook since it was
+        // written, and `CrossCuttingMethodsT500Test` has asserted
+        // "all four are registered" since too — but it registers them
+        // on a dispatcher of its OWN construction, so the assertion
+        // could never fail. No production code had ever called it,
+        // which is why `compact/status` answered `-32601` on every
+        // daemon and `src/compact-rpc.ts`'s remote mode has been dead
+        // since it was written.
+        //
+        // The TUI's `/context` reads `compact/status` for
+        // `autoCompactDisabled` + `lastCompactTs`, so this is what
+        // makes that panel able to say anything true about compaction.
+        org.aethercode.protocol.methods.CompactMethods compactRpcs =
+                new org.aethercode.protocol.methods.CompactMethods(
+                        engine instanceof org.aethercode.sdk.AetherCodeEngine sdk
+                                ? sdk.compactor()
+                                : null);
+        compactRpcs.registerAll(server.dispatcher());
+        LOG.info("R371: compact/* RPCs registered on stdio dispatcher (4 methods)");
+
         // wire the MemoryLifecycle orchestrator. The
         // engine's query() flow now calls onQueryStart / onQueryEnd
         // / onMemoryRecallHit so the experience store, audit log,
@@ -629,6 +651,18 @@ final class DaemonRunner {
             http.setPermissionMethods(httpPermRpcs);
             http.setGrantMethods(httpGrantRpcs);
             LOG.info("R367: permission/* (5) + grants/* (4) registered on http path");
+
+            // R371: compact/* on the HTTP path too. The TUI talks to
+            // the HTTP daemon, so a stdio-only registration would be
+            // another desktop-only -32601 — the exact shape of R720's
+            // memory/* and R367's permission/grants.
+            org.aethercode.protocol.methods.CompactMethods httpCompactRpcs =
+                    new org.aethercode.protocol.methods.CompactMethods(
+                            engine instanceof org.aethercode.sdk.AetherCodeEngine sdkHttp
+                                    ? sdkHttp.compactor()
+                                    : null);
+            http.setCompactMethods(httpCompactRpcs);
+            LOG.info("R371: compact/* (4) registered on http path");
         } catch (Exception memEx) {
             LOG.warn("R266d: memory store install failed on http path: {}",
                     memEx.getMessage());

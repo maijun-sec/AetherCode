@@ -40,6 +40,9 @@ import { intentForSentinel, describeSentinel } from "./panelIntents.js";
 // on a path is not a cwd comparison: it is case- and separator-
 // sensitive, which on Windows empties the list it is filtering.
 import { partitionByCwd, cwdBasename, sameCwd } from "./cwdMatch.js";
+// R371: mounted on Ink for the first time. T-441 wrote this component
+// in T-441 and nothing has imported it since.
+import { ContextMeter } from "./components/ContextMeter.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
@@ -329,6 +332,8 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   "grants-manager": "grants",
   "notification-center": "notifications",
   "mcp-viewer": "mcp",
+  // R371: the row that R362 shipped as a `no-command` placeholder.
+  "context-meter": "context",
 };
 
 /** Intents whose panel row list is scoped to the active cwd. Kept as
@@ -385,6 +390,14 @@ const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string
     title: "MCP servers",
     hint: "↑/↓ or j/k navigate · Enter sign in · Ctrl+R reconnect",
     loading: "listing MCP servers",
+  },
+  // R371: no `loading` copy is needed — this panel renders from state
+  // the 15 s poll already fills, and inventing a spinner here would
+  // flash on every tick.
+  context: {
+    title: "Context",
+    hint: "Esc close · /context re-reads on a 15 s tick",
+    loading: "reading the context window",
   },
 };
 
@@ -1281,6 +1294,62 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     const id = setInterval(fetchTasks, 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, [state.sidebarVisible, client]);
+
+  // R371 — feed the ContextMeter.
+  //
+  // T-441 declared `contextMaxTokens` / `lastCompactTs` /
+  // `autoCompactDisabled` on State and wired a ContextMeter into the
+  // StatusBar in spirit only: no action ever wrote those fields, so
+  // the bar would have measured against a hard-coded 200_000 forever.
+  //
+  // `getContextInfo` (AetherCodeMethods:8077, routed on HTTP at
+  // HttpJsonRpcServer:846) is the real window. `compact/status` is the
+  // compaction circuit breaker + last event — and it was `-32601` on
+  // every daemon until R371 wired CompactMethods into both transports,
+  // because CrossCuttingMethodsT500Test registered it on a dispatcher
+  // it built itself.
+  //
+  // Best-effort and quiet: a failure here leaves the previous answer in
+  // place and the meter showing `—`. It must never surface as an error
+  // toast — a status-bar widget that interrupts the user is worse than
+  // a status-bar widget that is briefly stale.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const raw = (await client.request("getContextInfo", {} as RpcValue)) as Record<string, unknown> | null;
+        if (cancelled || !raw || raw.ok === false) return;
+        const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+        const window = num(raw.contextWindow);
+        // A daemon that answers `ok:true` with contextWindow 0 would
+        // leave `contextMaxTokens` at 0 and the ratio division would
+        // fall back to 0% — the same invented reading, one layer down.
+        if (window <= 0) return;
+        dispatch({
+          type: "setContextInfo",
+          info: {
+            provider: String(raw.provider ?? "—"),
+            model: String(raw.model ?? "—"),
+            contextWindow: window,
+            maxOutputTokens: num(raw.maxOutputTokens),
+            transcriptChars: num(raw.transcriptChars),
+            estimatedTokens: num(raw.estimatedTokens),
+            usagePercent: num(raw.usagePercent),
+          },
+        });
+      } catch { /* best-effort */ }
+      try {
+        const st = (await client.request("compact/status", {} as RpcValue)) as Record<string, unknown> | null;
+        if (cancelled || !st || st.ok === false) return;
+        const ev = (st.lastEvent ?? null) as Record<string, unknown> | null;
+        const ts = ev && typeof ev.ts === "number" && ev.ts > 0 ? ev.ts : null;
+        dispatch({ type: "setCompactStatus", autoCompactDisabled: st.autoCompactDisabled === true, lastEventTs: ts });
+      } catch { /* best-effort */ }
+    };
+    void refresh();
+    const id = setInterval(refresh, 15_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [client]);
 
   // R362 — fetch the open panel's data.
   //
@@ -3120,6 +3189,74 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             title=""
           />
         );
+
+      case "context": {
+        // R371. The panel exists because three half-rounds left the
+        // pieces unconnected: the component, the State fields and the
+        // RPCs each landed separately and nothing read any of them.
+        //
+        // It renders the SNAPSHOT plus the live bar, and it says what
+        // it does not know. `getContextInfo` estimates tokens as
+        // `transcriptChars / 4` — a crude proxy the daemon itself
+        // calls "rough" — so calling the number exact here would be
+        // the first lie the panel tells.
+        const info = state.contextInfo;
+        const known = info != null;
+        const pct = known ? Math.min(100, info.usagePercent) : null;
+        const lastCompact = state.lastCompactTs
+          ? new Date(state.lastCompactTs).toLocaleTimeString()
+          : null;
+        return (
+          <Box flexDirection="column">
+            <ContextMeter
+              info={{
+                inputTokens: state.inputTokens,
+                maxTokens: state.contextMaxTokens ?? 200_000,
+                lastCompactTs: state.lastCompactTs,
+                autoCompactDisabled: state.autoCompactDisabled,
+              }}
+              width={Math.max(20, Math.min(48, panelWidth - 20))}
+            />
+            <Text> </Text>
+            {known ? (
+              <>
+                <Text>
+                  <Text dimColor>model      </Text>
+                  <Text>{info.provider}/{info.model}</Text>
+                </Text>
+                <Text>
+                  <Text dimColor>window     </Text>
+                  <Text>{info.contextWindow.toLocaleString()} tokens</Text>
+                  <Text dimColor>  (max output {info.maxOutputTokens.toLocaleString()})</Text>
+                </Text>
+                <Text>
+                  <Text dimColor>in use     </Text>
+                  <Text>~{info.estimatedTokens.toLocaleString()} tokens</Text>
+                  <Text dimColor>  — {pct}% of the window</Text>
+                </Text>
+                <Text>
+                  <Text dimColor>transcript </Text>
+                  <Text>{info.transcriptChars.toLocaleString()} characters</Text>
+                </Text>
+              </>
+            ) : (
+              <Text dimColor>  the daemon has not reported a context window yet</Text>
+            )}
+            <Text> </Text>
+            <Text dimColor>
+              {state.autoCompactDisabled
+                ? "⚠ auto-compact is OFF for this session — the window will fill until the provider rejects the turn"
+                : "auto-compact is on"}
+              {lastCompact ? `  ·  last compacted ${lastCompact}` : ""}
+            </Text>
+            {known ? (
+              <Text dimColor>
+                token count is the daemon's estimate (transcript characters ÷ 4), not a tokenizer count
+              </Text>
+            ) : null}
+          </Box>
+        );
+      }
 
       case "grants": {
         const grants = state.grants;
