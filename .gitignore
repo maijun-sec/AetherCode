@@ -100,6 +100,14 @@ desktop.ini
 # Cleanup: rm R*-COMMIT-MSG.txt after the round is committed.
 # ------------------------------------------------------------
 R*-COMMIT-MSG.txt
+# The pattern above only matches the ALL-CAPS form, so a lowercase-named
+# draft (gitignore-cleanup-msg.txt, pnpm-lock-commit-msg.txt) still showed
+# up in `git status` as untracked noise after the commit was made. These
+# are written to pass to `git commit -F <file>`; the message then lives in
+# history and the file is pure leftover.
+*-commit-msg.txt
+*-commit-message.txt
+commit-msg*.txt
 
 # ------------------------------------------------------------
 # Round-specific debug Java files (R343Debug.java, R343ParseDebug.java etc.)
