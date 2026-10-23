@@ -268,6 +268,42 @@ reference/papers/README.md
 # 旧的 clone 副本 (中文目录名, 已删除, 已转 submodule)
 reference/参考项目/
 
+# ------------------------------------------------------------
+# Tauri bundler output (aethercode-desktop)
+# The bundler writes MSI + extracted PFiles trees next to the app.
+# These are re-creatable by `pnpm tauri build` and are ~120 MB each;
+# leaving them untracked-but-visible buries real changes in `git status`.
+# ------------------------------------------------------------
+aethercode-desktop/pkg-old/
+aethercode-desktop/.pkg-check*/
+aethercode-desktop/bundle/
+
+# Bundled deploy artifacts (the *.jar / *.exe patterns above already
+# cover the files; this covers the directory the bundler copies them into).
+aethercode-desktop/resources/
+aethercode-desktop/src-tauri/resources/
+
+# ------------------------------------------------------------
+# End-to-end test scratch fixtures
+# Round scripts write transcripts, jars and logs here while proving a
+# fix against a real run. Pure scratch: the useful part is the log line
+# that gets pasted into the round doc.
+#   .r750-e2e/     R747-R750 stream-json protocol verification
+#   tmp-r*-e2e/    TUI round e2e harnesses
+# ------------------------------------------------------------
+.r*-e2e/
+**/tmp-r*-e2e/
+
+# Stray shell/Maven redirection at the repo or module root. A `>` in a
+# PowerShell command without an argument lands here; `aethercode/$out`
+# came from `2>&1 $out` being parsed as a redirect target.
+stdout.txt
+stderr.txt
+/stdout.txt
+/stderr.txt
+aethercode/stdout.txt
+aethercode/stderr.txt
+
 # ============================================================
 # Whitelisted files (force include)
 # ============================================================
