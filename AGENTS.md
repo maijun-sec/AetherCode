@@ -1042,6 +1042,58 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   Same family as `WorkflowExecutorR375Test` above. Baseline is **47**
   failures in 14 files; a 48th is this flake, not a regression.
 
+- **R369** (honest refusals for methods the daemon lacks): `/help`
+  advertised five commands that all returned -32601 — `/stop`,
+  `/pause`, `/continue`, `/rewind`, `/tokens` — plus
+  `/agent-pick-set-default` and `/effort <level>`. Full write-up:
+  `docs/R369-honest-commands.md`.
+  - **An allowlist inside a gate is not documentation, it is a product
+    requirement.** `BACKEND_MISSING` lived only in
+    `r366-rpc-names.test.mjs`, so when the UI needed the same knowledge
+    it had nowhere to read it from. It now lives in
+    `src/rpcCapabilities.ts`; the gate compiles and imports it, so
+    there is one copy.
+  - **The refusal lives at the dispatcher, not in the five `case`
+    bodies.** `handleSlash` consults the table and rewrites the result
+    to `{local: "<sentence>"}`; `routeSlash` is the unrouted inner
+    function. A command added next month that names a missing method
+    is then honest for free — the R364/R366 shape was one call site at
+    a time.
+  - **Not a silent skip.** The command stays advertised and still runs;
+    it answers in a sentence instead of an error code. Hiding it would
+    lose discovery; firing the request spends a round trip to learn
+    something the table already knows.
+  - **Every reason in that table is shown verbatim, so each must stand
+    alone.** `task/pause` used to say "same as task/kill"; the user
+    saw `task/pause is not available on this daemon — same as task/kill.`
+    The gate now requires each reason to be > 25 chars.
+  - **The line-mode `/agent-pick` and `/effort-pick` panels call
+    `probe()` directly and bypassed `handleSlash`**, so they emitted a
+    raw error while the Ink side already refused in words. Two
+    renderers at two honesty levels is itself the defect.
+  - **`for...of matchAll(...)` is structurally blind to its own
+    failure to match** (the R368 hole for the fifth time): if the regex
+    drifts the body never runs and nothing fires. Each extraction gets
+    its own counted floor.
+  - A mutation that only **disables** a guard (`n >= 7` → `n >= 0`)
+    survives and should — it breaks nothing, so every other assertion
+    still holds. The floor exists for extraction failure, not for a
+    disabled check. Point the mutation at the regex instead.
+  - `phase-6-t6-17.test.mjs` and `t457-e2e-smoke.test.mjs` had three
+    assertions pinning the BROKEN behaviour
+    (`assert.equal(r.rpcMethod, "task/resume")`). Both now assert the
+    refusal AND use `routeSlash` to pin the mapping exactly — stronger
+    than before, not weaker.
+
+- **`aethercode-tui/src/_*.ts` test shims were TRACKED in git.**
+  `_t6_17_helpers.ts`, `_t7_06_mock.ts`, `_t7_12_mock.ts` are one-line
+  `export { X } from "./y.js"` files that test suites write into `src/`
+  at run time; nothing in `src/` imports them. `aethercode-tui/.gitignore`
+  already had `src/**/_*.ts`, but **gitignore does not apply to tracked
+  files**, so every `npm test` dirtied the working tree. Untracked with
+  `git rm --cached` (files left on disk). If you see `src/_*.ts` show up
+  in `git status`, it has been re-added.
+
 - **R750e** (TaskRegistry.updateStatus lost update + a lesson about "improvements"):
   `updateStatus` was `get()` then `put()` — a non-atomic read-modify-write.
   Two threads transitioning the SAME task both read the same `prev` and the

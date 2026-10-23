@@ -30,7 +30,10 @@ if (existsSync(tmp)) {
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "_t6_17_helpers.ts");
 const shim = [
-  `export { handleSlash, SLASH_COMMANDS, SLASH_HELP, completeSlash } from "./commands.js";`,
+  // R369: routeSlash is the unrouted inner function. The capability
+  // filter in handleSlash drops rpcParams, so this is the only thing
+  // that can still pin the `? id` argument shape.
+  `export { handleSlash, routeSlash, SLASH_COMMANDS, SLASH_HELP, completeSlash } from "./commands.js";`,
   "",
 ].join("\n");
 writeFileSync(shimPath, shim, "utf-8");
@@ -51,38 +54,54 @@ const tscArgs = [
 const helpers = await import(
   "file:///" + join(tmp, "out", "_t6_17_helpers.js").replace(/\\/g, "/")
 );
-const { handleSlash, SLASH_COMMANDS, SLASH_HELP, completeSlash } = helpers;
+// R369. These two tests used to assert `rpcMethod === "task/resume"`
+// and friends — i.e. they pinned the BROKEN behaviour, since those
+// three methods are not registered on the daemon the TUI spawns. The
+// mapping itself is unchanged and still worth pinning; it now shows
+// up inside the refusal instead of in an `rpcMethod` field. So the
+// assertion gets STRONGER, not weaker: it proves both that `/stop`
+// still means task/kill AND that the command refuses rather than
+// dispatching into a -32601.
+//
+// The param shape is asserted on `routeSlash`, the unrouted inner
+// function, because the refusal no longer carries rpcParams — and
+// losing that check would be a real gap, since it is the only thing
+// pinning the `? id` form.
+const { handleSlash, routeSlash, SLASH_COMMANDS, SLASH_HELP, completeSlash } = helpers;
+
+/** The method a refusal is refusing, or undefined when it dispatched. */
+function refusedMethod(res, expected) {
+  assert.equal(res.rpcMethod, undefined,
+    `${expected} must not dispatch — the daemon does not register it`);
+  assert.ok(res.local && res.local.includes(expected),
+    `${expected} refusal should name the method it cannot run, got: ${res.local}`);
+}
 
 // ----- 1. /continue → task/resume --------------------------------------
 
 test("T-6-17: /continue → task/resume (no args = active task)", () => {
-  const r1 = handleSlash("/continue");
-  assert.equal(r1.rpcMethod, "task/resume");
-  assert.equal(r1.rpcParams, undefined);
-  // /continue with an explicit id passes it as a param.
-  const r2 = handleSlash("/continue abc-123");
-  assert.equal(r2.rpcMethod, "task/resume");
-  assert.deepEqual(r2.rpcParams, { id: "abc-123" });
+  refusedMethod(handleSlash("/continue"), "task/resume");
+  refusedMethod(handleSlash("/continue abc-123"), "task/resume");
   // /resume is an alias.
-  const r3 = handleSlash("/resume");
-  assert.equal(r3.rpcMethod, "task/resume");
+  refusedMethod(handleSlash("/resume"), "task/resume");
+
+  // Param shape, asserted before the capability filter runs.
+  assert.equal(routeSlash("/continue").rpcParams, undefined);
+  assert.deepEqual(routeSlash("/continue abc-123").rpcParams, { id: "abc-123" });
+  assert.equal(routeSlash("/resume").rpcMethod, "task/resume");
 });
 
 // ----- 2. /pause + /stop → task/pause + task/kill -----------------------
 
 test("T-6-17: /pause → task/pause and /stop → task/kill", () => {
-  const r1 = handleSlash("/pause");
-  assert.equal(r1.rpcMethod, "task/pause");
-  const r2 = handleSlash("/stop");
-  assert.equal(r2.rpcMethod, "task/kill");
+  refusedMethod(handleSlash("/pause"), "task/pause");
+  refusedMethod(handleSlash("/stop"), "task/kill");
   // /kill alias
-  const r3 = handleSlash("/kill");
-  assert.equal(r3.rpcMethod, "task/kill");
+  refusedMethod(handleSlash("/kill"), "task/kill");
+
   // With explicit id.
-  const r4 = handleSlash("/pause task-9");
-  assert.deepEqual(r4.rpcParams, { id: "task-9" });
-  const r5 = handleSlash("/stop task-9");
-  assert.deepEqual(r5.rpcParams, { id: "task-9" });
+  assert.deepEqual(routeSlash("/pause task-9").rpcParams, { id: "task-9" });
+  assert.deepEqual(routeSlash("/stop task-9").rpcParams, { id: "task-9" });
 });
 
 // ----- 3. /todos → __TODO_BOARD__ --------------------------------------
@@ -98,11 +117,13 @@ test("T-6-17: /todos → __TODO_BOARD__ local token", () => {
 // ----- 4. /tokens → session/tokens RPC ---------------------------------
 
 test("T-6-17: /tokens → session/tokens RPC", () => {
-  const r = handleSlash("/tokens");
-  assert.equal(r.rpcMethod, "session/tokens");
+  // R369: same shape as /stop — the method is not registered, so the
+  // command refuses in words instead of dispatching. The mapping is
+  // still pinned, via the refusal text and via routeSlash.
+  refusedMethod(handleSlash("/tokens"), "session/tokens");
   // /token singular alias.
-  const r2 = handleSlash("/token");
-  assert.equal(r2.rpcMethod, "session/tokens");
+  refusedMethod(handleSlash("/token"), "session/tokens");
+  assert.equal(routeSlash("/tokens").rpcMethod, "session/tokens");
 });
 
 // ----- 5. /consents + /grants → __GRANTS_MANAGER__ (alias) -------------

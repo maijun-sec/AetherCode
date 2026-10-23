@@ -51,10 +51,35 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { codeOf } from "./strip-comments.mjs";
+
+/**
+ * Compile `src/rpcCapabilities.ts` and import the real value out of
+ * it. Node cannot import a .ts directly, and a JSON sidecar or a
+ * regex re-read of the source would be a SECOND copy of the table —
+ * which is the duplication this change exists to remove.
+ */
+async function loadCapabilities() {
+  const tmp = join(tmpdir(), `r366-caps-${process.pid}`);
+  mkdirSync(tmp, { recursive: true });
+  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const r = spawnSync(`"${tscBin}"`, [
+    "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
+    "--moduleResolution", "bundler", "--rootDir", join(root, "src"),
+    `"${join(root, "src", "rpcCapabilities.ts")}"`,
+  ], { encoding: "utf-8", shell: true });
+  if (r.status !== 0) {
+    console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
+    process.exit(1);
+  }
+  const mod = await import(pathToFileURL(join(tmp, "out", "rpcCapabilities.js")).href);
+  return mod.BACKEND_MISSING;
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -225,20 +250,20 @@ function sentMethods() {
 /**
  * Methods the TUI sends that the daemon genuinely does not have.
  *
- * Every entry needs a reason. This is NOT a suppression list for
+ * R369: this used to be declared HERE, which made the test file the
+ * only place the reasons were written down — so the UI, which needs
+ * the same knowledge to answer honestly instead of firing a doomed
+ * request, had nowhere to read them from. It now lives in
+ * `src/rpcCapabilities.ts` and is COMPILED AND IMPORTED, so the gate
+ * and the UI read one table and cannot drift. `handleSlash` consults
+ * that same table at dispatch time.
+ *
+ * Every entry still needs a reason. This is NOT a suppression list for
  * "the gate is inconvenient" — it is the count of known-broken
  * surfaces, and it grows if someone adds a call site for a method
  * that does not exist.
  */
-const BACKEND_MISSING = new Map([
-  ["agent/setDefault", "no 'set the active agent' RPC; updateAgent writes agent DEFINITIONS, listAgents lists them"],
-  ["effort/set", "no effort concept on the daemon at all; no registered name contains 'effort'"],
-  ["rewind", "no rewind handler; transcript rollback is unimplemented daemon-side"],
-  ["session/tokens", "no per-session token RPC; getState carries the aggregate counters"],
-  ["task/kill", "SupervisorRpcServer has task/* but it is a separate CLI the TUI never starts"],
-  ["task/pause", "same as task/kill"],
-  ["task/resume", "same as task/kill"],
-]);
+const BACKEND_MISSING = await loadCapabilities();
 
 test("the protocol sources are locatable (skip rather than false-green)", () => {
   const missing = REQUIRED_PROTOCOL_SOURCES.filter((p) => !existsSync(p));

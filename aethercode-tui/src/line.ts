@@ -14,6 +14,9 @@ import * as readline from "node:readline";
 import { LineInput } from "./lineInput.js";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { handleSlash, SLASH_HELP } from "./commands.js";
+// R369: the one table that says what this daemon cannot do, shared
+// with `handleSlash` and with the R366 gate.
+import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
 import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 
 export interface LineOptions {
@@ -2322,7 +2325,17 @@ async function panelAgentPick(ctx: PanelCtx): Promise<void> {
   });
   repaint(ctx);
   if (picked === null) return;
-  const res = await probe(ctx, "agent/setDefault", { name: picked } as RpcValue);
+  // R369: probe this and it returns -32601, because the daemon
+    // registers no such method. The Ink side already says so in plain
+    // words before the user picks (tui.tsx `case "agents"`), so line
+    // mode should not be the one that fails with a raw error code.
+    // Same table `handleSlash` consults.
+    const agentWhy = unsupportedReason("agent/setDefault");
+    if (agentWhy) {
+      ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("agent/setDefault", agentWhy)}`, C.red, nc));
+      return;
+    }
+    const res = await probe(ctx, "agent/setDefault", { name: picked } as RpcValue);
   ctx.logAbove(
     res.ok
       ? colorize(`  \u2713 default agent \u2192 ${picked}`, C.green, nc)
@@ -2371,7 +2384,14 @@ async function pickEffort(ctx: PanelCtx): Promise<void> {
   });
   repaint(ctx);
   if (picked === null) return;
-  const res = await probe(ctx, "effort/set", { effort: picked } as RpcValue);
+  // R369: same as above — `effort/set` is not registered either, so the
+    // picker must say so in words instead of probing into -32601.
+    const effortWhy = unsupportedReason("effort/set");
+    if (effortWhy) {
+      ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("effort/set", effortWhy)}`, C.red, nc));
+      return;
+    }
+    const res = await probe(ctx, "effort/set", { effort: picked } as RpcValue);
   ctx.logAbove(
     res.ok
       ? colorize(`  \u2713 effort \u2192 ${picked}`, C.green, nc)

@@ -33,6 +33,12 @@ const T = {
   commands: join(root, "src", "commands.ts"),
   line: join(root, "src", "line.ts"),
   tui: join(root, "src", "tui.tsx"),
+  // R369: BACKEND_MISSING moved out of this gate and into src/. The two
+  // allowlist mutations below used to edit the gate's own copy, and the
+  // day it moved they went NO-OP — silently testing nothing. The
+  // harness's no-op detector caught it, which is exactly why that
+  // detector exists rather than counting failures only.
+  caps: join(root, "src", "rpcCapabilities.ts"),
   // R367: the daemon the TUI actually spawns.
   runner: join(root, "..", "aethercode", "aethercode-cli", "src", "main", "java",
     "org", "aethercode", "cli", "DaemonRunner.java"),
@@ -92,9 +98,9 @@ const CASES = [
 
   // --- aimed at the allowlist itself ---
   ["delete an allowlist entry (must surface as an unknown method)", "red",
-    [["gate", (s) => s.replace(/\["rewind",[^\]]*\],\n/, "")]]],
+    [["caps", (s) => s.replace(/\[\s*"rewind",\s*\n?\s*"no rewind handler[^\]]*\],?\s*\n/, "")]]],
   ["blank an allowlist reason (the reason gate must bite)", "red",
-    [["gate", (s) => s.replace('"no rewind handler; transcript rollback is unimplemented daemon-side"', '""')]]],
+    [["caps", (s) => s.replace('"no rewind handler; transcript rollback is unimplemented daemon-side"', '""')]]],
   ["make the extraction pattern stop matching (must fail the floor)", "red",
     // Break the character class the four extraction patterns share, so every
     // one of them stops matching method names. If the `sent.size >= 40` floor

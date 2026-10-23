@@ -228,19 +228,28 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
   tscShim(
     "cmds-runtime",
     [
-      `export { handleSlash, SLASH_HELP, SLASH_COMMANDS } from "./commands.js";`,
+      `export { handleSlash, routeSlash, SLASH_HELP, SLASH_COMMANDS } from "./commands.js";`,
       ``,
     ].join("\n"),
   );
   const out = join(tmpTsc, "out", "_t457_smoke_shim.js");
   const mod = await import(`file:///${out.replace(/\\/g, "/")}`);
-  const { handleSlash, SLASH_COMMANDS, SLASH_HELP } = mod;
+  const { handleSlash, routeSlash, SLASH_COMMANDS, SLASH_HELP } = mod;
 
   // T-420: /agent-pick
   assert.equal(handleSlash("/agent-pick").local, "__AGENT_PICK__");
-  assert.deepEqual(
-    handleSlash("/agent-pick-set-default work").rpcMethod,
-    "agent/setDefault",
+  // R369: `/agent-pick-set-default` and `/effort <level>` map to methods
+  // the TUI's daemon does not register, so `handleSlash` now refuses
+  // them in words instead of dispatching into a -32601. The mapping is
+  // still pinned — it appears in the refusal text — and a returned
+  // `rpcMethod` here would be the pre-R369 behaviour, i.e. the bug.
+  assert.match(
+    handleSlash("/agent-pick-set-default work").local ?? "",
+    /agent\/setDefault is not available on this daemon/,
+  );
+  assert.match(
+    handleSlash("/effort high").local ?? "",
+    /effort\/set is not available on this daemon/,
   );
   // T-421: /effort-pick + /effort <level>
   assert.equal(handleSlash("/effort-pick").local, "__EFFORT_PICK__");
@@ -248,7 +257,8 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
     handleSlash("/effort").local,
     "usage: /effort <low|medium|high|xhigh>  (or /effort-pick)",
   );
-  assert.equal(handleSlash("/effort high").rpcMethod, "effort/set");
+  assert.equal(handleSlash("/effort high").rpcMethod, undefined);
+  assert.equal(routeSlash("/effort high").rpcMethod, "effort/set");
   // T-423: /cwd-pick
   assert.equal(handleSlash("/cwd-pick").local, "__CWD_PICK__");
   // T-428: /mcp, /mcp-login, /mcp-reconnect
@@ -317,15 +327,21 @@ test("T-457: legacy slash commands still work (no regression)", async () => {
 test("T-457: every §5.3 command maps to either a local token or a known RPC", async () => {
   tscShim(
     "cmds-rpc",
-    [`export { handleSlash } from "./commands.js";`, ``].join("\n"),
+    [`export { handleSlash, routeSlash } from "./commands.js";`, ``].join("\n"),
   );
   const out = join(tmpTsc, "out", "_t457_smoke_shim.js");
   const mod = await import(`file:///${out.replace(/\\/g, "/")}`);
-  const { handleSlash } = mod;
+  const { handleSlash, routeSlash } = mod;
 
   // Each row: [slash, expectedRpcMethod or null]. The
   // local-token rows are checked by the previous test; this
   // one is for the rows that route to JSON-RPC.
+  // R369: the first two rows name methods the TUI's daemon does not
+  // register. `handleSlash` therefore refuses them in words instead
+  // of returning an `rpcMethod` — a returned one here would be the
+  // pre-R369 behaviour. `routeSlash` still pins the mapping exactly,
+  // so the row keeps its meaning while describing what the user now
+  // actually sees.
   const cases = [
     ["/agent-pick-set-default myagent", "agent/setDefault"],
     ["/effort high", "effort/set"],
@@ -333,7 +349,13 @@ test("T-457: every §5.3 command maps to either a local token or a known RPC", a
   ];
   for (const [cmd, expected] of cases) {
     const r = handleSlash(cmd);
-    assert.equal(r.rpcMethod, expected, `${cmd} → wrong RPC`);
+    if (expected === "memory/compact") {
+      assert.equal(r.rpcMethod, expected, `${cmd} → wrong RPC`);
+    } else {
+      assert.equal(r.rpcMethod, undefined, `${cmd} must not dispatch to ${expected}`);
+      assert.match(r.local ?? "", new RegExp(`${expected.replace("/", "\\/")} is not available`));
+      assert.equal(routeSlash(cmd).rpcMethod, expected, `${cmd} no longer maps to ${expected}`);
+    }
   }
 });
 

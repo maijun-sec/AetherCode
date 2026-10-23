@@ -14,6 +14,12 @@ export interface SlashResult {
   rpcParams?: Record<string, unknown>;
 }
 
+// R369: the capability filter needs the table that says which methods
+// this daemon cannot serve. Imported here so `handleSlash` can refuse
+// honestly instead of returning -32601; the R366 gate imports the same
+// table, so the UI and the gate cannot disagree about it.
+import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
+
 // /help text — generated from a curated group/description list
 // above. Source of truth for autocomplete is SLASH_COMMANDS_DETAILED;
 // this string is only the user-facing /help printout. To add a new
@@ -386,7 +392,17 @@ function parsePhase(rest: string[]): number | null | undefined {
   return n;
 }
 
-export function handleSlash(input: string): SlashResult | null {
+/**
+ * Route a slash command to its result, WITHOUT the capability filter.
+ *
+ * <p>Not the UI's entry point — `handleSlash` is. Exported because the
+ * refusal in R369 drops `rpcParams`, which was the only thing pinning
+ * the `? id` argument shape of `/stop <id>` and friends. Losing that
+ * check silently is worse than exporting one more function, and
+ * `r369-honest-commands.test.mjs` pins that this stays an inner
+ * function with a filter in front of it rather than being merged back.
+ */
+export function routeSlash(input: string): SlashResult | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith("/")) return null;
   const [cmd, ...rest] = trimmed.slice(1).split(/\s+/);
@@ -1062,4 +1078,32 @@ export function handleSlash(input: string): SlashResult | null {
     default:
       return { local: `unknown slash command: /${cmd}. Try /help.` };
   }
+}
+
+/**
+ * The single entry point for slash commands.
+ *
+ * <p>R369. Five commands — `/stop`, `/pause`, `/continue`, `/rewind`,
+ * `/tokens` — are advertised in `/help` and would each return -32601,
+ * because the daemon the TUI spawns registers none of their methods.
+ * The user typed a command `/help` told them existed and got a raw
+ * JSON-RPC error code back.
+ *
+ * <p>The filter lives HERE rather than in the five `case` bodies on
+ * purpose. Per-site discipline is exactly what R364 and R366 had to
+ * fix one bug at a time; making it a property of the dispatcher means
+ * a command added next month that targets a missing method is honest
+ * for free. Same shape as R367's lesson: change the model, not the
+ * call sites.
+ *
+ * <p>Deliberately NOT a silent skip. The command stays advertised and
+ * still runs — it just answers in a sentence instead of an error code.
+ * Hiding it would lose discovery; firing the request spends a round
+ * trip to learn something this table already knows.
+ */
+export function handleSlash(input: string): SlashResult | null {
+  const result = routeSlash(input);
+  const why = unsupportedReason(result?.rpcMethod);
+  if (!result || !why || !result.rpcMethod) return result;
+  return { local: unsupportedMessage(result.rpcMethod, why) };
 }
