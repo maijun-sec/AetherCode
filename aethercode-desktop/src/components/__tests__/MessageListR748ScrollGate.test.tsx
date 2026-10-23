@@ -38,6 +38,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sliceBlock } from '../../test-support/slice-structural';
 
 // R748: resolve the repo root from THIS file's own location, NOT from
 // process.cwd(). Under vitest's jsdom environment with several
@@ -117,9 +118,15 @@ describe('MessageList — R748 user-scrolled gate is not a permanent latch', () 
     // The "jump to bottom" button is the user's explicit "take me
     // back to live" signal. If it left the timestamp armed, the next
     // scroll event would re-engage the gate.
-    const jumpIdx = source.indexOf('const jumpToBottom');
-    expect(jumpIdx).toBeGreaterThan(-1);
-    const jumpBody = source.slice(jumpIdx, jumpIdx + 900);
+    //
+    // R750c: this used to slice a fixed 900 characters forward. That number
+    // is a guess about the function's length, and it rots the first time
+    // someone writes a comment above the line it is checking — the token
+    // slides out of the window and the gate starts failing for the wrong
+    // reason. sliceBlock bounds on the function's own closing brace, which
+    // no amount of commentary can move (see test-support/slice-structural).
+    const jumpBody = sliceBlock(source, 'const jumpToBottom');
+    expect(jumpBody).not.toBeNull();
     expect(jumpBody).toMatch(/resumeFollowing\(\)/);
   });
 });
