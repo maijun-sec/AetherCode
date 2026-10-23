@@ -22,6 +22,8 @@ import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 // Ink uses. See src/cwdMatch.ts for the four ways string equality
 // gets a path wrong.
 import { partitionByCwd } from "./cwdMatch.js";
+// R372: the messages→turns converter, shared with the Ink renderer.
+import { replayTranscript } from "./transcriptHydrate.js";
 
 export interface LineOptions {
   jar: string;
@@ -2178,14 +2180,51 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
     // response when the daemon sent one.
     const back = (res.value as { sessionId?: unknown } | null | undefined)?.sessionId;
     if (typeof back === "string" && back.length > 0) ctx.sessionId = back;
+
+    // R372 — replay the transcript into the scrollback.
+    //
+    // Line mode's scrollback is a `LineTurn[]` (role + text + ts), so
+    // the Ink `Turn` is projected down: a tool call becomes a
+    // `[tool] name` line with its result, and everything else keeps
+    // its role. The projection is lossy on purpose — line mode has no
+    // tool cards to hang a duration or a category off.
+    const tr = await probe(ctx, "getTranscript");
+    if (tr.ok) {
+      const replay = replayTranscript(tr.value, 1);
+      ctx.turns.length = 0;
+      for (const t of replay.turns) {
+        ctx.turns.push(
+          t.role === "tool"
+            ? {
+              id: t.id,
+              role: "assistant",
+              text: `[tool] ${t.toolName ?? t.text}` +
+                (t.toolResult ? `\n${t.toolResult}` : ""),
+              ts: t.ts,
+            }
+            : { id: t.id, role: t.role === "assistant" ? "assistant" : "user", text: t.text, ts: t.ts },
+        );
+      }
+      repaint(ctx);
+      const dropped = replay.totalMessages - replay.replayedMessages;
+      ctx.logAbove(
+        colorize(
+          dropped > 0
+            ? `    replayed ${replay.replayedMessages} of ${replay.totalMessages} messages (${dropped} older ones not shown)`
+            : `    replayed ${replay.turns.length} turns`,
+          C.dim,
+          nc,
+        ),
+      );
+    } else {
+      // The switch happened; the replay did not. Say so, rather than
+      // leaving an empty scrollback that reads like an empty session.
+      ctx.logAbove(colorize("    its history could not be read", C.dim, nc));
+    }
   }
   ctx.logAbove(
     res.ok
-      ? colorize(
-        `  \u2713 now working in ${ctx.sessionId} \u2014 the next prompt continues it (history is not replayed here)`,
-        C.green,
-        nc,
-      )
+      ? colorize(`  \u2713 now working in ${ctx.sessionId}`, C.green, nc)
       : colorize(`  \u2717 loadSession failed: ${res.reason}`, C.red, nc),
   );
 }

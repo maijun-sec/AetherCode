@@ -1267,3 +1267,39 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - **Seven of R371's fixes were to the TEST, not the product.** A gate
   that has just been shown to fail on correct code needs its own
   scrutiny; run its mutation battery before trusting the new version.
+
+## Watch out for (R372 additions)
+
+- **A 「诚实但残缺」的降级会让缺口不可见。** R370 的 `/sessions`
+  做完后选会话能真的继续,但滚动区是空的,toast 写着
+  `history is not replayed here`。那句话是诚实的 —— 所以它不触发
+  任何失败,但它是**症状**不是结论:renderer 里没有
+  messages→turns 转换器,而 daemon 一直有数据(`getTranscript`
+  早就注册了,只是没人读)。R372 补上后这句话才变成真的。
+  **Lesson 1162.** 推论:降级文案要带「待办」信号 ——
+  「history is not replayed here」读起来像产品特性,
+  「history could not be read」读起来像欠债。
+- **`src/transcriptHydrate.ts` 是纯函数,门禁测行为不测源码。**
+  21 条断言里大部分是「输入 → 输出」:源码钉看不见「tool_result
+  变成了自己的 turn」。**Lesson 1165 — 能跑就跑。**
+- **回填的三样东西不许编。** ① 时长 —— 回填的工具调用没有起止,
+  `toolStartedAt` 留 undefined,`ToolCard.computeDuration` 本来
+  就渲染 `—`;② 没有结果的调用 —— 渲染成
+  `(no recorded result — the run was interrupted)`,不是空成功;
+  ③ 完整历史 —— 只回放尾部 200 条,**并且报出被丢掉多少**。
+- **孤儿 tool_result 有两条规则,第二条才是容易错的。** ① 不产生
+  turn;② **不污染前一个调用**。「挂到最后一个 turn」是最自然的
+  实现,而它会静默覆盖真实结果。
+- **「出现一次」和「每条路径都出现」是两种断言。** 变异删掉**失败
+  路径**的 `adoptSession`,门禁全绿,因为成功路径那处还在。
+  用 `catchBodies()` 按分支拆。**Lesson 1163.**
+- **切换和回填必须是 ONE action。** `adoptSession` 带可选
+  `turns`。两个 dispatch(先清后填)会留下一个窗口:滚动区空的,
+  头部却已经写着新会话 —— 用户在这个窗口里打字,是在跟一个
+  看不见的对话说话。
+- **变异用例的目标会随产品演进而腐烂。** R372 改了 reducer 形态和
+  toast 文案,r370-mutate 两条变异**目标文本不存在了** → 静默
+  no-op。no-op 检出器在这轮抓到 4 个:2 个目标过期、1 个**测 R372
+  的行为却跑 R370 的门禁**、1 个是「中和一条断言 + 引入只有另一条
+  断言能看见的缺陷」(按构造就是单点故障,证明不了冗余)。
+  **Lesson 1164.**

@@ -26,10 +26,13 @@ import Spinner from "ink-spinner";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { findJar } from "./ac-tui.js";
 import {
-  reducer, INITIAL, type State, type Action, type PermissionAsk, type SddRunState,
+  reducer, INITIAL, nextTurnId, type State, type Action, type PermissionAsk, type SddRunState,
   type PanelId, type PanelStatus, type MemoryScopeId, type MemoryRow, type ThreadRow,
   type GrantRow,
 } from "./state.js";
+// R372: the messages→turns converter. Until this existed the TUI had
+// no way to show a session's history after switching to it.
+import { replayTranscript } from "./transcriptHydrate.js";
 import { handleSlash, completeSlash } from "./commands.js";
 // R362 — the sentinel → intent contract. The slash dispatcher looks
 // intents up here instead of hand-writing an `if (local === "__X__")`
@@ -3053,17 +3056,49 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                   const sid =
                     (res as { sessionId?: unknown } | null)?.sessionId;
                   const adopted = typeof sid === "string" && sid.length > 0 ? sid : threadId;
-                  dispatch({ type: "adoptSession", sessionId: adopted });
-                  dispatch({
-                    type: "pushToast",
-                    kind: "ok",
-                    // Say what actually happened. The scrollback is
-                    // NOT the picked session's history (there is no
-                    // transcript hydration in this renderer), and a
-                    // toast that implies otherwise is the R369 class
-                    // of lie one layer up.
-                    text: `now working in ${adopted} — the next prompt continues it (history is not replayed here)`,
-                  });
+
+                  // R372 — replay the session's transcript.
+                  //
+                  // The daemon has it (`getTranscript`), and the
+                  // converter lives in `src/transcriptHydrate.ts`.
+                  // The scrollback is replaced ATOMICALLY with the
+                  // replay, in one `adoptSession`, because two
+                  // dispatches would leave a window where the
+                  // scrollback is empty and the header names the new
+                  // session — a user who types in that window is
+                  // talking to a conversation they cannot see.
+                  //
+                  // If the transcript cannot be read, we still adopt
+                  // the session (the daemon HAS switched — that part
+                  // is real) and the scrollback is empty, which is
+                  // the honest state. The toast says which of the two
+                  // happened.
+                  void client
+                    .request("getTranscript", {} as RpcValue)
+                    .then((raw: unknown) => {
+                      const replay = replayTranscript(raw, nextTurnId());
+                      dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });
+                      const dropped = replay.totalMessages - replay.replayedMessages;
+                      dispatch({
+                        type: "pushToast",
+                        kind: "ok",
+                        text: dropped > 0
+                          ? `now working in ${adopted} — replayed ${replay.replayedMessages} of ` +
+                            `${replay.totalMessages} messages (${dropped} older ones not shown)`
+                          : `now working in ${adopted} — replayed ${replay.turns.length} turns`,
+                      });
+                    })
+                    .catch((e: unknown) => {
+                      // The switch happened; the replay did not. Say
+                      // exactly that, and do not pretend the history
+                      // is empty when it is merely unread.
+                      dispatch({ type: "adoptSession", sessionId: adopted });
+                      dispatch({
+                        type: "pushToast",
+                        kind: "warn",
+                        text: `now working in ${adopted} — its history could not be read (${errMsg(e)})`,
+                      });
+                    });
                 })
                 .catch((e: unknown) =>
                   dispatch({ type: "pushToast", kind: "err", text: `loadSession failed: ${errMsg(e)}` })

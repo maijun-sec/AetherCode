@@ -312,6 +312,27 @@ test("adoptSession moves the TUI onto the picked session and drops the old scrol
   assert.equal(after.input, before.input);
 });
 
+test("adoptSession REPLACES the scrollback atomically when a transcript is supplied", () => {
+  // R372: the replay arrives with the switch, and the two land in ONE
+  // action. Two actions (clear, then fill) would leave a window where
+  // the scrollback is empty and the header names the new session — a
+  // user who types in that window is talking to a conversation they
+  // cannot see.
+  const before = {
+    ...INITIAL,
+    sessionId: "old-session",
+    turns: [{ id: 1, role: "user", text: "hi", ts: 1 }],
+  };
+  const replayed = [{ id: 90, role: "assistant", text: "from the other session", ts: 5, collapsed: false, previewChars: 80 }];
+  const after = reducer(before, { type: "adoptSession", sessionId: "new-session", turns: replayed });
+  assert.equal(after.sessionId, "new-session");
+  assert.deepEqual(after.turns, replayed,
+    "the replayed transcript was not adopted — the scrollback still shows the " +
+    "session we just left");
+  assert.equal(after.turns.some((t) => t.text === "hi"), false,
+    "the old session's turns survived the switch");
+});
+
 test("adoptSession is a no-op when nothing would change", () => {
   const s = { ...INITIAL, sessionId: "same" };
   assert.equal(reducer(s, { type: "adoptSession", sessionId: "same" }), s,
@@ -328,6 +349,26 @@ test("both renderers dispatch adoptSession after a successful loadSession", () =
   assert.ok(/loadSession/.test(linePick), "panelThreads no longer calls loadSession");
   assert.ok(/ctx\.sessionId\s*=\s*back/.test(linePick),
     "line mode never adopts the new session id — the status line keeps naming the old one");
+});
+
+test("the FAILED path adopts the session too, not just the successful one", () => {
+  // R372 split the switch into two outcomes: the replay worked (the
+  // transcript is adopted with the turns) and the replay failed (the
+  // session is adopted WITHOUT them). Both have to adopt — the
+  // daemon really did switch, and a toast that says "now working in
+  // X" while the engine still answers in the old session is a lie.
+  //
+  // The mutation battery found this by deleting the catch-path
+  // dispatch: the only assertion was "adoptSession appears in the
+  // block", and the OTHER one satisfied it. "Appears somewhere" and
+  // "appears on both paths" are different claims.
+  const inkPick = block(tuiSrc, /case "threads":/);
+  const catches = [...inkPick.matchAll(/catch\s*(?:\([^)]*\))?\s*(?:=>\s*)?\{/g)];
+  assert.ok(catches.length >= 1, "the Ink picker has no catch at all");
+  const catchText = inkPick.slice(catches[0].index);
+  assert.ok(/type:\s*"adoptSession"/.test(catchText),
+    "the failure path never adopts the session — the toast would claim the " +
+    "user is in the new session while the engine still answers in the old one");
 });
 
 // =========================================================================
@@ -439,10 +480,26 @@ test("ThreadSelector renders what it was always handed", () => {
 });
 
 test("the switch toast says what actually happened", () => {
-  assert.ok(/history is not replayed here/.test(tuiSrc),
-    "the post-switch toast implies the picked session's history is on screen; it is not");
-  assert.ok(/history is not replayed here/.test(lineSrc),
-    "line mode's post-switch toast implies the same thing");
+  // R370 pinned a SENTENCE: "history is not replayed here". That was
+  // true then and false from R372 on, when the transcript is actually
+  // replayed. A test that names the wording of a message stops
+  // measuring the message and starts measuring the wording — and the
+  // fix is to go back to the property, not to update the string.
+  //
+  // The property: the toast must name the session the user is now in
+  // (so they can tell the switch happened) and must not claim
+  // something the code did not do.
+  const ink = block(tuiSrc, /case "threads":/);
+  const toasts = [...ink.matchAll(/text:\s*`([^`]*)`/g)].map((m) => m[1]);
+  assert.ok(toasts.length >= 1, "the picker shows no toast at all");
+  const switchToast = toasts.find((t) => /now working in/.test(t));
+  assert.ok(switchToast,
+    `no toast names the session the user is now in — the switch is silent ` +
+    `(${JSON.stringify(toasts)})`);
+  assert.ok(/adopted|replayed|history could not be read/.test(switchToast),
+    `the switch toast claims nothing about what happened: ${switchToast}`);
+  assert.ok(!/history is not replayed here/.test(switchToast),
+    "the switch toast still says the history is not replayed — R372 replays it");
 });
 
 // =========================================================================

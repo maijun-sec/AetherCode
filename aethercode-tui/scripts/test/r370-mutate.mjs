@@ -83,9 +83,13 @@ const CASES = [
     [["tui", (s) => s.replace('.request("loadSession", { sessionId: threadId } as RpcValue)',
       '.request("loadSession", { id: threadId } as RpcValue)')]]],
 
+  // R372 reshaped this: the reducer now reads `action.turns ?? []`
+  // and the case body no longer contains the literal `turns: [],`.
+  // The old target stopped matching and the harness correctly called it
+  // a NO-OP. Aim it at the new shape.
   ["adoptSession stops clearing the old scrollback",
-    [["state", (s) => s.replace(/turns: \[\],\n\s*todos: \[\],\n\s*\/\/ `status` is this renderer's streaming flag[\s\S]*?status: state\.connected \? "ready" : state\.status,\n\s*viewingSubagentId: null,\n\s*viewHistory: \[\],\n\s*lastStopReason: null,\n\s*lastStopKind: null,/,
-      'todos: [],')]]],
+    [["state", (s) => s.replace("      const nextTurns = action.turns ?? [];",
+      "      const nextTurns: Turn[] = action.turns ?? state.turns;")]]],
 
   ["Ink stops adopting the picked session id",
     [["tui", (s) => s.replace('dispatch({ type: "adoptSession", sessionId: adopted });', '')]]],
@@ -94,10 +98,6 @@ const CASES = [
     [["line", (s) => s.replace(/if \(typeof back === "string" && back\.length > 0\) ctx\.sessionId = back;/,
       'void back;')]]],
 
-  ["the success toast goes back to implying the history loaded",
-    [["tui", (s) => s.replace(
-      '`now working in ${adopted} — the next prompt continues it (history is not replayed here)`',
-      '`switched to thread ${adopted}`')]]],
 
   ["delete the line-mode __SESSION_PICKER__ arm (cmd.exe prints the token)",
     [["line", (s) => s.replace(/case "__SESSION_PICKER__":[\s\S]*?return true;\n/, '')]]],

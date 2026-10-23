@@ -1108,7 +1108,7 @@ export type Action =
   | { type: "setMcpServers"; servers: McpServerRow[] }        // R362: MCP listing
   | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
   | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
-  | { type: "adoptSession"; sessionId: string }                          // R370: the daemon swapped its active session
+  | { type: "adoptSession"; sessionId: string; turns?: Turn[] }     // R370: the daemon swapped its active session
   | { type: "setContextInfo"; info: State["contextInfo"] }            // R371: `getContextInfo` answered
   | { type: "setCompactStatus"; autoCompactDisabled: boolean; lastEventTs: number | null } // R371: `compact/status` answered
   ;
@@ -2284,29 +2284,23 @@ export function reducer(state: State, action: Action): State {
     // R370 — the daemon's active session changed under us
     // (`loadSession` swaps `engine`'s in-memory transcript).
     //
-    // The TUI cannot replay the newly-adopted session's history:
-    // there is no messages -> Turn converter anywhere in this
-    // renderer (the desktop has one; the TUI's `init` action only
-    // carries sessionId/model/mode). So we do the honest thing
-    // rather than the convenient thing:
+    // R372 added the optional `turns`: the replayed transcript of the
+    // session we just adopted. It is ONE action rather than two
+    // (clear, then fill) on purpose — two would leave a window in
+    // which the scrollback is empty and the header names the new
+    // session, and a user who types in that window sees a reply to
+    // nothing. The replacement is atomic.
     //
-    //   KEEP the old turns  -> the user reads session A's history
-    //                         while the model answers in session
-    //                         B. That is a lie with a UI on it.
-    //   CLEAR the turns    -> the scrollback is empty, the header
-    //                         names the right session, and the
-    //                         NEXT prompt genuinely continues
-    //                         there (the TUI sends `query` with no
-    //                         sessionId, so the daemon's active
-    //                         session is the one that answers).
-    //
-    // See docs/R370-cwd-session-picker.md for the hydration gap.
+    // With no `turns` the behaviour is R370's: clear. That path is
+    // still real — it is what happens when the daemon cannot give us
+    // a transcript, and clearing is the honest answer there.
     case "adoptSession": {
-      if (action.sessionId === state.sessionId && state.turns.length === 0) return state;
+      const nextTurns = action.turns ?? [];
+      if (action.sessionId === state.sessionId && nextTurns.length === 0) return state;
       return {
         ...state,
         sessionId: action.sessionId,
-        turns: [],
+        turns: nextTurns,
         todos: [],
         // `status` is this renderer's streaming flag (`AppStatus`),
         // not a separate `streaming` boolean.
