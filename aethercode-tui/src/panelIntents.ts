@@ -356,18 +356,54 @@ export const PANEL_INTENTS: PanelIntent[] = [
     id: 'update-available',
     sentinels: ['__UPDATE_AVAILABLE__', '__UPDATE_DEPS__', '__UPDATE_INSTALL__'],
     command: '/update',
-    title: 'Review and install an available update',
+    title: 'Check the version, and how to update it',
     group: 'system',
-    ink: 'unavailable',
-    line: 'rendered', // R365: line mode HAS a real frame (panelUpdate).
-    blocker: 'not-wired',
+    component: 'components/UpdatePanel.tsx',
+    // R374: this row was `ink: 'unavailable'` with
+    // `blocker: 'not-wired'` for three rounds, and the blocker was
+    // WRONG. `not-wired` means "the backend works, nobody wrote the
+    // UI" — but the daemon has no update RPC at all: no
+    // `update/check`, no `update/refreshDeps`, no `update/install`,
+    // and no updater module in the reactor. The honest blocker was
+    // `backend-missing`, whose rule is "do NOT write the UI; it would
+    // be a dead button".
+    //
+    // So R374 did not mount `UpdateAvailable` / `UpdateConfirm` /
+    // `UpdateProgress` — each of them needs a fact this daemon
+    // cannot produce ("an update is available", a `latest` version, a
+    // download in flight), so each would have rendered a button that
+    // does nothing.
+    //
+    // Instead the panel reports what DOES exist — the TUI and daemon
+    // versions, side by side, the way every mature updater shows
+    // "current vs available" — says plainly what did NOT happen, and
+    // points at the package manager, which is what Electron's own
+    // docs recommend for platforms with no built-in updater.
+    //
+    // The surface is real on both renderers now, so there is no
+    // renderer-side blocker left to declare. The gapNote stays,
+    // because the gap it describes is STILL REAL: typing `/update`
+    // does not update anything. The panel reports the versions and
+    // the manual path instead of pretending otherwise.
+    //
+    // Two different questions, two different answers: "is there a UI
+    // surface?" (the ink/line columns — yes) and "does the underlying
+    // capability exist?" (the gapNote — no). They do not contradict.
+    ink: 'mounted',
+    line: 'rendered',
     gapNote:
-      'R362 declared both renderers unavailable. R365 re-derived the ' +
-      'columns from source and found line mode has always had a real ' +
-      'frame (line.ts panelUpdate) - only Ink lacks a case. Note that ' +
-      '/update-deps is a DIFFERENT decision from /update; merging them ' +
-      'into one modal is a UX bug, so when this is built on Ink it needs ' +
-      'two entry points.',
+      'R374: the daemon has NO update RPC at all — no `update/check`, ' +
+      'no `update/refreshDeps`, no `update/install`, and no updater ' +
+      'module in the reactor. R365 had classified this row ' +
+      '`blocker: \'not-wired\'`, which was WRONG: `not-wired` means ' +
+      '"the backend works, nobody wrote the UI", and its rule is ' +
+      '"write the UI". The backend does not work, so the honest ' +
+      'blocker was `backend-missing`, whose rule is "do NOT write the ' +
+      'UI; it would be a dead button". R374 therefore did not mount ' +
+      '`UpdateAvailable` / `UpdateConfirm` / `UpdateProgress` — each ' +
+      'needs a fact this daemon cannot produce. The panel reports the ' +
+      'versions, says what did NOT happen, and points at the package ' +
+      'manager.',
   },
 ];
 

@@ -24,8 +24,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { runTui } from "./tui.js";
-
-const VERSION = "0.2.1";
+// R374: the version lives in a leaf module so the `--version` banner
+// and the `/update` panel cannot drift apart.
+import { TUI_VERSION as VERSION } from "./version.js";
 
 function parseCli(argv: string[]): { values: Record<string, unknown>; positionals: string[] } {
   return parseArgs({

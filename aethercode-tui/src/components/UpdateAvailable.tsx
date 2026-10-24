@@ -167,6 +167,14 @@ export function dismissUpdateCancel(): UpdateAvailableResult {
   return { kind: "cancel" };
 }
 
-/** Default changelog URL. Mirrors the Java `CHANGELOG_URL`. */
+/** Default changelog URL.
+ *
+ * R374: this used to point at
+ * `github.com/langchain-ai/deepagents/blob/main/libs/code/CHANGELOG.md`
+ * — an upstream default that was never repointed at this project.
+ * Following it would have sent a user to another project's release
+ * notes. The live update panel uses the same URL, from
+ * `src/updateInfo.ts`.
+ */
 export const DEFAULT_CHANGELOG_URL =
-  "https://github.com/langchain-ai/deepagents/blob/main/libs/code/CHANGELOG.md";
+  "https://github.com/maijun-sec/AetherCode/releases";

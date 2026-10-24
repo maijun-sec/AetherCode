@@ -178,8 +178,18 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "mcp-login", args: "<name>",   description: "start the OAuth login flow for an MCP server" },
   { name: "mcp-reconnect", description: "force a reconnect of the MCP registry" },
   { name: "threads", description: "switch to another session thread" },
-  { name: "update", description: "review an available update" },
-  { name: "update-deps", description: "confirm a dependency refresh" },
+  // R374: these two descriptions were T-430's originals — "review an
+  // available update" and "confirm a dependency refresh" — and both
+  // were LIES. There is no available update to review (the daemon has
+  // no update RPC) and nothing to confirm (the daemon has no
+  // dependency-refresh RPC). The verbs now describe what the panel
+  // actually does: it REPORTS the versions and the manual path.
+  //
+  // The optional `[install]` is the third verb. It existed since T-430
+  // and was reachable, but invisible — the catalog advertised one
+  // shape for a command that has two.
+  { name: "update", args: "[install]", description: "check for a newer release (add 'install' to see how to apply one)" },
+  { name: "update-deps", description: "check how to refresh dependencies" },
   // R344: /demo walks the user through a canned conversation
   // that exercises every visual surface (welcome banner, tool
   // cards, permission modal, status changes, error path). It's

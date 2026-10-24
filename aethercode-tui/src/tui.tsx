@@ -23,7 +23,7 @@
 import React, { useEffect, useReducer, useRef, useState } from "react";
 import { render, Box, Text, useApp, useInput, type Instance as InkInstance } from "ink";
 import Spinner from "ink-spinner";
-import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
+import { JsonRpcClient, RpcCallError, type RpcValue } from "./jsonrpc.js";
 import { findJar } from "./ac-tui.js";
 import {
   reducer, INITIAL, nextTurnId, type State, type Action, type PermissionAsk, type SddRunState,
@@ -54,6 +54,19 @@ import { WorkflowPicker } from "./components/WorkflowPicker.js";
 // envelope, and the empty-state copy. Kept out of this file so the
 // gate can RUN it instead of grepping for it.
 import { parseWorkflowListing } from "./workflowRows.js";
+// R374: `/update` and `/update-deps`. The daemon has NO update RPC, so
+// this panel reports the versions and the manual path instead of
+// offering a button that cannot work.
+import { UpdatePanel } from "./components/UpdatePanel.js";
+import {
+  buildUpdatePanel,
+  updateVerbForSentinel,
+  daemonVersionOf,
+  scalarRows,
+  UPDATE_ENDPOINTS,
+  type UpdateFacts,
+} from "./updateInfo.js";
+import { TUI_VERSION } from "./version.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
@@ -348,6 +361,10 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   // R373: the row R365 re-derived as "line mode has a real frame,
   // Ink has none". This is the Ink half.
   "workflow-picker": "workflows",
+  // R374: `/update`, `/update install` and `/update-deps` share ONE
+  // panel; the verb (a flag, written at openPanel) says which
+  // operation the panel is about.
+  "update-available": "update",
 };
 
 /** Intents whose panel row list is scoped to the active cwd. Kept as
@@ -421,6 +438,15 @@ const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string
     title: "Workflows",
     hint: "↑/↓ (j/k): navigate · Enter: run · Esc close",
     loading: "listing workflows",
+  },
+  // R374: the update panel. The hint names the ONE action it has —
+  // print the changelog — because a hint that lists keys the panel
+  // does not handle is how a surface ends up advertising a button it
+  // never had.
+  update: {
+    title: "Update",
+    hint: "Enter: show the changelog URL · Esc close",
+    loading: "asking the daemon about updates",
   },
 };
 
@@ -576,6 +602,19 @@ function envelopeError(v: unknown): string | null {
     if (r.ok === false) return String(r.error ?? r.reason ?? "the daemon rejected the request");
   }
   return null;
+}
+
+/**
+ * R374: is this the daemon saying "I have no such method"?
+ *
+ * -32601 is JSON-RPC's `METHOD_NOT_FOUND`. The daemon's error object
+ * carries the CODE, so check the code — not the message. A
+ * message-substring test would also match a timeout whose text
+ * happened to contain "method not found", and would silently stop
+ * matching if the daemon reworded its message.
+ */
+function isMissingMethod(e: unknown): boolean {
+  return e instanceof RpcCallError && e.code === -32601;
 }
 
 /* --------------------------- the shell ---------------------------- */
@@ -1600,6 +1639,52 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       return () => { cancelled = true; };
     }
 
+    if (panel === "update") {
+      // R374. Two probes in parallel:
+      //
+      //   1. the verb's endpoint — does this daemon have it at all?
+      //   2. `ping` — what version is the daemon actually running?
+      //
+      // The first is the load-bearing one: the daemon has NO update
+      // RPC today, and the panel must be able to say so WITHOUT
+      // hard-coding "this is unavailable" — the day the daemon grows
+      // one, the same panel reports it.
+      begin();
+      const verb = stateRef.current.panelUpdateVerb;
+      const method = UPDATE_ENDPOINTS[verb];
+      // R374. NOTE: the discriminant is a STRING, not a boolean.
+      //
+      // TypeScript narrows a union by a boolean discriminant only when
+      // `strictNullChecks` is ON. The npm gates compile TypeScript
+      // with DEFAULT options — they pass the file on the command line,
+      // so `tsconfig.json` is ignored and `strict` stays off — and
+      // under that `!p.ok && f(p.err)` does not compile at all, even
+      // though the project's own `tsc --noEmit` (`strict: true`) is
+      // perfectly happy. A string discriminant narrows in BOTH modes,
+      // so the two compilers can never disagree about this file again.
+      const probe = client.request(method, {} as RpcValue).then(
+        (raw) => ({ state: "ok" as const, raw }),
+        (e: unknown) => ({ state: "err" as const, err: e }),
+      );
+      const ping = client.request("ping", undefined, { timeoutMs: 10_000 }).then(
+        (raw) => ({ state: "ok" as const, raw }),
+        (e: unknown) => ({ state: "err" as const, err: e }),
+      );
+      void Promise.all([probe, ping]).then(([p, g]) => {
+        if (cancelled) return;
+        const facts: UpdateFacts = {
+          tuiVersion: TUI_VERSION,
+          daemonVersion: g.state === "ok" ? daemonVersionOf(g.raw) : null,
+          endpointMissing: p.state === "err" && isMissingMethod(p.err),
+          reason: p.state === "ok" ? null : p.err instanceof Error ? p.err.message : String(p.err),
+          reported: p.state === "ok" ? scalarRows(p.raw) : [],
+        };
+        dispatch({ type: "setUpdateFacts", facts });
+        done();
+      });
+      return () => { cancelled = true; };
+    }
+
     // "todos", "cwd", "effort" and "notifications" are served from
     // local state; nothing to fetch, so nothing to await.
     return () => { cancelled = true; };
@@ -2063,7 +2148,8 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     // it deliberately falls through to the human-readable fallback.
     const panelLocal = slash?.local;
     if (panelLocal) {
-      const intent = intentForSentinel(bareSentinel(panelLocal));
+      const bare = bareSentinel(panelLocal);
+      const intent = intentForSentinel(bare);
       const panelId = intent ? PANEL_BY_INTENT[intent.id] : undefined;
       if (panelId) {
         // R370: cwd-scoped intents (today: `session-picker` =
@@ -2071,10 +2157,16 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         // place a panel is opened. Every other consumer reads
         // `state.panelCwdOnly` and does not re-derive it, so the
         // filter cannot disagree between the fetch and the header.
+        //
+        // R374: same rule for the update verb. Three sentinels share
+        // ONE panel, and the verb says which operation the user
+        // asked for. It is decided HERE — the only place a panel is
+        // opened — so the probe and the render cannot disagree.
         dispatch({
           type: "openPanel",
           id: panelId,
           cwdOnly: intent ? CWD_SCOPED_INTENTS.has(intent.id) : false,
+          updateVerb: updateVerbForSentinel(bare),
         });
         return;
       }
@@ -3494,6 +3586,46 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             onClose={closePanel}
             title=""
             maxVisible={10}
+          />
+        );
+      }
+
+      case "update": {
+        // R374. The update panel.
+        //
+        // It is NOT the old `UpdateAvailable` modal: that one needs
+        // an "an update is available" fact, and this daemon has no
+        // update RPC to produce one. Mounting it would put a button
+        // on screen that cannot do anything.
+        //
+        // What the panel does instead: report the versions it knows,
+        // say plainly what did NOT happen, and point at the package
+        // manager — which is what Electron's own docs recommend for
+        // platforms with no built-in updater.
+        const verb = state.panelUpdateVerb;
+        const facts: UpdateFacts = state.updateFacts ?? {
+          tuiVersion: TUI_VERSION,
+          daemonVersion: null,
+          endpointMissing: false,
+          reason: null,
+          reported: [],
+        };
+        const model = buildUpdatePanel(verb, facts);
+        return (
+          <UpdatePanel
+            model={model}
+            onChangelog={() =>
+              // Print the URL. The terminal is what opens it — a
+              // panel that spawned a browser would be a side effect
+              // the user did not ask for.
+              dispatch({
+                type: "sideNote",
+                kind: "info",
+                message: `changelog: ${model.changelogUrl}`,
+              })
+            }
+            onClose={closePanel}
+            title=""
           />
         );
       }

@@ -27,6 +27,15 @@ import { replayTranscript } from "./transcriptHydrate.js";
 // R373: the workflow empty-state copy, shared with the Ink panel so
 // the two renderers cannot drift apart.
 import { workflowEmptyCopy } from "./workflowRows.js";
+// R374: the update panel's content, shared with the Ink panel.
+import {
+  buildUpdatePanel,
+  daemonVersionOf,
+  scalarRows,
+  UPDATE_ENDPOINTS,
+  type UpdateVerb,
+} from "./updateInfo.js";
+import { TUI_VERSION } from "./version.js";
 
 export interface LineOptions {
   jar: string;
@@ -2740,46 +2749,48 @@ async function panelWorkflow(ctx: PanelCtx): Promise<void> {
 //  /update  /update-deps
 // -------------------------------------------------------------------------
 
-async function panelUpdate(ctx: PanelCtx, deps: boolean): Promise<void> {
+async function panelUpdate(ctx: PanelCtx, verb: UpdateVerb): Promise<void> {
   const nc = ctx.noColor;
-  const endpoint = deps ? "update/refreshDeps" : "update/check";
+  const endpoint = UPDATE_ENDPOINTS[verb];
   const r = await probe(ctx, endpoint);
-  if (!r.ok) {
-    emitPanel(
-      ctx,
-      panelMissingEndpoint(nc, {
-        title: deps ? "dependency refresh" : "available update",
-        endpoint,
-        status: probeStatus(r),
-        instead: [
-          `the daemon answered: ${r.reason}`,
-          deps
-            ? "npm outdated   in the tui directory shows what moved"
-            : "npm outdated   in the tui directory shows what moved",
-        ],
-        hint: "line mode has no updater \u2014 it reports, it never writes",
-      }),
-    );
-    return;
-  }
-  const obj = (r.value ?? {}) as Record<string, unknown>;
-  const entries = Object.entries(obj).filter(([, v]) => typeof v !== "object" || v === null);
-  const rows: PanelCell[][] = entries.map(([k, v]) => [
-    { text: k, tone: "strong" },
-    { text: String(v), tone: /err|fail/i.test(String(v)) ? "err" : "plain" },
-  ]);
+  // The daemon's version, for the same "current vs available" shape
+  // the Ink panel shows. A failed ping is not fatal: the panel still
+  // opens, and the version reads "not reported by the daemon".
+  const ping = await probe(ctx, "ping");
+  // R374: the COPY comes from the same pure module the Ink panel
+  // uses, so the two renderers cannot drift apart.
+  const model = buildUpdatePanel(verb, {
+    tuiVersion: TUI_VERSION,
+    daemonVersion: ping.ok ? daemonVersionOf(ping.value) : null,
+    endpointMissing: r.missing,
+    reason: r.ok ? null : r.reason,
+    reported: r.ok ? scalarRows(r.value) : [],
+  });
   emitPanel(
     ctx,
     renderPanel({
-      title: deps ? "dependency refresh" : "available update",
-      subtitle: endpoint,
+      title: model.title,
+      subtitle: model.endpoint,
       noColor: nc,
       columns: [
-        { header: "field", min: 12 },
+        { header: "field", min: 16 },
         { header: "value", flex: 1 },
       ],
-      rows,
-      empty: [`${endpoint} reported nothing to do`],
+      rows: [
+        ...model.rows.map(([k, v]): PanelCell[] => [
+          { text: k, tone: "strong" },
+          { text: v, tone: "plain" },
+        ]),
+        // The honest answer leads the prose, then the manual path.
+        [{ text: "status", tone: "muted" },
+         { text: model.headline, tone: model.endpointMissing ? "err" : "plain" }],
+        ...model.manual.map((line): PanelCell[] => [
+          { text: "", tone: "plain" },
+          { text: line, tone: "plain" },
+        ]),
+        [{ text: "changelog", tone: "muted" },
+         { text: model.changelogUrl, tone: "plain" }],
+      ],
     }),
   );
 }
@@ -3219,13 +3230,16 @@ async function renderPanelSentinel(
 
     // --- system ------------------------------------------------------
     case "__UPDATE_AVAILABLE__":
-      await panelUpdate(ctx, false);
+      await panelUpdate(ctx, "check");
       return true;
     case "__UPDATE_INSTALL__":
-      await panelUpdate(ctx, false);
+      // R374: install is its OWN verb. It used to share the check
+      // verb, which is how "is there a newer version?" and "install
+      // it" ended up saying the same sentence.
+      await panelUpdate(ctx, "install");
       return true;
     case "__UPDATE_DEPS__":
-      await panelUpdate(ctx, true);
+      await panelUpdate(ctx, "deps");
       return true;
 
     // --- SDD ---------------------------------------------------------

@@ -173,8 +173,22 @@ test("the Ink panel is reachable through the sentinel, not a private path", () =
   // The sentinel has to travel intent -> PANEL_BY_INTENT -> openPanel.
   // A panel that is only reachable by a hand-written branch would be
   // unreachable in practice.
-  assert.ok(/intentForSentinel\(bareSentinel\(panelLocal\)\)/.test(tuiSrc),
-    "the panel claim no longer goes through the registry");
+  //
+  // R374: this used to assert the LITERAL
+  // `intentForSentinel(bareSentinel(panelLocal))`, and R374's
+  // refactor (hoisting `bareSentinel` into a local) broke it while
+  // the property was still true. The property is what is asserted
+  // now: the claim block consults the REGISTRY and the registry's
+  // map, not a hand-written branch.
+  const at = tuiSrc.search(/const panelLocal = slash\?\.local;/);
+  assert.notEqual(at, -1, "the sentinel claim block moved — re-anchor this test");
+  const claim = block(tuiSrc, /const panelLocal = slash\?\.local;/);
+  assert.ok(/intentForSentinel\(/.test(claim),
+    "the panel claim no longer goes through the registry:\n" + claim);
+  assert.ok(/PANEL_BY_INTENT\[/.test(claim),
+    "the panel claim no longer goes through PANEL_BY_INTENT:\n" + claim);
+  assert.ok(/type:\s*"openPanel"/.test(claim),
+    "the panel claim does not open a panel:\n" + claim);
 });
 
 // --- the daemon contract ----------------------------------------------------

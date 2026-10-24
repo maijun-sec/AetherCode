@@ -70,7 +70,7 @@ const CASES = [
 
   ["the Ink panel is not reachable through the sentinel",
     [["tui", (s) => s.replace(
-      "intentForSentinel(bareSentinel(panelLocal))",
+      "intentForSentinel(bare)",
       "undefined")]]],
 
   // --- the wrong method names --------------------------------------------

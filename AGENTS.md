@@ -1362,3 +1362,69 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   daemon 线程上就返回了,结果走 stream 事件。toast 必须说
   `workflow deploy.yaml accepted (run wf-3)`,说 "started" 就是在
   声称这次调用没有报告过的结果。
+## Watch out for (R374 additions)
+
+- **blocker 词汇是「指令」,不是标签。** `not-wired` = 后端能用、
+  只是没写 UI(**去写**);`backend-missing` = 后端根本没有这个
+  RPC(**别写**,写了就是死按钮)。R374 发现 `update-available` 标了
+  三个轮次的 `not-wired`,而 daemon 压根没有任何 update RPC
+  (无 `update/check`、无 `update/refreshDeps`、无 `update/install`、
+  reactor 里没有 updater 模块)—— 正确分类是 `backend-missing`。
+  **blocker 必须从后端重新推导,不能从「缺哪个 UI」倒推。**
+- **「别做 UI」本身是一个交付物。** 后端缺失时,诚实的答案是:一个
+  说清**什么都没发生**、并指出可行路径的面板,而不是一个带死按钮的
+  弹窗。R374 因此**没有**挂 `UpdateAvailable` / `UpdateConfirm` /
+  `UpdateProgress` —— 每个都要一个这个 daemon 产不出的事实
+  (「有可用更新」/ `latest` 版本 / 下载在途)。
+- **按成熟工具的方式拆动词。** Electron `autoUpdater` 拆
+  check → download → install(且「已下载的更新会在下次启动时生效」),
+  Homebrew 拆 `update`(刷索引)/ `upgrade`(装)/ `outdated`(只报)。
+  合成一句话就是 UX bug。R374 落成三个 verb:`/update`(check)、
+  `/update install`(install)、`/update-deps`(deps)。
+- **「不可用」要靠探测得出,不能写死。** 面板调 `UPDATE_ENDPOINTS[verb]`,
+  按 JSON-RPC 错误码 `-32601`(`METHOD_NOT_FOUND`)判断后端缺这个方法。
+  硬编码 "unavailable" 的面板在后端落地后**还会继续说谎**。
+- **`null` 不是 `0`。** daemon 的 `ping` 从 jar manifest 的
+  `Implementation-Version` 读版本,普通 `mvn package` 不写它 ——
+  所以「未上报」是**常态**,渲染成 `not reported by the daemon`,
+  绝不能是 `0.0.0`。
+- **描述文案在面板能纠正你之前就被读到了。** T-430 留下的
+  "review an available update" / "confirm a dependency refresh" 两句
+  都是谎言(没有可 review 的 update,也没有可 confirm 的刷新)。
+  `/help` 的文案是第一手真相,必须和后端能力一致。
+- **可达但没登记的动词等于半个功能。** `/update install` 从 T-430
+  就存在,但 catalog 只登记了一个形状 → 第三个 verb 一直不可见。
+  catalog 的 `args` 字段(`args: "[install]"`)是让可选子动词在
+  `/help` 里显形的地方。
+- **一个性质只有一条推导时,那条断言可以被悄无声息地废掉。** R374
+  变异电池发现:中和掉映射断言后,门禁仍然全绿 —— 因为其它断言
+  直接调 `updateHeadline("install", …)`,**不经过映射**。修法是补
+  一条**经过映射**的第二推导:
+  `updateHeadline(updateVerbForSentinel(s))` 必须逐个不同。
+  **推论:GATE 变异只有在缺陷还有第二条独立推导时才有意义。**
+- **没有花括号的 `case` arm 不能用花括号配对来提取。** R374 门禁
+  的 `block()` 从 `case "__UPDATE_AVAILABLE__":` 往后找 `{`,
+  走进了**下一个** arm(读到一个 `sdd.start` case)。用 `caseArm()`:
+  切到下一个同缩进的 `case` 为止。
+- **断言「引用了某个轮次」会被散文里的旁注满足。** gapNote 正文
+  解释「R365 的旧 blocker 是错的」,于是把开头的 `R374:` 删掉,
+  `/R\d{3}/` 照样匹配。断言必须钉**开头**:`/^R\d{3}:/`。
+- **门禁的 tsc 和项目的 tsc 不是同一个编译器。** 项目
+  `tsc --noEmit` 读 `tsconfig.json`(`strict: true`);而
+  `r43` / `r77` / `r78` / `r79` / `r94-e` 这几个门禁把文件**直接写在
+  命令行上**(`tsc … src/tui.tsx`),此时 **`tsconfig.json` 被完全忽略**,
+  走的是编译器默认值(`strictNullChecks: false`)。
+  而在非严格模式下,TypeScript **不会**用布尔字面量去收窄联合类型:
+
+      declare const p: { ok: true; raw: number } | { ok: false; err: unknown };
+      !p.ok && f(p.err);        // 非严格: TS2339 Property 'err' does not exist
+      declare const q: { state: "ok"; raw: number } | { state: "err"; err: unknown };
+      q.state === "err" && f(q.err);   // 两种模式都通过
+
+  R374 的 probe 结果原本是 `{ ok: true, raw } | { ok: false, err }` ——
+  项目编译绿灯,5 个门禁**根本编译不过**。改用**字符串判别**
+  (`state: "ok" | "err"`)后两种模式都过。
+  **推论:本仓库新增的 TypeScript 必须同时满足项目和门禁两个编译器。**
+  写完 `tsc --noEmit` 不算数,还要跑一次**不带 tsconfig 的**
+  `tsc --outDir … --target ES2022 --module ES2022 --moduleResolution bundler
+  --jsx react src/<file>.tsx`。

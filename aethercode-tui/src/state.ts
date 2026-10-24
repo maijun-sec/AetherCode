@@ -18,6 +18,11 @@
 // reducer dropped.
 import type { WorkflowRow } from "./workflowRows.js";
 export type { WorkflowRow } from "./workflowRows.js";
+// R374: the update verbs and the probe facts. A leaf module, so the
+// panel and the state share one definition of "what the daemon told
+// us about updating".
+import type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
+export type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
 
 export type Role = "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
 export type ToolStatus = "running" | "ok" | "error";
@@ -124,7 +129,8 @@ export type PanelId =
   | "notifications"
   | "mcp"
   | "context"   // R371 — /context, the row R362 shipped as a placeholder
-  | "workflows"; // R373 — /workflow, the row R365 found line-mode-only
+  | "workflows" // R373 — /workflow, the row R365 found line-mode-only
+  | "update";   // R374 — /update and /update-deps, one panel + a verb flag
 
 /** Loading / error / notice triple shared by every panel. Drives
  *  the shell's pending row and its red error row so a failed RPC is
@@ -792,6 +798,24 @@ export interface State {
    * "there are no workflows here" are different facts.
    */
   workflowSkipped: string[];
+  /**
+   * R374: which update verb the open panel is for.
+   *
+   * <p>A flag rather than a second `PanelId`, for the R370 reason: the
+   * three sentinels (`__UPDATE_AVAILABLE__`, `__UPDATE_INSTALL__`,
+   * `__UPDATE_DEPS__`) share one panel, and the verb decides which
+   * endpoint is probed and which copy is shown. It is written once, at
+   * `openPanel`, so the fetch and the render cannot disagree.
+   */
+  panelUpdateVerb: UpdateVerb;
+  /**
+   * R374: what the daemon said when the update panel probed it.
+   *
+   * <p>`null` means "not probed yet", which is NOT the same as
+   * "the daemon has no update operation" — the panel must not claim
+   * the second before the first has been ruled out.
+   */
+  updateFacts: UpdateFacts | null;
   /** R362: MCP servers. Empty until the daemon grows an MCP RPC. */
   mcpServers: McpServerRow[];
   /** R362: the active reasoning-effort id. The daemon exposes no
@@ -1137,7 +1161,7 @@ export type Action =
   | { type: "removeSubagentSpawnCard"; eventId: string } // R214: dismiss the spawn card (e.g. the user cleared the chat)
 
   /* --- R362: Ink panel host ------------------------------------ */
-  | { type: "openPanel"; id: PanelId; cwdOnly?: boolean } // R362: mount a panel; R370: `cwdOnly` filters the session list to the active cwd
+  | { type: "openPanel"; id: PanelId; cwdOnly?: boolean; updateVerb?: UpdateVerb } // R362: mount a panel; R370: `cwdOnly` filters the session list to the active cwd; R374: `updateVerb` picks which update operation the panel is about
   | { type: "closePanel" }                                    // R362: unmount + restore the prompt draft
   | { type: "setPanelStatus"; status: PanelStatus }            // R362: pending / error / notice
   | { type: "setMemoryTab"; tab: MemoryScopeId }               // R362: switch tab (App re-fetches the scope)
@@ -1146,6 +1170,7 @@ export type Action =
   | { type: "setThreads"; threads: ThreadRow[] }              // R362: `listSessions` result
   | { type: "setGrants"; grants: GrantRow[] }                 // R362: `permission/list` result
   | { type: "setWorkflows"; workflows: WorkflowRow[]; dir: string | null; skipped: string[] } // R373: `listWorkflows` result
+  | { type: "setUpdateFacts"; facts: UpdateFacts | null }     // R374: the update probe's answer
   | { type: "setMcpServers"; servers: McpServerRow[] }        // R362: MCP listing
   | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
   | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
@@ -1307,6 +1332,8 @@ export const INITIAL: State = {
   workflows: [],
   workflowDir: null,
   workflowSkipped: [],
+  panelUpdateVerb: "check",
+  updateFacts: null,
   mcpServers: [],
   effortCurrent: null,
   notificationToggles: {},
@@ -2259,6 +2286,11 @@ export function reducer(state: State, action: Action): State {
         // R370: written here and cleared on close, so the flag can
         // never outlive the panel it describes.
         panelCwdOnly: action.cwdOnly === true,
+        // R374: same rule for the update verb. Written here (the one
+        // place a panel is opened) so the fetch and the render read
+        // the same verb, and cleared on close so a stale verb cannot
+        // outlive the panel.
+        panelUpdateVerb: action.updateVerb ?? "check",
         panelOpenedAt: Date.now(),
         panelStatus: EMPTY_PANEL_STATUS,
         panelInputBefore: state.input,
@@ -2289,6 +2321,8 @@ export function reducer(state: State, action: Action): State {
         activePanel: null,
         // R370: cleared with the panel, so reopening always re-decides.
         panelCwdOnly: false,
+        // R374: same — the verb belongs to the panel, not to the app.
+        panelUpdateVerb: "check",
         panelStatus: EMPTY_PANEL_STATUS,
         memoryCompact: { state: "idle" },
         input: state.panelInputBefore,
@@ -2383,6 +2417,9 @@ export function reducer(state: State, action: Action): State {
         workflowDir: action.dir,
         workflowSkipped: action.skipped,
       };
+
+    case "setUpdateFacts":
+      return { ...state, updateFacts: action.facts };
 
     case "setMcpServers":
       return { ...state, mcpServers: action.servers };

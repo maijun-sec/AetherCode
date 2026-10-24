@@ -38,24 +38,39 @@ const CASES = [
   ["re-assert the R362 lie: mcp-viewer unavailable",
     (s) => s.replace(/(id: 'mcp-viewer',[\s\S]*?)ink: 'mounted',\n\s*line: 'rendered'/,
       "$1ink: 'unavailable',\n    line: 'unavailable'")],
-  // R371: this used to REMOVE `advertised: false` from /context — the
-  // one row that carried both it and `blocker: 'no-command'`, and the
-  // live user-facing bug R365 was written for. R371 gave /context a
-  // real command, so the pattern stopped matching and the harness
-  // reported a NO-OP rather than a pass. Correct.
+  // R374: this case is DELETED, and it was deleted for a reason worth
+  // writing down.
   //
-  // It was then retargeted at `workflow-picker` (`not-wired`) and
-  // SURVIVED — because hiding a row that is genuinely unavailable from
-  // /help is correct behaviour, not a bug. The invariant is not "no
-  // row may be hidden"; it is "a row whose COMMAND DOES NOT EXIST may
-  // not be advertised", and there is no such row left to mutate.
+  // Its intent was "drop the blocker from a blocked row". Two things
+  // happened:
   //
-  // Rather than invent a defect to fit the case, the mechanism is
-  // covered by a synthetic row in r371-context-meter.test.mjs, which
-  // can construct one. Deleting the case here is honest; keeping a
-  // case that measures nothing is not.
-  ["drop the blocker from a blocked row (back to prose-only)",
-    (s) => s.replace(/(id: 'workflow-picker',[\s\S]*?)\n    blocker: 'not-wired',/, "$1")],
+  //   1. The regex `/(id: 'workflow-picker',[\s\S]*?)\n    blocker:
+  //      'not-wired',/` CROSSED ROW BOUNDARIES. `[\s\S]*?` is lazy but
+  //      it will happily skip over the end of the `workflow-picker`
+  //      row to find the next `\n    blocker: 'not-wired',` anywhere
+  //      later in the file — which was the `update-available` row.
+  //      So the case was mutating a DIFFERENT row than the one it
+  //      named, and the gate went red for the wrong reason.
+  //   2. R374 removed that row's blocker (correctly: the daemon has no
+  //      update RPC, so the honest classification is
+  //      `backend-missing`, and R374 built the surface), which left
+  //      the regex with nothing to match. The no-op detector caught
+  //      it — which is the only thing that could tell a vacuous case
+  //      from a passing one.
+  //
+  // The registry now has NO row with a `blocker` field at all: every
+  // row is `mounted`/`rendered`. So the case is unexpressible against
+  // the live table, and the mechanism it wanted to cover — "a
+  // placeholder with no command behind it must not be advertised" —
+  // is covered by a SYNTHETIC row in r371-context-meter.test.mjs,
+  // which constructs the row instead of depending on one happening
+  // to ship in that state.
+  //
+  // Keeping a case that measures nothing is not honest. Deleting it
+  // is.
+  //
+  // "claim a blocker on a fully-mounted row" below is the surviving
+  // half of this pair, and it still has a live target.
   ["claim a blocker on a fully-mounted row",
     (s) => s.replace(/(id: 'cwd-switcher',[\s\S]*?)ink: 'mounted',\n    line: 'rendered',/,
       "$1ink: 'mounted',\n    line: 'rendered',\n    blocker: 'backend-missing',")],
