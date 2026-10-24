@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -25,9 +26,17 @@ const T = {
   commands: join(root, "src", "commands.ts"),
 };
 
+
+// R375: a battery that is KILLED mid-case must not leave a mutation on
+// disk — the next test run would then read a deliberately broken product
+// and the failures would belong to neither round. See
+// scripts/test/mutation-snapshot.mjs.
+const SNAPSHOT = join(root, "tmp-r364-mutate.snapshot.json");
+recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(T).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
+const snapshot = writeSnapshot(Object.entries(T).map(([k, p]) => [p, original[k]]), SNAPSHOT);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", join(here, "r364-cwd-rpc.test.mjs")],
@@ -112,4 +121,5 @@ for (const [k, p] of Object.entries(T)) {
 }
 
 console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

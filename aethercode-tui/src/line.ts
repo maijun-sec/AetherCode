@@ -27,6 +27,17 @@ import { replayTranscript } from "./transcriptHydrate.js";
 // R373: the workflow empty-state copy, shared with the Ink panel so
 // the two renderers cannot drift apart.
 import { workflowEmptyCopy } from "./workflowRows.js";
+// R375: the run-control vocabulary, shared with the Ink renderer so
+// the two cannot disagree about what "stop" means.
+import {
+  RUN_STOP_METHOD,
+  RUN_PAUSE_METHOD,
+  runParams,
+  runOutcome,
+  runAlreadyInState,
+  runNothingInFlight,
+  type RunAction,
+} from "./runControl.js";
 // R374: the update panel's content, shared with the Ink panel.
 import {
   buildUpdatePanel,
@@ -3466,6 +3477,10 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
    */
   let activeRunId: string | null = null;
   let cancelSent = false;
+  // R375 — the mirror of the daemon's per-session auto-continue flag.
+  // Line mode has no reducer, so it lives here; it is cleared where
+  // the daemon clears its own flag (the next user-prompt submit).
+  let continuationPaused = false;
 
   const onRunEnd = () => {
     sawRunEnd = true;
@@ -3743,24 +3758,28 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   let rlClosed = false;
 
   /**
-   * R363 — interrupt the run in flight. Same three rules as the Ink
-   * TUI's `cancelActiveRun`:
+   * R363/R375 — interrupt the run in flight. Same three rules as the Ink
+   * TUI's `stopActiveRun`:
    *   1. never fire blind (no runId => say so, don't send a doomed RPC)
    *   2. never fire twice (`cancelSent` latch)
    *   3. never swallow a failed cancel (release the latch, report it)
+   *
+   * R375: this is the ONE implementation of "stop" in line mode too —
+   * Esc, the `/stop` command and the status line's Stop button all come
+   * through here.
    */
-  async function cancelActiveRun(): Promise<void> {
+  async function stopActiveRun(explicitRunId?: string | null): Promise<void> {
     if (cancelSent) return;
-    if (!activeRunId) {
-      logAbove(colorize("  no cancellable run (daemon did not report a run id)", C.yellow, noColor));
+    const target = explicitRunId ?? activeRunId;
+    if (!target) {
+      logAbove(colorize(`  ${runNothingInFlight()}`, C.yellow, noColor));
       return;
     }
     cancelSent = true;
-    const target = activeRunId;
-    logAbove(colorize(`  stopping run ${target}...`, C.dim, noColor));
+    logAbove(colorize(`  ${runOutcome("stop", true, { runId: target })}`, C.dim, noColor));
     if (!rlClosed) lineInput.redraw();
     try {
-      await client.request("cancel", { runId: target });
+      await client.request(RUN_STOP_METHOD, runParams("stop", { runId: target }));
       logAbove(colorize(`  interrupt sent for run ${target}`, C.dim, noColor));
     } catch (e) {
       // Either the daemon never saw this run or the transport dropped.
@@ -3768,7 +3787,38 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // Esc is dead for the rest of the session.
       cancelSent = false;
       activeRunId = null;
-      logAbove(colorize(`  cancel failed: ${(e as Error).message}`, C.red, noColor));
+      logAbove(colorize(`  ${runOutcome("stop", false, { error: (e as Error).message })}`, C.red, noColor));
+    }
+    if (!rlClosed) lineInput.redraw();
+  }
+
+  /**
+   * R375 — pause / resume this session's automatic continuation.
+   *
+   * The daemon owns the flag and clears it on the next user-prompt
+   * submit. Line mode has no state store, so it keeps the mirror in a
+   * local variable — cleared at the same moment the daemon clears it.
+   */
+  async function pauseAutoContinue(paused: boolean): Promise<void> {
+    const action: RunAction = paused ? "pause" : "continue";
+    // R375 — idempotent, and it says so.
+    if (continuationPaused === paused) {
+      const already = runAlreadyInState(action);
+      if (already) {
+        logAbove(colorize(`  ${already}`, C.dim, noColor));
+        if (!rlClosed) lineInput.redraw();
+        return;
+      }
+    }
+    try {
+      await client.request(
+        RUN_PAUSE_METHOD,
+        runParams(action),
+      );
+      continuationPaused = paused;
+      logAbove(colorize(`  ${runOutcome(action, true)}`, C.dim, noColor));
+    } catch (e) {
+      logAbove(colorize(`  ${runOutcome(action, false, { error: (e as Error).message })}`, C.red, noColor));
     }
     if (!rlClosed) lineInput.redraw();
   }
@@ -3780,7 +3830,7 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // unaffected; and `pickFromList` calls `lineInput.pause()` while
       // a picker owns the keyboard, so closing a picker still wins.
       onEscape: () => {
-        if (inFlight > 0) void cancelActiveRun();
+        if (inFlight > 0) void stopActiveRun();
       },
       onSubmit: (submitted: string) => {
         if (submitted.endsWith("\\")) {
@@ -4032,6 +4082,18 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       return;
     }
     if (slash?.rpcMethod) {
+      // R375: the run-control verbs use the same implementations the
+      // Esc key uses, so line mode's `/stop` and its Esc cannot drift.
+      if (slash.rpcMethod === RUN_STOP_METHOD) {
+        const p = (slash.rpcParams ?? {}) as { runId?: string };
+        await stopActiveRun(p.runId ?? null);
+        return;
+      }
+      if (slash.rpcMethod === RUN_PAUSE_METHOD) {
+        const p = (slash.rpcParams ?? {}) as { stopped?: boolean };
+        await pauseAutoContinue(p.stopped !== false);
+        return;
+      }
       try {
         const result = await client.request<unknown>(slash.rpcMethod, slash.rpcParams as RpcValue);
         logAbove(colorize(`${slash.rpcMethod} \u2192 ${JSON.stringify(result)}`, C.dim, noColor));
@@ -4047,6 +4109,11 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     // BEFORE awaiting the daemon so the export always has the
     // user's question even if the model never does.
     turnsBuffer.push({ id: ++turnCounter, role: "user", text: currentUserPrompt, ts: Date.now() });
+    // R375 — the daemon clears its auto-continue flag on the next
+    // user-prompt submit, so the mirror goes with it. A session that
+    // claims to be paused while the daemon has already resumed it is
+    // a lie the status line would tell.
+    continuationPaused = false;
     try {
       // R363 — the `query` response carries `{runId, accepted}`; this
       // is where we learn the id that `cancel` needs. A daemon refusal

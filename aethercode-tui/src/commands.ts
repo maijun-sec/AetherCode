@@ -198,9 +198,13 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "demo", description: "walk a canned conversation (no LLM round-trip)" },
   { name: "notifications", description: "open the notification center" },
   // Phase 6.3 (T-6-17) — long-running + must-have commands.
-  { name: "continue", description: "resume the active long-running task (task/resume)" },
-  { name: "pause", description: "pause the active long-running task (task/pause)" },
-  { name: "stop", description: "kill the active long-running task (task/kill)" },
+  // R375: these three used to name methods the daemon does not have
+  // ("task/resume", "task/pause", "task/kill"), which made the help
+  // text a promise the TUI could not keep. The descriptions now say
+  // what the command DOES, and the method names live in the code.
+  { name: "continue", description: "resume this session's automatic continuation" },
+  { name: "pause", description: "pause this session's automatic continuation" },
+  { name: "stop", description: "interrupt the run that is in flight" },
   { name: "todos", description: "open the live TODO board (j/k nav)" },
   { name: "tokens", description: "show current token usage (input / output / total / cost)" },
   { name: "consents", description: "open the grants manager (alias: /grants)" },
@@ -945,33 +949,34 @@ export function routeSlash(input: string): SlashResult | null {
     // ---------------------------------------------------------------
     case "continue":
     case "resume": {
-      // T-6-17: resume the active long-running task.
-      // With no args, the host resumes the currently-focused
-      // session. With one arg, the host uses it as the task id
-      // (so the user can re-attach to a specific running task).
-      if (rest.length === 0) {
-        return { rpcMethod: "task/resume" };
-      }
-      return { rpcMethod: "task/resume", rpcParams: { id: String(rest[0]) } };
+      // R375: this used to ask for `task/resume`, which the daemon
+      // this TUI spawns does NOT register. `task/resume` belongs to
+      // `TaskMethods`, an adapter that proxies to a SEPARATE
+      // supervisor process that production code never constructs — and
+      // it carries no `task/pause` at all.
+      //
+      // The real "let it keep going" is the session's auto-continue
+      // flag, which the daemon DOES expose.
+      return { rpcMethod: "setContinuationStopped", rpcParams: { stopped: false } };
     }
     case "pause": {
-      // T-6-17: pause the active long-running task. The daemon
-      // sets state to "paused" at the next safe checkpoint
-      // (so the agent doesn't lose state mid-tool-call).
-      if (rest.length === 0) {
-        return { rpcMethod: "task/pause" };
-      }
-      return { rpcMethod: "task/pause", rpcParams: { id: String(rest[0]) } };
+      // R375: same story as `continue`, inverted. The daemon's own
+      // wording for this is "Stop auto-continue" — it stops the
+      // session's automatic continuation and cancels the pending
+      // countdown immediately.
+      return { rpcMethod: "setContinuationStopped", rpcParams: { stopped: true } };
     }
     case "stop":
     case "kill": {
-      // T-6-17: kill the active long-running task. Graceful
-      // shutdown — the daemon persists the final state before
-      // exiting. The state goes to "cancelled".
+      // R375: the real "stop" is `cancel {runId}` — the same call Esc
+      // makes (R363). The run id is not known at this layer (the
+      // command table has no state), so the HOST fills it in from the
+      // active run. `task/kill` was a task id on a supervisor that
+      // does not exist, and it was being handed a SESSION id.
       if (rest.length === 0) {
-        return { rpcMethod: "task/kill" };
+        return { rpcMethod: "cancel" };
       }
-      return { rpcMethod: "task/kill", rpcParams: { id: String(rest[0]) } };
+      return { rpcMethod: "cancel", rpcParams: { runId: String(rest[0]) } };
     }
     case "todos":
     case "todo": {

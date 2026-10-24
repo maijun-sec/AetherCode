@@ -67,6 +67,19 @@ import {
   type UpdateFacts,
 } from "./updateInfo.js";
 import { TUI_VERSION } from "./version.js";
+// R375: the run-control vocabulary — which daemon method carries
+// "stop", "pause" and "continue", what params it takes, and what the
+// user is told afterwards. Shared with the line renderer, so the two
+// cannot drift (the same reason the update copy lives in a module).
+import {
+  RUN_STOP_METHOD,
+  RUN_PAUSE_METHOD,
+  runParams,
+  runOutcome,
+  runAlreadyInState,
+  runNothingInFlight,
+  type RunAction,
+} from "./runControl.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
@@ -2195,6 +2208,21 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       return;
     }
     if (slash?.rpcMethod) {
+      // R375: the run-control verbs go through the SAME functions the
+      // status bar's buttons use. Before R375 the slash commands and
+      // the buttons were two implementations of one idea, and the
+      // buttons' one was pointing at a method this daemon does not
+      // have.
+      if (slash.rpcMethod === RUN_STOP_METHOD) {
+        const p = (slash.rpcParams ?? {}) as { runId?: string };
+        await stopActiveRun(p.runId ?? null);
+        return;
+      }
+      if (slash.rpcMethod === RUN_PAUSE_METHOD) {
+        const p = (slash.rpcParams ?? {}) as { stopped?: boolean };
+        await pauseAutoContinue(p.stopped !== false);
+        return;
+      }
       try {
         const result = await client.request<unknown>(slash.rpcMethod, slash.rpcParams as RpcValue);
         // when the user lands in a new permission mode (via
@@ -2568,7 +2596,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   }
 
   /**
-   * R363 — interrupt the run currently in flight.
+   * R363/R375 — interrupt the run currently in flight.
    *
    * Wired to Esc (and Ctrl-C's non-exit sibling path). The daemon's
    * cancel is R721-hard: thread interrupt + destroyForcibly on the
@@ -2588,23 +2616,33 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
    *     (old daemon, transport drop) we must clear `cancelRequested`,
    *     otherwise the strip shows "stopping..." forever on a run that
    *     is still happily running.
+   *
+   * R375: this is now the ONE implementation of "stop". Esc, the
+   * status bar's Stop button and the `/stop` command all come through
+   * here. Before R375 the button called `task/kill` — a method this
+   * daemon does not register — and its rejection was swallowed, so the
+   * button did nothing at all.
    */
-  async function cancelActiveRun(): Promise<void> {
+  async function stopActiveRun(explicitRunId?: string | null): Promise<void> {
     if (cancelSentRef.current) return;
-    const runId = stateRef.current.activeRunId;
+    const runId = explicitRunId ?? stateRef.current.activeRunId;
     if (!runId) {
       dispatch({
         type: "pushToast",
         kind: "warn",
-        text: "no cancellable run (daemon did not report a run id)",
+        text: runNothingInFlight(),
       });
       return;
     }
     cancelSentRef.current = true;
     dispatch({ type: "requestCancelRun" });
-    dispatch({ type: "pushToast", kind: "info", text: `stopping run ${runId}...` });
+    dispatch({
+      type: "pushToast",
+      kind: "info",
+      text: runOutcome("stop", true, { runId }),
+    });
     try {
-      await client.request("cancel", { runId });
+      await client.request(RUN_STOP_METHOD, runParams("stop", { runId }));
     } catch (e) {
       // The daemon may not know this run (it already finished), or the
       // transport dropped. Either way the run is not ours to stop, so
@@ -2614,7 +2652,53 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       dispatch({
         type: "pushToast",
         kind: "err",
-        text: `cancel failed: ${(e as Error).message}`,
+        text: runOutcome("stop", false, { error: (e as Error).message }),
+      });
+    }
+  }
+
+  /**
+   * R375 — pause / resume this session's automatic continuation.
+   *
+   * The daemon owns the flag (`setContinuationStopped` → the engine's
+   * continuation dispatcher) and clears it on the next user-prompt
+   * submit, so the TUI's mirror is cleared in the same place. The
+   * daemon also cancels the pending countdown when the flag goes on,
+   * which is why pausing takes effect immediately rather than after
+   * the countdown window.
+   *
+   * Before R375 this capability was never called at all: the status
+   * bar's Pause button asked for `task/pause`, a method that exists
+   * nowhere.
+   */
+  async function pauseAutoContinue(paused: boolean): Promise<void> {
+    const action: RunAction = paused ? "pause" : "continue";
+    // R375 — idempotent, and it says so. Firing a request whose only
+    // effect is to set a flag to the value it already has would be
+    // noise dressed up as feedback.
+    if (stateRef.current.continuationPaused === paused) {
+      const already = runAlreadyInState(action);
+      if (already) {
+        dispatch({ type: "pushToast", kind: "info", text: already });
+        return;
+      }
+    }
+    try {
+      await client.request(
+        RUN_PAUSE_METHOD,
+        runParams(action),
+      );
+      dispatch({ type: "setContinuationPaused", paused });
+      dispatch({
+        type: "pushToast",
+        kind: "info",
+        text: runOutcome(action, true),
+      });
+    } catch (e) {
+      dispatch({
+        type: "pushToast",
+        kind: "err",
+        text: runOutcome(action, false, { error: (e as Error).message }),
       });
     }
   }
@@ -2748,7 +2832,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     if (key.escape) {
       if (state.showSearch) { dispatch({ type: "showSearch", show: false }); return; }
       if (state.helpVisible) { dispatch({ type: "showHelp", show: false }); return; }
-      if (state.submitting) { void cancelActiveRun(); return; }
+      if (state.submitting) { void stopActiveRun(); return; }
     }
     // when a permission ask is on screen, route the decision
     // keys to replyPermission. The card is now INLINE in the
@@ -3914,13 +3998,18 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 {state.layout === "full" ? <StatusBar
                   state={state}
                   onContinue={() => {
-                    void client.request("task/resume", { id: state.sessionId });
+                    // R375: the real thing. Before this, all three
+                    // buttons called `task/resume` / `task/pause` /
+                    // `task/kill` — none of which this daemon
+                    // registers — and the rejection was swallowed, so
+                    // the buttons did nothing.
+                    void pauseAutoContinue(false);
                   }}
                   onPause={() => {
-                    void client.request("task/pause", { id: state.sessionId });
+                    void pauseAutoContinue(true);
                   }}
                   onStop={() => {
-                    void client.request("task/kill", { id: state.sessionId });
+                    void stopActiveRun();
                   }}
                 /> : null}
               </Box>

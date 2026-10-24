@@ -1138,6 +1138,29 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   was listed but could not be started, written, or deleted). See
   "Watch out for (R373 additions)" and `docs/R373-workflow-picker.md`.
 
+- **R374** (the `/update` panel, three honest verbs, no dead button): the
+  blocker vocabulary was wrong for three rounds — `not-wired` means "the
+  backend works, go write the UI", `backend-missing` means "there is no
+  backend, do NOT write the UI". The daemon had NO update RPC at all, so
+  the honest deliverable was a panel that says so, with no install button
+  and no `UpdateAvailable` / `UpdateConfirm` / `UpdateProgress` mounted.
+  The gap statement is derived from a real `-32601` probe, so the panel
+  self-upgrades when the daemon gains the method. See
+  "Watch out for (R374 additions)" and `docs/R374-update-panel.md`.
+
+- **R375** (the run-control surface: three verbs that actually work): the
+  status bar's Continue/Pause/Stop buttons and the `/pause` `/stop`
+  `/continue` commands all called `task/resume|task/pause|task/kill` —
+  methods that exist only on `TaskMethods`, a proxy to a SUPERVISOR
+  process production code never constructs (`task/pause` is not even in
+  its list). The rejection was swallowed, so the buttons did nothing.
+  They now call `cancel {runId}` and `setContinuationStopped {stopped}`
+  — the two methods the daemon really has. R375 also found a DEAD UI
+  nobody was looking for: `validActions("running")` has no `continue` and
+  the status mapping could never return `"paused"`, so Continue was
+  permanently greyed out. See "Watch out for (R375 additions)" and
+  `docs/R375-run-control.md`.
+
 - **Reverting the predicate is not the only mutation; pick the mutation your
   fix actually introduced.** Each round's gate must be checked against the
   specific change under test, and a fix that is *only* reachable through a
@@ -1428,3 +1451,81 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   写完 `tsc --noEmit` 不算数,还要跑一次**不带 tsconfig 的**
   `tsc --outDir … --target ES2022 --module ES2022 --moduleResolution bundler
   --jsx react src/<file>.tsx`。
+
+## Watch out for (R375 additions)
+
+- **`task/*` 在这个 daemon 上不存在,而它长得像存在。**
+  `TaskMethods`(`aethercode-protocol/.../methods/TaskMethods.java`)真的
+  声明了 `task/resume` / `task/kill` 等 12 个方法,但它是**代理到独立
+  supervisor 进程**(`SupervisorClient`,自带 TCP loopback socket)的适配器,
+  `DaemonRunner` 从不构造它;`task/pause` 连它的列表都没进(只有
+  `TaskPauseParams` 这个 DTO)。R375 之前 TUI 的三个按钮 + 三条斜杠命令
+  打的就是这些名字,而且**没有 `.catch`**,所以 `-32601` 被吞掉,按钮
+  **什么都不做**。**任何"这个方法名在某个类里"的证据都不等于可达** ——
+  要看 `DaemonRunner` 有没有接线它。
+- **`setContinuationStopped` 的三个默认行为是 TUI 依赖的契约:**
+  (1) `sessionId` 空白 → 回落到 `engine.appState().sessionId()`(当前会话);
+  (2) **`stopped` 缺失 → 默认 `true`** —— 所以 "continue" 必须**显式**发
+  `stopped:false`,什么都不发等于**暂停**;
+  (3) `stopped=true` 会**同时取消待触发的倒计时**,所以暂停立刻生效。
+  TUI **故意不传 sessionId**:行渲染器的占位符是 `"—"`,daemon 的空白检查
+  抓不到它,会老老实实给一个叫 `"—"` 的会话设标志。
+- **daemon 在用户下一次提交提示时清掉自己的标志**
+  (`AetherCodeMethods.query` → `setContinuationStopped(_targetSid, false)`),
+  所以 TUI 的本地镜像**必须在同一个时刻**清掉,否则状态栏会撒谎。
+- **死 UI 的成因可能在下游,不在上游。**
+  `SessionControl.validActions("running")` = `{pause, stop}`(没有
+  `continue`),而 `mapSessionState()` 之前**永远**返回 `"running"` ——
+  Continue 按钮是**永久灰的**,而且因为 `/pause` 也打错了方法名,用户根本
+  到不了"已暂停"状态。**一个不可达的状态让另一个修复完全无效。**
+  门禁要**端到端**跑 `validActions(runControlState(status, paused))`,
+  而不是分别断言两个部件。
+- **`BACKEND_MISSING` 是"方法清单",不是"按钮健康度清单"。**
+  把一个坏按钮登记成"缺方法"等于把缺陷归档成知识。R375 换成一条**结构性
+  不变量**:任何能发 RPC 的源文件都**不得再命名**一个 daemon 服务不了的
+  方法(`r369` + `r375` 门禁都扫)。注意 `TaskPanel.tsx` /
+  `src/rpc/queries.ts` 仍在注释和死代码里提 `task/*` —— 它们没被挂载、
+  没被引用、也不在扫描范围内,是已知的后续项。
+- **一条"断言这个命令已知是坏的"的断言,锁住的是坏的现状。**
+  `phase-6-t6-17` 曾经断言 `/continue` 会拒绝 `task/resume`,理由是"这个
+  方法不存在"。**后端其实有能力,只是名字错了/概念错了** —— 正确动作是
+  **去把命令接对**,不是把"接不对"写进断言。问的问题是"这个能力到底存在
+  吗",不是"这个方法名存在吗"。
+- **改名和改断言是同一个动作。** R375 把 `cancelActiveRun` 改名成
+  `stopActiveRun`,`r363-cancel` 的 6 条断言当场变红 —— 它们钉的是**名字**
+  而不是**契约**。要么改断言去钉契约(本轮钉共享常量 `RUN_STOP_METHOD`,
+  方法名本身由 `r375` 门禁钉住),要么别改名。
+- **变异用例插注释,门禁看不见,而且**应该**看不见。**
+  "DaemonRunner 没有接线 TaskMethods" 读的是**去注释后**的源码;插一行
+  `// TaskMethods ...` 会让文本变了而门禁纹丝不动 —— 注释不是接线。
+  变异必须插**真代码**。差点被当成门禁有洞,其实是门禁对。
+- **失败文案不能顺着失败路径长。** "没有可停的 run"复用失败分支就会变成
+  "stop failed: no run is in flight" —— 用户读到"出错了",而其实什么都没
+  发生。两个渲染器各写文案时这个偏差立刻出现,共享文案模块
+  (`runNothingInFlight()`) 是唯一可靠的解法。
+- **一个动作只能有一个实现。** R375 之前斜杠命令、状态栏按钮、Esc 键是
+  **两套**实现(而且按钮那套指向不存在的方法)。现在 `src/runControl.ts`
+  是唯一的词汇表(动词 → 方法 → 参数 → 文案),两个渲染器各自只有**一份**
+  `stopActiveRun` / `pauseAutoContinue`,命令表**只负责说方法名**。
+  **推论:同一个问题的第二个答案就是下一个漂移的种子** —— 状态映射曾经
+  在 `StatusBar.tsx` 有一份私有的副本,现已并回 `runControl.ts`。
+- **`/stop <runId>` 的 run id 由宿主补,不由命令表补。** 命令表没有 state,
+  所以 `routeSlash("/stop")` 只说方法名;`tui.tsx` / `line.ts` 收到
+  `rpcMethod === "cancel"` 时**提前 return**,自己把 active run id 填上,
+  再走同一个 `stopActiveRun`。
+- **任何"在原地改源码"的工具,都必须能在被杀之后自愈。** 变异电池
+  (`scripts/test/rNNN-mutate.mjs`)把产品源码改在原地;它一旦被杀,变异就
+  留在树上,下一次 `npm test` 读到一个**故意被改坏的产品** —— 那些失败
+  **属于谁都负责**。R375 踩过:`node scripts/test/r375-mutate.mjs 2>&1 |
+  Select-Object -First 2` 会**停掉上游进程**,电池死在第一个用例中间,
+  `src/runControl.ts` 留下了 `RUN_STOP_METHOD = "task/kill"`,全量测试多出
+  3 条**假失败**。
+  `git checkout --` 不能兜底(回到 HEAD,吞掉未提交的修复,Lesson 1171)。
+  **修法是结构性的**(`scripts/test/mutation-snapshot.mjs`,12 个电池全接上):
+  改动前把原始字节写进 snapshot 文件;电池**启动时**先从 snapshot 恢复
+  **再读基线**(顺序反了会把变异固化成基线);跑完清掉。用 snapshot 文件
+  而不是 `process.on("exit")`,是因为**被直接杀的进程一个 handler 都不跑**。
+  **推论:护栏本身要被真实验证** —— 真的启动一个电池、杀掉它、确认树脏了、
+  重跑、确认它自愈;以及"树已经脏了 → 跑电池 → 确认它先自愈而不是把脏内容
+  当基线"。两件事都做过,才算这个护栏存在。
+  **推论:别用 `| Select-Object -First N` 截断电池的输出** —— 那会杀掉它。

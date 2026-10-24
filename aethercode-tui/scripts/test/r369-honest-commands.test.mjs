@@ -14,6 +14,22 @@
 // JSON-RPC error code. That is the same failure as R365's `/context`
 // (advertising a command that cannot work) and R366's `setCwd`.
 //
+// ## R375 — three of the five were the WRONG KIND OF BROKEN
+//
+// A refusal is the honest answer to "this method does not exist". But
+// `/stop`, `/pause` and `/continue` were not asking for a method that
+// happens to be missing — they were asking for a method that does
+// not describe the capability AT ALL. The daemon has no "task" the
+// user could pause; it has a RUN in flight and a session's automatic
+// continuation. So refusing them was wrong twice over: the buttons
+// still fired the request (and swallowed the -32601), and the refusal
+// text described a task registry the daemon does have.
+//
+// R375 points those three at methods that really exist
+// (`setContinuationStopped`, `cancel`), so this gate now covers the
+// two that are still genuinely missing (`rewind`, `session/tokens`)
+// AND asserts that the TUI no longer NAMES a method it cannot serve.
+//
 // ## Why the filter is not in the five `case` bodies
 //
 // The refusal lives in `handleSlash`, which is the single entry point
@@ -73,13 +89,17 @@ test("the capability table is not empty and every reason is user-facing", () => 
   // green on a table it never read. That is the R368 hole for the
   // fifth time — an unchecked extraction. So neither loop is allowed
   // to be unmeasured.
+  //
+  // The floor was 7 while the table still carried the three `task/*`
+  // entries. R375 removed them (the TUI stopped naming those methods
+  // altogether), so the measured count is 4 as of 2026-10-24.
   const entries = [...capsSrc.matchAll(/^\s*\[\s*"[a-z][\w/]*",/gm)];
-  assert.ok(entries.length >= 7,
+  assert.ok(entries.length >= 4,
     `only ${entries.length} entries parsed from rpcCapabilities.ts — the table ` +
     "probably stopped parsing, which would make the honesty checks vacuous");
 
   const reasons = [...capsSrc.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)];
-  assert.ok(reasons.length >= 7,
+  assert.ok(reasons.length >= 4,
     `only ${reasons.length} reasons parsed — the per-reason check would run ` +
     "zero times and pass on a table it never read");
   for (const m of reasons) {
@@ -90,14 +110,14 @@ test("the capability table is not empty and every reason is user-facing", () => 
 // --- the behaviour ------------------------------------------------------
 
 test("every backend-missing command answers in words, not with an rpcMethod", () => {
-  // The five advertised ones. `/rewind` only reaches its RPC with an
-  // argument — with none it returns a usage string, which is already
-  // honest, so both forms are asserted.
+  // The advertised ones that are STILL missing. `/rewind` only reaches
+  // its RPC with an argument — with none it returns a usage string,
+  // which is already honest, so both forms are asserted.
+  //
+  // R375 removed `/stop`, `/pause` and `/continue` from this list:
+  // they no longer name a missing method, so there is nothing to
+  // refuse. They are asserted to WORK in `phase-6-t6-17.test.mjs`.
   const CASES = [
-    ["/stop", "task/kill"],
-    ["/stop 42", "task/kill"],
-    ["/pause", "task/pause"],
-    ["/continue", "task/resume"],
     ["/rewind 3", "rewind"],
     ["/tokens", "session/tokens"],
   ];
@@ -169,4 +189,43 @@ test("line mode's direct probes consult the same table", () => {
   }
   assert.match(lineSrc, /import \{ unsupportedReason, unsupportedMessage \} from "\.\/rpcCapabilities\.js"/,
     "line.ts must read the same table handleSlash does, not a local copy");
+});
+
+// --- R375: naming a method the daemon cannot serve -------------------------
+
+test("REGRESSION R375: the TUI names no method the daemon cannot serve", () => {
+  // The three `task/*` methods used to sit in the refusal table, and
+  // the TUI SENT them: the status bar's Continue/Pause/Stop buttons
+  // called `task/resume` / `task/pause` / `task/kill` with a SESSION
+  // id, and swallowed the -32601 — so the buttons did nothing at all.
+  //
+  // A refusal table is the wrong place to park that. The table says
+  // "this method does not exist"; it cannot say "this button is
+  // broken", and it certainly cannot make the button work. R375
+  // points the buttons at methods that exist, so the invariant is now
+  // structural: no RPC-capable source may NAME one of these methods
+  // any more — not in a call, not in the refusal table.
+  //
+  // `codeOf` strips comments first, so the R375 rationale (which
+  // mentions the old names in prose) does not trip the scan. That is
+  // deliberate: prose about a removed method is not a call site.
+  const SOURCES = [
+    "src/tui.tsx", "src/line.ts", "src/commands.ts", "src/ac-tui.ts",
+    "src/memory-rpc.ts", "src/panelIntents.ts", "src/state.ts",
+    "src/runControl.ts", "src/rpcCapabilities.ts",
+  ];
+  const offenders = [];
+  for (const rel of SOURCES) {
+    const src = codeOf(readFileSync(join(root, rel), "utf-8"), rel);
+    for (const m of src.matchAll(/["'](task\/[a-zA-Z]+)["']/g)) {
+      offenders.push(`${m[1]}  <- ${rel}`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    "the TUI names task/* methods, which this daemon does not register — every\n" +
+    "  call site is a -32601. Before R375 the status bar's buttons did exactly\n" +
+    "  that and swallowed the rejection, so they silently did nothing.\n" +
+    "  Use `cancel` (stop the run in flight) and `setContinuationStopped`\n" +
+    "  (pause/resume this session's automatic continuation) instead:\n" +
+    "  " + offenders.join("\n  "));
 });

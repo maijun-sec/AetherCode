@@ -58,3 +58,9 @@ tmp-r365-panel-truth/
 tmp-r365-probe-trash/
 tmp-r366-rpc-names/
 tmp-r366-probe-trash/
+tmp-r375-run-control/
+tmp-r375probe/
+# R375: the mutation batteries' snapshot files. A battery that is
+# killed mid-case writes one of these; the NEXT run of that battery
+# restores the tree from it. See scripts/test/mutation-snapshot.mjs.
+tmp-*-mutate.snapshot.json

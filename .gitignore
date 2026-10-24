@@ -335,3 +335,8 @@ aethercode/stderr.txt
 # R292 archive: old ssd code moved here before delete
 .archive/
 
+# R375: the TUI mutation batteries' snapshot files. A battery that is
+# killed mid-case writes one; the NEXT run of that battery restores the
+# tree from it. See aethercode-tui/scripts/test/mutation-snapshot.mjs.
+tmp-*-mutate.snapshot.json
+

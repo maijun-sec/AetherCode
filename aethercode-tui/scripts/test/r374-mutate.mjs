@@ -29,6 +29,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -53,9 +54,17 @@ const PATHS = {
 // Read the originals ONCE, in memory. `git checkout --` would restore
 // to HEAD and swallow every uncommitted fix in the working tree
 // (R373: Lesson 1171 has bitten this repo four times).
+
+// R375: a battery that is KILLED mid-case must not leave a mutation on
+// disk — the next test run would then read a deliberately broken product
+// and the failures would belong to neither round. See
+// scripts/test/mutation-snapshot.mjs.
+const SNAPSHOT = join(root, "tmp-r374-mutate.snapshot.json");
+recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
+const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -377,4 +386,5 @@ for (const [k, p] of Object.entries(PATHS)) {
 
 console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
 if (noops) console.log(`${noops} case(s) were no-ops and did not test anything`);
+snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

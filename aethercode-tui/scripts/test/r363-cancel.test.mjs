@@ -219,11 +219,21 @@ function bodyAfter(src, decl) {
   return end > start ? src.slice(start, end) : null;
 }
 
-test("tui.tsx has a cancelActiveRun that guards on a known runId", () => {
-  const body = bodyAfter(tuiCode, "async function cancelActiveRun");
-  assert.ok(body, "cancelActiveRun not found (re-anchor this test)");
-  assert.match(body, /request\(\s*"cancel"/,
-    "cancelActiveRun must actually call the cancel RPC");
+test("tui.tsx has a stopActiveRun that guards on a known runId", () => {
+  // R375: the function was renamed from `cancelActiveRun` to
+  // `stopActiveRun` when the status bar's Stop button and the `/stop`
+  // command were wired to it as well — one implementation of "stop"
+  // instead of three diverging ones.
+  //
+  // The RPC name is no longer a literal here: it comes from the shared
+  // `RUN_STOP_METHOD` constant, so this gate pins that the call goes
+  // through the shared vocabulary, and `r375-run-control.test.mjs`
+  // pins that the constant IS `cancel`. Splitting it that way keeps
+  // each gate's claim small enough to stay true.
+  const body = bodyAfter(tuiCode, "async function stopActiveRun");
+  assert.ok(body, "stopActiveRun not found (re-anchor this test)");
+  assert.match(body, /request\(\s*RUN_STOP_METHOD/,
+    "stopActiveRun must actually call the shared stop RPC");
   assert.match(body, /!runId[\s\S]*?pushToast/,
     "a cancel with no runId must degrade to a human-readable notice, not a doomed RPC");
 });
@@ -253,7 +263,7 @@ test("tui.tsx captures the runId from BOTH the query response and the notificati
 // --- source pins: the Esc ladder ------------------------------------------
 
 test("the Esc-cancel block sits ABOVE the decision-card branches", () => {
-  const cancelIdx = tuiCode.indexOf("void cancelActiveRun()");
+  const cancelIdx = tuiCode.indexOf("void stopActiveRun()");
   // Anchor on the `key.ctrl && input === "l"` branch, which sits below
   // the whole permission / decision-card region. Anchoring on
   // `setDecisionCardExpanded` itself is wrong: the FIRST occurrence is
@@ -281,10 +291,10 @@ test("Esc closes overlays before it stops a run (close-what-you-opened wins)", (
     "an open search bar must swallow Esc instead of cancelling the run");
   assert.match(block, /helpVisible/,
     "an open help overlay must swallow Esc instead of cancelling the run");
-  assert.ok(block.indexOf("showSearch") < block.indexOf("void cancelActiveRun()"),
+  assert.ok(block.indexOf("showSearch") < block.indexOf("void stopActiveRun()"),
     "the overlay checks must come first, or Esc both closes the overlay " +
     "and cancels the run on the same keypress");
-  assert.ok(block.indexOf("helpVisible") < block.indexOf("void cancelActiveRun()"),
+  assert.ok(block.indexOf("helpVisible") < block.indexOf("void stopActiveRun()"),
     "same for the help overlay");
 });
 
@@ -309,7 +319,7 @@ test("Esc stops a live run BEFORE it drops the queue", () => {
     `expected several Esc branches in the key handler; found ${starts.length}`);
 
   const cancelIdx = starts.find((i) =>
-    tuiCode.slice(i, i + 2000).includes("void cancelActiveRun()"));
+    tuiCode.slice(i, i + 2000).includes("void stopActiveRun()"));
   assert.ok(cancelIdx !== undefined,
     "no Esc branch that cancels the run — re-anchor this test");
 
@@ -349,9 +359,9 @@ test("line mode captures the runId and calls the same cancel RPC", () => {
   assert.match(lineCode, /activeRunId/);
   assert.match(lineCode, /resp\.runId/,
     "line mode must capture the query response's runId like the Ink TUI does");
-  const body = bodyAfter(lineCode, "async function cancelActiveRun");
-  assert.ok(body, "line mode's cancelActiveRun not found (re-anchor this test)");
-  assert.match(body, /request\(\s*"cancel"/);
+  const body = bodyAfter(lineCode, "async function stopActiveRun");
+  assert.ok(body, "line mode's stopActiveRun not found (re-anchor this test)");
+  assert.match(body, /request\(\s*RUN_STOP_METHOD/);
 });
 
 test("line mode resets both the id and the latch on run_end", () => {
@@ -372,7 +382,7 @@ test("line mode resets both the id and the latch on run_end", () => {
 test("line mode's LineInput gets the onEscape wiring", () => {
   assert.match(lineCode, /onEscape:\s*\(\)\s*=>/,
     "line mode must wire Esc to the interrupt, or the parity claim is false");
-  assert.match(lineCode, /onEscape:[\s\S]{0,200}cancelActiveRun/);
+  assert.match(lineCode, /onEscape:[\s\S]{0,200}stopActiveRun/);
 });
 
 // --- the daemon contract we depend on -------------------------------------

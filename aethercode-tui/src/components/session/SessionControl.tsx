@@ -4,13 +4,21 @@
  * Per spec §5.2, the user sees a horizontal row of 3
  * buttons at the top of the session panel:
  *
- *   - Continue  — sends `task/resume <childId>` (the
- *                 session goes from `paused` / `completed`
- *                 back to `running`).
- *   - Pause     — sends `task/pause` (the agent stops at
- *                 the next safe checkpoint).
- *   - Stop      — sends `task/kill` (graceful shutdown,
- *                 final state is persisted).
+ *   - Continue  — resumes this session's automatic continuation
+ *                 (the session goes from `paused` back to `running`).
+ *   - Pause     — stops this session's automatic continuation
+ *                 (the agent stops at the next safe checkpoint).
+ *   - Stop      — interrupts the run that is in flight.
+ *
+ * R375: this comment used to say the buttons send `task/resume`,
+ * `task/pause` and `task/kill`. None of those is registered on the
+ * daemon the TUI spawns — `TaskMethods` proxies them to a separate
+ * supervisor process that production code never constructs, and
+ * `task/pause` does not exist even there. The component is
+ * "headless" about transport, so the METHODS are the host's business;
+ * what the host must send is `setContinuationStopped {stopped}` for
+ * the pause/continue pair and `cancel {runId}` for stop. The naming
+ * of the wire methods lives in `src/runControl.ts`, one place.
  *
  * The component is "headless" about transport: it accepts
  * the three callbacks. The TUI wires them to the

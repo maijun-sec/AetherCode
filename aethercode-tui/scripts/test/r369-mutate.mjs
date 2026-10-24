@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -31,9 +32,17 @@ const PATHS = {
   line: join(root, "src", "line.ts"),
 };
 
+
+// R375: a battery that is KILLED mid-case must not leave a mutation on
+// disk — the next test run would then read a deliberately broken product
+// and the failures would belong to neither round. See
+// scripts/test/mutation-snapshot.mjs.
+const SNAPSHOT = join(root, "tmp-r369-mutate.snapshot.json");
+recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
+const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -76,10 +85,16 @@ const CASES = [
       /export function handleSlash\(input: string\): SlashResult \| null \{[\s\S]*?\n\}/,
       "export function handleSlash(input: string): SlashResult | null {\n  return routeSlash(input);\n}")]]],
 
-  ["a reason is internal shorthand again ('same as task/kill')",
+  // R375 removed the three `task/*` entries (the TUI stopped naming
+  // those methods at all), so this case is re-aimed at a reason that
+  // is still in the table. The PROPERTY is unchanged: a reason is
+  // shown to the user verbatim, so it must stand alone — a pointer at
+  // another entry ("same as X") is internal shorthand the reader
+  // cannot resolve.
+  ["a reason is internal shorthand again ('same as rewind')",
     [["caps", (s) => s.replace(
-      '"the daemon has no task registry, so there is no running task to pause"',
-      '"same as task/kill"')]]],
+      '"no rewind handler; transcript rollback is unimplemented daemon-side"',
+      '"same as rewind"')]]],
 
   // --- line mode's direct probes ---
   ["line mode stops consulting the table before probing agent/setDefault",
@@ -159,4 +174,5 @@ for (const [k, p] of Object.entries(PATHS)) {
 }
 
 console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

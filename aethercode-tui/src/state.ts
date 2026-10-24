@@ -312,6 +312,23 @@ export interface State {
    * second Esc a no-op instead of a duplicate cancel.
    */
   cancelRequested: boolean;
+  /**
+   * R375: whether THIS session's automatic continuation is paused.
+   *
+   * <p>The flag itself lives on the daemon
+   * (`setContinuationStopped` → the engine's continuation dispatcher),
+   * and the daemon clears it on the next user-prompt submit. This is
+   * the TUI's mirror of it, and it is cleared in the same place — so
+   * the two agree, because the TUI knows about both the places the
+   * flag can change (its own pause/resume actions, and its own prompt
+   * submit).
+   *
+   * <p>It exists so the status bar's Continue button is reachable at
+   * all: `SessionControl` disables "continue" unless the session is
+   * paused, and before R375 the TUI's session state was never anything
+   * but "running", so Continue was permanently greyed out.
+   */
+  continuationPaused: boolean;
   connected: boolean;
   /**
    * detailed daemon-connection state. Distinct from
@@ -1068,6 +1085,8 @@ export type Action =
   | { type: "setActiveRunId"; runId: string | null }
   | { type: "requestCancelRun" }
   | { type: "setCancelSettled" }
+  // R375 — the mirror of the daemon's per-session auto-continue flag.
+  | { type: "setContinuationPaused"; paused: boolean }
   // R364 — the session cwd. Named `setCurrentCwd`, NOT `setCwd`,
   // because `setCwd` is the desktop's Tauri IPC command name and
   // using it here is exactly the confusion that produced R364
@@ -1198,6 +1217,8 @@ export const INITIAL: State = {
   pendingPrompts: [],
   activeRunId: null,
   cancelRequested: false,
+  // R375 — not paused until the user says so.
+  continuationPaused: false,
   // R364 — seeded from the launch cwd by `tui.tsx` on first render.
   cwd: "",
   connected: false,
@@ -1606,6 +1627,14 @@ export function reducer(state: State, action: Action): State {
     // claiming "stopping..." on a run that is still running.
     case "setCancelSettled":
       return state.cancelRequested ? { ...state, cancelRequested: false } : state;
+    // R375 — the daemon clears its own flag on the next user-prompt
+    // submit, so the mirror is cleared at the same moment. Anything
+    // else would leave the status bar claiming "paused" for a session
+    // the daemon is happily auto-continuing.
+    case "setContinuationPaused":
+      return state.continuationPaused === action.paused
+        ? state
+        : { ...state, continuationPaused: action.paused };
     case "setCurrentCwd": {
       // R364 — the daemon normalises to an absolute, `.`-stripped
       // path before echoing it back (`switchProject` does
@@ -1641,6 +1670,11 @@ export function reducer(state: State, action: Action): State {
         // once run ids restart, cancel the wrong one).
         activeRunId: null,
         cancelRequested: false,
+        // R375 — the daemon clears its auto-continue flag on the next
+        // user-prompt submit, so the mirror goes with it. A session
+        // that is "paused" but about to accept a new prompt is not
+        // paused, and a status bar that says otherwise is lying.
+        continuationPaused: false,
         turns: [
           ...state.turns,
           {
@@ -2387,6 +2421,11 @@ export function reducer(state: State, action: Action): State {
         viewHistory: [],
         lastStopReason: null,
         lastStopKind: null,
+        // R375 — the auto-continue flag belongs to a SESSION, so the
+        // mirror must not survive a session switch. Carrying it over
+        // would make the status bar say "paused" about a session whose
+        // daemon flag was never set.
+        continuationPaused: false,
       };
     }
 

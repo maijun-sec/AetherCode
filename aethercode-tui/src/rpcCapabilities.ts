@@ -46,17 +46,25 @@ export const BACKEND_MISSING: ReadonlyMap<string, string> = new Map<string, stri
     "session/tokens",
     "no per-session token RPC; getState carries the aggregate counters (see /metrics)",
   ],
-  [
-    "task/kill",
-    "the daemon has no task registry; task/* lives on SupervisorRpcServer, which is a separate CLI",
-  ],
-  // R369: these two used to say "same as task/kill", which is internal
-  // shorthand and reads as nonsense to the user who is looking at it
-  // ("task/pause is not available on this daemon — same as task/kill").
-  // Every reason in this table is shown verbatim, so each one has to
-  // stand alone.
-  ["task/pause", "the daemon has no task registry, so there is no running task to pause"],
-  ["task/resume", "the daemon has no task registry, so there is no paused task to resume"],
+  // R375: `task/kill`, `task/pause` and `task/resume` used to be here,
+  // and every one of those entries was WRONG — twice over.
+  //
+  // The reasons claimed "the daemon has no task registry, so there is
+  // no running task to pause". The daemon DOES have a task registry
+  // (`TaskRegistry`, behind `listTasks` / `updateTaskStatus`); what it
+  // does not have is a SUPERVISOR — `TaskMethods` is an adapter that
+  // proxies `task/*` to a separate supervisor process that production
+  // code never constructs, and `task/pause` is not even in its list.
+  //
+  // Worse, the TUI was not asking for a task at all: it was asking for
+  // those names to interrupt the RUN the user was looking at, and
+  // passing a SESSION id where a task id was expected.
+  //
+  // The capability the user actually wanted — stop the run in flight,
+  // pause the session's automatic continuation — IS on the daemon
+  // (`cancel` and `setContinuationStopped`). R375 points the TUI at
+  // those, so the TUI no longer NAMES a method it cannot serve, and
+  // these entries have nothing left to describe.
 ]);
 
 /**

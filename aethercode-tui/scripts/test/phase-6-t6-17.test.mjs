@@ -1,14 +1,22 @@
 // T-6-17 (Phase 6.3): the 9 new slash commands.
 //
 // 6 tests:
-//   1. /continue → task/resume RPC (no args = active task)
-//   2. /pause, /stop → task/pause, task/kill
+//   1. /continue → setContinuationStopped RPC (the session's auto-continue)
+//   2. /pause → setContinuationStopped, /stop → cancel
 //   3. /todos → __TODO_BOARD__ local token
 //   4. /tokens → session/tokens RPC
 //   5. /consents + /grants → __GRANTS_MANAGER__ (alias)
 //   6. /model <name> → model/set + /workflow [name] → picker or workflow/run
 //
 //  Plus: tab-completion picks up the new commands.
+//
+// R375: tests 1 and 2 used to assert a REFUSAL — "/continue is known
+// to be broken because `task/resume` does not exist". That is the
+// wrong thing for a gate to protect: the /help text still advertised
+// the command, and the honest refusal is a worse product than a
+// working command. R375 points the two commands at the daemon methods
+// that really exist (`setContinuationStopped`, `cancel`), so the tests
+// now pin the WORKING shape.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -54,14 +62,13 @@ const tscArgs = [
 const helpers = await import(
   "file:///" + join(tmp, "out", "_t6_17_helpers.js").replace(/\\/g, "/")
 );
-// R369. These two tests used to assert `rpcMethod === "task/resume"`
-// and friends — i.e. they pinned the BROKEN behaviour, since those
-// three methods are not registered on the daemon the TUI spawns. The
-// mapping itself is unchanged and still worth pinning; it now shows
-// up inside the refusal instead of in an `rpcMethod` field. So the
-// assertion gets STRONGER, not weaker: it proves both that `/stop`
-// still means task/kill AND that the command refuses rather than
-// dispatching into a -32601.
+// R369. This helper asserts a REFUSAL: the command must answer in
+// words and never dispatch a method the daemon does not register.
+//
+// R375 removed three of its callers — `/stop`, `/pause` and
+// `/continue` no longer refuse, because they now point at methods
+// that really exist. `/tokens` still refuses: there is no per-session
+// token RPC on this daemon.
 //
 // The param shape is asserted on `routeSlash`, the unrouted inner
 // function, because the refusal no longer carries rpcParams — and
@@ -77,31 +84,53 @@ function refusedMethod(res, expected) {
     `${expected} refusal should name the method it cannot run, got: ${res.local}`);
 }
 
-// ----- 1. /continue → task/resume --------------------------------------
+// ----- 1. /continue → setContinuationStopped ---------------------------
 
-test("T-6-17: /continue → task/resume (no args = active task)", () => {
-  refusedMethod(handleSlash("/continue"), "task/resume");
-  refusedMethod(handleSlash("/continue abc-123"), "task/resume");
-  // /resume is an alias.
-  refusedMethod(handleSlash("/resume"), "task/resume");
+test("T-6-17: /continue → setContinuationStopped {stopped:false}", () => {
+  // R375: this test used to assert that `/continue` REFUSES, because
+  // it asked for `task/resume` — a method the daemon this TUI spawns
+  // does not register (`TaskMethods` proxies to a separate supervisor
+  // process that production code never constructs).
+  //
+  // The real "let it keep going" is the session's auto-continue flag,
+  // which the daemon DOES expose. So the command now dispatches
+  // `setContinuationStopped {stopped:false}` — the same flag the
+  // daemon's own countdown UI toggles.
+  const r = handleSlash("/continue");
+  assert.equal(r.rpcMethod, "setContinuationStopped");
+  assert.deepEqual(r.rpcParams, { stopped: false });
 
-  // Param shape, asserted before the capability filter runs.
-  assert.equal(routeSlash("/continue").rpcParams, undefined);
-  assert.deepEqual(routeSlash("/continue abc-123").rpcParams, { id: "abc-123" });
-  assert.equal(routeSlash("/resume").rpcMethod, "task/resume");
+  // /resume is an alias, with the same params.
+  const alias = handleSlash("/resume");
+  assert.equal(alias.rpcMethod, "setContinuationStopped");
+  assert.deepEqual(alias.rpcParams, { stopped: false });
+
+  // The unrouted form carries the same params — the capability filter
+  // in handleSlash must not drop them.
+  assert.deepEqual(routeSlash("/continue").rpcParams, { stopped: false });
+  assert.equal(routeSlash("/continue").rpcMethod, "setContinuationStopped");
 });
 
-// ----- 2. /pause + /stop → task/pause + task/kill -----------------------
+// ----- 2. /pause + /stop → setContinuationStopped + cancel --------------
 
-test("T-6-17: /pause → task/pause and /stop → task/kill", () => {
-  refusedMethod(handleSlash("/pause"), "task/pause");
-  refusedMethod(handleSlash("/stop"), "task/kill");
+test("T-6-17: /pause → setContinuationStopped and /stop → cancel", () => {
+  // R375: same story as /continue, inverted. The daemon's own wording
+  // for this is "Stop auto-continue" — it stops the session's
+  // automatic continuation and cancels the pending countdown.
+  const p = handleSlash("/pause");
+  assert.equal(p.rpcMethod, "setContinuationStopped");
+  assert.deepEqual(p.rpcParams, { stopped: true });
+
+  // /stop is the interrupt of the run in flight — the same `cancel`
+  // the Esc key sends (R363). With an argument it is the run id.
+  const s = handleSlash("/stop");
+  assert.equal(s.rpcMethod, "cancel");
+  const s2 = handleSlash("/stop run-7");
+  assert.equal(s2.rpcMethod, "cancel");
+  assert.deepEqual(s2.rpcParams, { runId: "run-7" });
   // /kill alias
-  refusedMethod(handleSlash("/kill"), "task/kill");
-
-  // With explicit id.
-  assert.deepEqual(routeSlash("/pause task-9").rpcParams, { id: "task-9" });
-  assert.deepEqual(routeSlash("/stop task-9").rpcParams, { id: "task-9" });
+  assert.equal(handleSlash("/kill").rpcMethod, "cancel");
+  assert.deepEqual(routeSlash("/kill run-7").rpcParams, { runId: "run-7" });
 });
 
 // ----- 3. /todos → __TODO_BOARD__ --------------------------------------
@@ -185,13 +214,13 @@ test("T-6-17: SLASH_COMMANDS + SLASH_HELP contain the 9 new commands", () => {
 // ----- 8. Tab-completion -----------------------------------------------
 
 test("T-6-17: tab-completion picks up the new commands", () => {
-  // /con matches BOTH "continue" and "consents" — LCP is
-  // "con" (3 chars: both have c/o/n, but "continue" has
-  // 't' at position 3 where "consents" has 's'). The user
-  // needs to type more characters.
+  // /con matches THREE commands — "consents", "context" and
+  // "continue" (R371 added `/context`, and this assertion was never
+  // updated, so it has been red since that round). The user needs to
+  // type more characters.
   const c1 = completeSlash("/con");
   assert.equal(c1.completed, "/con");
-  assert.deepEqual(c1.alternatives.sort(), ["consents", "continue"]);
+  assert.deepEqual(c1.alternatives.sort(), ["consents", "context", "continue"]);
   assert.equal(c1.oneShot, false);
   // /tok → /tokens (unique)
   const c2 = completeSlash("/tok");

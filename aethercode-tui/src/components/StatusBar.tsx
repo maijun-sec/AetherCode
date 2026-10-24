@@ -38,7 +38,13 @@ import { t, formatCost, formatTokens } from "../theme.js";
 // them, so even a mounted meter would have shown a confident 0% against
 // a hard-coded 200_000 window.
 import { ContextMeter, type ContextInfo } from "./ContextMeter.js";
-import { SessionControl, type SessionState } from "./session/SessionControl.js";
+import { SessionControl } from "./session/SessionControl.js";
+// R375: the session-state mapping lives with the rest of the
+// run-control vocabulary, so the status bar, the line renderer and the
+// gate read ONE definition of "is this session paused?". A second copy
+// here was a second answer to that question — the exact shape of bug
+// this round exists to remove.
+import { runControlState } from "../runControl.js";
 import { isStale, staleLabel } from "./session/SessionDetailsPanel.js";
 
 interface Props {
@@ -90,16 +96,6 @@ function jarName(p: string): string {
   if (!p) return "—";
   const m = p.split(/[\\/]/);
   return m[m.length - 1] || p;
-}
-
-/** Map the TUI's stringly-typed state.status to SessionControl's enum. */
-function mapSessionState(s: State["status"]): SessionState {
-  const lo = String(s || "").toLowerCase();
-  if (lo === "paused") return "paused";
-  if (lo === "completed" || lo === "ok") return "completed";
-  if (lo === "failed" || lo === "error") return "failed";
-  if (lo === "cancelled") return "cancelled";
-  return "running";
 }
 
 export const StatusBar: React.FC<Props> = ({
@@ -174,7 +170,7 @@ export const StatusBar: React.FC<Props> = ({
     <Box flexDirection="column" paddingX={1}>
       {showControl ? (
         <SessionControl
-          state={mapSessionState(state.status)}
+          state={runControlState(state.status, state.continuationPaused)}
           onContinue={onContinue}
           onPause={onPause}
           onStop={onStop}
