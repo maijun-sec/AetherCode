@@ -61,15 +61,27 @@ const commandsSrc = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8
 const tuiSrc = codeOf(readFileSync(join(root, "src", "tui.tsx"), "utf-8"), "tui.tsx");
 const lineSrc = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
 const stateSrc = codeOf(readFileSync(join(root, "src", "state.ts"), "utf-8"), "state.ts");
-const intentsSrc = codeOf(readFileSync(join(root, "src", "panelIntents.ts"), "utf-8"), "panelIntents.ts");
+const intentsSrc = codeOf(
+  readFileSync(join(root, "src", "panelIntents.ts"), "utf-8"),
+  "panelIntents.ts",
+);
 const threadSelSrc = codeOf(
   readFileSync(join(root, "src", "components", "ThreadSelector.tsx"), "utf-8"),
   "ThreadSelector.tsx",
 );
 
 const methodsJava = join(
-  repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java",
+  repo,
+  "aethercode",
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "methods",
+  "AetherCodeMethods.java",
 );
 assert.ok(existsSync(methodsJava), `cannot find the daemon source at ${methodsJava}`);
 const methodsCode = javaCode(readFileSync(methodsJava, "utf-8"));
@@ -78,16 +90,32 @@ const methodsCode = javaCode(readFileSync(methodsJava, "utf-8"));
 
 const tmp = mkdtempSync(join(tmpdir(), "r370-"));
 const tsc = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-const compiled = spawnSync(`"${tsc}"`, [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
-  `"${join(root, "src", "commands.ts")}"`,
-  `"${join(root, "src", "state.ts")}"`,
-  `"${join(root, "src", "cwdMatch.ts")}"`,
-  `"${join(root, "src", "panelIntents.ts")}"`,
-], { encoding: "utf-8", shell: true });
+const compiled = spawnSync(
+  `"${tsc}"`,
+  [
+    "--outDir",
+    join(tmp, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    `"${join(root, "src", "commands.ts")}"`,
+    `"${join(root, "src", "state.ts")}"`,
+    `"${join(root, "src", "cwdMatch.ts")}"`,
+    `"${join(root, "src", "panelIntents.ts")}"`,
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (compiled.status !== 0) {
   console.error("tsc failed:\n" + compiled.stdout + "\n" + compiled.stderr);
   process.exit(1);
@@ -137,12 +165,18 @@ function block(src, header) {
 // =========================================================================
 test("/sessions opens the picker, not the raw wire dump", () => {
   const r = routeSlash("/sessions");
-  assert.equal(r?.local, "__SESSION_PICKER__",
+  assert.equal(
+    r?.local,
+    "__SESSION_PICKER__",
     "/sessions must return the picker sentinel, not an rpcMethod — the old " +
-    "shape pretty-printed listSessions' raw rows and offered no way to pick one");
-  assert.equal(r?.rpcMethod, undefined,
+      "shape pretty-printed listSessions' raw rows and offered no way to pick one",
+  );
+  assert.equal(
+    r?.rpcMethod,
+    undefined,
     "/sessions must not ALSO send an RPC; two producers for one command means " +
-    "one of them renders and the other does not");
+      "one of them renders and the other does not",
+  );
 });
 
 test("/threads keeps its own sentinel, so /sessions did not steal it", () => {
@@ -157,8 +191,10 @@ test("the registry declares session-picker and both commands resolve", () => {
   assert.deepEqual(picker.sentinels, ["__SESSION_PICKER__"]);
   assert.equal(picker.ink, "mounted");
   assert.equal(picker.line, "rendered");
-  assert.ok(PANEL_INTENTS.some((p) => p.command === "/threads"),
-    "/threads lost its registry row");
+  assert.ok(
+    PANEL_INTENTS.some((p) => p.command === "/threads"),
+    "/threads lost its registry row",
+  );
 });
 
 // =========================================================================
@@ -171,8 +207,11 @@ test("session-picker resolves to the SAME panel id as thread-selector", () => {
     return hit ? hit[1] : undefined;
   };
   assert.equal(panelOf("session-picker"), "threads");
-  assert.equal(panelOf("thread-selector"), "threads",
-    "/threads changed panel — the whole point of the flag was to avoid a second PanelId");
+  assert.equal(
+    panelOf("thread-selector"),
+    "threads",
+    "/threads changed panel — the whole point of the flag was to avoid a second PanelId",
+  );
 });
 
 test("...and that panel id is one the host actually fetches and renders", () => {
@@ -198,8 +237,10 @@ test("...and that panel id is one the host actually fetches and renders", () => 
   assert.ok(entries.length >= 9, `PANEL_BY_INTENT only yielded ${entries.length} entries`);
 
   for (const { intent, panel } of entries) {
-    assert.ok(new RegExp(`case "${panel}":`).test(tuiSrc),
-      `intent "${intent}" maps to panel "${panel}", which has no render case`);
+    assert.ok(
+      new RegExp(`case "${panel}":`).test(tuiSrc),
+      `intent "${intent}" maps to panel "${panel}", which has no render case`,
+    );
   }
 
   // Only the panels that FETCH need a fetch branch, and the set is
@@ -212,31 +253,46 @@ test("...and that panel id is one the host actually fetches and renders", () => 
   //
   // What must hold is that a panel whose rows come from an RPC HAS
   // that RPC's fetch. `threads` is the one under test.
-  assert.ok(/panel === "threads"/.test(tuiSrc) && /"listSessions"/.test(tuiSrc),
-    "the threads panel has no listSessions fetch — it would open and show nothing");
+  assert.ok(
+    /panel === "threads"/.test(tuiSrc) && /"listSessions"/.test(tuiSrc),
+    "the threads panel has no listSessions fetch — it would open and show nothing",
+  );
 });
 
 test("only session-picker is cwd-scoped, and the filter flag rides on openPanel", () => {
   const set = /const CWD_SCOPED_INTENTS\s*=\s*new Set\(\[([^\]]*)\]\)/.exec(tuiSrc);
   assert.ok(set, "CWD_SCOPED_INTENTS not found — the cwd filter has no single owner");
   const members = [...set[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(members, ["session-picker"],
+  assert.deepEqual(
+    members,
+    ["session-picker"],
     "the cwd-scoped set drifted: /threads in it would silently filter away the " +
-    "cross-project sessions it exists to show, and an unknown member filters nothing");
-  assert.ok(/type:\s*"openPanel"[\s\S]{0,200}?cwdOnly:\s*intent\s*\?\s*CWD_SCOPED_INTENTS\.has\(intent\.id\)/.test(tuiSrc),
-    "openPanel no longer passes cwdOnly from CWD_SCOPED_INTENTS — the set would be decorative");
+      "cross-project sessions it exists to show, and an unknown member filters nothing",
+  );
+  assert.ok(
+    /type:\s*"openPanel"[\s\S]{0,200}?cwdOnly:\s*intent\s*\?\s*CWD_SCOPED_INTENTS\.has\(intent\.id\)/.test(
+      tuiSrc,
+    ),
+    "openPanel no longer passes cwdOnly from CWD_SCOPED_INTENTS — the set would be decorative",
+  );
 });
 
 test("the threads fetch actually branches on the flag", () => {
   const body = block(tuiSrc, /if \(panel === "threads"\)/);
-  assert.ok(/panelCwdOnly/.test(body),
+  assert.ok(
+    /panelCwdOnly/.test(body),
     "the fetch never reads panelCwdOnly — the flag is set at openPanel and then ignored, " +
-    "so /sessions and /threads render identical lists");
-  assert.ok(/partitionByCwd/.test(body),
-    "the fetch does not partition by cwd, so there is no filter to apply");
+      "so /sessions and /threads render identical lists",
+  );
+  assert.ok(
+    /partitionByCwd/.test(body),
+    "the fetch does not partition by cwd, so there is no filter to apply",
+  );
   // The filter must not be "drop the rest silently".
-  assert.ok(/other\.length\s*>\s*0/.test(body),
-    "unattributed sessions are dropped without being counted; see the module header");
+  assert.ok(
+    /other\.length\s*>\s*0/.test(body),
+    "unattributed sessions are dropped without being counted; see the module header",
+  );
 });
 
 test("...and the flag reaches the row list, not just a local variable", () => {
@@ -254,36 +310,50 @@ test("...and the flag reaches the row list, not just a local variable", () => {
   // silently resolves to a different instance of the thing it is
   // looking for. Hence `matchAll` plus an explicit floor, never a
   // bare `.exec`.
-  const dispatches = [...body.matchAll(
-    /dispatch\(\{\s*type:\s*"setThreads"\s*,\s*threads:\s*([^}]*?)\s*\}\)/g,
-  )].map((x) => x[1]);
-  assert.ok(dispatches.length >= 2,
+  const dispatches = [
+    ...body.matchAll(/dispatch\(\{\s*type:\s*"setThreads"\s*,\s*threads:\s*([^}]*?)\s*\}\)/g),
+  ].map((x) => x[1]);
+  assert.ok(
+    dispatches.length >= 2,
     `expected the error path AND the success path to dispatch setThreads, found ` +
-    `${dispatches.length} — this extraction is reading the wrong block`);
+      `${dispatches.length} — this extraction is reading the wrong block`,
+  );
   const scopedDispatch = dispatches.filter((d) => /\bscoped\b/.test(d));
-  assert.ok(scopedDispatch.length >= 1,
+  assert.ok(
+    scopedDispatch.length >= 1,
     `no setThreads dispatch consults the scope flag (saw: ${JSON.stringify(dispatches)}) — ` +
-    `/sessions shows whatever /threads shows`);
-  assert.ok(scopedDispatch.some((d) => /\bmine\b/.test(d)),
+      `/sessions shows whatever /threads shows`,
+  );
+  assert.ok(
+    scopedDispatch.some((d) => /\bmine\b/.test(d)),
     `the flag reaches setThreads but not the partitioned rows ` +
-    `(saw: ${JSON.stringify(scopedDispatch)}) — the cwd filter is computed and thrown away`);
+      `(saw: ${JSON.stringify(scopedDispatch)}) — the cwd filter is computed and thrown away`,
+  );
 });
 
 test("panelCwdOnly is reset, so it cannot leak into the next panel", () => {
-  assert.ok(/activePanel:\s*null,[\s\S]{0,120}?panelCwdOnly:\s*false/.test(stateSrc),
+  assert.ok(
+    /activePanel:\s*null,[\s\S]{0,120}?panelCwdOnly:\s*false/.test(stateSrc),
     "closePanel no longer clears panelCwdOnly — the next panel opened would inherit " +
-    "a filter that has nothing to do with it");
-  assert.ok(/panelCwdOnly:\s*action\.cwdOnly\s*===\s*true/.test(stateSrc),
-    "openPanel no longer writes the flag from the action");
-  assert.ok(/panelCwdOnly:\s*false,/.test(stateSrc),
+      "a filter that has nothing to do with it",
+  );
+  assert.ok(
+    /panelCwdOnly:\s*action\.cwdOnly\s*===\s*true/.test(stateSrc),
+    "openPanel no longer writes the flag from the action",
+  );
+  assert.ok(
+    /panelCwdOnly:\s*false,/.test(stateSrc),
     "INITIAL has no panelCwdOnly — the field is required on State, so this is a type error " +
-    "at best and `undefined` (falsy, so accidentally right) at worst");
+      "at best and `undefined` (falsy, so accidentally right) at worst",
+  );
 });
 
 test("closePanel still returns the draft and clears the pickers", () => {
   // Regression guard for the edit that added panelCwdOnly next to it.
-  assert.ok(/input:\s*state\.panelInputBefore/.test(stateSrc),
-    "closePanel lost the prompt-draft restore");
+  assert.ok(
+    /input:\s*state\.panelInputBefore/.test(stateSrc),
+    "closePanel lost the prompt-draft restore",
+  );
 });
 
 // =========================================================================
@@ -299,9 +369,12 @@ test("adoptSession moves the TUI onto the picked session and drops the old scrol
   };
   const after = reducer(before, { type: "adoptSession", sessionId: "new-session" });
   assert.equal(after.sessionId, "new-session");
-  assert.equal(after.turns.length, 0,
+  assert.equal(
+    after.turns.length,
+    0,
     "the old session's turns stay on screen while the engine answers in the new one — " +
-    "there is no transcript hydration in this renderer, so keeping them is a lie");
+      "there is no transcript hydration in this renderer, so keeping them is a lie",
+  );
   assert.equal(after.todos.length, 0);
   assert.equal(after.viewingSubagentId, null);
   assert.deepEqual(after.viewHistory, []);
@@ -323,32 +396,58 @@ test("adoptSession REPLACES the scrollback atomically when a transcript is suppl
     sessionId: "old-session",
     turns: [{ id: 1, role: "user", text: "hi", ts: 1 }],
   };
-  const replayed = [{ id: 90, role: "assistant", text: "from the other session", ts: 5, collapsed: false, previewChars: 80 }];
-  const after = reducer(before, { type: "adoptSession", sessionId: "new-session", turns: replayed });
+  const replayed = [
+    {
+      id: 90,
+      role: "assistant",
+      text: "from the other session",
+      ts: 5,
+      collapsed: false,
+      previewChars: 80,
+    },
+  ];
+  const after = reducer(before, {
+    type: "adoptSession",
+    sessionId: "new-session",
+    turns: replayed,
+  });
   assert.equal(after.sessionId, "new-session");
-  assert.deepEqual(after.turns, replayed,
+  assert.deepEqual(
+    after.turns,
+    replayed,
     "the replayed transcript was not adopted — the scrollback still shows the " +
-    "session we just left");
-  assert.equal(after.turns.some((t) => t.text === "hi"), false,
-    "the old session's turns survived the switch");
+      "session we just left",
+  );
+  assert.equal(
+    after.turns.some((t) => t.text === "hi"),
+    false,
+    "the old session's turns survived the switch",
+  );
 });
 
 test("adoptSession is a no-op when nothing would change", () => {
   const s = { ...INITIAL, sessionId: "same" };
-  assert.equal(reducer(s, { type: "adoptSession", sessionId: "same" }), s,
-    "a no-op switch re-rendered the whole transcript tree");
+  assert.equal(
+    reducer(s, { type: "adoptSession", sessionId: "same" }),
+    s,
+    "a no-op switch re-rendered the whole transcript tree",
+  );
 });
 
 test("both renderers dispatch adoptSession after a successful loadSession", () => {
   const inkPick = block(tuiSrc, /case "threads":/);
   assert.ok(/loadSession/.test(inkPick), "the threads panel no longer calls loadSession");
-  assert.ok(/type:\s*"adoptSession"/.test(inkPick),
-    "Ink never adopts the new session id — the Header pill and /export keep naming the old one");
+  assert.ok(
+    /type:\s*"adoptSession"/.test(inkPick),
+    "Ink never adopts the new session id — the Header pill and /export keep naming the old one",
+  );
 
   const linePick = block(lineSrc, /async function panelThreads\(/);
   assert.ok(/loadSession/.test(linePick), "panelThreads no longer calls loadSession");
-  assert.ok(/ctx\.sessionId\s*=\s*back/.test(linePick),
-    "line mode never adopts the new session id — the status line keeps naming the old one");
+  assert.ok(
+    /ctx\.sessionId\s*=\s*back/.test(linePick),
+    "line mode never adopts the new session id — the status line keeps naming the old one",
+  );
 });
 
 test("the FAILED path adopts the session too, not just the successful one", () => {
@@ -366,18 +465,23 @@ test("the FAILED path adopts the session too, not just the successful one", () =
   const catches = [...inkPick.matchAll(/catch\s*(?:\([^)]*\))?\s*(?:=>\s*)?\{/g)];
   assert.ok(catches.length >= 1, "the Ink picker has no catch at all");
   const catchText = inkPick.slice(catches[0].index);
-  assert.ok(/type:\s*"adoptSession"/.test(catchText),
+  assert.ok(
+    /type:\s*"adoptSession"/.test(catchText),
     "the failure path never adopts the session — the toast would claim the " +
-    "user is in the new session while the engine still answers in the old one");
+      "user is in the new session while the engine still answers in the old one",
+  );
 });
 
 // =========================================================================
 test("the loadSession key is the one the DAEMON reads, not one we remembered", () => {
   // Derived from the handler, not from a comment describing it.
-  const body = javaMethod(methodsCode, 'public Object loadSession(');
+  const body = javaMethod(methodsCode, "public Object loadSession(");
   const key = /stringOrThrow\(\s*p\s*,\s*"([^"]+)"\s*\)/.exec(body);
-  assert.ok(key, "loadSession no longer reads a required string param by name — " +
-    "this gate cannot derive the contract and needs updating");
+  assert.ok(
+    key,
+    "loadSession no longer reads a required string param by name — " +
+      "this gate cannot derive the contract and needs updating",
+  );
   assert.equal(key[1], "sessionId", "the daemon's required key changed; update both renderers");
 
   // Scope each extraction to the SESSION PICKER. The first version of
@@ -388,30 +492,43 @@ test("the loadSession key is the one the DAEMON reads, not one we remembered", (
   // of the bug it exists to catch.
   const inkPick = block(tuiSrc, /case "threads":/);
   const linePick = block(lineSrc, /async function panelThreads\(/);
-  for (const [name, src] of [["tui.tsx", inkPick], ["line.ts", linePick]]) {
-    const call = /request\(\s*"loadSession"\s*,\s*\{([^}]*)\}/.exec(src)
-      ?? /probe\(\s*ctx\s*,\s*"loadSession"\s*,\s*\{([^}]*)\}/.exec(src);
+  for (const [name, src] of [
+    ["tui.tsx", inkPick],
+    ["line.ts", linePick],
+  ]) {
+    const call =
+      /request\(\s*"loadSession"\s*,\s*\{([^}]*)\}/.exec(src) ??
+      /probe\(\s*ctx\s*,\s*"loadSession"\s*,\s*\{([^}]*)\}/.exec(src);
     assert.ok(call, `${name}'s session picker has no loadSession params object to check`);
-    assert.ok(/\bsessionId\s*:/.test(call[1]),
-      `${name} calls loadSession without a sessionId key — the daemon answers -32602`);
-    assert.ok(!/\bid\s*:/.test(call[1]),
+    assert.ok(
+      /\bsessionId\s*:/.test(call[1]),
+      `${name} calls loadSession without a sessionId key — the daemon answers -32602`,
+    );
+    assert.ok(
+      !/\bid\s*:/.test(call[1]),
       `${name} still sends \`id:\` to loadSession. That is the exact R370 bug: ` +
-      `the daemon reads "sessionId" and rejects everything else.`);
+        `the daemon reads "sessionId" and rejects everything else.`,
+    );
   }
 });
 
 test("both renderers read lastUsedAt, the key listSessions actually sends", () => {
-  const body = javaMethod(methodsCode, 'public Object listSessions(');
-  assert.ok(/m\.put\(\s*"lastUsedAt"/.test(body),
-    "listSessions stopped sending lastUsedAt — the age column would be empty again");
+  const body = javaMethod(methodsCode, "public Object listSessions(");
+  assert.ok(
+    /m\.put\(\s*"lastUsedAt"/.test(body),
+    "listSessions stopped sending lastUsedAt — the age column would be empty again",
+  );
   assert.ok(/m\.put\(\s*"cwd"/.test(body), "listSessions stopped sending cwd");
 
-  assert.ok(/lastUsedAt/.test(tuiSrc),
-    "tui.tsx no longer reads lastUsedAt");
-  assert.ok(/r\.updatedAt\s*\?\?\s*r\.lastActiveAt\s*\?\?\s*""/.test(tuiSrc) === false,
-    "tui.tsx is back to reading keys listSessions never sends");
-  assert.ok(/lastUsedAt/.test(lineSrc),
-    "line.ts no longer reads lastUsedAt — its \"last seen\" column is blank on every row");
+  assert.ok(/lastUsedAt/.test(tuiSrc), "tui.tsx no longer reads lastUsedAt");
+  assert.ok(
+    /r\.updatedAt\s*\?\?\s*r\.lastActiveAt\s*\?\?\s*""/.test(tuiSrc) === false,
+    "tui.tsx is back to reading keys listSessions never sends",
+  );
+  assert.ok(
+    /lastUsedAt/.test(lineSrc),
+    'line.ts no longer reads lastUsedAt — its "last seen" column is blank on every row',
+  );
 });
 
 // =========================================================================
@@ -427,8 +544,10 @@ test("sameCwd is path equality, and the four ways `===` gets it wrong are covere
   assert.ok(sameCwd("/srv/app", "/srv/app/"), "trailing separator, reversed");
   assert.ok(sameCwd("/srv/app", "/srv/other") === false, "different dirs must differ");
   assert.ok(sameCwd("", "/srv/app") === false, "unknown cwd must not match a real one");
-  assert.ok(sameCwd("", "") === false,
-    "two unknowns must NOT compare equal, or a filter over unattributed rows passes them all");
+  assert.ok(
+    sameCwd("", "") === false,
+    "two unknowns must NOT compare equal, or a filter over unattributed rows passes them all",
+  );
   assert.ok(sameCwd("   ", "/srv/app") === false, "whitespace is not a path");
 });
 
@@ -459,23 +578,37 @@ test("partitionByCwd splits, and keeps the unattributed rows visible", () => {
     { id: "d", cwd: undefined },
   ];
   const { mine, other } = partitionByCwd(rows, (r) => r.cwd, "/p");
-  assert.deepEqual(mine.map((r) => r.id), ["a"]);
-  assert.deepEqual(other.map((r) => r.id), ["b", "c", "d"],
-    "rows with no recorded cwd must land in `other`, not vanish — the panel counts them");
+  assert.deepEqual(
+    mine.map((r) => r.id),
+    ["a"],
+  );
+  assert.deepEqual(
+    other.map((r) => r.id),
+    ["b", "c", "d"],
+    "rows with no recorded cwd must land in `other`, not vanish — the panel counts them",
+  );
   assert.equal(mine.length + other.length, rows.length, "a row was dropped");
 });
 
 // =========================================================================
 test("ThreadSelector renders what it was always handed", () => {
-  assert.ok(/emptyLabel\?:/.test(threadSelSrc) && /\{emptyLabel\}/.test(threadSelSrc),
+  assert.ok(
+    /emptyLabel\?:/.test(threadSelSrc) && /\{emptyLabel\}/.test(threadSelSrc),
     "the picker's empty state is hard-coded again — /sessions with 0 attributed " +
-    "sessions would print /threads' sentence");
-  assert.ok(/subtitle\?:/.test(threadSelSrc) && /\{subtitle \?/.test(threadSelSrc),
-    "no subtitle — /sessions shows a leaf name with no path, and two checkouts can share one");
-  assert.ok(/t\.updatedAt \?/.test(threadSelSrc),
-    "updatedAt is carried on every row and rendered nowhere; which session you left is unanswerable");
-  assert.ok(!/t\.cwd\s*!==\s*currentCwd/.test(threadSelSrc),
-    "the cwd badge is back to string equality — it flags the daemon's own directory as different");
+      "sessions would print /threads' sentence",
+  );
+  assert.ok(
+    /subtitle\?:/.test(threadSelSrc) && /\{subtitle \?/.test(threadSelSrc),
+    "no subtitle — /sessions shows a leaf name with no path, and two checkouts can share one",
+  );
+  assert.ok(
+    /t\.updatedAt \?/.test(threadSelSrc),
+    "updatedAt is carried on every row and rendered nowhere; which session you left is unanswerable",
+  );
+  assert.ok(
+    !/t\.cwd\s*!==\s*currentCwd/.test(threadSelSrc),
+    "the cwd badge is back to string equality — it flags the daemon's own directory as different",
+  );
   assert.ok(/sameCwd/.test(threadSelSrc), "ThreadSelector does not use the shared comparator");
 });
 
@@ -493,25 +626,38 @@ test("the switch toast says what actually happened", () => {
   const toasts = [...ink.matchAll(/text:\s*`([^`]*)`/g)].map((m) => m[1]);
   assert.ok(toasts.length >= 1, "the picker shows no toast at all");
   const switchToast = toasts.find((t) => /now working in/.test(t));
-  assert.ok(switchToast,
+  assert.ok(
+    switchToast,
     `no toast names the session the user is now in — the switch is silent ` +
-    `(${JSON.stringify(toasts)})`);
-  assert.ok(/adopted|replayed|history could not be read/.test(switchToast),
-    `the switch toast claims nothing about what happened: ${switchToast}`);
-  assert.ok(!/history is not replayed here/.test(switchToast),
-    "the switch toast still says the history is not replayed — R372 replays it");
+      `(${JSON.stringify(toasts)})`,
+  );
+  assert.ok(
+    /adopted|replayed|history could not be read/.test(switchToast),
+    `the switch toast claims nothing about what happened: ${switchToast}`,
+  );
+  assert.ok(
+    !/history is not replayed here/.test(switchToast),
+    "the switch toast still says the history is not replayed — R372 replays it",
+  );
 });
 
 // =========================================================================
 test("line mode claims the sentinel with a real arm, passing the filter flag", () => {
   const arm = /case\s+"__SESSION_PICKER__"\s*:\s*([\s\S]*?)\n\s*return true;/.exec(lineSrc);
-  assert.ok(arm, "line.ts has no __SESSION_PICKER__ arm — cmd.exe users get the raw token, " +
-    "which is the R362 defect in its sixth form");
-  assert.ok(/panelThreads\(ctx,\s*true\)/.test(arm[1]),
-    "the /sessions arm does not scope the list to the current cwd");
+  assert.ok(
+    arm,
+    "line.ts has no __SESSION_PICKER__ arm — cmd.exe users get the raw token, " +
+      "which is the R362 defect in its sixth form",
+  );
+  assert.ok(
+    /panelThreads\(ctx,\s*true\)/.test(arm[1]),
+    "the /sessions arm does not scope the list to the current cwd",
+  );
   const threadArm = /case\s+"__THREAD_SELECTOR__"\s*:\s*([\s\S]*?)\n\s*return true;/.exec(lineSrc);
-  assert.ok(threadArm && /panelThreads\(ctx,\s*false\)/.test(threadArm[1]),
-    "/threads is no longer the unfiltered list — the fix swallowed the command it replaced");
+  assert.ok(
+    threadArm && /panelThreads\(ctx,\s*false\)/.test(threadArm[1]),
+    "/threads is no longer the unfiltered list — the fix swallowed the command it replaced",
+  );
 });
 
 // =========================================================================
@@ -520,6 +666,8 @@ test("the picker filter is not the only cwd comparison left on these paths", () 
   // while the host used `sameCwd`, a case-differing path would be
   // labelled "switch" and then correctly ignored — a harmless-looking
   // disagreement, but it is the disagreement that produced R364.
-  assert.ok(/sameCwd\(/.test(block(threadSelSrc, /function chooseCwd\(/)),
-    "chooseCwd went back to string equality");
+  assert.ok(
+    /sameCwd\(/.test(block(threadSelSrc, /function chooseCwd\(/)),
+    "chooseCwd went back to string equality",
+  );
 });

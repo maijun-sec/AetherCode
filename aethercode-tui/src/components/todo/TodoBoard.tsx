@@ -187,17 +187,20 @@ export const TodoBoard: React.FC<TodoBoardProps> = ({
   // with a ▶ CURRENT prefix in addition to the j/k focus
   // cursor. The two are independent: focus is "what I'm
   // looking at", currentTodoId is "what the engine is doing".
-  const currentRow = currentTodoId
-    ? sorted.findIndex((t) => t.id === currentTodoId)
-    : -1;
+  const currentRow = currentTodoId ? sorted.findIndex((t) => t.id === currentTodoId) : -1;
 
   return (
     <Box flexDirection="column" paddingX={1}>
       {showHeader ? (
         <>
           <Box flexDirection="row" justifyContent="space-between">
-            <Text color={t.brand} bold>todo board</Text>
-            <Text dimColor>  {todos.length} item{todos.length === 1 ? "" : "s"}</Text>
+            <Text color={t.brand} bold>
+              todo board
+            </Text>
+            <Text dimColor>
+              {" "}
+              {todos.length} item{todos.length === 1 ? "" : "s"}
+            </Text>
           </Box>
           <Text dimColor>{"─".repeat(20)}</Text>
           {/* progress bar. The bar uses the same "done
@@ -209,7 +212,7 @@ export const TodoBoard: React.FC<TodoBoardProps> = ({
         </>
       ) : null}
       {sorted.length === 0 ? (
-        <Text dimColor>  {emptyLabel}</Text>
+        <Text dimColor> {emptyLabel}</Text>
       ) : (
         <Box flexDirection="column">
           {visible.map((it, i) => {
@@ -217,7 +220,10 @@ export const TodoBoard: React.FC<TodoBoardProps> = ({
             return (
               <Box key={it.id} flexDirection="column">
                 {isCurrent ? (
-                  <Text color="cyan" bold>  ▶ CURRENT</Text>
+                  <Text color="cyan" bold>
+                    {" "}
+                    ▶ CURRENT
+                  </Text>
                 ) : null}
                 <TodoItem
                   item={it}
@@ -229,7 +235,10 @@ export const TodoBoard: React.FC<TodoBoardProps> = ({
             );
           })}
           {overflow > 0 ? (
-            <Text dimColor>  {icon.arrow} {overflow} more…</Text>
+            <Text dimColor>
+              {" "}
+              {icon.arrow} {overflow} more…
+            </Text>
           ) : null}
         </Box>
       )}

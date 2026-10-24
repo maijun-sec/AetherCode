@@ -64,11 +64,11 @@
 
 export type TokenKind =
   | "plain"
-  | "keyword"   // control flow / structural
-  | "string"    // "..." '...' `...`
-  | "number"    // 123 0xFF 3.14
-  | "comment"   // // ... # ... /* ... */
-  | "builtin"   // true false null console Math
+  | "keyword" // control flow / structural
+  | "string" // "..." '...' `...`
+  | "number" // 123 0xFF 3.14
+  | "comment" // // ... # ... /* ... */
+  | "builtin" // true false null console Math
   | "operator"; // = + - * / => ===
 
 export interface Token {
@@ -151,39 +151,99 @@ function tokenize(src: string, patterns: Pattern[]): Token[] {
  * commands it runs.
  */
 const BASH_KEYWORDS = [
-  "if", "then", "else", "elif", "fi",
-  "for", "while", "until", "do", "done",
-  "case", "esac", "in", "select",
-  "function", "return", "exit", "break", "continue",
-  "time", "{", "}",
+  "if",
+  "then",
+  "else",
+  "elif",
+  "fi",
+  "for",
+  "while",
+  "until",
+  "do",
+  "done",
+  "case",
+  "esac",
+  "in",
+  "select",
+  "function",
+  "return",
+  "exit",
+  "break",
+  "continue",
+  "time",
+  "{",
+  "}",
 ];
 
 /** Common builtin commands — things `bash` ships with. */
 const BASH_BUILTINS = [
-  "echo", "printf", "read", "export", "local", "source", "alias",
-  "set", "unset", "cd", "pwd", "eval", "exec", "test", "true",
-  "false", "shift", "trap", "wait", "type", "declare", "typeset",
-  "shopt", "ulimit", "umask",
+  "echo",
+  "printf",
+  "read",
+  "export",
+  "local",
+  "source",
+  "alias",
+  "set",
+  "unset",
+  "cd",
+  "pwd",
+  "eval",
+  "exec",
+  "test",
+  "true",
+  "false",
+  "shift",
+  "trap",
+  "wait",
+  "type",
+  "declare",
+  "typeset",
+  "shopt",
+  "ulimit",
+  "umask",
 ];
 
 /** External commands the agent typically emits. */
 const BASH_COMMANDS = [
-  "ls", "cat", "grep", "sed", "awk", "find", "mkdir", "rmdir",
-  "rm", "mv", "cp", "chmod", "chown", "touch", "ln", "tar",
-  "curl", "wget", "git", "npm", "npx", "node", "python", "pip",
-  "java", "mvn", "gradle", "make", "docker", "kubectl",
+  "ls",
+  "cat",
+  "grep",
+  "sed",
+  "awk",
+  "find",
+  "mkdir",
+  "rmdir",
+  "rm",
+  "mv",
+  "cp",
+  "chmod",
+  "chown",
+  "touch",
+  "ln",
+  "tar",
+  "curl",
+  "wget",
+  "git",
+  "npm",
+  "npx",
+  "node",
+  "python",
+  "pip",
+  "java",
+  "mvn",
+  "gradle",
+  "make",
+  "docker",
+  "kubectl",
 ];
 
 function highlightBash(src: string): Token[] {
   const keywordRe = new RegExp(
     "\\b(?:" + BASH_KEYWORDS.filter((k) => /^[a-z]+$/.test(k)).join("|") + ")\\b",
   );
-  const builtinRe = new RegExp(
-    "\\b(?:" + BASH_BUILTINS.join("|") + ")\\b",
-  );
-  const commandRe = new RegExp(
-    "\\b(?:" + BASH_COMMANDS.join("|") + ")\\b",
-  );
+  const builtinRe = new RegExp("\\b(?:" + BASH_BUILTINS.join("|") + ")\\b");
+  const commandRe = new RegExp("\\b(?:" + BASH_COMMANDS.join("|") + ")\\b");
   return tokenize(src, [
     // Comments — bash comments are `#` to end of line.
     { kind: "comment", re: /#[^\n]*/ },
@@ -229,35 +289,104 @@ function highlightJson(src: string): Token[] {
 // ---------------------------------------------------------------------------
 
 const JS_KEYWORDS = [
-  "break", "case", "catch", "class", "const", "continue", "debugger",
-  "default", "delete", "do", "else", "export", "extends", "finally",
-  "for", "function", "if", "import", "in", "instanceof", "new",
-  "return", "super", "switch", "this", "throw", "try", "typeof",
-  "var", "void", "while", "with", "yield", "let", "static", "async",
-  "await", "from", "of", "as", "is",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "export",
+  "extends",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "new",
+  "return",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+  "let",
+  "static",
+  "async",
+  "await",
+  "from",
+  "of",
+  "as",
+  "is",
 ];
 
 const TS_EXTRA_KEYWORDS = [
-  "interface", "type", "enum", "namespace", "declare", "public",
-  "private", "protected", "readonly", "abstract", "implements",
-  "keyof", "satisfies",
+  "interface",
+  "type",
+  "enum",
+  "namespace",
+  "declare",
+  "public",
+  "private",
+  "protected",
+  "readonly",
+  "abstract",
+  "implements",
+  "keyof",
+  "satisfies",
 ];
 
 const JS_BUILTINS = [
-  "true", "false", "null", "undefined", "NaN", "Infinity",
-  "console", "window", "document", "globalThis", "process", "Buffer",
-  "Object", "Array", "String", "Number", "Boolean", "Math", "JSON",
-  "Promise", "Date", "RegExp", "Error", "Map", "Set", "Symbol",
-  "Set", "WeakMap", "WeakSet", "Proxy", "Reflect",
+  "true",
+  "false",
+  "null",
+  "undefined",
+  "NaN",
+  "Infinity",
+  "console",
+  "window",
+  "document",
+  "globalThis",
+  "process",
+  "Buffer",
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Boolean",
+  "Math",
+  "JSON",
+  "Promise",
+  "Date",
+  "RegExp",
+  "Error",
+  "Map",
+  "Set",
+  "Symbol",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Proxy",
+  "Reflect",
 ];
 
 function highlightJavaScript(src: string): Token[] {
   const keywordRe = new RegExp(
     "\\b(?:" + [...JS_KEYWORDS, ...TS_EXTRA_KEYWORDS].join("|") + ")\\b",
   );
-  const builtinRe = new RegExp(
-    "\\b(?:" + JS_BUILTINS.join("|") + ")\\b",
-  );
+  const builtinRe = new RegExp("\\b(?:" + JS_BUILTINS.join("|") + ")\\b");
   return tokenize(src, [
     // Comments — single-line `//` and block `/* ... */`.
     // Block comments are non-greedy and tolerate newlines.
@@ -275,7 +404,10 @@ function highlightJavaScript(src: string): Token[] {
     // Operators — compound forms (`=>`, `===`, `!==`, `&&`,
     // `||`, `++`, `--`, `**`) before single chars so the
     // regex doesn't split them.
-    { kind: "operator", re: /=>|===|!==|==|!=|<=|>=|<<|>>|>>>|&&|\|\||\+\+|--|\*\*|[-+*/%=<>!&|^~?]/ },
+    {
+      kind: "operator",
+      re: /=>|===|!==|==|!=|<=|>=|<<|>>|>>>|&&|\|\||\+\+|--|\*\*|[-+*/%=<>!&|^~?]/,
+    },
   ]);
 }
 
@@ -292,24 +424,90 @@ function highlightJavaScript(src: string): Token[] {
  * treatment JS gets for `true` / `false` / `null`.
  */
 const PY_KEYWORDS = [
-  "and", "as", "assert", "async", "await", "break", "class", "continue",
-  "def", "del", "elif", "else", "except", "finally", "for", "from",
-  "global", "if", "import", "in", "is", "lambda", "nonlocal", "not",
-  "or", "pass", "raise", "return", "try", "while", "with", "yield",
-  "match", "case",
+  "and",
+  "as",
+  "assert",
+  "async",
+  "await",
+  "break",
+  "class",
+  "continue",
+  "def",
+  "del",
+  "elif",
+  "else",
+  "except",
+  "finally",
+  "for",
+  "from",
+  "global",
+  "if",
+  "import",
+  "in",
+  "is",
+  "lambda",
+  "nonlocal",
+  "not",
+  "or",
+  "pass",
+  "raise",
+  "return",
+  "try",
+  "while",
+  "with",
+  "yield",
+  "match",
+  "case",
 ];
 
 /** Python runtime constants — `True` / `False` / `None`. */
 const PY_BUILTINS = [
-  "True", "False", "None",
-  "self", "cls",
-  "print", "len", "range", "list", "dict", "set", "tuple", "frozenset",
-  "str", "int", "float", "bool", "bytes", "bytearray",
-  "open", "isinstance", "issubclass", "type", "super", "object",
-  "enumerate", "zip", "map", "filter", "reversed", "sorted",
-  "min", "max", "sum", "abs", "round", "any", "all",
-  "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
-  "AttributeError", "RuntimeError", "StopIteration",
+  "True",
+  "False",
+  "None",
+  "self",
+  "cls",
+  "print",
+  "len",
+  "range",
+  "list",
+  "dict",
+  "set",
+  "tuple",
+  "frozenset",
+  "str",
+  "int",
+  "float",
+  "bool",
+  "bytes",
+  "bytearray",
+  "open",
+  "isinstance",
+  "issubclass",
+  "type",
+  "super",
+  "object",
+  "enumerate",
+  "zip",
+  "map",
+  "filter",
+  "reversed",
+  "sorted",
+  "min",
+  "max",
+  "sum",
+  "abs",
+  "round",
+  "any",
+  "all",
+  "Exception",
+  "ValueError",
+  "TypeError",
+  "KeyError",
+  "IndexError",
+  "AttributeError",
+  "RuntimeError",
+  "StopIteration",
 ];
 
 function highlightPython(src: string): Token[] {
@@ -330,14 +528,20 @@ function highlightPython(src: string): Token[] {
     // quoted body. (We don't try to interpolate `{expr}`.)
     { kind: "builtin", re: /\b[frbFRB]?(?=["'])/ },
     // Numbers: int / float / hex / oct / binary / scientific.
-    { kind: "number", re: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|0x[0-9a-fA-F]+\b|0o[0-7]+\b|0b[01]+\b/ },
+    {
+      kind: "number",
+      re: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|0x[0-9a-fA-F]+\b|0o[0-7]+\b|0b[01]+\b/,
+    },
     // Decorators: `@name` — render as builtin (annotation).
     { kind: "builtin", re: /@[A-Za-z_][A-Za-z0-9_.]*/ },
     // Operators — Python's compound operators come first
     // so the regex doesn't split them. Order matters:
     // multi-char forms (`**`, `//`, `->`, `:=`) before
     // single-char forms.
-    { kind: "operator", re: /->|:=|@=|\*\*|\/\/=|<<=|>>=|\+=|-=|\*=|\/=|%=|=|<=|>=|==|!=|\/\/|<<|>>|@|[-+*/%=<>!&|^~]/ },
+    {
+      kind: "operator",
+      re: /->|:=|@=|\*\*|\/\/=|<<=|>>=|\+=|-=|\*=|\/=|%=|=|<=|>=|==|!=|\/\/|<<|>>|@|[-+*/%=<>!&|^~]/,
+    },
     // Keywords first (control flow), then builtins.
     { kind: "keyword", re: keywordRe },
     { kind: "builtin", re: builtinRe },
@@ -355,14 +559,62 @@ function highlightPython(src: string): Token[] {
  * (declarations) so they stand out from runtime types.
  */
 const JAVA_KEYWORDS = [
-  "abstract", "assert", "boolean", "break", "byte", "case", "catch",
-  "char", "class", "const", "continue", "default", "do", "double",
-  "else", "enum", "extends", "final", "finally", "float", "for",
-  "goto", "if", "implements", "import", "instanceof", "int", "interface",
-  "long", "native", "new", "package", "private", "protected", "public",
-  "return", "short", "static", "strictfp", "super", "switch", "synchronized",
-  "this", "throw", "throws", "transient", "try", "void", "volatile", "while",
-  "yield", "sealed", "permits", "non-sealed", "record", "var",
+  "abstract",
+  "assert",
+  "boolean",
+  "break",
+  "byte",
+  "case",
+  "catch",
+  "char",
+  "class",
+  "const",
+  "continue",
+  "default",
+  "do",
+  "double",
+  "else",
+  "enum",
+  "extends",
+  "final",
+  "finally",
+  "float",
+  "for",
+  "goto",
+  "if",
+  "implements",
+  "import",
+  "instanceof",
+  "int",
+  "interface",
+  "long",
+  "native",
+  "new",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "short",
+  "static",
+  "strictfp",
+  "super",
+  "switch",
+  "synchronized",
+  "this",
+  "throw",
+  "throws",
+  "transient",
+  "try",
+  "void",
+  "volatile",
+  "while",
+  "yield",
+  "sealed",
+  "permits",
+  "non-sealed",
+  "record",
+  "var",
 ];
 
 /**
@@ -371,12 +623,36 @@ const JAVA_KEYWORDS = [
  * typically sees in agent output.
  */
 const JAVA_BUILTINS = [
-  "String", "Object", "Integer", "Long", "Double", "Float", "Boolean",
-  "List", "Map", "Set", "Collection", "ArrayList", "HashMap", "HashSet",
-  "LinkedList", "TreeMap", "TreeSet", "Optional", "Stream",
-  "System", "Math", "Thread", "Runnable", "Callable", "Exception",
-  "RuntimeException", "NullPointerException", "IllegalArgumentException",
-  "IOException", "ClassNotFoundException",
+  "String",
+  "Object",
+  "Integer",
+  "Long",
+  "Double",
+  "Float",
+  "Boolean",
+  "List",
+  "Map",
+  "Set",
+  "Collection",
+  "ArrayList",
+  "HashMap",
+  "HashSet",
+  "LinkedList",
+  "TreeMap",
+  "TreeSet",
+  "Optional",
+  "Stream",
+  "System",
+  "Math",
+  "Thread",
+  "Runnable",
+  "Callable",
+  "Exception",
+  "RuntimeException",
+  "NullPointerException",
+  "IllegalArgumentException",
+  "IOException",
+  "ClassNotFoundException",
 ];
 
 function highlightJava(src: string): Token[] {
@@ -396,13 +672,19 @@ function highlightJava(src: string): Token[] {
     { kind: "builtin", re: /@[A-Za-z_][A-Za-z0-9_]*/ },
     // Numbers: int / long (with `L` suffix) / float (with
     // `f` or `F` or `d` suffix) / hex / binary.
-    { kind: "number", re: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[fFdDlL]?\b|0x[0-9a-fA-F]+[lL]?\b|0b[01]+[lL]?\b/ },
+    {
+      kind: "number",
+      re: /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[fFdDlL]?\b|0x[0-9a-fA-F]+[lL]?\b|0b[01]+[lL]?\b/,
+    },
     // Operators: compound forms first (`>>>` for
     // `Stream.toList`, `::` for method refs, `?:` for
     // ternaries). `{` / `}` are structural in Java
     // (class body / method body), so we render them as
     // operators.
-    { kind: "operator", re: /->|::|\?::?|\+\+|--|<<=|>>=|>>>=|&&|\|\||===|!==|==|!=|<=|>=|<<|>>|>>>|\+=|-=|\*=|\/=|%=|&=|\|=|\^=|[-+*/%=<>!&|^~?{}]/ },
+    {
+      kind: "operator",
+      re: /->|::|\?::?|\+\+|--|<<=|>>=|>>>=|&&|\|\||===|!==|==|!=|<=|>=|<<|>>|>>>|\+=|-=|\*=|\/=|%=|&=|\|=|\^=|[-+*/%=<>!&|^~?{}]/,
+    },
     // Keywords first (control flow + modifiers + types),
     // then builtins (common runtime types).
     { kind: "keyword", re: keywordRe },
@@ -486,8 +768,12 @@ export function highlightCode(src: string, lang: string): Token[] {
   }
   // js / ts family
   if (
-    norm === "javascript" || norm === "js" ||
-    norm === "typescript" || norm === "ts" || norm === "tsx" || norm === "jsx"
+    norm === "javascript" ||
+    norm === "js" ||
+    norm === "typescript" ||
+    norm === "ts" ||
+    norm === "tsx" ||
+    norm === "jsx"
   ) {
     return highlightJavaScript(src);
   }
@@ -501,9 +787,7 @@ export function highlightCode(src: string, lang: string): Token[] {
   // matches for Java syntax, but the keyword overlap is
   // high enough that the user gets a usable colour scheme
   // even when we don't have a per-language tokenizer).
-  if (
-    norm === "java" || norm === "kotlin" || norm === "kt" || norm === "scala"
-  ) {
+  if (norm === "java" || norm === "kotlin" || norm === "kt" || norm === "scala") {
     return highlightJava(src);
   }
   // yaml family — `yaml` plus `yml` and TOML (TOML
@@ -566,33 +850,120 @@ export function highlightCode(src: string, lang: string): Token[] {
  *  slows the regex and risks over-classifying identifiers. */
 const INLINE_KEYWORDS = [
   // control flow (cross-lang)
-  "if", "else", "elif", "for", "while", "do", "switch", "case",
-  "break", "continue", "return", "throw", "try", "catch",
-  "finally", "yield", "await", "async",
+  "if",
+  "else",
+  "elif",
+  "for",
+  "while",
+  "do",
+  "switch",
+  "case",
+  "break",
+  "continue",
+  "return",
+  "throw",
+  "try",
+  "catch",
+  "finally",
+  "yield",
+  "await",
+  "async",
   // declarations
-  "function", "class", "interface", "struct", "enum", "trait",
-  "def", "fn", "func", "lambda",
-  "var", "let", "const", "static", "public", "private", "protected",
-  "void", "new", "delete", "this", "self", "super",
+  "function",
+  "class",
+  "interface",
+  "struct",
+  "enum",
+  "trait",
+  "def",
+  "fn",
+  "func",
+  "lambda",
+  "var",
+  "let",
+  "const",
+  "static",
+  "public",
+  "private",
+  "protected",
+  "void",
+  "new",
+  "delete",
+  "this",
+  "self",
+  "super",
   // imports / modules
-  "import", "export", "from", "as", "in", "of", "with",
+  "import",
+  "export",
+  "from",
+  "as",
+  "in",
+  "of",
+  "with",
   // python-specific (a few high-signal)
-  "pass", "raise", "match", "nonlocal", "global",
+  "pass",
+  "raise",
+  "match",
+  "nonlocal",
+  "global",
   // js/ts specific
-  "typeof", "instanceof", "in", "of",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
   // bash
-  "then", "fi", "done", "esac", "in",
+  "then",
+  "fi",
+  "done",
+  "esac",
+  "in",
 ];
 
 /** Operator set used by all langs. Compound forms first. */
 const INLINE_OPERATORS = [
-  "=>", "===", "!==", "==", "!=", "<=", ">=",
-  "<<=", ">>=", "&&", "||", "??",
-  "->", "::", ":=", "**", "//",
-  "<<", ">>", "++", "--",
-  "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-  "+", "-", "*", "/", "%", "=",
-  "<", ">", "!", "&", "|", "^", "~", "?",
+  "=>",
+  "===",
+  "!==",
+  "==",
+  "!=",
+  "<=",
+  ">=",
+  "<<=",
+  ">>=",
+  "&&",
+  "||",
+  "??",
+  "->",
+  "::",
+  ":=",
+  "**",
+  "//",
+  "<<",
+  ">>",
+  "++",
+  "--",
+  "+=",
+  "-=",
+  "*=",
+  "/=",
+  "%=",
+  "&=",
+  "|=",
+  "^=",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "=",
+  "<",
+  ">",
+  "!",
+  "&",
+  "|",
+  "^",
+  "~",
+  "?",
   // `(` / `)` are extremely common in inline code
   // (`foo()` / `(x + y)` / `setTimeout(...)` etc.) so we
   // classify them as operators. We deliberately do NOT
@@ -600,15 +971,17 @@ const INLINE_OPERATORS = [
   // and adding them would cause over-classification of
   // prose that happens to use braces (`{key: value}` in
   // a code-style aside is rendered as text, not code).
-  "(", ")", "[", "]",
+  "(",
+  ")",
+  "[",
+  "]",
 ];
 
 function buildInlineOperatorRe() {
   // Sort by length DESC so multi-char operators are tried
   // before their single-char prefixes. We then build a
   // single alternation regex from the deduped list.
-  const dedup = Array.from(new Set(INLINE_OPERATORS))
-    .sort((a, b) => b.length - a.length);
+  const dedup = Array.from(new Set(INLINE_OPERATORS)).sort((a, b) => b.length - a.length);
   // Escape each operator for use inside a regex character
   // class is wrong — these are literal alternation
   // branches, not a char class. We escape only the
@@ -685,7 +1058,11 @@ export function inferInlineLang(src: string): string {
   //    is a Java method signature. We require the type to
   //    be one of the Java primitive / reference types so
   //    prose like "public trust" doesn't false-positive.
-  if (/\b(public|private|protected)\s+(static\s+)?(void|int|long|String|boolean|float|double|byte|char|short)\s+[A-Za-z_]/.test(src)) {
+  if (
+    /\b(public|private|protected)\s+(static\s+)?(void|int|long|String|boolean|float|double|byte|char|short)\s+[A-Za-z_]/.test(
+      src,
+    )
+  ) {
     return "java";
   }
   // `class Foo {` (brace) is Java; `class Foo:` (colon) is Python.
@@ -726,7 +1103,11 @@ export function inferInlineLang(src: string): string {
   // Leading `$` (the bash prompt).
   if (/^\s*\$\s/.test(src)) return "bash";
   // Common bash commands.
-  if (/\b(echo|cd|ls|grep|find|awk|sed|cat|mkdir|rm|mv|cp|chmod|curl|wget|export|alias|source|set|unset)\s+/.test(src)) {
+  if (
+    /\b(echo|cd|ls|grep|find|awk|sed|cat|mkdir|rm|mv|cp|chmod|curl|wget|export|alias|source|set|unset)\s+/.test(
+      src,
+    )
+  ) {
     return "bash";
   }
 
@@ -789,13 +1170,20 @@ export function highlightInlineCode(src: string): Token[] {
  *  side effects, so the function is trivially testable. */
 export function tokenKindToColor(kind: TokenKind): string {
   switch (kind) {
-    case "keyword":  return "tokKeyword";
-    case "string":   return "tokString";
-    case "number":   return "tokNumber";
-    case "comment":  return "tokComment";
-    case "builtin":  return "tokBuiltin";
-    case "operator": return "tokOperator";
+    case "keyword":
+      return "tokKeyword";
+    case "string":
+      return "tokString";
+    case "number":
+      return "tokNumber";
+    case "comment":
+      return "tokComment";
+    case "builtin":
+      return "tokBuiltin";
+    case "operator":
+      return "tokOperator";
     case "plain":
-    default:         return "code";
+    default:
+      return "code";
   }
 }

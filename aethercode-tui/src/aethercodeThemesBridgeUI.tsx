@@ -37,9 +37,7 @@ export const AethercodeThemeProvider: React.FC<AethercodeThemeProviderProps> = (
     list: store.list(),
   };
   return (
-    <AethercodeThemeContext.Provider value={value}>
-      {children}
-    </AethercodeThemeContext.Provider>
+    <AethercodeThemeContext.Provider value={value}>{children}</AethercodeThemeContext.Provider>
   );
 };
 

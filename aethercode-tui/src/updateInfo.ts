@@ -160,9 +160,12 @@ export interface UpdatePanelModel {
 /** The panel title for a verb. */
 export function updateVerbTitle(verb: UpdateVerb): string {
   switch (verb) {
-    case "check": return "Check for an update";
-    case "install": return "Install an update";
-    case "deps": return "Refresh dependencies";
+    case "check":
+      return "Check for an update";
+    case "install":
+      return "Install an update";
+    case "deps":
+      return "Refresh dependencies";
   }
 }
 
@@ -176,22 +179,31 @@ export function updateVerbTitle(verb: UpdateVerb): string {
 export function updateHeadline(verb: UpdateVerb, endpointMissing: boolean): string {
   if (!endpointMissing) {
     switch (verb) {
-      case "check": return "The daemon reported its update status.";
-      case "install": return "The daemon accepted the install request.";
-      case "deps": return "The daemon refreshed the dependency index.";
+      case "check":
+        return "The daemon reported its update status.";
+      case "install":
+        return "The daemon accepted the install request.";
+      case "deps":
+        return "The daemon refreshed the dependency index.";
     }
   }
   switch (verb) {
     case "check":
-      return "This daemon has no update-check operation, so whether a " +
+      return (
+        "This daemon has no update-check operation, so whether a " +
         "newer release exists cannot be answered here. No release feed " +
-        "was contacted and nothing was changed.";
+        "was contacted and nothing was changed."
+      );
     case "install":
-      return "This daemon has no install operation. Nothing was " +
-        "downloaded, nothing was replaced, and nothing was written.";
+      return (
+        "This daemon has no install operation. Nothing was " +
+        "downloaded, nothing was replaced, and nothing was written."
+      );
     case "deps":
-      return "This daemon has no dependency-refresh operation. No index " +
-        "was refreshed and nothing was changed.";
+      return (
+        "This daemon has no dependency-refresh operation. No index " +
+        "was refreshed and nothing was changed."
+      );
   }
 }
 
@@ -260,10 +272,7 @@ export function scalarRows(raw: unknown): Array<[string, string]> {
 export function buildUpdatePanel(verb: UpdateVerb, facts: UpdateFacts): UpdatePanelModel {
   const rows: Array<[string, string]> = [
     ["tui version", facts.tuiVersion || "not reported"],
-    [
-      "daemon version",
-      facts.daemonVersion ?? "not reported by the daemon",
-    ],
+    ["daemon version", facts.daemonVersion ?? "not reported by the daemon"],
   ];
   for (const [k, v] of facts.reported) rows.push([k, v]);
   if (facts.endpointMissing && facts.reason) {

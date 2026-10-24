@@ -30,8 +30,8 @@ export type UpdateConfirmResult = boolean;
 
 /** Which sub-confirm this is. Drives title + body + help. */
 export type UpdateConfirmKind =
-  | "before-deps"    // Update dcode first?  (a new app version + dep refresh available)
-  | "refresh-deps";  // Refresh dependencies?
+  | "before-deps" // Update dcode first?  (a new app version + dep refresh available)
+  | "refresh-deps"; // Refresh dependencies?
 
 export interface UpdateConfirmProps {
   /** Which sub-confirm. */
@@ -58,12 +58,19 @@ export interface UpdateConfirmProps {
 
 function defaultTitle(kind: UpdateConfirmKind): string {
   switch (kind) {
-    case "before-deps": return "Update aethercode first?";
-    case "refresh-deps": return "Refresh dependencies?";
+    case "before-deps":
+      return "Update aethercode first?";
+    case "refresh-deps":
+      return "Refresh dependencies?";
   }
 }
 
-function defaultBody(kind: UpdateConfirmKind, current?: string, latest?: string, planned?: string): string {
+function defaultBody(
+  kind: UpdateConfirmKind,
+  current?: string,
+  latest?: string,
+  planned?: string,
+): string {
   switch (kind) {
     case "before-deps":
       return `A newer aethercode version is available (${current ?? "?"} → ${latest ?? "?"}). Update aethercode now, or refresh dependencies for the current version you already have.`;
@@ -77,8 +84,10 @@ function defaultBody(kind: UpdateConfirmKind, current?: string, latest?: string,
 
 function defaultHelp(kind: UpdateConfirmKind): string {
   switch (kind) {
-    case "before-deps": return "Enter: update aethercode  ·  Esc: refresh current dependencies";
-    case "refresh-deps": return "Enter: refresh  ·  Esc: cancel";
+    case "before-deps":
+      return "Enter: update aethercode  ·  Esc: refresh current dependencies";
+    case "refresh-deps":
+      return "Enter: refresh  ·  Esc: cancel";
   }
 }
 
@@ -109,22 +118,18 @@ export const UpdateConfirm: React.FC<UpdateConfirmProps> = ({
   const h = help ?? defaultHelp(kind);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {t}</Text>
+        <Text color="cyan" bold>
+          ◆ {t}
+        </Text>
       </Box>
       <Text> </Text>
       {b.split("\n").map((line, i) => (
         <Text key={i}>{line}</Text>
       ))}
       <Text> </Text>
-      <Text dimColor>  {h}</Text>
+      <Text dimColor> {h}</Text>
     </Box>
   );
 };

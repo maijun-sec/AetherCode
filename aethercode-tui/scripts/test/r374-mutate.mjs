@@ -47,8 +47,19 @@ const PATHS = {
   intents: join(root, "src", "panelIntents.ts"),
   commands: join(root, "src", "commands.ts"),
   actui: join(root, "src", "ac-tui.ts"),
-  methods: join(repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-    "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java"),
+  methods: join(
+    repo,
+    "aethercode",
+    "aethercode-protocol",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "protocol",
+    "methods",
+    "AetherCodeMethods.java",
+  ),
 };
 
 // Read the originals ONCE, in memory. `git checkout --` would restore
@@ -64,7 +75,10 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(PATHS).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -78,257 +92,612 @@ function runGate() {
 
 const CASES = [
   // --- the verb mapping -----------------------------------------------------
-  ["the install sentinel maps back to the check verb",
-    [["info", (s) => s.replace(
-      '  if (sentinel === "__UPDATE_INSTALL__") return "install";',
-      '  if (sentinel === "__UPDATE_INSTALL__") return "check";')]]],
+  [
+    "the install sentinel maps back to the check verb",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /if \(sentinel === "__UPDATE_INSTALL__"\) return "install";/,
+            '  if (sentinel === "__UPDATE_INSTALL__") return "check";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the deps sentinel maps back to the check verb",
-    [["info", (s) => s.replace(
-      '  if (sentinel === "__UPDATE_DEPS__") return "deps";',
-      '  if (sentinel === "__UPDATE_DEPS__") return "check";')]]],
+  [
+    "the deps sentinel maps back to the check verb",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /if \(sentinel === "__UPDATE_DEPS__"\) return "deps";/,
+            '  if (sentinel === "__UPDATE_DEPS__") return "check";',
+          ),
+      ],
+    ],
+  ],
 
-  ["an unknown sentinel falls back to the MUTATING verb",
-    [["info", (s) => s.replace(
-      '  if (sentinel === "__UPDATE_DEPS__") return "deps";\n  return "check";',
-      '  if (sentinel === "__UPDATE_DEPS__") return "deps";\n  return "install";')]]],
+  [
+    "an unknown sentinel falls back to the MUTATING verb",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /if \(sentinel === "__UPDATE_DEPS__"\) return "deps";\s*\n\s*return "check";/,
+            '  if (sentinel === "__UPDATE_DEPS__") return "deps";\n  return "install";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the three verbs collapse onto one endpoint",
-    [["info", (s) => s.replace(
-      '  deps: "update/refreshDeps",',
-      '  deps: "update/check",')]]],
+  [
+    "the three verbs collapse onto one endpoint",
+    [["info", (s) => s.replace('  deps: "update/refreshDeps",', '  deps: "update/check",')]],
+  ],
 
   // --- three answers, not one ----------------------------------------------
-  ["the install verb reuses the check sentence",
-    [["info", (s) => s.replace(
-      '    case "install":\n      return "This daemon has no install operation. Nothing was " +\n        "downloaded, nothing was replaced, and nothing was written.";',
-      '    case "install":\n      return "This daemon has no update-check operation, so whether a " +\n        "newer release exists cannot be answered here. No release feed " +\n        "was contacted and nothing was changed.";')]]],
+  [
+    "the install verb reuses the check sentence",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /case "install":\s*return \(\s*"This daemon has no install operation\. Nothing was " \+\s*"downloaded, nothing was replaced, and nothing was written\."\s*\);/,
+            '    case "install":\n      return "This daemon has no update-check operation, so whether a " +\n        "newer release exists cannot be answered here. No release feed " +\n        "was contacted and nothing was changed.";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the deps verb reuses the check sentence",
-    [["info", (s) => s.replace(
-      '    case "deps":\n      return "This daemon has no dependency-refresh operation. No index " +\n        "was refreshed and nothing was changed.";',
-      '    case "deps":\n      return "This daemon has no update-check operation, so whether a " +\n        "newer release exists cannot be answered here. No release feed " +\n        "was contacted and nothing was changed.";')]]],
+  [
+    "the deps verb reuses the check sentence",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /case "deps":\s*return \(\s*"This daemon has no dependency-refresh operation\. No index " \+\s*"was refreshed and nothing was changed\."\s*\);/,
+            '    case "deps":\n      return "This daemon has no update-check operation, so whether a " +\n        "newer release exists cannot be answered here. No release feed " +\n        "was contacted and nothing was changed.";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the three verbs share one title",
-    [["info", (s) => s.replace(
-      '    case "install": return "Install an update";',
-      '    case "install": return "Check for an update";')]]],
+  [
+    "the three verbs share one title",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /case "install":\s*return "Install an update";/,
+            'case "install": return "Check for an update";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the three verbs share one manual path",
-    [["info", (s) => s.replace(
-      '    case "deps":\n      return [\n        "To refresh dependencies, do it where the TUI is installed:",\n        "  npm outdated      # what moved",\n        "  npm update        # re-resolve to the newest compatible versions",\n      ];',
-      '    case "deps":\n      return [\n        "To see whether a newer release exists, check it where you installed this:",\n        "  npm outdated -g aethercode-tui",\n        "  or read the release notes at the changelog URL below",\n      ];')]]],
+  [
+    "the three verbs share one manual path",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            '    case "deps":\n      return [\n        "To refresh dependencies, do it where the TUI is installed:",\n        "  npm outdated      # what moved",\n        "  npm update        # re-resolve to the newest compatible versions",\n      ];',
+            '    case "deps":\n      return [\n        "To see whether a newer release exists, check it where you installed this:",\n        "  npm outdated -g aethercode-tui",\n        "  or read the release notes at the changelog URL below",\n      ];',
+          ),
+      ],
+    ],
+  ],
 
   // --- the honest gap -------------------------------------------------------
-  ["the install gap no longer says that nothing was written",
-    [["info", (s) => s.replace(
-      '      return "This daemon has no install operation. Nothing was " +\n        "downloaded, nothing was replaced, and nothing was written.";',
-      '      return "This daemon has no install operation.";')]]],
+  [
+    "the install gap no longer says that nothing was written",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /return \(\s*"This daemon has no install operation\. Nothing was " \+\s*"downloaded, nothing was replaced, and nothing was written\."\s*\);/,
+            '      return "This daemon has no install operation.";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the gap sentence is too short to stand alone",
-    [["info", (s) => s.replace(
-      '      return "This daemon has no update-check operation, so whether a " +\n        "newer release exists cannot be answered here. No release feed " +\n        "was contacted and nothing was changed.";',
-      '      return "No update-check operation.";')]]],
+  [
+    "the gap sentence is too short to stand alone",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /return \(\s*"This daemon has no update-check operation, so whether a " \+\s*"newer release exists cannot be answered here\. No release feed " \+\s*"was contacted and nothing was changed\."\s*\);/,
+            '      return "No update-check operation.";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the gap sentence blames the user",
-    [["info", (s) => s.replace(
-      '      return "This daemon has no update-check operation, so whether a " +\n        "newer release exists cannot be answered here. No release feed " +\n        "was contacted and nothing was changed.";',
-      '      return "You need to update the daemon yourself, because you have no " +\n        "update-check operation and you should not expect this panel to " +\n        "do it for you.";')]]],
+  [
+    "the gap sentence blames the user",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /return \(\s*"This daemon has no update-check operation, so whether a " \+\s*"newer release exists cannot be answered here\. No release feed " \+\s*"was contacted and nothing was changed\."\s*\);/,
+            '      return "You need to update the daemon yourself, because you have no " +\n        "update-check operation and you should not expect this panel to " +\n        "do it for you.";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the panel claims a gap on a daemon that answered",
-    [["info", (s) => s.replace(
-      "  if (!endpointMissing) {\n    switch (verb) {",
-      "  if (false) {\n    switch (verb) {")]]],
+  [
+    "the panel claims a gap on a daemon that answered",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /if \(!endpointMissing\) \{\s*\n\s*switch \(verb\) \{/,
+            "  if (false) {\n    switch (verb) {",
+          ),
+      ],
+    ],
+  ],
 
   // --- the versions ----------------------------------------------------------
-  ["an unreported daemon version becomes 0.0.0",
-    [["info", (s) => s.replace(
-      "  return typeof v === \"string\" && v.length > 0 ? v : null;",
-      "  return typeof v === \"string\" ? v : \"0.0.0\";")]]],
+  [
+    "an unreported daemon version becomes 0.0.0",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            '  return typeof v === "string" && v.length > 0 ? v : null;',
+            '  return typeof v === "string" ? v : "0.0.0";',
+          ),
+      ],
+    ],
+  ],
 
-  ["an empty daemon version is treated as a version",
-    [["info", (s) => s.replace(
-      "  return typeof v === \"string\" && v.length > 0 ? v : null;",
-      "  return typeof v === \"string\" ? v : null;")]]],
+  [
+    "an empty daemon version is treated as a version",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            '  return typeof v === "string" && v.length > 0 ? v : null;',
+            '  return typeof v === "string" ? v : null;',
+          ),
+      ],
+    ],
+  ],
 
-  ["the panel renders an unreported version as 0.0.0",
-    [["info", (s) => s.replace(
-      '      facts.daemonVersion ?? "not reported by the daemon",',
-      '      facts.daemonVersion ?? "0.0.0",')]]],
+  [
+    "the panel renders an unreported version as 0.0.0",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /facts\.daemonVersion \?\? "not reported by the daemon"/,
+            'facts.daemonVersion ?? "0.0.0"',
+          ),
+      ],
+    ],
+  ],
 
-  ["the panel drops the TUI version row",
-    [["info", (s) => s.replace(
-      '    ["tui version", facts.tuiVersion || "not reported"],',
-      "")]]],
+  [
+    "the panel drops the TUI version row",
+    [["info", (s) => s.replace('    ["tui version", facts.tuiVersion || "not reported"],', "")]],
+  ],
 
-  ["the panel drops the daemon's own report",
-    [["info", (s) => s.replace(
-      "  for (const [k, v] of facts.reported) rows.push([k, v]);",
-      "")]]],
+  [
+    "the panel drops the daemon's own report",
+    [["info", (s) => s.replace("  for (const [k, v] of facts.reported) rows.push([k, v]);", "")]],
+  ],
 
-  ["the panel drops the daemon's own reason",
-    [["info", (s) => s.replace(
-      '    rows.push(["daemon said", facts.reason]);',
-      "")]]],
+  [
+    "the panel drops the daemon's own reason",
+    [["info", (s) => s.replace('    rows.push(["daemon said", facts.reason]);', "")]],
+  ],
 
-  ["the flat report lets nested blobs through",
-    [["info", (s) => s.replace(
-      "    .filter(([, v]) => v === null || typeof v !== \"object\")\n",
-      "")]]],
+  [
+    "the flat report lets nested blobs through",
+    [
+      [
+        "info",
+        (s) => s.replace('    .filter(([, v]) => v === null || typeof v !== "object")\n', ""),
+      ],
+    ],
+  ],
 
   // --- the changelog ---------------------------------------------------------
-  ["the changelog URL reverts to the upstream project",
-    [["info", (s) => s.replace(
-      'export const CHANGELOG_URL = "https://github.com/maijun-sec/AetherCode/releases";',
-      'export const CHANGELOG_URL = "https://github.com/langchain-ai/deepagents/releases";')]]],
+  [
+    "the changelog URL reverts to the upstream project",
+    [
+      [
+        "info",
+        (s) =>
+          s.replace(
+            'export const CHANGELOG_URL = "https://github.com/maijun-sec/AetherCode/releases";',
+            'export const CHANGELOG_URL = "https://github.com/langchain-ai/deepagents/releases";',
+          ),
+      ],
+    ],
+  ],
 
-  ["UpdateAvailable regains the upstream changelog URL",
-    [["available", (s) => s.replace(
-      'export const DEFAULT_CHANGELOG_URL =\n  "https://github.com/maijun-sec/AetherCode/releases";',
-      'export const DEFAULT_CHANGELOG_URL =\n  "https://github.com/langchain-ai/deepagents/releases";')]]],
+  [
+    "UpdateAvailable regains the upstream changelog URL",
+    [
+      [
+        "available",
+        (s) =>
+          s.replace(
+            'export const DEFAULT_CHANGELOG_URL = "https://github.com/maijun-sec/AetherCode/releases";',
+            'export const DEFAULT_CHANGELOG_URL =\n  "https://github.com/langchain-ai/deepagents/releases";',
+          ),
+      ],
+    ],
+  ],
 
   // --- the panel must not offer an action that pretends ---------------------
-  ["the panel grows an install action",
-    [["panel", (s) => s.replace(
-      "  onChangelog: () => void;",
-      "  onChangelog: () => void;\n  onInstall?: () => void;")]]],
+  [
+    "the panel grows an install action",
+    [
+      [
+        "panel",
+        (s) =>
+          s.replace(
+            "  onChangelog: () => void;",
+            "  onChangelog: () => void;\n  onInstall?: () => void;",
+          ),
+      ],
+    ],
+  ],
 
   // --- the registry ----------------------------------------------------------
-  ["the registry row goes back to unavailable on Ink",
-    [["intents", (s) => s.replace(
-      "    ink: 'mounted',\n    line: 'rendered',\n    gapNote:",
-      "    ink: 'unavailable',\n    line: 'rendered',\n    blocker: 'backend-missing',\n    gapNote:")]]],
+  [
+    "the registry row goes back to unavailable on Ink",
+    [
+      [
+        "intents",
+        (s) =>
+          s.replace(
+            /(component: "components\/UpdatePanel\.tsx",[\s\S]*?ink: )"mounted",\n(\s*)line: "rendered",\n(\s*)gapNote:/,
+            '$1"unavailable",\n$2line: "rendered",\n$2blocker: "backend-missing",\n$3gapNote:',
+          ),
+      ],
+    ],
+  ],
 
-  ["the registry row keeps a blocker it no longer has",
-    [["intents", (s) => s.replace(
-      "    component: 'components/UpdatePanel.tsx',",
-      "    component: 'components/UpdatePanel.tsx',\n    blocker: 'not-wired',")]]],
+  [
+    "the registry row keeps a blocker it no longer has",
+    [
+      [
+        "intents",
+        (s) =>
+          s.replace(
+            /component: "components\/UpdatePanel\.tsx",/,
+            'component: "components/UpdatePanel.tsx",\n    blocker: "not-wired",',
+          ),
+      ],
+    ],
+  ],
 
-  ["the registry row drops the gap note",
-    [["intents", (s) => s.replace(
-      "    gapNote:\n      'R374:", "    gapNote:\n      'XXX:")]]],
+  [
+    "the registry row drops the gap note",
+    [["intents", (s) => s.replace(/gapNote:\s*"R374:/, "    gapNote:\n      'XXX:")]],
+  ],
 
   // --- reachability ----------------------------------------------------------
-  ["the Ink panel is not mapped from its intent",
-    [["tui", (s) => s.replace(
-      '"update-available": "update",', '"update-available": "updateXXX",')]]],
+  [
+    "the Ink panel is not mapped from its intent",
+    [
+      [
+        "tui",
+        (s) => s.replace('"update-available": "update",', '"update-available": "updateXXX",'),
+      ],
+    ],
+  ],
 
-  ["the Ink panel has no render case",
-    [["tui", (s) => s.replace(
-      '      case "update": {', '      case "updateXXX": {')]]],
+  [
+    "the Ink panel has no render case",
+    [["tui", (s) => s.replace('      case "update": {', '      case "updateXXX": {')]],
+  ],
 
-  ["the Ink panel hard-codes the endpoint instead of probing the verb's",
-    [["tui", (s) => s.replace(
-      "      const method = UPDATE_ENDPOINTS[verb];",
-      '      const method = "update/check";')]]],
+  [
+    "the Ink panel hard-codes the endpoint instead of probing the verb's",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            "      const method = UPDATE_ENDPOINTS[verb];",
+            '      const method = "update/check";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the Ink panel never asks the daemon for its version",
-    [["tui", (s) => s.replace(
-      '      const ping = client.request("ping", undefined, { timeoutMs: 10_000 }).then(',
-      '      const ping = Promise.resolve({ ok: true as const, raw: {} }).then(')]]],
+  [
+    "the Ink panel never asks the daemon for its version",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            '      const ping = client.request("ping", undefined, { timeoutMs: 10_000 }).then(',
+            "      const ping = Promise.resolve({ ok: true as const, raw: {} }).then(",
+          ),
+      ],
+    ],
+  ],
 
-  ["the Ink panel stops detecting a missing method",
-    [["tui", (s) => s.replace(
-      "          endpointMissing: p.state === \"err\" && isMissingMethod(p.err),",
-      "          endpointMissing: p.state === \"err\",")]]],
+  [
+    "the Ink panel stops detecting a missing method",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            '          endpointMissing: p.state === "err" && isMissingMethod(p.err),',
+            '          endpointMissing: p.state === "err",',
+          ),
+      ],
+    ],
+  ],
 
-  ["the missing-method test matches the MESSAGE, not the code",
-    [["tui", (s) => s.replace(
-      "  return e instanceof RpcCallError && e.code === -32601;",
-      "  return e instanceof RpcCallError && String(e.message).includes(\"method not found\");")]]],
+  [
+    "the missing-method test matches the MESSAGE, not the code",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            "  return e instanceof RpcCallError && e.code === -32601;",
+            '  return e instanceof RpcCallError && String(e.message).includes("method not found");',
+          ),
+      ],
+    ],
+  ],
 
-  ["the missing-method test uses the wrong JSON-RPC code",
-    [["tui", (s) => s.replace(
-      "  return e instanceof RpcCallError && e.code === -32601;",
-      "  return e instanceof RpcCallError && e.code === -32602;")]]],
+  [
+    "the missing-method test uses the wrong JSON-RPC code",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            "  return e instanceof RpcCallError && e.code === -32601;",
+            "  return e instanceof RpcCallError && e.code === -32602;",
+          ),
+      ],
+    ],
+  ],
 
-  ["line mode collapses the three sentinels onto the check verb",
-    [["line", (s) => s.replace(
-      '      await panelUpdate(ctx, "install");',
-      '      await panelUpdate(ctx, "check");')]]],
+  [
+    "line mode collapses the three sentinels onto the check verb",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            '      await panelUpdate(ctx, "install");',
+            '      await panelUpdate(ctx, "check");',
+          ),
+      ],
+    ],
+  ],
 
-  ["line mode gives the deps sentinel the install verb",
-    [["line", (s) => s.replace(
-      '      await panelUpdate(ctx, "deps");',
-      '      await panelUpdate(ctx, "install");')]]],
+  [
+    "line mode gives the deps sentinel the install verb",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            '      await panelUpdate(ctx, "deps");',
+            '      await panelUpdate(ctx, "install");',
+          ),
+      ],
+    ],
+  ],
 
-  ["line mode stops using the shared copy",
-    [["line", (s) => s.replace(
-      '  const model = buildUpdatePanel(verb, {\n    tuiVersion: TUI_VERSION,\n    daemonVersion: ping.ok ? daemonVersionOf(ping.value) : null,\n    endpointMissing: r.missing,\n    reason: r.ok ? null : r.reason,\n    reported: r.ok ? scalarRows(r.value) : [],\n  });',
-      '  const model = { title: verb, endpoint: endpoint, endpointMissing: r.missing, headline: String(r.reason), rows: [] as Array<[string, string]>, manual: [] as string[], changelogUrl: "" };')]]],
+  [
+    "line mode stops using the shared copy",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            "  const model = buildUpdatePanel(verb, {\n    tuiVersion: TUI_VERSION,\n    daemonVersion: ping.ok ? daemonVersionOf(ping.value) : null,\n    endpointMissing: r.missing,\n    reason: r.ok ? null : r.reason,\n    reported: r.ok ? scalarRows(r.value) : [],\n  });",
+            '  const model = { title: verb, endpoint: endpoint, endpointMissing: r.missing, headline: String(r.reason), rows: [] as Array<[string, string]>, manual: [] as string[], changelogUrl: "" };',
+          ),
+      ],
+    ],
+  ],
 
   // --- the version constant -------------------------------------------------
-  ["the version constant drifts from package.json",
-    [["version", (s) => s.replace(
-      'export const TUI_VERSION = "0.2.1";',
-      'export const TUI_VERSION = "0.2.0";')]]],
+  [
+    "the version constant drifts from package.json",
+    [
+      [
+        "version",
+        (s) =>
+          s.replace('export const TUI_VERSION = "0.2.1";', 'export const TUI_VERSION = "0.2.0";'),
+      ],
+    ],
+  ],
 
-  ["the CLI banner regains its own version string",
-    [["actui", (s) => s.replace(
-      'import { TUI_VERSION as VERSION } from "./version.js";',
-      'const VERSION = "0.2.1";')]]],
+  [
+    "the CLI banner regains its own version string",
+    [
+      [
+        "actui",
+        (s) =>
+          s.replace(
+            'import { TUI_VERSION as VERSION } from "./version.js";',
+            'const VERSION = "0.2.1";',
+          ),
+      ],
+    ],
+  ],
 
   // --- the reducer -----------------------------------------------------------
-  ["the reducer drops the probe's answer",
-    [["state", (s) => s.replace(
-      '      return { ...state, updateFacts: action.facts };',
-      '      return { ...state, updateFacts: null };')]]],
+  [
+    "the reducer drops the probe's answer",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            "      return { ...state, updateFacts: action.facts };",
+            "      return { ...state, updateFacts: null };",
+          ),
+      ],
+    ],
+  ],
 
-  ["openPanel ignores the verb it was opened with",
-    [["state", (s) => s.replace(
-      '        panelUpdateVerb: action.updateVerb ?? "check",',
-      '        panelUpdateVerb: "check",')]]],
+  [
+    "openPanel ignores the verb it was opened with",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            '        panelUpdateVerb: action.updateVerb ?? "check",',
+            '        panelUpdateVerb: "check",',
+          ),
+      ],
+    ],
+  ],
 
-  ["closePanel leaves the verb behind",
-    [["state", (s) => s.replace(
-      '        panelUpdateVerb: "check",\n        panelStatus: EMPTY_PANEL_STATUS,',
-      '        panelUpdateVerb: state.panelUpdateVerb,\n        panelStatus: EMPTY_PANEL_STATUS,')]]],
+  [
+    "closePanel leaves the verb behind",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            '        panelUpdateVerb: "check",\n        panelStatus: EMPTY_PANEL_STATUS,',
+            "        panelUpdateVerb: state.panelUpdateVerb,\n        panelStatus: EMPTY_PANEL_STATUS,",
+          ),
+      ],
+    ],
+  ],
 
   // --- the daemon dependency -------------------------------------------------
-  ["the daemon's ping stops answering a version",
-    [["methods", (s) => s.replace(
-      '        r.put("version",',
-      '        r.put("versionRemoved",')]]],
+  [
+    "the daemon's ping stops answering a version",
+    [["methods", (s) => s.replace('        r.put("version",', '        r.put("versionRemoved",')]],
+  ],
 
   // --- the catalog -----------------------------------------------------------
-  ["the catalog stops advertising the install verb",
-    [["commands", (s) => s.replace(
-      '{ name: "update", args: "[install]", description: "check for a newer release (add \'install\' to see how to apply one)" },',
-      '{ name: "update", description: "check for a newer release" },')]]],
+  [
+    "the catalog stops advertising the install verb",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            /name: "update",\s*args: "\[install\]",\s*description: "check for a newer release \(add 'install' to see how to apply one\)",/,
+            '{ name: "update", description: "check for a newer release" },',
+          ),
+      ],
+    ],
+  ],
 
-  ["the catalog promises an update the daemon cannot have",
-    [["commands", (s) => s.replace(
-      '{ name: "update", args: "[install]", description: "check for a newer release (add \'install\' to see how to apply one)" },',
-      '{ name: "update", args: "[install]", description: "review an available update" },')]]],
+  [
+    "the catalog promises an update the daemon cannot have",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            /name: "update",\s*args: "\[install\]",\s*description: "check for a newer release \(add 'install' to see how to apply one\)",/,
+            '{ name: "update", args: "[install]", description: "review an available update" },',
+          ),
+      ],
+    ],
+  ],
 
-  ["the catalog promises a dependency confirmation",
-    [["commands", (s) => s.replace(
-      '{ name: "update-deps", description: "check how to refresh dependencies" },',
-      '{ name: "update-deps", description: "confirm a dependency refresh" },')]]],
+  [
+    "the catalog promises a dependency confirmation",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            '{ name: "update-deps", description: "check how to refresh dependencies" },',
+            '{ name: "update-deps", description: "confirm a dependency refresh" },',
+          ),
+      ],
+    ],
+  ],
 
   // --- GATE mutations: does an edit here mask a real defect? --------------
   // Each of these neuters ONE assertion and introduces a defect that a
   // SECOND assertion can still see. If the gate goes green, the
   // property had only one derivation and the neutered assertion was
   // load-bearing after all.
-  ["GATE: neuter the verb-mapping test + collapse the install verb",
-    [["gate", (s) => s.replace(
-      '  assert.equal(updateVerbForSentinel("__UPDATE_INSTALL__"), "install");',
-      '  assert.ok(true, "checked elsewhere");'),
-      (s) => s.replace(
-        '  assert.equal(updateVerbForSentinel("__UPDATE_DEPS__"), "deps");',
-        '  assert.ok(true, "checked elsewhere");')],
-     ["info", (s) => s.replace(
-       '  if (sentinel === "__UPDATE_INSTALL__") return "install";',
-       '  if (sentinel === "__UPDATE_INSTALL__") return "check";')]]],
+  [
+    "GATE: neuter the verb-mapping test + collapse the install verb",
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            '  assert.equal(updateVerbForSentinel("__UPDATE_INSTALL__"), "install");',
+            '  assert.ok(true, "checked elsewhere");',
+          ),
+        (s) =>
+          s.replace(
+            '  assert.equal(updateVerbForSentinel("__UPDATE_DEPS__"), "deps");',
+            '  assert.ok(true, "checked elsewhere");',
+          ),
+      ],
+      [
+        "info",
+        (s) =>
+          s.replace(
+            /if \(sentinel === "__UPDATE_INSTALL__"\) return "install";/,
+            '  if (sentinel === "__UPDATE_INSTALL__") return "check";',
+          ),
+      ],
+    ],
+  ],
 
-  ["GATE: neuter the unreported-version test + invent 0.0.0",
-    [["gate", (s) => s.replace(
-      '  assert.equal(daemonVersionOf({ version: null }), null);',
-      '  assert.ok(true, "checked elsewhere");')],
-     ["info", (s) => s.replace(
-       "  return typeof v === \"string\" && v.length > 0 ? v : null;",
-       "  return typeof v === \"string\" ? v : \"0.0.0\";")]]],
+  [
+    "GATE: neuter the unreported-version test + invent 0.0.0",
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            "  assert.equal(daemonVersionOf({ version: null }), null);",
+            '  assert.ok(true, "checked elsewhere");',
+          ),
+      ],
+      [
+        "info",
+        (s) =>
+          s.replace(
+            '  return typeof v === "string" && v.length > 0 ? v : null;',
+            '  return typeof v === "string" ? v : "0.0.0";',
+          ),
+      ],
+    ],
+  ],
 ];
 
 console.log(`r374 mutation battery — ${CASES.length} cases\n`);
@@ -341,12 +710,18 @@ for (const [name, edits] of CASES) {
   for (const [key, mutate] of edits) {
     const before = original[key];
     const after = mutate(before);
-    if (after === before) { broken = key; break; }
+    if (after === before) {
+      broken = key;
+      break;
+    }
     applied.push([key, before, after]);
   }
   if (broken) {
-    holes++; noops++;
-    console.log(`  ??  ${name}\n      NO-OP on ${broken} — the pattern did not match, so this case tests nothing`);
+    holes++;
+    noops++;
+    console.log(
+      `  ??  ${name}\n      NO-OP on ${broken} — the pattern did not match, so this case tests nothing`,
+    );
     continue;
   }
 
@@ -356,7 +731,9 @@ for (const [name, edits] of CASES) {
 
   const ok = fail > 0 || status !== 0;
   if (!ok) holes++;
-  console.log(`  ${ok ? "ok  " : "HOLE"}  ${name}\n      gate fail=${fail} status=${status}  — gate must go red`);
+  console.log(
+    `  ${ok ? "ok  " : "HOLE"}  ${name}\n      gate fail=${fail} status=${status}  — gate must go red`,
+  );
   if (!ok) {
     const lines = out.split(/\r?\n/);
     lines.forEach((l, i) => {
@@ -384,7 +761,9 @@ for (const [k, p] of Object.entries(PATHS)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 if (noops) console.log(`${noops} case(s) were no-ops and did not test anything`);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

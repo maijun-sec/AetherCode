@@ -15,7 +15,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 
-export type RpcValue = string | number | boolean | null | RpcValue[] | { [k: string]: RpcValue } | undefined;
+export type RpcValue =
+  string | number | boolean | null | RpcValue[] | { [k: string]: RpcValue } | undefined;
 
 export interface RpcRequest {
   jsonrpc: "2.0";
@@ -54,7 +55,9 @@ export class RpcCallError extends Error {
 }
 
 export class DaemonDisconnected extends Error {
-  constructor() { super("daemon disconnected"); }
+  constructor() {
+    super("daemon disconnected");
+  }
 }
 
 export interface RequestOptions {
@@ -86,7 +89,10 @@ export class JsonRpcClient {
   /** connection state surfaced to the renderer so the
    *  status bar can show "reconnecting (2/5)..." when the
    *  daemon dies and we're auto-respawning. */
-  private readonly onConnectionState: (state: ConnectionState, info?: { attempt: number; lastError: string | null }) => void;
+  private readonly onConnectionState: (
+    state: ConnectionState,
+    info?: { attempt: number; lastError: string | null },
+  ) => void;
   // cached reference to the most recent connection
   // state for synchronous reads (the status bar polls
   // currentConnectionState() on every tick). The setter
@@ -110,11 +116,16 @@ export class JsonRpcClient {
    *  user can press Ctrl-R to retry. */
   private maxReconnectAttempts: number = 10;
 
-  constructor(opts: ClientOptions & {
-    onConnectionState?: (state: ConnectionState, info?: { attempt: number; lastError: string | null }) => void;
-    autoReconnect?: boolean;
-    maxReconnectAttempts?: number;
-  }) {
+  constructor(
+    opts: ClientOptions & {
+      onConnectionState?: (
+        state: ConnectionState,
+        info?: { attempt: number; lastError: string | null },
+      ) => void;
+      autoReconnect?: boolean;
+      maxReconnectAttempts?: number;
+    },
+  ) {
     this.jarPath = opts.jarPath;
     this.cwd = opts.cwd;
     this.javaBinary = opts.javaBinary ?? "java";
@@ -168,11 +179,7 @@ export class JsonRpcClient {
     // if any tool decides to resolve them from System.getProperty
     // ("user.dir") rather than the spawn cwd.
     const cwdProp = this.cwd ? `-Daethercode.cwd=${this.cwd}` : null;
-    const args = [
-      ...this.jvmArgs,
-      ...(cwdProp ? [cwdProp] : []),
-      "-jar", this.jarPath, "--daemon",
-    ];
+    const args = [...this.jvmArgs, ...(cwdProp ? [cwdProp] : []), "-jar", this.jarPath, "--daemon"];
     const child = spawn(this.javaBinary, args, {
       cwd: this.cwd,
       stdio: ["pipe", "pipe", "pipe"],
@@ -185,7 +192,11 @@ export class JsonRpcClient {
       const trimmed = line.trim();
       if (trimmed.length === 0) return;
       let msg: RpcResponse | RpcNotification;
-      try { msg = JSON.parse(trimmed); } catch { return; }
+      try {
+        msg = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
       if ("id" in msg && msg.id !== undefined && msg.id !== null) {
         const r = msg as RpcResponse;
         const p = this.pending.get(r.id);
@@ -313,13 +324,18 @@ export class JsonRpcClient {
     }
     this.reconnectAttempt = 0;
     if (this.stopped) return;
-    try { this.start(); }
-    catch (e) {
+    try {
+      this.start();
+    } catch (e) {
       this.scheduleReconnect(`manual retry threw: ${(e as Error).message}`);
     }
   }
 
-  request<T = RpcValue>(method: string, params?: RpcValue, options: RequestOptions = {}): Promise<T> {
+  request<T = RpcValue>(
+    method: string,
+    params?: RpcValue,
+    options: RequestOptions = {},
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.start();
       const id = this.nextId++;
@@ -379,10 +395,22 @@ export class JsonRpcClient {
     if (!child) return;
     try {
       child.stdin?.end();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch { /* ignore */ } resolve(); }, 2000);
-      child.on("exit", () => { clearTimeout(timer); resolve(); });
+      const timer = setTimeout(() => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* ignore */
+        }
+        resolve();
+      }, 2000);
+      child.on("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
     });
   }
 }

@@ -41,11 +41,7 @@ const theme = readFileSync(themePath, "utf-8");
 
 test("R215: theme.ts exposes heading tokens (heading1..heading6)", () => {
   for (let n = 1; n <= 6; n++) {
-    assert.match(
-      theme,
-      new RegExp(`heading${n}\\s*:`),
-      `theme.ts should export heading${n} token`,
-    );
+    assert.match(theme, new RegExp(`heading${n}\\s*:`), `theme.ts should export heading${n} token`);
   }
 });
 
@@ -84,7 +80,7 @@ test("R215: H1 heading gets a `▌` brand bar prefix", () => {
   // The pre-R215 renderer rendered all headings as `prefix + body`
   // with no leading bar. R215 adds a small `▌` brand bar so the
   // user can pick the H1 out at a glance.
-  assert.match(md, /level === 1\s*\?\s*<Text[^>]*>▌/);
+  assert.match(md, /level === 1\s*\?\s*\(?\s*<Text[^>]*>\s*▌/);
 });
 
 // ----- 3. inline code pill --------------------------------------------
@@ -174,7 +170,7 @@ test("R215: table uses heavy `━` separator + bold `┃` column dividers", () =
 
 test("R215: bullet list uses brand-coloured `▸` marker", () => {
   // The bullet marker is `▸` (heavy triangle) in t.brand.
-  assert.match(md, /color=\{t\.brand\}[\s\S]{0,80}?>\{["']\s*▸\s*["']/);
+  assert.match(md, /color=\{t\.brand\}[\s\S]{0,200}?>\s*\{["']\s*▸\s*["']/);
 });
 
 test("R215: ordered list uses accent-coloured `(1)` style number", () => {
@@ -211,23 +207,46 @@ test("R215: package.json does NOT add a new markdown library (react-markdown / m
 // ----- 11. tsc smoke test ---------------------------------------------
 
 test("R215: TypeScript compile of Markdown.tsx + theme.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r215-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Markdown.tsx") + '"',
-    '"' + join(root, "src", "theme.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "Markdown.tsx") + '"',
+      '"' + join(root, "src", "theme.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

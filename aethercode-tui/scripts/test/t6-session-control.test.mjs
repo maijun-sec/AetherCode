@@ -14,10 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Pure-helper tests ------------------------------------
@@ -26,12 +23,18 @@ test("T-6-06: validActions returns the right set per state", () => {
   // Mirror the implementation in SessionControl.tsx.
   function validActions(state) {
     switch (state) {
-      case "running":   return new Set(["pause", "stop"]);
-      case "paused":    return new Set(["continue", "stop"]);
-      case "completed": return new Set(["continue"]);
-      case "failed":    return new Set(["continue", "stop"]);
-      case "cancelled": return new Set(["continue"]);
-      default:          return new Set();
+      case "running":
+        return new Set(["pause", "stop"]);
+      case "paused":
+        return new Set(["continue", "stop"]);
+      case "completed":
+        return new Set(["continue"]);
+      case "failed":
+        return new Set(["continue", "stop"]);
+      case "cancelled":
+        return new Set(["continue"]);
+      default:
+        return new Set();
     }
   }
   assert.deepEqual([...validActions("running")].sort(), ["pause", "stop"]);
@@ -115,18 +118,39 @@ test("T-6-06: makeSessionControlProps helper is exported", () => {
 test("T-6-06: tsc --strict compile of SessionControl.tsx is clean", () => {
   const tmp = join(root, "tmp-t6-sc-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true", "--noUncheckedIndexedAccess", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "components", "session", "SessionControl.tsx"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "components", "session", "SessionControl.tsx"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error(r.stdout);
     console.error(r.stderr);

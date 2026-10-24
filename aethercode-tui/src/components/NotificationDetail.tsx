@@ -90,26 +90,24 @@ export const NotificationDetail: React.FC<NotificationDetailProps> = ({
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title ?? entry.title}</Text>
+        <Text color="cyan" bold>
+          ◆ {title ?? entry.title}
+        </Text>
       </Box>
       {entry.body ? (
         <Box flexDirection="column">
           {entry.body.split("\n").map((line, i) => (
-            <Text key={i} dimColor>{line}</Text>
+            <Text key={i} dimColor>
+              {line}
+            </Text>
           ))}
         </Box>
       ) : null}
       <Text> </Text>
       {options.length === 0 ? (
-        <Text dimColor>  (no actions)</Text>
+        <Text dimColor> (no actions)</Text>
       ) : (
         options.map((o, i) => {
           const isHighlighted = i === selected;
@@ -117,9 +115,7 @@ export const NotificationDetail: React.FC<NotificationDetailProps> = ({
           const isPrimary = action?.primary ?? false;
           return (
             <Box key={o.actionId} flexDirection="row">
-              <Text color={isHighlighted ? "cyan" : undefined}>
-                {isHighlighted ? "▶" : " "}{" "}
-              </Text>
+              <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
               <Text color={isPrimary ? "cyan" : undefined} bold={isPrimary || isHighlighted}>
                 {o.label}
               </Text>
@@ -128,7 +124,7 @@ export const NotificationDetail: React.FC<NotificationDetailProps> = ({
         })
       )}
       <Text> </Text>
-      <Text dimColor>  ↑/↓ (j/k): navigate  Tab/Shift+Tab  Enter: select  Esc: back</Text>
+      <Text dimColor> ↑/↓ (j/k): navigate Tab/Shift+Tab Enter: select Esc: back</Text>
     </Box>
   );
 };

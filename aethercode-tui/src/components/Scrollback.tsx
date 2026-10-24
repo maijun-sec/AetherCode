@@ -21,11 +21,7 @@ import { Markdown } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { PlanList } from "./PlanList.js";
 import { Welcome } from "./Welcome.js";
-import {
-  SummaryFooter,
-  splitAssistantMessage,
-  type Summary,
-} from "./chat/SummaryFooter.js";
+import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/SummaryFooter.js";
 
 interface Props {
   turns: Turn[];
@@ -81,15 +77,15 @@ function formatAskInput(input: Record<string, unknown>): string {
 }
 
 const RISK_COLOR: Record<string, string> = {
-  low:      t.ok,
-  medium:   t.warn,
-  high:     "yellowBright",
+  low: t.ok,
+  medium: t.warn,
+  high: "yellowBright",
   critical: t.err,
 };
 const RISK_LABEL: Record<string, string> = {
-  low:      "LOW",
-  medium:   "MEDIUM",
-  high:     "HIGH",
+  low: "LOW",
+  medium: "MEDIUM",
+  high: "HIGH",
   critical: "CRITICAL",
 };
 
@@ -107,11 +103,13 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
     return (
       <Box marginY={0} paddingX={1} borderStyle="single" borderColor={riskColor}>
         <Text>
-          <Text color={riskColor} bold>{icon.warn} decision pending</Text>
-          <Text dimColor>  ·  </Text>
+          <Text color={riskColor} bold>
+            {icon.warn} decision pending
+          </Text>
+          <Text dimColor> · </Text>
           <Text bold>{ask.tool}</Text>
-          <Text dimColor>  ·  [{riskLabel}]</Text>
-          <Text dimColor>  ·  A=allow  T=task  P=project  U=user  D=deny  N=never</Text>
+          <Text dimColor> · [{riskLabel}]</Text>
+          <Text dimColor> · A=allow T=task P=project U=user D=deny N=never</Text>
         </Text>
       </Box>
     );
@@ -125,16 +123,20 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
       borderColor={riskColor}
     >
       <Text>
-        <Text color={riskColor} bold>{icon.warn} PERMISSION REQUIRED</Text>
-        <Text dimColor>  ·  [{riskLabel}] risk</Text>
+        <Text color={riskColor} bold>
+          {icon.warn} PERMISSION REQUIRED
+        </Text>
+        <Text dimColor> · [{riskLabel}] risk</Text>
       </Text>
       <Text> </Text>
       <Text>
-        <Text>tool:   </Text>
-        <Text bold color={t.brand}>{ask.tool}</Text>
+        <Text>tool: </Text>
+        <Text bold color={t.brand}>
+          {ask.tool}
+        </Text>
       </Text>
       <Text>
-        <Text>input:  </Text>
+        <Text>input: </Text>
         <Text>{formatAskInput(ask.input)}</Text>
       </Text>
       <Text>
@@ -142,18 +144,57 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
         <Text dimColor>{ask.reason}</Text>
       </Text>
       <Text> </Text>
-      <Text dimColor>  choose an option — these keys work even while the input box is focused:</Text>
-      <Text>    <Text color={t.ok} bold>[A]</Text> allow this call once</Text>
-      <Text>    <Text color={t.ok} bold>[T]</Text> allow for this task (rest of this sub-task)</Text>
-      <Text>    <Text color={t.ok} bold>[P]</Text> allow for this project (saved to .aethercode/permissions.json)</Text>
-      <Text>    <Text color={t.ok} bold>[U]</Text> allow for this user (saved to ~/.aethercode/.../permissions.json)</Text>
-      <Text>    <Text color={t.err} bold>[D]</Text> deny this call once</Text>
-      <Text>    <Text color={t.err} bold>[N]</Text> deny and remember for this tool</Text>
+      <Text dimColor> choose an option — these keys work even while the input box is focused:</Text>
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          [A]
+        </Text>{" "}
+        allow this call once
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          [T]
+        </Text>{" "}
+        allow for this task (rest of this sub-task)
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          [P]
+        </Text>{" "}
+        allow for this project (saved to .aethercode/permissions.json)
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          [U]
+        </Text>{" "}
+        allow for this user (saved to ~/.aethercode/.../permissions.json)
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.err} bold>
+          [D]
+        </Text>{" "}
+        deny this call once
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.err} bold>
+          [N]
+        </Text>{" "}
+        deny and remember for this tool
+      </Text>
     </Box>
   );
 };
 
-const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({ turn, effectiveCollapsed }) => {
+const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
+  turn,
+  effectiveCollapsed,
+}) => {
   const ts = fmtTime(turn.ts);
   switch (turn.role) {
     case "user":
@@ -181,7 +222,7 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({ turn,
               <Text dimColor>{ts} </Text>
               <Text color={t.brand}>💬 </Text>
               <Text dimColor>{truncate(lead.replace(/\n+/g, " "), turn.previewChars)}</Text>
-              <Text dimColor>  ·  Tab to expand</Text>
+              <Text dimColor> · Tab to expand</Text>
             </Text>
             {/* T-6-14: summary footer is ALWAYS visible,
                 even when the rest of the turn is collapsed. */}
@@ -193,11 +234,11 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({ turn,
         <Box flexDirection="column" marginY={0}>
           <Text>
             <Text dimColor>{ts} </Text>
-            <Text color={t.brand} bold>💬 Reply  </Text>
+            <Text color={t.brand} bold>
+              💬 Reply{" "}
+            </Text>
           </Text>
-          <Box marginLeft={2}>
-            {lead ? <Markdown text={lead} /> : <Text dimColor>…</Text>}
-          </Box>
+          <Box marginLeft={2}>{lead ? <Markdown text={lead} /> : <Text dimColor>…</Text>}</Box>
           {/* T-6-14: summary footer rendered as the LAST
               line of the assistant message; never collapsed. */}
           <Box marginTop={1}>
@@ -214,7 +255,8 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({ turn,
         return (
           <Box flexDirection="column" marginY={0} marginLeft={2}>
             <Text dimColor>
-              🧠 Thinking · {truncate(turn.text.replace(/\n+/g, " "), turn.previewChars)}  · Tab to expand
+              🧠 Thinking · {truncate(turn.text.replace(/\n+/g, " "), turn.previewChars)} · Tab to
+              expand
             </Text>
           </Box>
         );
@@ -253,16 +295,27 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({ turn,
         return (
           <Box flexDirection="column" marginY={0} marginLeft={2}>
             <Text dimColor>
-              {icon.plan} {turn.text || "Plan"} · {items.length} item{items.length === 1 ? "" : "s"}  · Tab to expand
+              {icon.plan} {turn.text || "Plan"} · {items.length} item{items.length === 1 ? "" : "s"}{" "}
+              · Tab to expand
             </Text>
           </Box>
         );
       }
       return <PlanList items={turn.planItems ?? []} title={turn.text || "Plan"} />;
     case "system":
-      return <Text dimColor>  {ts} · {turn.text}</Text>;
+      return (
+        <Text dimColor>
+          {" "}
+          {ts} · {turn.text}
+        </Text>
+      );
     case "error":
-      return <Text color={t.err}>  {ts} ✗ {turn.text}</Text>;
+      return (
+        <Text color={t.err}>
+          {" "}
+          {ts} ✗ {turn.text}
+        </Text>
+      );
     case "permission":
       // not rendered here — the active permission card lives
       // at the top of the scrollback (rendered before the turns
@@ -276,9 +329,18 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({ turn,
 };
 
 export const Scrollback: React.FC<Props> = ({
-  turns, height, showWelcome, welcomeCtx, collapseAll, onToggleTurn,
-  lastStopReason, lastStopKind, lastError,
-  showThinking, permissionAsk, decisionCardExpanded,
+  turns,
+  height,
+  showWelcome,
+  welcomeCtx,
+  collapseAll,
+  onToggleTurn,
+  lastStopReason,
+  lastStopKind,
+  lastError,
+  showThinking,
+  permissionAsk,
+  decisionCardExpanded,
 }) => {
   const start = Math.max(0, turns.length - height);
   // filter out "thinking" turns when the toggle is off. The
@@ -309,22 +371,21 @@ export const Scrollback: React.FC<Props> = ({
       borderStyle="single"
       borderColor={banner || errorCard || permCard ? t.err : t.dim}
     >
-      {errorCard ? (
-        <Box marginY={1}>{errorCard}</Box>
-      ) : null}
-      {banner ? (
-        <Box marginY={1}>{banner}</Box>
-      ) : null}
-      {permCard ? (
-        <Box marginY={1}>{permCard}</Box>
-      ) : null}
+      {errorCard ? <Box marginY={1}>{errorCard}</Box> : null}
+      {banner ? <Box marginY={1}>{banner}</Box> : null}
+      {permCard ? <Box marginY={1}>{permCard}</Box> : null}
       {showWelcome ? (
         <Box marginY={1}>
-          <Welcome model={welcomeCtx.model} cwd={welcomeCtx.cwd} sessionId={welcomeCtx.sessionId} mode={welcomeCtx.mode} />
+          <Welcome
+            model={welcomeCtx.model}
+            cwd={welcomeCtx.cwd}
+            sessionId={welcomeCtx.sessionId}
+            mode={welcomeCtx.mode}
+          />
         </Box>
       ) : null}
       {visible.length === 0 && !showWelcome ? (
-        <Text dimColor>  (empty — type a prompt or /help)</Text>
+        <Text dimColor> (empty — type a prompt or /help)</Text>
       ) : (
         // wrap the conversation in a clear left gutter
         // (a vertical dim line) so the user can SEE the row
@@ -352,35 +413,31 @@ function renderStopBanner(
   reason: string | null,
 ): React.ReactNode {
   if (kind == null || kind === "ok" || kind === "empty") return null;
-  const color =
-    kind === "loop" || kind === "error" ? t.err :
-    kind === "max_turns" ? t.warn :
-    t.dim;
+  const color = kind === "loop" || kind === "error" ? t.err : kind === "max_turns" ? t.warn : t.dim;
   const icon = kind === "loop" ? "■" : kind === "error" ? "✗" : "▲";
   const headline =
-    kind === "loop"      ? "Run stopped — loop detected" :
-    kind === "max_turns" ? "Run stopped — max turns reached" :
-    kind === "error"     ? "Run stopped — error" :
-                            "Run stopped";
+    kind === "loop"
+      ? "Run stopped — loop detected"
+      : kind === "max_turns"
+        ? "Run stopped — max turns reached"
+        : kind === "error"
+          ? "Run stopped — error"
+          : "Run stopped";
   const hint =
     kind === "loop"
       ? "The model repeated the same call or hit a long-running output; the daemon stopped it. Type a new prompt to continue."
       : kind === "max_turns"
-      ? "The run hit the per-query turn cap. Increase with --max-turns, or narrow the prompt."
-      : "Check the daemon log (stderr) for the underlying error. Type a new prompt to continue.";
+        ? "The run hit the per-query turn cap. Increase with --max-turns, or narrow the prompt."
+        : "Check the daemon log (stderr) for the underlying error. Type a new prompt to continue.";
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={color}
-      paddingX={2}
-      paddingY={0}
-    >
+    <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={2} paddingY={0}>
       <Text>
-        <Text color={color} bold>{icon} {headline}</Text>
-        {reason ? <Text dimColor>  (reason: {reason})</Text> : null}
+        <Text color={color} bold>
+          {icon} {headline}
+        </Text>
+        {reason ? <Text dimColor> (reason: {reason})</Text> : null}
       </Text>
-      <Text dimColor>  {hint}</Text>
+      <Text dimColor> {hint}</Text>
     </Box>
   );
 }
@@ -395,22 +452,16 @@ function renderStopBanner(
  */
 function renderErrorCard(err: { message: string; ts: number; stack?: string }): React.ReactNode {
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={t.err}
-      paddingX={2}
-      paddingY={0}
-    >
+    <Box flexDirection="column" borderStyle="round" borderColor={t.err} paddingX={2} paddingY={0}>
       <Text>
-        <Text color={t.err} bold>✗ Error</Text>
-        <Text dimColor>  ·  {new Date(err.ts).toLocaleTimeString()}</Text>
+        <Text color={t.err} bold>
+          ✗ Error
+        </Text>
+        <Text dimColor> · {new Date(err.ts).toLocaleTimeString()}</Text>
       </Text>
-      <Text>  {err.message}</Text>
-      {err.stack ? (
-        <Text dimColor>  {err.stack.split("\n").slice(0, 3).join("\n  ")}</Text>
-      ) : null}
-      <Text dimColor>  Type a new prompt to clear.</Text>
+      <Text> {err.message}</Text>
+      {err.stack ? <Text dimColor> {err.stack.split("\n").slice(0, 3).join("\n  ")}</Text> : null}
+      <Text dimColor> Type a new prompt to clear.</Text>
     </Box>
   );
 }

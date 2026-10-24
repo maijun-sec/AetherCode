@@ -117,7 +117,7 @@ function normalizeEvent(v: unknown): CompactEvent | null {
   const layer = asNumber(r["layer"], 1);
   const out: CompactEvent = {
     ts: asNumber(r["ts"], 0),
-    layer: (layer === 1 || layer === 2 || layer === 3) ? (layer as 1 | 2 | 3) : 1,
+    layer: layer === 1 || layer === 2 || layer === 3 ? (layer as 1 | 2 | 3) : 1,
     beforeTokens: asNumber(r["beforeTokens"], 0),
     afterTokens: asNumber(r["afterTokens"], 0),
     elapsedMs: asNumber(r["elapsedMs"], 0),
@@ -130,12 +130,19 @@ function normalizeEvent(v: unknown): CompactEvent | null {
 
 function normalizeRun(v: unknown): CompactRunResult {
   if (typeof v !== "object" || v === null) {
-    return { layer: 1, beforeTokens: 0, afterTokens: 0, ms: 0, failed: true, failureReason: "malformed" };
+    return {
+      layer: 1,
+      beforeTokens: 0,
+      afterTokens: 0,
+      ms: 0,
+      failed: true,
+      failureReason: "malformed",
+    };
   }
   const r = v as Record<string, unknown>;
   const layer = asNumber(r["layer"], 1);
   const out: CompactRunResult = {
-    layer: (layer === 1 || layer === 2 || layer === 3) ? (layer as 1 | 2 | 3) : 1,
+    layer: layer === 1 || layer === 2 || layer === 3 ? (layer as 1 | 2 | 3) : 1,
     beforeTokens: asNumber(r["beforeTokens"], 0),
     afterTokens: asNumber(r["afterTokens"], 0),
     ms: asNumber(r["ms"], 0),
@@ -148,7 +155,12 @@ function normalizeRun(v: unknown): CompactRunResult {
 
 function normalizeStatus(v: unknown): CompactStatusResult {
   if (typeof v !== "object" || v === null) {
-    return { autoCompactDisabled: false, consecutiveCompactFailures: 0, lastFailureTs: null, lastEvent: null };
+    return {
+      autoCompactDisabled: false,
+      consecutiveCompactFailures: 0,
+      lastFailureTs: null,
+      lastEvent: null,
+    };
   }
   const r = v as Record<string, unknown>;
   return {
@@ -226,13 +238,19 @@ export class RemoteCompactRpc implements CompactRpcClient {
           const ev = normalizeEvent(params);
           if (ev) {
             for (const h of [...this.handlers]) {
-              try { h(ev); } catch { /* ignore */ }
+              try {
+                h(ev);
+              } catch {
+                /* ignore */
+              }
             }
           }
         }
       });
     }
-    return () => { this.handlers.delete(handler); };
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 }
 
@@ -278,10 +296,16 @@ export class LocalCompactRpc implements CompactRpcClient {
     this.handlers.add(handler);
     this.invoke.onEvent((event) => {
       for (const h of [...this.handlers]) {
-        try { h(event); } catch { /* ignore */ }
+        try {
+          h(event);
+        } catch {
+          /* ignore */
+        }
       }
     });
-    return () => { this.handlers.delete(handler); };
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 }
 
@@ -317,7 +341,9 @@ export function buildLocalInvoke(impl: CompactRpcShim): LocalInvoke {
     history: (params) => Promise.resolve(impl.history(params)).then(extractHistory),
     onEvent: (handler) => {
       impl.onEvent((event) => handler(event as CompactEvent));
-      return () => { /* no-op; the underlying impl owns the listener */ };
+      return () => {
+        /* no-op; the underlying impl owns the listener */
+      };
     },
   };
 }
@@ -330,7 +356,17 @@ export interface CompactRpcShim {
   status(): { result?: unknown; error?: unknown };
   reset(): { result?: unknown; error?: unknown };
   history(params?: CompactHistoryParams): { result?: unknown; error?: unknown };
-  onEvent(handler: (event: { ts: number; layer: number; beforeTokens: number; afterTokens: number; elapsedMs: number; failed: boolean; failureReason?: string }) => void): void;
+  onEvent(
+    handler: (event: {
+      ts: number;
+      layer: number;
+      beforeTokens: number;
+      afterTokens: number;
+      elapsedMs: number;
+      failed: boolean;
+      failureReason?: string;
+    }) => void,
+  ): void;
 }
 
 function unwrap<T>(v: { result?: unknown; error?: unknown }): T {
@@ -341,10 +377,14 @@ function unwrap<T>(v: { result?: unknown; error?: unknown }): T {
   return (v && typeof v === "object" && "result" in v ? v.result : v) as T;
 }
 
-const extractRun = (v: { result?: unknown; error?: unknown }): CompactRunResult => unwrap<CompactRunResult>(v);
-const extractStatus = (v: { result?: unknown; error?: unknown }): CompactStatusResult => unwrap<CompactStatusResult>(v);
-const extractReset = (v: { result?: unknown; error?: unknown }): CompactResetResult => unwrap<CompactResetResult>(v);
-const extractHistory = (v: { result?: unknown; error?: unknown }): ReadonlyArray<CompactEvent> => unwrap<ReadonlyArray<CompactEvent>>(v);
+const extractRun = (v: { result?: unknown; error?: unknown }): CompactRunResult =>
+  unwrap<CompactRunResult>(v);
+const extractStatus = (v: { result?: unknown; error?: unknown }): CompactStatusResult =>
+  unwrap<CompactStatusResult>(v);
+const extractReset = (v: { result?: unknown; error?: unknown }): CompactResetResult =>
+  unwrap<CompactResetResult>(v);
+const extractHistory = (v: { result?: unknown; error?: unknown }): ReadonlyArray<CompactEvent> =>
+  unwrap<ReadonlyArray<CompactEvent>>(v);
 
 /** Re-export the JSON-RPC error class so consumers can catch
  *  both the raw `RpcCallError` and our `CompactRpcError` with a
@@ -355,10 +395,22 @@ export { RpcCallError };
 export class NullCompactRpc implements CompactRpcClient {
   readonly mode = "local" as const;
   async run(): Promise<CompactRunResult> {
-    return { layer: 1, beforeTokens: 0, afterTokens: 0, ms: 0, failed: true, failureReason: "no daemon" };
+    return {
+      layer: 1,
+      beforeTokens: 0,
+      afterTokens: 0,
+      ms: 0,
+      failed: true,
+      failureReason: "no daemon",
+    };
   }
   async status(): Promise<CompactStatusResult> {
-    return { autoCompactDisabled: false, consecutiveCompactFailures: 0, lastFailureTs: null, lastEvent: null };
+    return {
+      autoCompactDisabled: false,
+      consecutiveCompactFailures: 0,
+      lastFailureTs: null,
+      lastEvent: null,
+    };
   }
   async reset(): Promise<CompactResetResult> {
     return { ok: true, clearedFailures: 0 };

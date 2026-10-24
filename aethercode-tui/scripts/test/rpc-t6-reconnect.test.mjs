@@ -26,10 +26,7 @@ const root = join(here, "..", "..");
 
 // ----- 1. Load the TS source via a transpile-on-demand shim. ---
 
-const candidates = [
-  "dist/rpc/reconnect.js",
-  "rpc/reconnect.js",
-];
+const candidates = ["dist/rpc/reconnect.js", "rpc/reconnect.js"];
 let loaded = null;
 for (const c of candidates) {
   const p = join(root, c);
@@ -41,19 +38,42 @@ for (const c of candidates) {
 if (!loaded) {
   const tmp = join(root, "tmp-t6-reconnect");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--strict", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "rpc", "types.ts"),
-    join(root, "src", "rpc", "client.ts"),
-    join(root, "src", "rpc", "reconnect.ts"),
-  ], { encoding: "utf-8", shell: true });
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "rpc", "types.ts"),
+      join(root, "src", "rpc", "client.ts"),
+      join(root, "src", "rpc", "reconnect.ts"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     throw new Error("tsc compile failed for reconnect.ts:\n" + r.stdout + "\n" + r.stderr);
   }

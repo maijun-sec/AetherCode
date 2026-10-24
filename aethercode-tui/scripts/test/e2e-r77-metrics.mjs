@@ -20,8 +20,12 @@ const child = spawn(process.execPath, [acTui, "--line", "--jar", jar], {
 });
 
 let out = "";
-child.stdout.on("data", (chunk) => { out += chunk.toString(); });
-child.stderr.on("data", () => { /* ignore daemon stderr */ });
+child.stdout.on("data", (chunk) => {
+  out += chunk.toString();
+});
+child.stderr.on("data", () => {
+  /* ignore daemon stderr */
+});
 
 child.on("exit", (code) => {
   // Pull the metrics JSON line from the output.
@@ -37,7 +41,9 @@ child.on("exit", (code) => {
       console.log("✓ R77: metrics counters correctly track engine activity");
       process.exit(0);
     } else {
-      console.log(`✗ R77: expected turnsStarted>=1, toolCalls>=1, turnsCompleted>=1; got turnsStarted=${snap.turnsStarted}, toolCalls=${snap.toolCalls}, turnsCompleted=${snap.turnsCompleted}`);
+      console.log(
+        `✗ R77: expected turnsStarted>=1, toolCalls>=1, turnsCompleted>=1; got turnsStarted=${snap.turnsStarted}, toolCalls=${snap.toolCalls}, turnsCompleted=${snap.turnsCompleted}`,
+      );
       process.exit(1);
     }
   } else {
@@ -57,13 +63,21 @@ setTimeout(() => {
     // Keep stdin open briefly so the line mode has time to print
     // the metrics line.
     setTimeout(() => {
-      try { child.stdin.end(); } catch { /* ignore */ }
+      try {
+        child.stdin.end();
+      } catch {
+        /* ignore */
+      }
     }, 2000);
   }, 8000);
 }, 5000);
 
 setTimeout(() => {
   console.log("[e2e] hard timeout — forcing exit");
-  try { child.kill(); } catch { /* ignore */ }
+  try {
+    child.kill();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 }, 60000);

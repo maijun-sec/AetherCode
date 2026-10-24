@@ -22,16 +22,16 @@ interface Props {
 }
 
 const RISK_COLOR: Record<string, string> = {
-  low:      t.ok,
-  medium:   t.warn,
-  high:     "yellowBright",     // brighter than yellow
+  low: t.ok,
+  medium: t.warn,
+  high: "yellowBright", // brighter than yellow
   critical: t.err,
 };
 
 const RISK_LABEL: Record<string, string> = {
-  low:      "LOW",
-  medium:   "MEDIUM",
-  high:     "HIGH",
+  low: "LOW",
+  medium: "MEDIUM",
+  high: "HIGH",
   critical: "CRITICAL",
 };
 
@@ -59,30 +59,58 @@ export const PermissionModal: React.FC<Props> = ({ ask }) => {
       paddingY={1}
     >
       <Text>
-        <Text color={riskColor} bold>{icon.warn} PERMISSION REQUIRED </Text>
-        <Text dimColor>  [{riskLabel} risk]</Text>
+        <Text color={riskColor} bold>
+          {icon.warn} PERMISSION REQUIRED{" "}
+        </Text>
+        <Text dimColor> [{riskLabel} risk]</Text>
       </Text>
       <Text> </Text>
       <Text>
-        <Text>Tool:    </Text>
-        <Text bold color={t.brand}>{ask.tool}</Text>
+        <Text>Tool: </Text>
+        <Text bold color={t.brand}>
+          {ask.tool}
+        </Text>
       </Text>
       <Text>
-        <Text>Input:   </Text>
+        <Text>Input: </Text>
         <Text>{formatInput(ask.input)}</Text>
       </Text>
       <Text>
-        <Text>Reason:  </Text>
+        <Text>Reason: </Text>
         <Text dimColor>{ask.reason}</Text>
       </Text>
       <Text> </Text>
       <Text>Choose an option:</Text>
       {/* R344: numbered selector (1/2/3/4) with letter aliases (A/Y/D/N).
        *  Numbered selector matches Claude Code's modal style. */}
-      <Text>  <Text color={t.ok} bold>1 [A]</Text> allow this call once</Text>
-      <Text>  <Text color={t.ok} bold>2 [Y]</Text> allow and remember (always for this tool+input)</Text>
-      <Text>  <Text color={t.err} bold>3 [D]</Text> deny this call once</Text>
-      <Text>  <Text color={t.err} bold>4 [N]</Text> deny and remember</Text>
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          1 [A]
+        </Text>{" "}
+        allow this call once
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          2 [Y]
+        </Text>{" "}
+        allow and remember (always for this tool+input)
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.err} bold>
+          3 [D]
+        </Text>{" "}
+        deny this call once
+      </Text>
+      <Text>
+        {" "}
+        <Text color={t.err} bold>
+          4 [N]
+        </Text>{" "}
+        deny and remember
+      </Text>
     </Box>
   );
 };

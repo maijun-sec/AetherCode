@@ -43,11 +43,17 @@ function renderTraceTree(r) {
     if (!node) continue;
     if (parent == null || !byId.has(parent)) {
       let arr = childrenOf.get("__orphans__");
-      if (!arr) { arr = []; childrenOf.set("__orphans__", arr); }
+      if (!arr) {
+        arr = [];
+        childrenOf.set("__orphans__", arr);
+      }
       arr.push(node);
     } else {
       let arr = childrenOf.get(parent);
-      if (!arr) { arr = []; childrenOf.set(parent, arr); }
+      if (!arr) {
+        arr = [];
+        childrenOf.set(parent, arr);
+      }
       arr.push(node);
     }
   }
@@ -59,12 +65,14 @@ function renderTraceTree(r) {
   const emit = (node, prefix, isLast) => {
     const icon = node.status === "ok" ? "✓" : node.status === "error" ? "✗" : "·";
     const durStr = node.dur < 1000 ? `${node.dur}ms` : `${(node.dur / 1000).toFixed(2)}s`;
-    const connector = prefix === "" ? "" : (isLast ? "└─ " : "├─ ");
-    lines.push(`  ${prefix}${connector}${icon} ${node.name.padEnd(20, " ")}  ${durStr.padStart(8, " ")}  ${node.status}`);
+    const connector = prefix === "" ? "" : isLast ? "└─ " : "├─ ";
+    lines.push(
+      `  ${prefix}${connector}${icon} ${node.name.padEnd(20, " ")}  ${durStr.padStart(8, " ")}  ${node.status}`,
+    );
     const kids = node.children;
     for (let i = 0; i < kids.length; i++) {
       const k = kids[i];
-      const childPrefix = prefix === "" ? "  " : (prefix + (isLast ? "   " : "│  "));
+      const childPrefix = prefix === "" ? "  " : prefix + (isLast ? "   " : "│  ");
       emit(k, childPrefix, i === kids.length - 1);
     }
   };
@@ -99,8 +107,20 @@ test("R79: renderTraceTree draws ├─ and └─ for children", () => {
     completed: 3,
     spans: [
       { traceId: "tr-root", parentSpanId: null, name: "query", status: "ok", durationMs: 4500 },
-      { traceId: "tr-a",    parentSpanId: "tr-root", name: "tool.glob", status: "ok", durationMs: 200 },
-      { traceId: "tr-b",    parentSpanId: "tr-root", name: "tool.bash", status: "ok", durationMs: 300 },
+      {
+        traceId: "tr-a",
+        parentSpanId: "tr-root",
+        name: "tool.glob",
+        status: "ok",
+        durationMs: 200,
+      },
+      {
+        traceId: "tr-b",
+        parentSpanId: "tr-root",
+        name: "tool.bash",
+        status: "ok",
+        durationMs: 300,
+      },
     ],
   });
   // Two children — one gets ├─, the last gets └─.
@@ -119,8 +139,20 @@ test("R79: renderTraceTree nests grandchildren deeper than parent", () => {
     completed: 4,
     spans: [
       { traceId: "tr-root", parentSpanId: null, name: "query", status: "ok", durationMs: 4500 },
-      { traceId: "tr-a",    parentSpanId: "tr-root", name: "tool.bash", status: "ok", durationMs: 300 },
-      { traceId: "tr-gc",   parentSpanId: "tr-a", name: "tool.bash.inner", status: "ok", durationMs: 50 },
+      {
+        traceId: "tr-a",
+        parentSpanId: "tr-root",
+        name: "tool.bash",
+        status: "ok",
+        durationMs: 300,
+      },
+      {
+        traceId: "tr-gc",
+        parentSpanId: "tr-a",
+        name: "tool.bash.inner",
+        status: "ok",
+        durationMs: 50,
+      },
     ],
   });
   const lines = out.split("\n");
@@ -134,8 +166,10 @@ test("R79: renderTraceTree nests grandchildren deeper than parent", () => {
   assert.ok(parentLine && gcLine, "expected both parent and grandchild lines");
   const parentIndent = (parentLine.match(/^\s*/) ?? [""])[0].length;
   const gcIndent = (gcLine.match(/^\s*/) ?? [""])[0].length;
-  assert.ok(gcIndent > parentIndent,
-    `grandchild indent (${gcIndent}) should be > parent indent (${parentIndent})\n${out}`);
+  assert.ok(
+    gcIndent > parentIndent,
+    `grandchild indent (${gcIndent}) should be > parent indent (${parentIndent})\n${out}`,
+  );
 });
 
 test("R79: renderTraceTree uses │ connector when parent has multiple children", () => {
@@ -147,15 +181,33 @@ test("R79: renderTraceTree uses │ connector when parent has multiple children"
     completed: 5,
     spans: [
       { traceId: "tr-root", parentSpanId: null, name: "query", status: "ok", durationMs: 1000 },
-      { traceId: "tr-a",    parentSpanId: "tr-root", name: "tool.glob", status: "ok", durationMs: 100 },
-      { traceId: "tr-b",    parentSpanId: "tr-root", name: "tool.bash", status: "ok", durationMs: 200 },
+      {
+        traceId: "tr-a",
+        parentSpanId: "tr-root",
+        name: "tool.glob",
+        status: "ok",
+        durationMs: 100,
+      },
+      {
+        traceId: "tr-b",
+        parentSpanId: "tr-root",
+        name: "tool.bash",
+        status: "ok",
+        durationMs: 200,
+      },
       // tool.bash gets a grandchild — its line prefix should
       // include │ (because tool.bash is NOT the last child of
       // root — tool.bash is the last, so the LAST child rule
       // applies differently). Wait: this is a 2-child root:
       // tr-a is NOT last → ├─ + children get │ prefix.
       // tr-b IS last → └─ + children get "   " prefix.
-      { traceId: "tr-bg",   parentSpanId: "tr-b", name: "tool.bash.inner", status: "ok", durationMs: 50 },
+      {
+        traceId: "tr-bg",
+        parentSpanId: "tr-b",
+        name: "tool.bash.inner",
+        status: "ok",
+        durationMs: 50,
+      },
     ],
   });
   // tool.glob's line should have ├─ (not the last child of root).
@@ -170,8 +222,10 @@ test("R79: renderTraceTree uses │ connector when parent has multiple children"
   const bgLine = lines.find((l) => /tool\.bash\.inner/.test(l));
   const bashIndent = (bashLine.match(/^\s*/) ?? [""])[0].length;
   const bgIndent = (bgLine.match(/^\s*/) ?? [""])[0].length;
-  assert.ok(bgIndent > bashIndent,
-    `grandchild indent (${bgIndent}) should be > parent indent (${bashIndent})`);
+  assert.ok(
+    bgIndent > bashIndent,
+    `grandchild indent (${bgIndent}) should be > parent indent (${bashIndent})`,
+  );
 });
 
 test("R79: renderTraceTree renders orphans when root is missing", () => {
@@ -179,7 +233,13 @@ test("R79: renderTraceTree renders orphans when root is missing", () => {
     traceId: "tr-missing",
     completed: 1,
     spans: [
-      { traceId: "tr-orphan", parentSpanId: "tr-missing", name: "tool.glob", status: "ok", durationMs: 100 },
+      {
+        traceId: "tr-orphan",
+        parentSpanId: "tr-missing",
+        name: "tool.glob",
+        status: "ok",
+        durationMs: 100,
+      },
     ],
   });
   assert.match(out, /root tr-missing not in the recorder/);
@@ -197,7 +257,13 @@ test("R79: renderTraceTree shows error icon for error spans", () => {
     completed: 2,
     spans: [
       { traceId: "tr-root", parentSpanId: null, name: "query", status: "ok", durationMs: 100 },
-      { traceId: "tr-a",    parentSpanId: "tr-root", name: "tool.bash", status: "error", durationMs: 50 },
+      {
+        traceId: "tr-a",
+        parentSpanId: "tr-root",
+        name: "tool.bash",
+        status: "error",
+        durationMs: 50,
+      },
     ],
   });
   assert.match(out, /✗ tool\.bash/);
@@ -206,7 +272,19 @@ test("R79: renderTraceTree shows error icon for error spans", () => {
 // ----- 2. Source code assertions -----------------------------------
 
 test("R79: TraceRecorder.Span has parentSpanId + isRoot", () => {
-  const path = join(root, "..", "aethercode-core", "src", "main", "java", "org", "aethercode", "core", "trace", "TraceRecorder.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-core",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "core",
+    "trace",
+    "TraceRecorder.java",
+  );
   const src = readFileSync(path, "utf-8");
   assert.match(src, /String parentSpanId/);
   assert.match(src, /public boolean isRoot\(\)/);
@@ -215,15 +293,42 @@ test("R79: TraceRecorder.Span has parentSpanId + isRoot", () => {
 });
 
 test("R79: TraceRecorder exposes startChildSpan + getTrace", () => {
-  const path = join(root, "..", "aethercode-core", "src", "main", "java", "org", "aethercode", "core", "trace", "TraceRecorder.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-core",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "core",
+    "trace",
+    "TraceRecorder.java",
+  );
   const src = readFileSync(path, "utf-8");
-  assert.match(src, /public String startChildSpan\(String parentSpanId, String name, Map<String, Object> attrs\)/);
+  assert.match(
+    src,
+    /public String startChildSpan\(String parentSpanId, String name, Map<String, Object> attrs\)/,
+  );
   assert.match(src, /public List<Span> getTrace\(String traceId\)/);
   assert.match(src, /public Map<String, Object> snapshotForTrace\(String traceId\)/);
 });
 
 test("R79: AetherCodeMethods registers getTrace and uses startChildSpan in query()", () => {
-  const path = join(root, "..", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-protocol",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "protocol",
+    "methods",
+    "AetherCodeMethods.java",
+  );
   const src = readFileSync(path, "utf-8");
   assert.match(src, /dispatcher\.register\("getTrace",\s+this::getTrace\)/);
   assert.match(src, /public Object getTrace\(Object params\)/);
@@ -260,23 +365,46 @@ test("R79: state.ts has spanTree + selectedTraceId", () => {
 // ----- 3. Build smoke test ------------------------------------------
 
 test("R79: TypeScript compile of the new TUI code is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r79-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "tui.tsx") + '"',
-    '"' + join(root, "src", "commands.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "tui.tsx") + '"',
+      '"' + join(root, "src", "commands.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

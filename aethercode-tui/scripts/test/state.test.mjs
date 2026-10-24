@@ -31,22 +31,40 @@ if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
 // We use the locally-installed TypeScript binary (./node_modules/.bin/tsc)
 // rather than `npx tsc` to avoid PowerShell's npx.ps1 wrapper. We
 // pass `shell: true` so spawnSync can run .cmd shims on Windows.
-const tscBinAbs = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tscBinAbs = join(
+  root,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc",
+);
 const tscArgs = [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const tsc = spawnSync('"' + tscBinAbs + '"', [...tscArgs, '"' + join(root, "src", "state.ts") + '"'], {
-  encoding: "utf-8",
-  shell: true,
-});
+const tsc = spawnSync(
+  '"' + tscBinAbs + '"',
+  [...tscArgs, '"' + join(root, "src", "state.ts") + '"'],
+  {
+    encoding: "utf-8",
+    shell: true,
+  },
+);
 if (tsc.status !== 0) {
-  console.error("tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr);
+  console.error(
+    "tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr,
+  );
   process.exit(1);
 }
 if (!existsSync(join(tmp, "state.js"))) {

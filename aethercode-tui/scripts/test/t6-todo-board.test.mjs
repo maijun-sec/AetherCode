@@ -11,10 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Pure-helper tests ------------------------------------
@@ -59,7 +56,10 @@ test("T-6-07: sortTodos is stable on ties (sort by id)", () => {
     { id: "m", title: "m", status: "pending" },
   ];
   const sorted = sortTodos(items);
-  assert.deepEqual(sorted.map((s) => s.id), ["a", "m", "z"]);
+  assert.deepEqual(
+    sorted.map((s) => s.id),
+    ["a", "m", "z"],
+  );
 });
 
 test("T-6-07: summaryOf counts each status", () => {
@@ -187,19 +187,40 @@ test("T-6-07: TodoSummary interface is exported (used by SessionDetailsPanel)", 
 test("T-6-07: tsc --strict compile of TodoBoard.tsx is clean", () => {
   const tmp = join(root, "tmp-t6-tb-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true", "--noUncheckedIndexedAccess", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "components", "todo", "TodoBoard.tsx"),
-    join(root, "src", "components", "todo", "TodoItem.tsx"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "components", "todo", "TodoBoard.tsx"),
+      join(root, "src", "components", "todo", "TodoItem.tsx"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error(r.stdout);
     console.error(r.stderr);

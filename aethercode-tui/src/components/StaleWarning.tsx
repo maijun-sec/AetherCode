@@ -66,7 +66,7 @@ export function formatStaleDuration(ms: number): string {
 export function shouldWarnStale(
   lastActiveAt: number,
   now: number = Date.now(),
-  thresholdMs: number = STALE_THRESHOLD_MS
+  thresholdMs: number = STALE_THRESHOLD_MS,
 ): boolean {
   if (!Number.isFinite(lastActiveAt) || lastActiveAt <= 0) return false;
   if (!Number.isFinite(now)) return false;
@@ -91,8 +91,14 @@ export const StaleWarning: React.FC<StaleWarningProps> = ({
       else onCancel();
       return;
     }
-    if (input === "y" || input === "Y") { onReattach(); return; }
-    if (input === "n" || input === "N" || key.escape) { onCancel(); return; }
+    if (input === "y" || input === "Y") {
+      onReattach();
+      return;
+    }
+    if (input === "n" || input === "N" || key.escape) {
+      onCancel();
+      return;
+    }
     if (key.tab || key.leftArrow || key.rightArrow) {
       setFocus((f) => (f === "reattach" ? "cancel" : "reattach"));
       return;
@@ -108,13 +114,17 @@ export const StaleWarning: React.FC<StaleWarningProps> = ({
       paddingY={1}
     >
       <Text>
-        <Text color={t.warn} bold>{icon.warn} Re-attach? </Text>
+        <Text color={t.warn} bold>
+          {icon.warn} Re-attach?{" "}
+        </Text>
         <Text dimColor>(stale session)</Text>
       </Text>
       <Text> </Text>
       <Text>
         <Text>This session has been inactive for </Text>
-        <Text color={t.warn} bold>{formatStaleDuration(elapsed)}</Text>
+        <Text color={t.warn} bold>
+          {formatStaleDuration(elapsed)}
+        </Text>
         <Text>.</Text>
       </Text>
       <Text>
@@ -129,7 +139,7 @@ export const StaleWarning: React.FC<StaleWarningProps> = ({
         >
           {focus === "reattach" ? " " : ""}[Re-attach (y)]{focus === "reattach" ? " " : ""}
         </Text>
-        <Text>  </Text>
+        <Text> </Text>
         <Text
           backgroundColor={focus === "cancel" ? t.dim : undefined}
           color={focus === "cancel" ? "black" : t.dim}

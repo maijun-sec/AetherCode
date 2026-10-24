@@ -25,7 +25,31 @@ function rankCommands(query, limit = 8) {
   if (!query) return [];
   const q = query.toLowerCase();
   const out = [];
-  for (const name of ["help", "?", "clear", "exit", "quit", "q", "tools", "state", "ping", "model", "mode", "sessions", "tasks", "projects", "cwd", "stats", "history", "lastplan", "theme", "layout", "budget", "skip", "tool-actions"]) {
+  for (const name of [
+    "help",
+    "?",
+    "clear",
+    "exit",
+    "quit",
+    "q",
+    "tools",
+    "state",
+    "ping",
+    "model",
+    "mode",
+    "sessions",
+    "tasks",
+    "projects",
+    "cwd",
+    "stats",
+    "history",
+    "lastplan",
+    "theme",
+    "layout",
+    "budget",
+    "skip",
+    "tool-actions",
+  ]) {
     const lower = name.toLowerCase();
     let score = 0;
     const highlights = [];
@@ -40,7 +64,10 @@ function rankCommands(query, limit = 8) {
       score = 100;
       let qi = 0;
       for (let i = 0; i < lower.length && qi < q.length; i++) {
-        if (lower[i] === q[qi]) { highlights.push(i); qi++; }
+        if (lower[i] === q[qi]) {
+          highlights.push(i);
+          qi++;
+        }
       }
     }
     if (score > 0) out.push({ name, score, highlights });
@@ -74,7 +101,10 @@ test("R47: substring match ranks above subsequence", () => {
   const tools = r.find((m) => m.name === "tools");
   assert.ok(tools);
   // Substring match → score 500+.
-  assert.ok(tools.score >= 500, `expected score >= 500 for tools with substring 'to', got ${tools.score}`);
+  assert.ok(
+    tools.score >= 500,
+    `expected score >= 500 for tools with substring 'to', got ${tools.score}`,
+  );
 });
 
 test("R47: subsequence match (no substring) returns weak score", () => {
@@ -128,7 +158,10 @@ test("R47: state.ts has paletteOpen field + setPaletteOpen action", () => {
 
 test("R47: tui.tsx has Ctrl-P binding + CommandPalette render", () => {
   const tui = readFileSync(join(root, "src", "tui.tsx"), "utf-8");
-  assert.match(tui, /import\s+\{[^}]*\bCommandPalette\b[^}]*\}\s+from\s+"\.\/components\/CommandPalette\.js"/);
+  assert.match(
+    tui,
+    /import\s+\{[^}]*\bCommandPalette\b[^}]*\}\s+from\s+"\.\/components\/CommandPalette\.js"/,
+  );
   assert.match(tui, /key\.ctrl && \(input === "p" \|\| input === "P"\)/);
   assert.match(tui, /state\.paletteOpen/);
 });
@@ -136,22 +169,42 @@ test("R47: tui.tsx has Ctrl-P binding + CommandPalette render", () => {
 // ----- 3. Build smoke test -------------------------------------------
 
 test("R47: TypeScript compile of CommandPalette.tsx is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r47-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "CommandPalette.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "CommandPalette.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

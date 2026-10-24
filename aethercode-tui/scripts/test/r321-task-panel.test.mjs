@@ -26,8 +26,7 @@ const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ?
 // ----- 1. Source-level contract --------------------------------------
 
 test("R321: TaskPanel.tsx exists at the design-specified path", () => {
-  assert.ok(existsSync(panelPath),
-    `TaskPanel.tsx must exist at ${panelPath}`);
+  assert.ok(existsSync(panelPath), `TaskPanel.tsx must exist at ${panelPath}`);
 });
 
 test("R321: TaskPanel exports TaskPanel function and both interfaces", () => {
@@ -78,15 +77,28 @@ test("R321: TaskPanel handles the 6 supervisor lifecycle states", () => {
 test("R321: TaskPanel key bindings match design.md §4.7 + §4.6", () => {
   const src = readFileSync(panelPath, "utf-8");
   // 'a' attach, 'k' kill, 'r' resume, 'x' retry, 'j/k' nav, Esc close, Enter attach.
-  for (const k of ['"a"', '"k"', '"r"', '"x"', '"j"', "key.escape", "key.return", "key.upArrow", "key.downArrow"]) {
+  for (const k of [
+    '"a"',
+    '"k"',
+    '"r"',
+    '"x"',
+    '"j"',
+    "key.escape",
+    "key.return",
+    "key.upArrow",
+    "key.downArrow",
+  ]) {
     assert.ok(src.includes(k), `expected ${k} in TaskPanel source`);
   }
 });
 
 test("R321: TaskPanel shows a hint that names the CLI fallback", () => {
   const src = readFileSync(panelPath, "utf-8");
-  assert.match(src, /aethercode task spawn/,
-    "empty-state hint should mention the CLI command so users discover it");
+  assert.match(
+    src,
+    /aethercode task spawn/,
+    "empty-state hint should mention the CLI command so users discover it",
+  );
 });
 
 // ----- 2. Compile smoke test ----------------------------------------
@@ -94,17 +106,34 @@ test("R321: TaskPanel shows a hint that names the CLI fallback", () => {
 test("R321: TaskPanel.tsx compiles without TS errors", () => {
   const tmp = join(root, "tmp-r321-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--jsx", "react", "--rootDir", join(root, "src"),
-    "--noEmit", "true",
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--jsx",
+    "react",
+    "--rootDir",
+    join(root, "src"),
+    "--noEmit",
+    "true",
   ];
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${panelPath}"`], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   // We only require that the *file* compiles. The rest of
   // the project might have other unrelated issues; if so
@@ -112,8 +141,7 @@ test("R321: TaskPanel.tsx compiles without TS errors", () => {
   // TaskPanel.tsx is structurally valid (no parse errors).
   const output = (r.stdout || "") + (r.stderr || "");
   const hasFileError = /TaskPanel\.tsx.*error/i.test(output);
-  assert.equal(hasFileError, false,
-    `TaskPanel.tsx should compile cleanly; got: ${output}`);
+  assert.equal(hasFileError, false, `TaskPanel.tsx should compile cleanly; got: ${output}`);
 });
 
 // ----- 3. Wire-up to the supervisor RPC -----------------------------

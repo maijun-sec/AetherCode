@@ -26,9 +26,20 @@ import Spinner from "ink-spinner";
 import { JsonRpcClient, RpcCallError, type RpcValue } from "./jsonrpc.js";
 import { findJar } from "./ac-tui.js";
 import {
-  reducer, INITIAL, nextTurnId, type State, type Action, type PermissionAsk, type SddRunState,
-  type PanelId, type PanelStatus, type MemoryScopeId, type MemoryRow, type ThreadRow,
-  type GrantRow, type WorkflowRow,
+  reducer,
+  INITIAL,
+  nextTurnId,
+  type State,
+  type Action,
+  type PermissionAsk,
+  type SddRunState,
+  type PanelId,
+  type PanelStatus,
+  type MemoryScopeId,
+  type MemoryRow,
+  type ThreadRow,
+  type GrantRow,
+  type WorkflowRow,
 } from "./state.js";
 // R372: the messages→turns converter. Until this existed the TUI had
 // no way to show a session's history after switching to it.
@@ -107,7 +118,11 @@ import { TodoBoard } from "./components/todo/TodoBoard.js";
 import { StaleWarning } from "./components/StaleWarning.js";
 import { ThemeProvider } from "./ThemeContext.js";
 import { ThemePicker, type PickerTheme } from "./components/ThemePicker.js";
-import { toPickerTheme, useAethercodeThemeList, useAethercodeThemeFromStore } from "./aethercodeThemesBridgeCore.js";
+import {
+  toPickerTheme,
+  useAethercodeThemeList,
+  useAethercodeThemeFromStore,
+} from "./aethercodeThemesBridgeCore.js";
 import { AethercodeThemeProvider } from "./aethercodeThemesBridgeUI.js";
 import { ThemeStore } from "aethercode-themes";
 import * as os from "node:os";
@@ -220,49 +235,58 @@ function replyPermission(
   dispatch: (a: Action) => void,
   rememberScope?: "session" | "project" | "user",
 ): void {
-  void client.request("permissionResponse", {
-    requestId: ask.requestId,
-    decision,
-    reason: `TUI picked ${decision}`,
-  }).catch((e: Error) => {
-    dispatch({ type: "log", message: `permission reply failed: ${e.message}` });
-  });
+  void client
+    .request("permissionResponse", {
+      requestId: ask.requestId,
+      decision,
+      reason: `TUI picked ${decision}`,
+    })
+    .catch((e: Error) => {
+      dispatch({ type: "log", message: `permission reply failed: ${e.message}` });
+    });
   // If the user picked a remembered scope, also install a rule.
   // We do this AFTER the immediate reply so the model isn't held
   // up — the rule only affects future calls in this or later runs.
   if (rememberScope && rememberScope !== "session") {
-    const overrideDecision = (decision === "always_allow" || decision === "allow") ? "allow" : "deny";
+    const overrideDecision = decision === "always_allow" || decision === "allow" ? "allow" : "deny";
     // For file_* / bash, the "target" is the file path / command.
     // For other tools we pass no target (matches all inputs of that tool).
     const target =
-      typeof ask.input.command === "string" ? String(ask.input.command) :
-      typeof ask.input.file_path === "string" ? String(ask.input.file_path) :
-      typeof ask.input.path === "string" ? String(ask.input.path) :
-      typeof ask.input.url === "string" ? String(ask.input.url) :
-      "";
-    void client.request("permissionPolicyOverride", {
-      tool: ask.tool,
-      target,
-      decision: overrideDecision,
-      scope: rememberScope,
-    }).then((res) => {
-      const r = res as { ok?: boolean; reason?: string } | null | undefined;
-      if (r?.ok) {
-        dispatch({
-          type: "pushToast",
-          kind: "ok",
-          text: `saved ${overrideDecision} rule for ${ask.tool} (${rememberScope})`,
-        });
-      } else {
-        dispatch({
-          type: "pushToast",
-          kind: "warn",
-          text: `policy override failed: ${r?.reason ?? "unknown"}`,
-        });
-      }
-    }).catch((e: Error) => {
-      dispatch({ type: "log", message: `policy override failed: ${e.message}` });
-    });
+      typeof ask.input.command === "string"
+        ? String(ask.input.command)
+        : typeof ask.input.file_path === "string"
+          ? String(ask.input.file_path)
+          : typeof ask.input.path === "string"
+            ? String(ask.input.path)
+            : typeof ask.input.url === "string"
+              ? String(ask.input.url)
+              : "";
+    void client
+      .request("permissionPolicyOverride", {
+        tool: ask.tool,
+        target,
+        decision: overrideDecision,
+        scope: rememberScope,
+      })
+      .then((res) => {
+        const r = res as { ok?: boolean; reason?: string } | null | undefined;
+        if (r?.ok) {
+          dispatch({
+            type: "pushToast",
+            kind: "ok",
+            text: `saved ${overrideDecision} rule for ${ask.tool} (${rememberScope})`,
+          });
+        } else {
+          dispatch({
+            type: "pushToast",
+            kind: "warn",
+            text: `policy override failed: ${r?.reason ?? "unknown"}`,
+          });
+        }
+      })
+      .catch((e: Error) => {
+        dispatch({ type: "log", message: `policy override failed: ${e.message}` });
+      });
   }
   // clear the inline permission prompt once
   // the user has chosen an option. The card is
@@ -299,16 +323,16 @@ function cancelSubagent(
         dispatch({ type: "pushToast", kind: "warn", text: `subagent ${jobId}: nothing to cancel` });
       }
     } catch (e: any) {
-      dispatch({ type: "pushToast", kind: "err", text: `cancel failed: ${e?.message ?? String(e)}` });
+      dispatch({
+        type: "pushToast",
+        kind: "err",
+        text: `cancel failed: ${e?.message ?? String(e)}`,
+      });
     }
   })();
 }
 
-function insertSubagentResult(
-  jobId: string,
-  state: State,
-  dispatch: (a: Action) => void,
-): void {
+function insertSubagentResult(jobId: string, state: State, dispatch: (a: Action) => void): void {
   const job = state.subagentJobs[jobId];
   if (!job) {
     dispatch({ type: "pushToast", kind: "warn", text: `subagent ${jobId} not found` });
@@ -665,13 +689,7 @@ const PanelShell: React.FC<{
   // frame = 2 border cells + 2 padding cells.
   const inner = width - 4;
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="round"
-      borderColor={t.dim}
-      paddingX={1}
-    >
+    <Box flexDirection="column" width={width} borderStyle="round" borderColor={t.dim} paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={t.brand} bold>{`◆ ${title}`}</Text>
         <Text dimColor>esc close</Text>
@@ -682,14 +700,14 @@ const PanelShell: React.FC<{
       <Text color={t.dim}>{rule(inner)}</Text>
       {status.loading ? (
         <Box>
-          <Text color={t.spinner}><Spinner type="dots" /></Text>
+          <Text color={t.spinner}>
+            <Spinner type="dots" />
+          </Text>
           <Text color={t.warn}>{` ${loadingLabel}…`}</Text>
         </Box>
       ) : null}
       {status.error ? <Text color={t.err}>{`✗ ${status.error}`}</Text> : null}
-      {status.notice && !status.error ? (
-        <Text color={t.warn}>{`! ${status.notice}`}</Text>
-      ) : null}
+      {status.notice && !status.error ? <Text color={t.warn}>{`! ${status.notice}`}</Text> : null}
     </Box>
   );
 };
@@ -757,7 +775,8 @@ const GrantsCompact: React.FC<{
       </Box>
       {flat.length === 0 ? (
         <Text dimColor>
-          no grants stored yet — answer a permission prompt with P / U to remember one, or run /consents again
+          no grants stored yet — answer a permission prompt with P / U to remember one, or run
+          /consents again
         </Text>
       ) : (
         grouped.map(({ scope: gscope, items }) => (
@@ -777,16 +796,16 @@ const GrantsCompact: React.FC<{
           </Box>
         ))
       )}
-      <Text dimColor>  {`${flat.length} shown · ↑/↓ navigate · r revoke · 1-4 scope`}</Text>
+      <Text dimColor> {`${flat.length} shown · ↑/↓ navigate · r revoke · 1-4 scope`}</Text>
     </Box>
   );
 };
 
-const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.MutableRefObject<State> }> = ({
-  client,
-  cwd,
-  stateRef,
-}) => {
+const App: React.FC<{
+  client: JsonRpcClient;
+  cwd: string;
+  stateRef: React.MutableRefObject<State>;
+}> = ({ client, cwd, stateRef }) => {
   const { exit } = useApp();
 
   // R364 — seed `state.cwd` from the launch directory ONCE, then let
@@ -795,9 +814,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   // cwd, and every `currentCwd={currentCwd}` would flash.
   // The prop is only a bootstrap value — from here on `state.cwd` is
   // whatever the daemon last reported.
-  const [state, dispatch] = useReducer(reducer, INITIAL, (init) =>
-    cwd ? { ...init, cwd } : init,
-  );
+  const [state, dispatch] = useReducer(reducer, INITIAL, (init) => (cwd ? { ...init, cwd } : init));
   stateRef.current = state;
   const [h, setH] = useState(20);
 
@@ -842,8 +859,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   const themeList = useAethercodeThemeList(themeStore);
   const activeTheme = useAethercodeThemeFromStore(themeStore);
   const pickerThemes: ReadonlyArray<PickerTheme> = themeList.map(toPickerTheme);
-  const pickerCurrent =
-    state.themesPickedName ?? activeTheme?.name ?? pickerThemes[0]?.name ?? "";
+  const pickerCurrent = state.themesPickedName ?? activeTheme?.name ?? pickerThemes[0]?.name ?? "";
   // wire the JsonRpcClient's onConnectionState into
   // the reducer. The runTui entry point sets up a no-op
   // placeholder (the dispatch is owned by App), so we
@@ -1000,21 +1016,31 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           });
           // also push a transient toast so the user notices
           // the task update without scrolling.
-          const tkind = (p.status === "error" || p.status === "failed") ? "err" :
-                        (p.status === "done" || p.status === "ok" || p.status === "completed") ? "ok" :
-                        "info";
-          dispatch({ type: "pushToast", kind: tkind, text: `task ${p.taskId ?? "?"} → ${p.status ?? "?"}` });
+          const tkind =
+            p.status === "error" || p.status === "failed"
+              ? "err"
+              : p.status === "done" || p.status === "ok" || p.status === "completed"
+                ? "ok"
+                : "info";
+          dispatch({
+            type: "pushToast",
+            kind: tkind,
+            text: `task ${p.taskId ?? "?"} → ${p.status ?? "?"}`,
+          });
           // optimistically update the recent-tasks list with
           // the new status. We don't know the full name from
           // task_state alone, so we patch the matching id in place
           // if we already have it; otherwise we re-fetch.
           void (async () => {
             try {
-              const list = (await client.request("listTasks", { limit: 10 })) as Array<{ id: string; name: string; status: string; ts: number }> | null | undefined;
+              const list = (await client.request("listTasks", { limit: 10 })) as
+                Array<{ id: string; name: string; status: string; ts: number }> | null | undefined;
               if (Array.isArray(list)) {
                 dispatch({ type: "setRecentTasks", tasks: list });
               }
-            } catch { /* ignore — sidebar will refresh on the next tick */ }
+            } catch {
+              /* ignore — sidebar will refresh on the next tick */
+            }
           })();
           break;
         }
@@ -1026,8 +1052,8 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             dispatch({ type: "log", message: p.message ?? "" });
           }
           // also push to the log buffer for the log viewer.
-          const level = p.level === "warn" ? "warn" :
-                        p.level === "err" || p.level === "error" ? "err" : "info";
+          const level =
+            p.level === "warn" ? "warn" : p.level === "err" || p.level === "error" ? "err" : "info";
           dispatch({ type: "pushLog", level, message: p.message ?? "" });
           break;
         }
@@ -1048,9 +1074,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           // also empty, so a legacy-D daemon + a single-
           // session TUI still works.
           const p = (params ?? {}) as {
-            jobId?: string; role?: string; status?: string;
-            elapsedMs?: number; summary?: string; atMs?: number;
-            sessionId?: string; result?: string;
+            jobId?: string;
+            role?: string;
+            status?: string;
+            elapsedMs?: number;
+            summary?: string;
+            atMs?: number;
+            sessionId?: string;
+            result?: string;
           };
           dispatch({
             type: "subagentEvent",
@@ -1105,10 +1136,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const p = (params ?? {}) as Record<string, unknown>;
           const ask: PermissionAsk = {
             requestId: String(p.requestId ?? ""),
-            runId:     String(p.runId ?? ""),
-            tool:      String(p.tool ?? "(unknown)"),
-            input:     (p.input as Record<string, unknown>) ?? {},
-            reason:    String(p.reason ?? ""),
+            runId: String(p.runId ?? ""),
+            tool: String(p.tool ?? "(unknown)"),
+            input: (p.input as Record<string, unknown>) ?? {},
+            reason: String(p.reason ?? ""),
             riskLevel: ((p.riskLevel as string) ?? "medium") as PermissionAsk["riskLevel"],
           };
           // R363 — runId fallback #2. A permission ask is proof a run
@@ -1171,8 +1202,8 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             dispatch({
               type: "setSkipStats",
               consumed: stateRef.current.skipStats.consumed + 1,
-              armed:    stateRef.current.skipStats.armed,
-              prompts:  stateRef.current.skipStats.prompts,
+              armed: stateRef.current.skipStats.armed,
+              prompts: stateRef.current.skipStats.prompts,
             });
           }
           break;
@@ -1251,11 +1282,9 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         void (async () => {
           try {
             const projects = (await client.request("listProjects")) as
-              | Array<{ cwd?: string; active?: boolean }>
-              | null
-              | undefined;
+              Array<{ cwd?: string; active?: boolean }> | null | undefined;
             const current = Array.isArray(projects)
-              ? projects.find((p) => p?.active) ?? projects[0]
+              ? (projects.find((p) => p?.active) ?? projects[0])
               : undefined;
             const daemonCwd = String(current?.cwd ?? "").trim();
             if (daemonCwd) dispatch({ type: "setCurrentCwd", cwd: daemonCwd });
@@ -1274,13 +1303,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         // seed skip-confirmation adoption stats. The
         // daemon reports consumed / armed / prompts so we
         // can show "skip: 4/7 prompts used" in the footer.
-        const st2 = stObj.skipStats as { consumed?: number; armed?: number; prompts?: number } | undefined;
+        const st2 = stObj.skipStats as
+          { consumed?: number; armed?: number; prompts?: number } | undefined;
         if (st2 && typeof st2 === "object") {
           dispatch({
             type: "setSkipStats",
             consumed: Number(st2.consumed ?? 0),
-            armed:    Number(st2.armed ?? 0),
-            prompts:  Number(st2.prompts ?? 0),
+            armed: Number(st2.armed ?? 0),
+            prompts: Number(st2.prompts ?? 0),
           });
         }
         // seed the waterline + last-skip-low snapshot
@@ -1299,7 +1329,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             snap: {
               sessionId: String(lsl.sessionId),
               remaining: Number(lsl.remaining ?? 0),
-              atMs:      Number(lsl.atMs ?? Date.now()),
+              atMs: Number(lsl.atMs ?? Date.now()),
             },
           });
         }
@@ -1359,15 +1389,21 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     let cancelled = false;
     const fetchTasks = async () => {
       try {
-        const list = (await client.request("listTasks", { limit: 10 })) as Array<{ id: string; name: string; status: string; ts: number }> | null | undefined;
+        const list = (await client.request("listTasks", { limit: 10 })) as
+          Array<{ id: string; name: string; status: string; ts: number }> | null | undefined;
         if (!cancelled && Array.isArray(list)) {
           dispatch({ type: "setRecentTasks", tasks: list });
         }
-      } catch { /* ignore — task list is best-effort */ }
+      } catch {
+        /* ignore — task list is best-effort */
+      }
     };
     fetchTasks();
     const id = setInterval(fetchTasks, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [state.sidebarVisible, client]);
 
   // R371 — feed the ContextMeter.
@@ -1392,7 +1428,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     let cancelled = false;
     const refresh = async () => {
       try {
-        const raw = (await client.request("getContextInfo", {} as RpcValue)) as Record<string, unknown> | null;
+        const raw = (await client.request("getContextInfo", {} as RpcValue)) as Record<
+          string,
+          unknown
+        > | null;
         if (cancelled || !raw || raw.ok === false) return;
         const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
         const window = num(raw.contextWindow);
@@ -1412,18 +1451,32 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             usagePercent: num(raw.usagePercent),
           },
         });
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
       try {
-        const st = (await client.request("compact/status", {} as RpcValue)) as Record<string, unknown> | null;
+        const st = (await client.request("compact/status", {} as RpcValue)) as Record<
+          string,
+          unknown
+        > | null;
         if (cancelled || !st || st.ok === false) return;
         const ev = (st.lastEvent ?? null) as Record<string, unknown> | null;
         const ts = ev && typeof ev.ts === "number" && ev.ts > 0 ? ev.ts : null;
-        dispatch({ type: "setCompactStatus", autoCompactDisabled: st.autoCompactDisabled === true, lastEventTs: ts });
-      } catch { /* best-effort */ }
+        dispatch({
+          type: "setCompactStatus",
+          autoCompactDisabled: st.autoCompactDisabled === true,
+          lastEventTs: ts,
+        });
+      } catch {
+        /* best-effort */
+      }
     };
     void refresh();
     const id = setInterval(refresh, 15_000);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [client]);
 
   // R362 — fetch the open panel's data.
@@ -1509,7 +1562,9 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             });
           });
       });
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (panel === "threads") {
@@ -1546,16 +1601,18 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           if (scoped && other.length > 0) {
             setNotice(
               `${mine.length} of ${all.length} sessions are recorded under ` +
-              `${cwdBasename(currentCwd) || currentCwd || "(no cwd)"} — ` +
-              `the other ${other.length} have no recorded directory. ` +
-              `Use /threads to see everything.`,
+                `${cwdBasename(currentCwd) || currentCwd || "(no cwd)"} — ` +
+                `the other ${other.length} have no recorded directory. ` +
+                `Use /threads to see everything.`,
             );
           } else {
             done();
           }
         })
         .catch((e: unknown) => fail("listSessions", e));
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (panel === "agents") {
@@ -1566,13 +1623,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           if (cancelled) return;
           const envErr = envelopeError(raw);
           const arr = (raw as { agents?: unknown[] })?.agents;
-          const agents: AgentEntry[] = envErr || !Array.isArray(arr)
-            ? []
-            : (arr as Record<string, unknown>[]).map((a) => ({
-                name: String(a.name ?? a.displayName ?? "?"),
-                description: a.description == null ? undefined : String(a.description),
-                isDefault: Boolean(a.isDefault),
-              }));
+          const agents: AgentEntry[] =
+            envErr || !Array.isArray(arr)
+              ? []
+              : (arr as Record<string, unknown>[]).map((a) => ({
+                  name: String(a.name ?? a.displayName ?? "?"),
+                  description: a.description == null ? undefined : String(a.description),
+                  isDefault: Boolean(a.isDefault),
+                }));
           dispatch({ type: "setAgents", agents });
           dispatch({
             type: "setDefaultAgent",
@@ -1582,7 +1640,9 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           else done();
         })
         .catch((e: unknown) => fail("listAgents", e));
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (panel === "grants") {
@@ -1597,14 +1657,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             fail("permission/list", envErr);
             return;
           }
-          const arr = Array.isArray(raw)
-            ? raw
-            : ((raw as { grants?: unknown[] })?.grants ?? []);
+          const arr = Array.isArray(raw) ? raw : ((raw as { grants?: unknown[] })?.grants ?? []);
           dispatch({ type: "setGrants", grants: (arr as unknown[]).map(normalizeGrantRow) });
           done();
         })
         .catch((e: unknown) => fail("permission/list", e));
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (panel === "mcp") {
@@ -1649,7 +1709,9 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           done();
         })
         .catch((e: unknown) => fail("listWorkflows", e));
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (panel === "update") {
@@ -1695,18 +1757,22 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         dispatch({ type: "setUpdateFacts", facts });
         done();
       });
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // "todos", "cwd", "effort" and "notifications" are served from
     // local state; nothing to fetch, so nothing to await.
-    return () => { cancelled = true; };
-  // R370: `state.panelCwdOnly` is a DEP, not an afterthought.
-  // `/threads` and `/sessions` both resolve to `activePanel ===
-  // "threads"`, so opening one straight after closing the other can
-  // leave `activePanel` unchanged while the filter flips — without
-  // this dep the panel would re-render showing the previous
-  // command's row list with the new command's title.
+    return () => {
+      cancelled = true;
+    };
+    // R370: `state.panelCwdOnly` is a DEP, not an afterthought.
+    // `/threads` and `/sessions` both resolve to `activePanel ===
+    // "threads"`, so opening one straight after closing the other can
+    // leave `activePanel` unchanged while the filter flips — without
+    // this dep the panel would re-render showing the previous
+    // command's row list with the new command's title.
   }, [state.activePanel, state.memoryTab, state.sessionId, state.panelCwdOnly, client]);
 
   useEffect(() => {
@@ -1791,13 +1857,17 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       return;
     }
     if (slash?.local === "__CLEAR__") {
-      dispatch({ type: "log", message: "(clear is a no-op in this build; restart for a fresh scrollback)" });
+      dispatch({
+        type: "log",
+        message: "(clear is a no-op in this build; restart for a fresh scrollback)",
+      });
       return;
     }
     if (slash?.local === "__HISTORY__") {
-      const lines = state.history.length === 0
-        ? "(empty)"
-        : state.history.map((h, i) => `${String(i + 1).padStart(3, " ")}  ${h}`).join("\n");
+      const lines =
+        state.history.length === 0
+          ? "(empty)"
+          : state.history.map((h, i) => `${String(i + 1).padStart(3, " ")}  ${h}`).join("\n");
       dispatch({ type: "sideNote", kind: "history", message: lines });
       return;
     }
@@ -1825,7 +1895,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // /budget USD — set the cost budget for the progress bar.
       const usd = Number(slash.local.slice("__BUDGET__:".length));
       dispatch({ type: "setCostBudget", usd });
-      dispatch({ type: "pushToast", kind: "info", text: usd === 0 ? "budget off" : `budget = $${usd.toFixed(2)}` });
+      dispatch({
+        type: "pushToast",
+        kind: "info",
+        text: usd === 0 ? "budget off" : `budget = $${usd.toFixed(2)}`,
+      });
       return;
     }
     if (slash?.local === "__TUTORIAL__") {
@@ -1860,9 +1934,18 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // /snippet list — show the saved snippets.
       const names = Object.keys(state.snippets);
       if (names.length === 0) {
-        dispatch({ type: "sideNote", kind: "snippet", message: "(no snippets yet — /snippet save <name> to save the current input)" });
+        dispatch({
+          type: "sideNote",
+          kind: "snippet",
+          message: "(no snippets yet — /snippet save <name> to save the current input)",
+        });
       } else {
-        const lines = names.sort().map((n) => `  ${n.padEnd(20, " ")}  ${state.snippets[n].slice(0, 50)}${state.snippets[n].length > 50 ? "…" : ""}`);
+        const lines = names
+          .sort()
+          .map(
+            (n) =>
+              `  ${n.padEnd(20, " ")}  ${state.snippets[n].slice(0, 50)}${state.snippets[n].length > 50 ? "…" : ""}`,
+          );
         dispatch({ type: "sideNote", kind: "snippet", message: lines.join("\n") });
       }
       return;
@@ -1901,21 +1984,33 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       dispatch({ type: "pushToast", kind: "ok", text: `deleted snippet "${name}"` });
       return;
     }
-    if (slash?.local?.startsWith("__EXPORT_MD__:") || slash?.local?.startsWith("__EXPORT_JSON__:")) {
+    if (
+      slash?.local?.startsWith("__EXPORT_MD__:") ||
+      slash?.local?.startsWith("__EXPORT_JSON__:")
+    ) {
       // R347: `/export` and `/export json` (no path) now fall
       // back to `<cwd>/.aethercode/exports/session-<id>-<YYYYMMDD-HHMM>.{md,json}`
       // so the user doesn't have to type a path. The helper
       // mkdir -p's the parent directory before writeFileSync
       // (writeFileSync throws ENOENT on a missing dir).
       const isJson = slash.local.startsWith("__EXPORT_JSON__:");
-      const userPath = slash.local.slice(isJson ? "__EXPORT_JSON__:".length : "__EXPORT_MD__:".length);
+      const userPath = slash.local.slice(
+        isJson ? "__EXPORT_JSON__:".length : "__EXPORT_MD__:".length,
+      );
       void (async () => {
         try {
-          const { exportToMarkdown, exportToJson, exportWithFrontmatter, defaultExportPath, writeExport } = await import("./exportScrollback.js");
+          const {
+            exportToMarkdown,
+            exportToJson,
+            exportWithFrontmatter,
+            defaultExportPath,
+            writeExport,
+          } = await import("./exportScrollback.js");
           const { mkdirSync } = await import("node:fs");
-          const path = userPath && userPath.length > 0
-            ? userPath
-            : defaultExportPath(currentCwd, state.sessionId, isJson ? "json" : "md");
+          const path =
+            userPath && userPath.length > 0
+              ? userPath
+              : defaultExportPath(currentCwd, state.sessionId, isJson ? "json" : "md");
           // Ensure the exports/ directory exists. mkdirSync with
           // { recursive: true } is a no-op when the directory
           // already exists, so this is safe to call every time.
@@ -1929,9 +2024,17 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             ? exportToJson(state.turns)
             : exportWithFrontmatter(state.turns, state.model, state.sessionId, { cwd: currentCwd });
           writeExport(path, body);
-          dispatch({ type: "pushToast", kind: "ok", text: `exported ${state.turns.length} turns → ${path}` });
+          dispatch({
+            type: "pushToast",
+            kind: "ok",
+            text: `exported ${state.turns.length} turns → ${path}`,
+          });
         } catch (e) {
-          dispatch({ type: "pushToast", kind: "err", text: `export failed: ${(e as Error).message}` });
+          dispatch({
+            type: "pushToast",
+            kind: "err",
+            text: `export failed: ${(e as Error).message}`,
+          });
         }
       })();
       return;
@@ -1952,7 +2055,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const summary = await readBankStats();
           dispatch({ type: "sideNote", kind: "bank", message: summary.text });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "bank", message: `bank: error (${(e as Error).message})` });
+          dispatch({
+            type: "sideNote",
+            kind: "bank",
+            message: `bank: error (${(e as Error).message})`,
+          });
         }
       })();
       return;
@@ -1974,7 +2081,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const summary = await readBankRecall(kind, n);
           dispatch({ type: "sideNote", kind: "bank", message: summary.text });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "bank", message: `bank: error (${(e as Error).message})` });
+          dispatch({
+            type: "sideNote",
+            kind: "bank",
+            message: `bank: error (${(e as Error).message})`,
+          });
         }
       })();
       return;
@@ -1993,7 +2104,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const summary = await auditSelfEval();
           dispatch({ type: "sideNote", kind: "memoryAudit", message: summary.text });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "memoryAudit", message: `memory-audit: error (${(e as Error).message})` });
+          dispatch({
+            type: "sideNote",
+            kind: "memoryAudit",
+            message: `memory-audit: error (${(e as Error).message})`,
+          });
         }
       })();
       return;
@@ -2015,44 +2130,83 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       void (async () => {
         try {
           const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string }>(
-            "sdd.start", { intent, cwd: currentCwd } as RpcValue);
+            "sdd.start",
+            { intent, cwd: currentCwd } as RpcValue,
+          );
           if (!resp.ok || !resp.state) {
-            dispatch({ type: "sideNote", kind: "error", message: `sdd.start failed: ${resp.error ?? "unknown"}` });
+            dispatch({
+              type: "sideNote",
+              kind: "error",
+              message: `sdd.start failed: ${resp.error ?? "unknown"}`,
+            });
             return;
           }
           dispatch({ type: "sddRun.set", state: resp.state });
-          dispatch({ type: "sideNote", kind: "info",
-            message: `📐 SDD started · slug=${resp.state.slug} · phase 1/8 · ${resp.state.phases[0]?.title ?? "?"}` });
+          dispatch({
+            type: "sideNote",
+            kind: "info",
+            message: `📐 SDD started · slug=${resp.state.slug} · phase 1/8 · ${resp.state.phases[0]?.title ?? "?"}`,
+          });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "error", message: `sdd.start error: ${(e as Error).message}` });
+          dispatch({
+            type: "sideNote",
+            kind: "error",
+            message: `sdd.start error: ${(e as Error).message}`,
+          });
         }
       })();
       return;
     }
     if (slash?.local === "__SDD_ADVANCE__") {
-      const rpcAction = String((slash.rpcParams as { action?: unknown } | undefined)?.action ?? "approve");
-      const feedback = String((slash.rpcParams as { feedback?: unknown } | undefined)?.feedback ?? "");
+      const rpcAction = String(
+        (slash.rpcParams as { action?: unknown } | undefined)?.action ?? "approve",
+      );
+      const feedback = String(
+        (slash.rpcParams as { feedback?: unknown } | undefined)?.feedback ?? "",
+      );
       const sddSlug = state.sddRun?.slug;
       if (!sddSlug) {
-        dispatch({ type: "sideNote", kind: "error", message: "sdd.advance: no active run (run /sdd <intent> first)" });
+        dispatch({
+          type: "sideNote",
+          kind: "error",
+          message: "sdd.advance: no active run (run /sdd <intent> first)",
+        });
         return;
       }
       void (async () => {
         try {
-          const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string; code?: string }>(
-            "sdd.advance",
-            { slug: sddSlug, action: rpcAction, feedback: feedback || undefined, cwd: currentCwd } as RpcValue);
+          const resp = await client.request<{
+            ok: boolean;
+            state?: SddRunState;
+            error?: string;
+            code?: string;
+          }>("sdd.advance", {
+            slug: sddSlug,
+            action: rpcAction,
+            feedback: feedback || undefined,
+            cwd: currentCwd,
+          } as RpcValue);
           if (!resp.ok || !resp.state) {
-            dispatch({ type: "sideNote", kind: "error",
-              message: `sdd.advance failed (${resp.code ?? "UNKNOWN"}): ${resp.error ?? "unknown"}` });
+            dispatch({
+              type: "sideNote",
+              kind: "error",
+              message: `sdd.advance failed (${resp.code ?? "UNKNOWN"}): ${resp.error ?? "unknown"}`,
+            });
             return;
           }
           dispatch({ type: "sddRun.set", state: resp.state });
           const ph = resp.state.currentPhase ?? resp.state.phases.length;
-          dispatch({ type: "sideNote", kind: "info",
-            message: `📐 SDD ${rpcAction} · now at phase ${ph}/${resp.state.phases.length}` });
+          dispatch({
+            type: "sideNote",
+            kind: "info",
+            message: `📐 SDD ${rpcAction} · now at phase ${ph}/${resp.state.phases.length}`,
+          });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "error", message: `sdd.advance error: ${(e as Error).message}` });
+          dispatch({
+            type: "sideNote",
+            kind: "error",
+            message: `sdd.advance error: ${(e as Error).message}`,
+          });
         }
       })();
       return;
@@ -2069,7 +2223,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           dispatch({ type: "sddRun.clear" });
           dispatch({ type: "sideNote", kind: "info", message: "📐 SDD run aborted" });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "error", message: `sdd.abort error: ${(e as Error).message}` });
+          dispatch({
+            type: "sideNote",
+            kind: "error",
+            message: `sdd.abort error: ${(e as Error).message}`,
+          });
         }
       })();
       return;
@@ -2083,18 +2241,30 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       void (async () => {
         try {
           const resp = await client.request<{ ok: boolean; state?: SddRunState; error?: string }>(
-            "sdd.status", { slug: sddSlug, cwd: currentCwd } as RpcValue);
+            "sdd.status",
+            { slug: sddSlug, cwd: currentCwd } as RpcValue,
+          );
           if (!resp.ok || !resp.state) {
-            dispatch({ type: "sideNote", kind: "error",
-              message: `sdd.status failed: ${resp.error ?? "unknown"}` });
+            dispatch({
+              type: "sideNote",
+              kind: "error",
+              message: `sdd.status failed: ${resp.error ?? "unknown"}`,
+            });
             return;
           }
           dispatch({ type: "sddRun.set", state: resp.state });
           const ph = resp.state.currentPhase ?? resp.state.phases.length;
-          dispatch({ type: "sideNote", kind: "info",
-            message: `📐 SDD · slug=${resp.state.slug} · ${ph}/${resp.state.phases.length} · status=${resp.state.status}` });
+          dispatch({
+            type: "sideNote",
+            kind: "info",
+            message: `📐 SDD · slug=${resp.state.slug} · ${ph}/${resp.state.phases.length} · status=${resp.state.status}`,
+          });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "error", message: `sdd.status error: ${(e as Error).message}` });
+          dispatch({
+            type: "sideNote",
+            kind: "error",
+            message: `sdd.status error: ${(e as Error).message}`,
+          });
         }
       })();
       return;
@@ -2104,7 +2274,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     // sddRun.phases[N-1].path, which the daemon populates when
     // it emits the SddRunState over RPC. When no phase is given
     // we default to the run's currentPhase.
-    if (slash?.local === "__SDD_VIEW__" || slash?.local === "__SDD_DIFF__" || slash?.local === "__SDD_SNAPSHOT__") {
+    if (
+      slash?.local === "__SDD_VIEW__" ||
+      slash?.local === "__SDD_DIFF__" ||
+      slash?.local === "__SDD_SNAPSHOT__"
+    ) {
       const sddRun = state.sddRun;
       if (!sddRun) {
         dispatch({ type: "sideNote", kind: "error", message: "sdd: no active run" });
@@ -2117,8 +2291,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           : (sddRun.currentPhase ?? 1) - 1;
       const phase = sddRun.phases[phaseIdx];
       if (!phase || !phase.path) {
-        dispatch({ type: "sideNote", kind: "error",
-          message: `sdd: phase ${phaseIdx + 1} has no artefact yet` });
+        dispatch({
+          type: "sideNote",
+          kind: "error",
+          message: `sdd: phase ${phaseIdx + 1} has no artefact yet`,
+        });
         return;
       }
       const path = phase.path;
@@ -2128,17 +2305,30 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const lines = fs.readFileSync(path, "utf-8").split(/\r?\n/);
           if (slash?.local === "__SDD_SNAPSHOT__") {
             dispatch({ type: "sddCache.set", phase: phaseIdx + 1, lines });
-            dispatch({ type: "sideNote", kind: "info",
-              message: `📐 cached snapshot for phase ${phaseIdx + 1} (${lines.length} lines)` });
+            dispatch({
+              type: "sideNote",
+              kind: "info",
+              message: `📐 cached snapshot for phase ${phaseIdx + 1} (${lines.length} lines)`,
+            });
             return;
           }
           const cached = state.sddCache[phaseIdx + 1] ?? null;
-          setSddReview({ path, lines, previousLines: slash.local === "__SDD_DIFF__" ? cached : null });
-          dispatch({ type: "sideNote", kind: "info",
-            message: `📂 viewing ${path} (${lines.length} lines${cached ? `, diff vs cached ${cached.length} lines` : ""})` });
+          setSddReview({
+            path,
+            lines,
+            previousLines: slash.local === "__SDD_DIFF__" ? cached : null,
+          });
+          dispatch({
+            type: "sideNote",
+            kind: "info",
+            message: `📂 viewing ${path} (${lines.length} lines${cached ? `, diff vs cached ${cached.length} lines` : ""})`,
+          });
         } catch (e) {
-          dispatch({ type: "sideNote", kind: "error",
-            message: `sdd read ${path}: ${(e as Error).message}` });
+          dispatch({
+            type: "sideNote",
+            kind: "error",
+            message: `sdd read ${path}: ${(e as Error).message}`,
+          });
         }
       })();
       return;
@@ -2235,17 +2425,18 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           const newMode = String((slash.rpcParams as { mode?: unknown } | undefined)?.mode ?? "");
           if (newMode) {
             dispatch({ type: "setPermissionMode", mode: newMode });
-            const blurb = newMode === "BYPASS_PERMISSIONS"
-              ? "no prompts will be shown for any tool call"
-              : newMode === "ACCEPT_TASK"
-              ? "single task, no mid-task prompts (DEFAULT behaviour unless sub-task boundary)"
-              : newMode === "ACCEPT_EDITS"
-              ? "file edits auto-allowed; bash / network still ask"
-              : newMode === "AUTO_READ_ONLY"
-              ? "read-only tools auto-allowed; writes still ask"
-              : newMode === "PLAN"
-              ? "plan mode — tools ask before running"
-              : "default — every tool call asks before running";
+            const blurb =
+              newMode === "BYPASS_PERMISSIONS"
+                ? "no prompts will be shown for any tool call"
+                : newMode === "ACCEPT_TASK"
+                  ? "single task, no mid-task prompts (DEFAULT behaviour unless sub-task boundary)"
+                  : newMode === "ACCEPT_EDITS"
+                    ? "file edits auto-allowed; bash / network still ask"
+                    : newMode === "AUTO_READ_ONLY"
+                      ? "read-only tools auto-allowed; writes still ask"
+                      : newMode === "PLAN"
+                        ? "plan mode — tools ask before running"
+                        : "default — every tool call asks before running";
             dispatch({
               type: "pushToast",
               kind: newMode === "DEFAULT" ? "info" : "ok",
@@ -2257,7 +2448,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         // RPCs we fall back to a plain JSON dump.
         if (slash.rpcMethod === "getMetrics" && result && typeof result === "object") {
           const m = result as Record<string, unknown>;
-          const fmt = (n: unknown) => typeof n === "number" ? n.toFixed(3) : String(n);
+          const fmt = (n: unknown) => (typeof n === "number" ? n.toFixed(3) : String(n));
           const lines: string[] = [];
           lines.push("engine metrics");
           for (const k of Object.keys(m)) {
@@ -2279,7 +2470,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           // status icon + name + duration. We also push the result
           // into state.recentTraces so future /trace calls can
           // diff/refresh (and so other components could read it).
-          const r = result as { inFlight?: number; completed?: number; traces?: Array<Record<string, unknown>> };
+          const r = result as {
+            inFlight?: number;
+            completed?: number;
+            traces?: Array<Record<string, unknown>>;
+          };
           const traces = Array.isArray(r.traces) ? r.traces : [];
           const inFlight = typeof r.inFlight === "number" ? r.inFlight : 0;
           const completed = typeof r.completed === "number" ? r.completed : 0;
@@ -2310,16 +2505,26 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           // setSpanTree so the state holds the structured tree,
           // AND we pretty-print the tree here with ├─/└─
           // connectors so the user sees it inline.
-          const r = result as { traceId?: string; inFlight?: number; completed?: number; spans?: Array<Record<string, unknown>> };
+          const r = result as {
+            traceId?: string;
+            inFlight?: number;
+            completed?: number;
+            spans?: Array<Record<string, unknown>>;
+          };
           const spans = Array.isArray(r.spans) ? r.spans : [];
-          const traceId = typeof r.traceId === "string" ? r.traceId : (slash.rpcParams as { traceId?: string } | undefined)?.traceId ?? "?";
+          const traceId =
+            typeof r.traceId === "string"
+              ? r.traceId
+              : ((slash.rpcParams as { traceId?: string } | undefined)?.traceId ?? "?");
           dispatch({
             type: "setSpanTree",
             traceId,
             spans: spans as unknown as Array<import("./state.js").TraceSummary>,
           });
           const lines: string[] = [];
-          lines.push(`trace ${traceId} (${spans.length} spans, ${typeof r.completed === "number" ? r.completed : 0} total in recorder)`);
+          lines.push(
+            `trace ${traceId} (${spans.length} spans, ${typeof r.completed === "number" ? r.completed : 0} total in recorder)`,
+          );
           if (spans.length === 0) {
             lines.push("  (empty — root evicted or unknown id)");
           } else {
@@ -2329,7 +2534,13 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             // at the top with no connectors. A node is an orphan
             // iff its parentSpanId is set AND its parent is not
             // in the spans list.
-            interface TNode { id: string; name: string; status: string; dur: number; children: TNode[]; }
+            interface TNode {
+              id: string;
+              name: string;
+              status: string;
+              dur: number;
+              children: TNode[];
+            }
             const byId = new Map<string, TNode>();
             const childrenOf = new Map<string, TNode[]>();
             let rootNode: TNode | null = null;
@@ -2354,11 +2565,17 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
               // render them flat at the top.
               if (parent == null || !byId.has(parent)) {
                 let arr = childrenOf.get("__orphans__");
-                if (!arr) { arr = []; childrenOf.set("__orphans__", arr); }
+                if (!arr) {
+                  arr = [];
+                  childrenOf.set("__orphans__", arr);
+                }
                 arr.push(node);
               } else {
                 let arr = childrenOf.get(parent);
-                if (!arr) { arr = []; childrenOf.set(parent, arr); }
+                if (!arr) {
+                  arr = [];
+                  childrenOf.set(parent, arr);
+                }
                 arr.push(node);
               }
             }
@@ -2373,12 +2590,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             const emit = (node: TNode, prefix: string, isLast: boolean) => {
               const icon = node.status === "ok" ? "✓" : node.status === "error" ? "✗" : "·";
               const durStr = node.dur < 1000 ? `${node.dur}ms` : `${(node.dur / 1000).toFixed(2)}s`;
-              const connector = prefix === "" ? "" : (isLast ? "└─ " : "├─ ");
-              lines.push(`  ${prefix}${connector}${icon} ${node.name.padEnd(20, " ")}  ${durStr.padStart(8, " ")}  ${node.status}`);
+              const connector = prefix === "" ? "" : isLast ? "└─ " : "├─ ";
+              lines.push(
+                `  ${prefix}${connector}${icon} ${node.name.padEnd(20, " ")}  ${durStr.padStart(8, " ")}  ${node.status}`,
+              );
               const kids = node.children;
               for (let i = 0; i < kids.length; i++) {
                 const k = kids[i];
-                const childPrefix = prefix === "" ? "  " : (prefix + (isLast ? "   " : "│  "));
+                const childPrefix = prefix === "" ? "  " : prefix + (isLast ? "   " : "│  ");
                 emit(k, childPrefix, i === kids.length - 1);
               }
             };
@@ -2418,7 +2637,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
           } else {
             const nameWidth = Math.max(
               "name".length,
-              ...agents.map((a) => (a.displayName || a.name || "").length)
+              ...agents.map((a) => (a.displayName || a.name || "").length),
             );
             lines.push(`  ${"name".padEnd(nameWidth)}  model`);
             for (const a of agents) {
@@ -2478,16 +2697,27 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             text?: string;
             totalChars?: number;
             sectionCount?: number;
-            sections?: Array<{ name?: string; length?: number; source?: string; firstLine?: string }>;
+            sections?: Array<{
+              name?: string;
+              length?: number;
+              source?: string;
+              firstLine?: string;
+            }>;
           };
           const formatted = formatSystemPrompt(r);
           dispatch({ type: "sideNote", kind: "systemPrompt", message: formatted });
-          const sectionCount = typeof r.sectionCount === "number"
-            ? r.sectionCount
-            : (Array.isArray(r.sections) ? r.sections.length : 0);
-          const totalChars = typeof r.totalChars === "number"
-            ? r.totalChars
-            : (typeof r.text === "string" ? r.text.length : 0);
+          const sectionCount =
+            typeof r.sectionCount === "number"
+              ? r.sectionCount
+              : Array.isArray(r.sections)
+                ? r.sections.length
+                : 0;
+          const totalChars =
+            typeof r.totalChars === "number"
+              ? r.totalChars
+              : typeof r.text === "string"
+                ? r.text.length
+                : 0;
           if (sectionCount > 0) {
             dispatch({
               type: "pushToast",
@@ -2495,9 +2725,17 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
               text: `system prompt: ${sectionCount} sections, ${totalChars} chars (run /prompt <name> to drill down)`,
             });
           } else {
-            dispatch({ type: "pushToast", kind: "warn", text: "system prompt: empty (no sections)" });
+            dispatch({
+              type: "pushToast",
+              kind: "warn",
+              text: "system prompt: empty (no sections)",
+            });
           }
-        } else if (slash.rpcMethod === "getSystemPromptSection" && result && typeof result === "object") {
+        } else if (
+          slash.rpcMethod === "getSystemPromptSection" &&
+          result &&
+          typeof result === "object"
+        ) {
           // drill-down. The /prompt <name> variant
           // routes here. The response carries {ok, name,
           // source, length, text} on success and {ok: false,
@@ -2513,7 +2751,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             error?: string;
             available?: string[];
           };
-          dispatch({ type: "sideNote", kind: "systemPromptSection", message: formatSystemPromptSection(r) });
+          dispatch({
+            type: "sideNote",
+            kind: "systemPromptSection",
+            message: formatSystemPromptSection(r),
+          });
         } else {
           dispatch({
             type: "sideNote",
@@ -2535,9 +2777,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       dispatch({
         type: "pushToast",
         kind: "info",
-        text: pos === 0
-          ? "model is still working - prompt queued (sends when this run ends)"
-          : `model is still working - prompt queued (#${pos + 1})`,
+        text:
+          pos === 0
+            ? "model is still working - prompt queued (sends when this run ends)"
+            : `model is still working - prompt queued (#${pos + 1})`,
       });
       return;
     }
@@ -2561,13 +2804,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // `{ok:false, busyRunId}` (session lock held) is also handled:
       // we adopt `busyRunId` so Esc can stop the run that is actually
       // blocking us instead of dead-ending on a cancel we can't send.
-      const resp = (await client.request<{
-        runId?: string;
-        accepted?: boolean;
-        ok?: boolean;
-        busyRunId?: string;
-        error?: string;
-      }>("query", { prompt: text })) ?? {};
+      const resp =
+        (await client.request<{
+          runId?: string;
+          accepted?: boolean;
+          ok?: boolean;
+          busyRunId?: string;
+          error?: string;
+        }>("query", { prompt: text })) ?? {};
       const runId = resp.runId ?? resp.busyRunId ?? null;
       if (runId) dispatch({ type: "setActiveRunId", runId });
       if (resp.ok === false || resp.accepted === false) {
@@ -2684,10 +2928,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       }
     }
     try {
-      await client.request(
-        RUN_PAUSE_METHOD,
-        runParams(action),
-      );
+      await client.request(RUN_PAUSE_METHOD, runParams(action));
       dispatch({ type: "setContinuationPaused", paused });
       dispatch({
         type: "pushToast",
@@ -2726,9 +2967,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     dispatch({
       type: "pushToast",
       kind: "info",
-      text: state.pendingPrompts.length > 1
-        ? `sending queued prompt (${state.pendingPrompts.length - 1} still queued)`
-        : "sending queued prompt",
+      text:
+        state.pendingPrompts.length > 1
+          ? `sending queued prompt (${state.pendingPrompts.length - 1} still queued)`
+          : "sending queued prompt",
     });
     void sendPrompt(next);
     // `state.pendingPrompts` is the trigger. Depending on the full state
@@ -2778,12 +3020,16 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       const idx = Number(input);
       if (idx === 1) {
         // Back to primary.
-        void client.request("loadSession", { sessionId: state.sessionId })
+        void client
+          .request("loadSession", { sessionId: state.sessionId })
           .then(() => dispatch({ type: "viewPrimary" }))
-          .catch((e) => dispatch({
-            type: "pushToast", kind: "err",
-            text: `view primary failed: ${(e as any)?.message ?? String(e)}`,
-          }));
+          .catch((e) =>
+            dispatch({
+              type: "pushToast",
+              kind: "err",
+              text: `view primary failed: ${(e as any)?.message ?? String(e)}`,
+            }),
+          );
         return;
       }
       // Pick the (idx-2)th subagent in MRU order. We mirror
@@ -2791,22 +3037,37 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // newest-first).
       const ids = Object.keys(state.subagentJobs)
         .filter((id) => state.subagentJobs[id]?.status === "RUNNING")
-        .sort((a, b) => (state.subagentJobs[b].startedAtMs ?? 0) - (state.subagentJobs[a].startedAtMs ?? 0));
+        .sort(
+          (a, b) =>
+            (state.subagentJobs[b].startedAtMs ?? 0) - (state.subagentJobs[a].startedAtMs ?? 0),
+        );
       const terminal = Object.keys(state.subagentJobs)
         .filter((id) => state.subagentJobs[id]?.status !== "RUNNING")
-        .sort((a, b) => (state.subagentJobs[b].endedAtMs ?? state.subagentJobs[b].startedAtMs ?? 0) - (state.subagentJobs[a].endedAtMs ?? state.subagentJobs[a].startedAtMs ?? 0));
+        .sort(
+          (a, b) =>
+            (state.subagentJobs[b].endedAtMs ?? state.subagentJobs[b].startedAtMs ?? 0) -
+            (state.subagentJobs[a].endedAtMs ?? state.subagentJobs[a].startedAtMs ?? 0),
+        );
       const ordered = [...ids, ...terminal];
       const subId = ordered[idx - 2];
       if (!subId) {
-        dispatch({ type: "pushToast", kind: "warn", text: `Ctrl+${idx}: no subagent at that slot` });
+        dispatch({
+          type: "pushToast",
+          kind: "warn",
+          text: `Ctrl+${idx}: no subagent at that slot`,
+        });
         return;
       }
-      void client.request("loadSession", { sessionId: subId })
+      void client
+        .request("loadSession", { sessionId: subId })
         .then(() => dispatch({ type: "viewSubagent", jobId: subId }))
-        .catch((e) => dispatch({
-          type: "pushToast", kind: "err",
-          text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
-        }));
+        .catch((e) =>
+          dispatch({
+            type: "pushToast",
+            kind: "err",
+            text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
+          }),
+        );
       return;
     }
     if (key.ctrl && key.shift && (input === "b" || input === "B")) {
@@ -2830,9 +3091,18 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     // > drop the queue. A run is never something Esc opened, so it
     // never competes with rule 1.
     if (key.escape) {
-      if (state.showSearch) { dispatch({ type: "showSearch", show: false }); return; }
-      if (state.helpVisible) { dispatch({ type: "showHelp", show: false }); return; }
-      if (state.submitting) { void stopActiveRun(); return; }
+      if (state.showSearch) {
+        dispatch({ type: "showSearch", show: false });
+        return;
+      }
+      if (state.helpVisible) {
+        dispatch({ type: "showHelp", show: false });
+        return;
+      }
+      if (state.submitting) {
+        void stopActiveRun();
+        return;
+      }
     }
     // when a permission ask is on screen, route the decision
     // keys to replyPermission. The card is now INLINE in the
@@ -2847,25 +3117,38 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // Letter aliases (A/Y/D/N + T/P/U for scope variants) are
       // still accepted for muscle memory.
       if (input === "a" || input === "A" || input === "1") {
-        replyPermission(client, ask, "allow", dispatch); return;
+        replyPermission(client, ask, "allow", dispatch);
+        return;
       }
       // T — allow for this task. Session-scope rule, but only
       // future calls of this tool in the current run.
-      if (input === "t" || input === "T") { replyPermission(client, ask, "always_allow", dispatch, "session"); return; }
+      if (input === "t" || input === "T") {
+        replyPermission(client, ask, "always_allow", dispatch, "session");
+        return;
+      }
       // P — allow for this project. Persists to .aethercode/permissions.json.
-      if (input === "p" || input === "P") { replyPermission(client, ask, "always_allow", dispatch, "project"); return; }
+      if (input === "p" || input === "P") {
+        replyPermission(client, ask, "always_allow", dispatch, "project");
+        return;
+      }
       // U — allow for this user (cross-project, but only for this
       // user's account on this machine).
-      if (input === "u" || input === "U") { replyPermission(client, ask, "always_allow", dispatch, "user"); return; }
+      if (input === "u" || input === "U") {
+        replyPermission(client, ask, "always_allow", dispatch, "user");
+        return;
+      }
       // 2 = always_allow (session scope by default; matches "Y").
       if (input === "y" || input === "Y" || input === "2") {
-        replyPermission(client, ask, "always_allow", dispatch, "session"); return;
+        replyPermission(client, ask, "always_allow", dispatch, "session");
+        return;
       }
       if (input === "d" || input === "D" || input === "3") {
-        replyPermission(client, ask, "deny", dispatch); return;
+        replyPermission(client, ask, "deny", dispatch);
+        return;
       }
       if (input === "n" || input === "N" || input === "4") {
-        replyPermission(client, ask, "always_deny", dispatch, "session"); return;
+        replyPermission(client, ask, "always_deny", dispatch, "session");
+        return;
       }
       // Esc collapses the inline card but leaves the ask pending.
       if (key.escape && state.decisionCardExpanded) {
@@ -3022,14 +3305,26 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             const r = (await client.request("subagentCancel", { jobId: focusId })) as
               { ok?: boolean; cancelled?: boolean; alreadyFinished?: boolean } | null | undefined;
             if (r?.alreadyFinished) {
-              dispatch({ type: "pushToast", kind: "warn", text: `subagent ${focusId} already finished` });
+              dispatch({
+                type: "pushToast",
+                kind: "warn",
+                text: `subagent ${focusId} already finished`,
+              });
             } else if (r?.cancelled) {
               dispatch({ type: "pushToast", kind: "ok", text: `cancelled subagent ${focusId}` });
             } else {
-              dispatch({ type: "pushToast", kind: "warn", text: `subagent ${focusId}: nothing to cancel` });
+              dispatch({
+                type: "pushToast",
+                kind: "warn",
+                text: `subagent ${focusId}: nothing to cancel`,
+              });
             }
           } catch (e: any) {
-            dispatch({ type: "pushToast", kind: "err", text: `cancel failed: ${e?.message ?? String(e)}` });
+            dispatch({
+              type: "pushToast",
+              kind: "err",
+              text: `cancel failed: ${e?.message ?? String(e)}`,
+            });
           }
         })();
         return;
@@ -3042,12 +3337,16 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
         // useInput so the panel stays purely presentational).
         const focusId = state.subagentPanelFocus;
         if (!focusId) return;
-        void client.request("loadSession", { sessionId: focusId })
+        void client
+          .request("loadSession", { sessionId: focusId })
           .then(() => dispatch({ type: "viewSubagent", jobId: focusId }))
-          .catch((e) => dispatch({
-            type: "pushToast", kind: "err",
-            text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
-          }));
+          .catch((e) =>
+            dispatch({
+              type: "pushToast",
+              kind: "err",
+              text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
+            }),
+          );
         return;
       }
       // Other keys are swallowed while the panel is open
@@ -3055,9 +3354,15 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // the input box.
       return;
     }
-    if (input === "b" && !state.permissionAsk && !state.helpVisible
-        && !state.showSearch && !state.paletteOpen && !state.logViewerOpen
-        && !state.tutorialOpen) {
+    if (
+      input === "b" &&
+      !state.permissionAsk &&
+      !state.helpVisible &&
+      !state.showSearch &&
+      !state.paletteOpen &&
+      !state.logViewerOpen &&
+      !state.tutorialOpen
+    ) {
       // 'b' bookmarks the most recent turn (when no modal
       // is open). The user can /bookmark <id> for specific ids.
       const last = state.turns[state.turns.length - 1];
@@ -3086,15 +3391,24 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       const target = state.history.length - 1;
       void (async () => {
         try {
-          const r = (await client.request("rewind", { target })) as { ok?: boolean; reason?: string } | null | undefined;
+          const r = (await client.request("rewind", { target })) as
+            { ok?: boolean; reason?: string } | null | undefined;
           if (r?.ok) {
             dispatch({ type: "pushToast", kind: "ok", text: `rewound to #${target + 1}` });
             dispatch({ type: "setRewindTarget", target });
           } else {
-            dispatch({ type: "pushToast", kind: "err", text: `rewind failed: ${r?.reason ?? "unknown"}` });
+            dispatch({
+              type: "pushToast",
+              kind: "err",
+              text: `rewind failed: ${r?.reason ?? "unknown"}`,
+            });
           }
         } catch (e) {
-          dispatch({ type: "pushToast", kind: "err", text: `rewind error: ${(e as Error).message}` });
+          dispatch({
+            type: "pushToast",
+            kind: "err",
+            text: `rewind error: ${(e as Error).message}`,
+          });
         }
       })();
       return;
@@ -3172,7 +3486,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       if (r?.skipped) {
         dispatch({
           type: "setMemoryCompact",
-          progress: { state: "skipped", reason: String(r.reason ?? "the daemon reported nothing to compress") },
+          progress: {
+            state: "skipped",
+            reason: String(r.reason ?? "the daemon reported nothing to compress"),
+          },
         });
       } else {
         dispatch({
@@ -3273,10 +3590,14 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 void client
                   .request("switchProject", { cwd: target.cwd } as RpcValue)
                   .then(() =>
-                    dispatch({ type: "pushToast", kind: "ok", text: `cwd → ${target.cwd}` })
+                    dispatch({ type: "pushToast", kind: "ok", text: `cwd → ${target.cwd}` }),
                   )
                   .catch((e: unknown) =>
-                    dispatch({ type: "pushToast", kind: "warn", text: `switchProject failed: ${errMsg(e)}` })
+                    dispatch({
+                      type: "pushToast",
+                      kind: "warn",
+                      text: `switchProject failed: ${errMsg(e)}`,
+                    }),
                   );
               }
               void client
@@ -3288,8 +3609,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                   // the Header pill and `/export` show). Take the id
                   // back off the response rather than assuming the
                   // request succeeded into the one we asked for.
-                  const sid =
-                    (res as { sessionId?: unknown } | null)?.sessionId;
+                  const sid = (res as { sessionId?: unknown } | null)?.sessionId;
                   const adopted = typeof sid === "string" && sid.length > 0 ? sid : threadId;
 
                   // R372 — replay the session's transcript.
@@ -3317,10 +3637,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                       dispatch({
                         type: "pushToast",
                         kind: "ok",
-                        text: dropped > 0
-                          ? `now working in ${adopted} — replayed ${replay.replayedMessages} of ` +
-                            `${replay.totalMessages} messages (${dropped} older ones not shown)`
-                          : `now working in ${adopted} — replayed ${replay.turns.length} turns`,
+                        text:
+                          dropped > 0
+                            ? `now working in ${adopted} — replayed ${replay.replayedMessages} of ` +
+                              `${replay.totalMessages} messages (${dropped} older ones not shown)`
+                            : `now working in ${adopted} — replayed ${replay.turns.length} turns`,
                       });
                     })
                     .catch((e: unknown) => {
@@ -3336,7 +3657,11 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                     });
                 })
                 .catch((e: unknown) =>
-                  dispatch({ type: "pushToast", kind: "err", text: `loadSession failed: ${errMsg(e)}` })
+                  dispatch({
+                    type: "pushToast",
+                    kind: "err",
+                    text: `loadSession failed: ${errMsg(e)}`,
+                  }),
                 );
             }}
             onClose={closePanel}
@@ -3452,7 +3777,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                     type: "pushToast",
                     kind: "err",
                     text: `switchProject failed: ${errMsg(e)}`,
-                  })
+                  }),
                 );
             }}
             onClose={closePanel}
@@ -3491,18 +3816,20 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             {known ? (
               <>
                 <Text>
-                  <Text dimColor>model      </Text>
-                  <Text>{info.provider}/{info.model}</Text>
+                  <Text dimColor>model </Text>
+                  <Text>
+                    {info.provider}/{info.model}
+                  </Text>
                 </Text>
                 <Text>
-                  <Text dimColor>window     </Text>
+                  <Text dimColor>window </Text>
                   <Text>{info.contextWindow.toLocaleString()} tokens</Text>
-                  <Text dimColor>  (max output {info.maxOutputTokens.toLocaleString()})</Text>
+                  <Text dimColor> (max output {info.maxOutputTokens.toLocaleString()})</Text>
                 </Text>
                 <Text>
-                  <Text dimColor>in use     </Text>
+                  <Text dimColor>in use </Text>
                   <Text>~{info.estimatedTokens.toLocaleString()} tokens</Text>
-                  <Text dimColor>  — {pct}% of the window</Text>
+                  <Text dimColor> — {pct}% of the window</Text>
                 </Text>
                 <Text>
                   <Text dimColor>transcript </Text>
@@ -3510,7 +3837,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 </Text>
               </>
             ) : (
-              <Text dimColor>  the daemon has not reported a context window yet</Text>
+              <Text dimColor> the daemon has not reported a context window yet</Text>
             )}
             <Text> </Text>
             <Text dimColor>
@@ -3521,7 +3848,8 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             </Text>
             {known ? (
               <Text dimColor>
-                token count is the daemon's estimate (transcript characters ÷ 4), not a tokenizer count
+                token count is the daemon's estimate (transcript characters ÷ 4), not a tokenizer
+                count
               </Text>
             ) : null}
           </Box>
@@ -3531,7 +3859,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       case "grants": {
         const grants = state.grants;
         const onRevoke = (id: string) => {
-          dispatch({ type: "setPanelStatus", status: { loading: true, error: null, notice: null } });
+          dispatch({
+            type: "setPanelStatus",
+            status: { loading: true, error: null, notice: null },
+          });
           void client
             .request("permission/revoke", { id } as RpcValue)
             .then(() => {
@@ -3570,7 +3901,9 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             {entries.length === 0 ? (
               <Box flexDirection="column" marginBottom={1}>
                 <Text dimColor>
-                  {"  nothing pending — notices appear here (and as toasts) when the daemon asks for a"}
+                  {
+                    "  nothing pending — notices appear here (and as toasts) when the daemon asks for a"
+                  }
                 </Text>
                 <Text dimColor>
                   {"  permission decision, a background subagent finishes, or a tool call errors."}
@@ -3580,11 +3913,15 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             <NotificationCenter
               entries={entries}
               onSelect={() =>
-                setNotice("notification actions are local-only — the daemon exposes no notification RPC")
+                setNotice(
+                  "notification actions are local-only — the daemon exposes no notification RPC",
+                )
               }
               onToggleWarning={(key, enabled) => {
                 dispatch({ type: "setNotificationToggle", key, enabled });
-                setNotice(`${key} ${enabled ? "enabled" : "suppressed"} (this session only — not persisted)`);
+                setNotice(
+                  `${key} ${enabled ? "enabled" : "suppressed"} (this session only — not persisted)`,
+                );
               }}
               onClose={closePanel}
               title=""
@@ -3664,7 +4001,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                     type: "pushToast",
                     kind: "warn",
                     text: `runWorkflow failed: ${errMsg(e)}`,
-                  })
+                  }),
                 );
             }}
             onClose={closePanel}
@@ -3722,56 +4059,56 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
   return (
     <Box flexDirection="column" flexGrow={1}>
       <ThemeProvider themeName={state.themeName}>
-      <AethercodeThemeProvider store={themeStore}>
-      {state.themePickerOpen ? (
-        <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-          <ThemePicker
-            themes={pickerThemes}
-            current={pickerCurrent}
-            onClose={() => dispatch({ type: "setThemePickerOpen", open: false })}
-            onSelect={(name) => {
-              void themeStore.setActive(name).then(() => {
-                dispatch({ type: "setThemesPickedName", name });
-                dispatch({ type: "setThemePickerOpen", open: false });
-                dispatch({ type: "pushToast", kind: "info", text: `theme → ${name}` });
-              });
-            }}
-            onPreview={(name) => {
-              void themeStore.setActive(name);
-            }}
-          />
-        </Box>
-      ) : state.paletteOpen ? (
-        <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-          <CommandPalette
-            onClose={() => dispatch({ type: "setPaletteOpen", open: false })}
-            onSelect={(cmd) => dispatch({ type: "setInput", text: cmd + " " })}
-          />
-        </Box>
-      ) : state.tutorialOpen ? (
-        <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-          <Welcome
-            model={state.model}
-            cwd={currentCwd}
-            sessionId={state.sessionId}
-            mode={state.permissionMode}
-            bankStatus={bankStatus ?? undefined}
-          />
-        </Box>
-      ) : state.logViewerOpen ? (
-        <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-          <LogViewer
-            entries={state.logBuffer}
-            onClose={() => dispatch({ type: "setLogViewerOpen", open: false })}
-          />
-        </Box>
-      ) : state.helpVisible ? (
-        <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-          <HelpOverlay />
-        </Box>
-      ) : (
-        <Box flexDirection="row" flexGrow={1}>
-          {/* R362: the sidebar and the right column are suppressed
+        <AethercodeThemeProvider store={themeStore}>
+          {state.themePickerOpen ? (
+            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+              <ThemePicker
+                themes={pickerThemes}
+                current={pickerCurrent}
+                onClose={() => dispatch({ type: "setThemePickerOpen", open: false })}
+                onSelect={(name) => {
+                  void themeStore.setActive(name).then(() => {
+                    dispatch({ type: "setThemesPickedName", name });
+                    dispatch({ type: "setThemePickerOpen", open: false });
+                    dispatch({ type: "pushToast", kind: "info", text: `theme → ${name}` });
+                  });
+                }}
+                onPreview={(name) => {
+                  void themeStore.setActive(name);
+                }}
+              />
+            </Box>
+          ) : state.paletteOpen ? (
+            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+              <CommandPalette
+                onClose={() => dispatch({ type: "setPaletteOpen", open: false })}
+                onSelect={(cmd) => dispatch({ type: "setInput", text: cmd + " " })}
+              />
+            </Box>
+          ) : state.tutorialOpen ? (
+            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+              <Welcome
+                model={state.model}
+                cwd={currentCwd}
+                sessionId={state.sessionId}
+                mode={state.permissionMode}
+                bankStatus={bankStatus ?? undefined}
+              />
+            </Box>
+          ) : state.logViewerOpen ? (
+            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+              <LogViewer
+                entries={state.logBuffer}
+                onClose={() => dispatch({ type: "setLogViewerOpen", open: false })}
+              />
+            </Box>
+          ) : state.helpVisible ? (
+            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+              <HelpOverlay />
+            </Box>
+          ) : (
+            <Box flexDirection="row" flexGrow={1}>
+              {/* R362: the sidebar and the right column are suppressed
               while a panel is open. Two reasons, both hard:
               (1) the right column embeds its own TodoBoard, whose
                   `useInput` would receive ↑/↓/j/k a second time and
@@ -3782,77 +4119,89 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
               pinned `sidebarVisible ?` / `rightPanelVisible ?`
               ternaries so both remain the single source of truth
               for whether the column is toggled on. */}
-          {state.sidebarVisible ? (
-            state.activePanel ? null : (
-              <Sidebar
-                width={26}
-                cwd={currentCwd}
-                sessionId={state.sessionId}
-                recentQueries={state.history}
-                tasks={state.recentTasks}
-              />
-            )
-          ) : null}
-          {state.subagentPanelOpen ? (
-            // live list of recent subagent jobs.
-            // Sits to the right of the sidebar (or the
-            // main column when the sidebar is hidden).
-            // Width is capped so the main column keeps
-            // enough horizontal space; on a 120-col
-            // terminal the panel is ~42 cols.
-            // NOTE: do NOT pass `now={Date.now()}` here
-            // — that produces a fresh value every render,
-            // which forces a re-render of the whole
-            // SubagentPanel subtree (and Ink re-paints the
-            // row), which the user perceives as a visible
-            // "jumping" of the layout. The panel reads
-            // `Date.now()` internally for its duration
-            // counters; that only re-runs when something
-            // else (the panel's own setInterval) ticks.
-            <SubagentPanel
-              state={state}
-              width={Math.max(36, Math.min(54, Math.floor((typeof process.stdout.columns === "number" ? process.stdout.columns : 120) * 0.35)))}
-              onCancel={(jobId) => cancelSubagent(jobId, state, client, dispatch)}
-              onInsert={(jobId) => insertSubagentResult(jobId, state, dispatch)}
-              onView={(jobId) => {                  // R214: 'v' → loadSession + viewSubagent
-                void client.request("loadSession", { sessionId: jobId })
-                  .then(() => dispatch({ type: "viewSubagent", jobId }))
-                  .catch((e) => dispatch({
-                    type: "pushToast",
-                    kind: "err",
-                    text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
-                  }));
-              }}
-            />
-          ) : null}
-          <Box flexDirection="column" flexGrow={1}>
-            {/* toast notifications sit above the header so
+              {state.sidebarVisible ? (
+                state.activePanel ? null : (
+                  <Sidebar
+                    width={26}
+                    cwd={currentCwd}
+                    sessionId={state.sessionId}
+                    recentQueries={state.history}
+                    tasks={state.recentTasks}
+                  />
+                )
+              ) : null}
+              {state.subagentPanelOpen ? (
+                // live list of recent subagent jobs.
+                // Sits to the right of the sidebar (or the
+                // main column when the sidebar is hidden).
+                // Width is capped so the main column keeps
+                // enough horizontal space; on a 120-col
+                // terminal the panel is ~42 cols.
+                // NOTE: do NOT pass `now={Date.now()}` here
+                // — that produces a fresh value every render,
+                // which forces a re-render of the whole
+                // SubagentPanel subtree (and Ink re-paints the
+                // row), which the user perceives as a visible
+                // "jumping" of the layout. The panel reads
+                // `Date.now()` internally for its duration
+                // counters; that only re-runs when something
+                // else (the panel's own setInterval) ticks.
+                <SubagentPanel
+                  state={state}
+                  width={Math.max(
+                    36,
+                    Math.min(
+                      54,
+                      Math.floor(
+                        (typeof process.stdout.columns === "number"
+                          ? process.stdout.columns
+                          : 120) * 0.35,
+                      ),
+                    ),
+                  )}
+                  onCancel={(jobId) => cancelSubagent(jobId, state, client, dispatch)}
+                  onInsert={(jobId) => insertSubagentResult(jobId, state, dispatch)}
+                  onView={(jobId) => {
+                    // R214: 'v' → loadSession + viewSubagent
+                    void client
+                      .request("loadSession", { sessionId: jobId })
+                      .then(() => dispatch({ type: "viewSubagent", jobId }))
+                      .catch((e) =>
+                        dispatch({
+                          type: "pushToast",
+                          kind: "err",
+                          text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
+                        }),
+                      );
+                  }}
+                />
+              ) : null}
+              <Box flexDirection="column" flexGrow={1}>
+                {/* toast notifications sit above the header so
                 they don't compete with the scrollback for space. */}
-            <ToastStack toasts={state.toasts} />
-            {/* layout presets control which sub-components are
+                <ToastStack toasts={state.toasts} />
+                {/* layout presets control which sub-components are
                 rendered. "full" = everything; "minimal" = no header
                 / statusbar; "focus" = scrollback + input only. */}
-            {state.layout !== "focus" && state.layout !== "minimal" ? (
-              <Header state={state} cwd={currentCwd} />
-            ) : null}
-            {/* R700 — SDD mode banner. Renders only when
+                {state.layout !== "focus" && state.layout !== "minimal" ? (
+                  <Header state={state} cwd={currentCwd} />
+                ) : null}
+                {/* R700 — SDD mode banner. Renders only when
                 state.sddRun is non-null (i.e. an active SDD run
                 exists). Sits above the scrollback so the user
                 always sees the current phase + chip strip. */}
-            {state.sddRun ? (
-              <SddMode run={state.sddRun} cwd={currentCwd} />
-            ) : null}
-            {sddReview ? (
-              <Box flexDirection="column" paddingX={1}>
-                <SddReview
-                  artefactPath={sddReview.path}
-                  currentLines={sddReview.lines}
-                  previousLines={sddReview.previousLines}
-                  maxLines={60}
-                />
-              </Box>
-            ) : null}
-            {/* R362 — the open panel. Deliberately placed HERE,
+                {state.sddRun ? <SddMode run={state.sddRun} cwd={currentCwd} /> : null}
+                {sddReview ? (
+                  <Box flexDirection="column" paddingX={1}>
+                    <SddReview
+                      artefactPath={sddReview.path}
+                      currentLines={sddReview.lines}
+                      previousLines={sddReview.previousLines}
+                      maxLines={60}
+                    />
+                  </Box>
+                ) : null}
+                {/* R362 — the open panel. Deliberately placed HERE,
                 above the scrollback and NOT as a full-screen
                 replacement: the Header, the scrollback, the input
                 box and the status bar all stay mounted and visible
@@ -3861,75 +4210,97 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                 above). The user can always see their draft and that
                 the session is alive while a panel is open; only the
                 keyboard is handed over. */}
-            {state.activePanel && meta ? (
-              <Box flexDirection="column" paddingX={1}>
-                <PanelShell
-                  title={meta.title}
-                  // Only TodoBoard lacks a keymap line of its own;
-                  // for the other eight the component prints it.
-                  hint={state.activePanel === "todos" ? meta.hint : undefined}
-                  width={panelWidth}
-                  status={state.panelStatus}
-                  loadingLabel={meta.loading}
-                  onClose={closePanel}
-                >
-                  {panelBody()}
-                </PanelShell>
-              </Box>
-            ) : null}
-            <Box flexDirection="row" flexGrow={1}>
-              <Box flexDirection="column" flexGrow={1}>
-                <Scrollback
-                  turns={state.turns}
-                  height={1000}
-                  showWelcome={showWelcome}
-                  welcomeCtx={{ model: state.model, cwd: currentCwd, sessionId: state.sessionId, mode: state.permissionMode }}
-                  collapseAll={state.collapseAll}
-                  onToggleTurn={(id) => dispatch({ type: "toggleTurn", id })}
-                  lastStopReason={state.lastStopReason}
-                  lastStopKind={state.lastStopKind}
-                  lastError={state.lastError}
-                  showThinking={state.showThinking}
-                  permissionAsk={state.permissionAsk}
-                  decisionCardExpanded={state.decisionCardExpanded}
-                />
-                {/* inline subagent spawn cards. The host
+                {state.activePanel && meta ? (
+                  <Box flexDirection="column" paddingX={1}>
+                    <PanelShell
+                      title={meta.title}
+                      // Only TodoBoard lacks a keymap line of its own;
+                      // for the other eight the component prints it.
+                      hint={state.activePanel === "todos" ? meta.hint : undefined}
+                      width={panelWidth}
+                      status={state.panelStatus}
+                      loadingLabel={meta.loading}
+                      onClose={closePanel}
+                    >
+                      {panelBody()}
+                    </PanelShell>
+                  </Box>
+                ) : null}
+                <Box flexDirection="row" flexGrow={1}>
+                  <Box flexDirection="column" flexGrow={1}>
+                    <Scrollback
+                      turns={state.turns}
+                      height={1000}
+                      showWelcome={showWelcome}
+                      welcomeCtx={{
+                        model: state.model,
+                        cwd: currentCwd,
+                        sessionId: state.sessionId,
+                        mode: state.permissionMode,
+                      }}
+                      collapseAll={state.collapseAll}
+                      onToggleTurn={(id) => dispatch({ type: "toggleTurn", id })}
+                      lastStopReason={state.lastStopReason}
+                      lastStopKind={state.lastStopKind}
+                      lastError={state.lastError}
+                      showThinking={state.showThinking}
+                      permissionAsk={state.permissionAsk}
+                      decisionCardExpanded={state.decisionCardExpanded}
+                    />
+                    {/* inline subagent spawn cards. The host
                     also calls onOpen to switch the active
                     transcript to the subagent via loadSession
                     + the viewSubagent reducer action. */}
-                <SubagentSpawnCards
-                  cards={Object.entries(state.subagentSpawnCards).map(
-                    ([eventId, card]) => ({ eventId, card })
-                  )}
-                  onOpen={(subagentId) => {
-                    void client.request("loadSession", { sessionId: subagentId })
-                      .then(() => dispatch({ type: "viewSubagent", jobId: subagentId }))
-                      .catch((e) => dispatch({
-                        type: "pushToast",
-                        kind: "err",
-                        text: `loadSession(${subagentId}) failed: ${e?.message ?? e}`,
-                      }));
-                  }}
-                  onDismiss={(subagentId) => {
-                    const eid = Object.entries(state.subagentSpawnCards)
-                      .find(([, c]) => c.subagentId === subagentId)?.[0];
-                    if (eid) dispatch({ type: "removeSubagentSpawnCard", eventId: eid });
-                  }}
-                  width={Math.max(36, Math.min(72, Math.floor((typeof process.stdout.columns === "number" ? process.stdout.columns : 120) * 0.6)))}
-                />
-                {state.showSearch ? (
-                  <SearchBar
-                    turns={state.turns}
-                    initial={state.searchQuery}
-                    onClose={() => dispatch({ type: "showSearch", show: false })}
-                    onCommit={(matches) => dispatch({
-                      type: "setSearchQuery",
-                      query: state.searchQuery,
-                      matches,
-                    })}
-                  />
-                ) : null}
-                {/*
+                    <SubagentSpawnCards
+                      cards={Object.entries(state.subagentSpawnCards).map(([eventId, card]) => ({
+                        eventId,
+                        card,
+                      }))}
+                      onOpen={(subagentId) => {
+                        void client
+                          .request("loadSession", { sessionId: subagentId })
+                          .then(() => dispatch({ type: "viewSubagent", jobId: subagentId }))
+                          .catch((e) =>
+                            dispatch({
+                              type: "pushToast",
+                              kind: "err",
+                              text: `loadSession(${subagentId}) failed: ${e?.message ?? e}`,
+                            }),
+                          );
+                      }}
+                      onDismiss={(subagentId) => {
+                        const eid = Object.entries(state.subagentSpawnCards).find(
+                          ([, c]) => c.subagentId === subagentId,
+                        )?.[0];
+                        if (eid) dispatch({ type: "removeSubagentSpawnCard", eventId: eid });
+                      }}
+                      width={Math.max(
+                        36,
+                        Math.min(
+                          72,
+                          Math.floor(
+                            (typeof process.stdout.columns === "number"
+                              ? process.stdout.columns
+                              : 120) * 0.6,
+                          ),
+                        ),
+                      )}
+                    />
+                    {state.showSearch ? (
+                      <SearchBar
+                        turns={state.turns}
+                        initial={state.searchQuery}
+                        onClose={() => dispatch({ type: "showSearch", show: false })}
+                        onCommit={(matches) =>
+                          dispatch({
+                            type: "setSearchQuery",
+                            query: state.searchQuery,
+                            matches,
+                          })
+                        }
+                      />
+                    ) : null}
+                    {/*
                   R362 — the queued-prompt strip.
                   Claude Code's contract is explicit: it "lists the queued
                   entries in the conversation until it sends them". A queue
@@ -3938,7 +4309,7 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                   strip sits directly above the input box, shows position and
                   a truncated preview, and offers a way to drop one.
                 */}
-                {/*
+                    {/*
                   R363 — the interrupt affordance.
                   Claude Code's contract: "Esc explicitly stops the
                   current response or tool call mid-turn so you can
@@ -3953,114 +4324,130 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
                   "esc to interrupt" then would be a lie (Esc is
                   latched) and showing nothing would look broken.
                 */}
-                {state.submitting && !state.pendingPrompts.length ? (
-                  <Box paddingX={1}>
-                    <Text color={state.cancelRequested ? t.warn : t.dim}>
-                      {state.cancelRequested
-                        ? "stopping... (interrupt sent)"
-                        : "esc to interrupt"}
-                    </Text>
-                  </Box>
-                ) : null}
-                {state.submitting && state.pendingPrompts.length > 0 ? (
-                  <Box paddingX={1}>
-                    <Text color={state.cancelRequested ? t.warn : t.dim}>
-                      {state.cancelRequested
-                        ? "stopping... (interrupt sent)"
-                        : "esc to interrupt (press again to drop the queue)"}
-                    </Text>
-                  </Box>
-                ) : null}
-                {state.pendingPrompts.length > 0 ? (
-                  <Box flexDirection="column" paddingX={1}>
-                    {state.pendingPrompts.map((p, i) => (
-                      <Box key={`${i}-${p.slice(0, 12)}`} flexDirection="row">
-                        <Text color={t.dim}>
-                          {i === 0 ? "queued next" : `queued ${i + 1}`}
-                          {"  "}
+                    {state.submitting && !state.pendingPrompts.length ? (
+                      <Box paddingX={1}>
+                        <Text color={state.cancelRequested ? t.warn : t.dim}>
+                          {state.cancelRequested
+                            ? "stopping... (interrupt sent)"
+                            : "esc to interrupt"}
                         </Text>
-                        <Text color={t.accent} bold>
-                          {truncateForQueue(p)}
-                        </Text>
-                        <Box flexGrow={1} />
-                        {i === 0 ? (
-                          <Text color={t.dim}>{"  (esc drops the queue)"}</Text>
-                        ) : null}
                       </Box>
-                    ))}
+                    ) : null}
+                    {state.submitting && state.pendingPrompts.length > 0 ? (
+                      <Box paddingX={1}>
+                        <Text color={state.cancelRequested ? t.warn : t.dim}>
+                          {state.cancelRequested
+                            ? "stopping... (interrupt sent)"
+                            : "esc to interrupt (press again to drop the queue)"}
+                        </Text>
+                      </Box>
+                    ) : null}
+                    {state.pendingPrompts.length > 0 ? (
+                      <Box flexDirection="column" paddingX={1}>
+                        {state.pendingPrompts.map((p, i) => (
+                          <Box key={`${i}-${p.slice(0, 12)}`} flexDirection="row">
+                            <Text color={t.dim}>
+                              {i === 0 ? "queued next" : `queued ${i + 1}`}
+                              {"  "}
+                            </Text>
+                            <Text color={t.accent} bold>
+                              {truncateForQueue(p)}
+                            </Text>
+                            <Box flexGrow={1} />
+                            {i === 0 ? (
+                              <Text color={t.dim}>{"  (esc drops the queue)"}</Text>
+                            ) : null}
+                          </Box>
+                        ))}
+                      </Box>
+                    ) : null}
+                    <InputBox
+                      state={state}
+                      onChange={(t) => dispatch({ type: "setInput", text: t })}
+                      onSubmit={handleSubmit}
+                    />
+                    {state.layout === "full" ? (
+                      <StatusBar
+                        state={state}
+                        onContinue={() => {
+                          // R375: the real thing. Before this, all three
+                          // buttons called `task/resume` / `task/pause` /
+                          // `task/kill` — none of which this daemon
+                          // registers — and the rejection was swallowed, so
+                          // the buttons did nothing.
+                          void pauseAutoContinue(false);
+                        }}
+                        onPause={() => {
+                          void pauseAutoContinue(true);
+                        }}
+                        onStop={() => {
+                          void stopActiveRun();
+                        }}
+                      />
+                    ) : null}
                   </Box>
-                ) : null}
-                <InputBox
-                  state={state}
-                  onChange={(t) => dispatch({ type: "setInput", text: t })}
-                  onSubmit={handleSubmit}
-                />
-                {state.layout === "full" ? <StatusBar
-                  state={state}
-                  onContinue={() => {
-                    // R375: the real thing. Before this, all three
-                    // buttons called `task/resume` / `task/pause` /
-                    // `task/kill` — none of which this daemon
-                    // registers — and the rejection was swallowed, so
-                    // the buttons did nothing.
-                    void pauseAutoContinue(false);
-                  }}
-                  onPause={() => {
-                    void pauseAutoContinue(true);
-                  }}
-                  onStop={() => {
-                    void stopActiveRun();
-                  }}
-                /> : null}
-              </Box>
-              {/* T-6-15: right column with session details +
+                  {/* T-6-15: right column with session details +
                   todo board + tokens. Toggleable with Ctrl+D.
                   R362: hidden while a panel is open — it mounts a
                   second TodoBoard whose keys would fight the panel's. */}
-              {state.rightPanelVisible ? (
-                /* R362: the `activePanel` guard is nested inside the
+                  {state.rightPanelVisible ? (
+                    /* R362: the `activePanel` guard is nested inside the
                    pinned ternary — see the note on the sidebar. */
-                state.activePanel ? null : (
-                <Box
-                  flexDirection="column"
-                  width={Math.max(28, Math.min(46, Math.floor((typeof process.stdout.columns === "number" ? process.stdout.columns : 120) * 0.25)))}
-                  borderStyle="single"
-                  borderColor="gray"
-                >
-                  <SessionDetailsPanel
-                    details={{
-                      id: state.sessionId,
-                      title: state.sessionId,
-                        cwd: currentCwd,
-                      model: state.model,
-                      // Use 0 as the sentinel for "unknown /
-                      // not started yet" so the panel's
-                      // formatTimeAgo() returns "—"
-                      // instead of chasing Date.now() on
-                      // every parent re-render. The
-                      // startedAt / lastActiveAt fields
-                      // are stamped by the daemon's
-                      // session/show RPC; until that
-                      // lands, the panel shows "—".
-                      startedAt: 0,
-                      lastActiveAt: 0,
-                      state: state.status,
-                      tokensIn: state.inputTokens ?? 0,
-                      tokensOut: state.outputTokens ?? 0,
-                      messageCount: state.turns.length,
-                    }}
-                    todoSummary={null}
-                  />
-                  <Text dimColor>{"─".repeat(20)}</Text>
-                  <TodoBoard todos={state.todos} currentTodoId={state.currentTodoId} maxRows={8} />
+                    state.activePanel ? null : (
+                      <Box
+                        flexDirection="column"
+                        width={Math.max(
+                          28,
+                          Math.min(
+                            46,
+                            Math.floor(
+                              (typeof process.stdout.columns === "number"
+                                ? process.stdout.columns
+                                : 120) * 0.25,
+                            ),
+                          ),
+                        )}
+                        borderStyle="single"
+                        borderColor="gray"
+                      >
+                        <SessionDetailsPanel
+                          details={{
+                            id: state.sessionId,
+                            title: state.sessionId,
+                            cwd: currentCwd,
+                            model: state.model,
+                            // Use 0 as the sentinel for "unknown /
+                            // not started yet" so the panel's
+                            // formatTimeAgo() returns "—"
+                            // instead of chasing Date.now() on
+                            // every parent re-render. The
+                            // startedAt / lastActiveAt fields
+                            // are stamped by the daemon's
+                            // session/show RPC; until that
+                            // lands, the panel shows "—".
+                            startedAt: 0,
+                            lastActiveAt: 0,
+                            state: state.status,
+                            tokensIn: state.inputTokens ?? 0,
+                            tokensOut: state.outputTokens ?? 0,
+                            messageCount: state.turns.length,
+                          }}
+                          todoSummary={null}
+                        />
+                        <Text dimColor>{"─".repeat(20)}</Text>
+                        <TodoBoard
+                          todos={state.todos}
+                          currentTodoId={state.currentTodoId}
+                          maxRows={8}
+                        />
+                      </Box>
+                    )
+                  ) : null}
                 </Box>
-                )
-              ) : null}
+              </Box>
             </Box>
-          </Box>
-        </Box>
-      )}
-      </AethercodeThemeProvider>
+          )}
+        </AethercodeThemeProvider>
       </ThemeProvider>
     </Box>
   );
@@ -4258,14 +4645,23 @@ export async function runTui(opts: TuiOptions): Promise<number> {
       // useEffect can dispatch into the reducer. process
       // is the simplest cross-cutting channel that doesn't
       // require restructuring the constructor.
-      (process as any).emit("aethercode:connectionState", state, info?.attempt ?? 0, info?.lastError ?? null);
+      (process as any).emit(
+        "aethercode:connectionState",
+        state,
+        info?.attempt ?? 0,
+        info?.lastError ?? null,
+      );
     },
   });
-  const stateRef: React.MutableRefObject<State> = { current: INITIAL } as React.MutableRefObject<State>;
+  const stateRef: React.MutableRefObject<State> = {
+    current: INITIAL,
+  } as React.MutableRefObject<State>;
   let app: InkInstance | undefined;
   try {
     await client.request("ping", undefined, { timeoutMs: 30_000 });
-    app = render(<App client={client} cwd={opts.cwd} stateRef={stateRef} />, { exitOnCtrlC: false });
+    app = render(<App client={client} cwd={opts.cwd} stateRef={stateRef} />, {
+      exitOnCtrlC: false,
+    });
     await app.waitUntilExit();
   } catch (e) {
     process.stderr.write(`ac-tui: daemon failed to start: ${(e as Error).message}\n`);

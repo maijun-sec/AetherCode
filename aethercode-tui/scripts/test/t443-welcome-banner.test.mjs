@@ -59,11 +59,26 @@ test("T-443: WelcomeBanner.tsx exports the WelcomeBannerInfo interface", () => {
   assert.match(src, /export interface WelcomeBannerInfo/);
   // All the deepagents-code fields are present.
   for (const f of [
-    "modelProvider", "modelName", "cwd", "version",
-    "threadId", "projectName", "replicaProject", "projectUrls",
-    "mcpToolCount", "mcpUnauthenticated", "mcpErrored", "mcpAwaitingReconnect",
-    "showModel", "showCwd", "hideCwd", "hideVersion",
-    "showThreadId", "debugEnabled", "experimentalEnabled", "editableInstall",
+    "modelProvider",
+    "modelName",
+    "cwd",
+    "version",
+    "threadId",
+    "projectName",
+    "replicaProject",
+    "projectUrls",
+    "mcpToolCount",
+    "mcpUnauthenticated",
+    "mcpErrored",
+    "mcpAwaitingReconnect",
+    "showModel",
+    "showCwd",
+    "hideCwd",
+    "hideVersion",
+    "showThreadId",
+    "debugEnabled",
+    "experimentalEnabled",
+    "editableInstall",
   ]) {
     assert.ok(src.includes(f), `WelcomeBannerInfo missing field: ${f}`);
   }
@@ -85,8 +100,15 @@ test("T-443: WelcomeBanner.tsx exports the ANSI_THEMES set", () => {
 
 test("T-443: WelcomeBanner.tsx renders one row per deepagents-code field", () => {
   for (const label of [
-    "model:", "directory:", "tracing:", "replica:",
-    "thread:", "mcp tools:", "mcp login:", "mcp errors:", "mcp reconnect:",
+    "model:",
+    "directory:",
+    "tracing:",
+    "replica:",
+    "thread:",
+    "mcp tools:",
+    "mcp login:",
+    "mcp errors:",
+    "mcp reconnect:",
   ]) {
     assert.ok(src.includes(label), `WelcomeBanner missing label: ${label}`);
   }
@@ -110,22 +132,46 @@ test("T-443: Welcome.tsx still exists (kept for backward compat) and adds SHORTC
 test("T-443: TypeScript compile of WelcomeBanner.tsx is clean", () => {
   const tmp = join(root, "tmp-t443-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "WelcomeBanner.tsx") + '"',
-    '"' + join(root, "src", "components", "Welcome.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "WelcomeBanner.tsx") + '"',
+      '"' + join(root, "src", "components", "Welcome.tsx") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

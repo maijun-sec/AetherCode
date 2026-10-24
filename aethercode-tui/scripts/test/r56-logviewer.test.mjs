@@ -15,16 +15,30 @@ const tmp = join(root, "tmp-r56-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 {
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "state.ts")}"`], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
@@ -48,7 +62,8 @@ test("R56: pushLog appends a log entry", () => {
 
 test("R56: pushLog caps at 200 entries", () => {
   let s = INITIAL;
-  for (let i = 0; i < 250; i++) s = reducer(s, { type: "pushLog", level: "info", message: "m" + i });
+  for (let i = 0; i < 250; i++)
+    s = reducer(s, { type: "pushLog", level: "info", message: "m" + i });
   assert.equal(s.logBuffer.length, 200);
   assert.equal(s.logBuffer[0].message, "m50");
   assert.equal(s.logBuffer[199].message, "m249");
@@ -80,7 +95,10 @@ test("R56: state.ts has logBuffer + logViewerOpen + pushLog + setLogViewerOpen",
 
 test("R56: tui.tsx has Ctrl-L binding + LogViewer render", () => {
   const tui = readFileSync(join(root, "src", "tui.tsx"), "utf-8");
-  assert.match(tui, /import\s+\{[^}]*\bLogViewer\b[^}]*\}\s+from\s+"\.\/components\/LogViewer\.js"/);
+  assert.match(
+    tui,
+    /import\s+\{[^}]*\bLogViewer\b[^}]*\}\s+from\s+"\.\/components\/LogViewer\.js"/,
+  );
   assert.match(tui, /key\.ctrl && \(input === "l" \|\| input === "L"\)/);
   assert.match(tui, /setLogViewerOpen/);
   assert.match(tui, /<LogViewer\s+entries=\{state\.logBuffer\}/);
@@ -93,19 +111,34 @@ test("R56: tui.tsx has Ctrl-L binding + LogViewer render", () => {
 test("R56: TypeScript compile of LogViewer.tsx is clean", () => {
   const tmp2 = join(root, "tmp-r56-tsc2");
   if (existsSync(tmp2)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp2] : ["-rf", tmp2]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp2] : ["-rf", tmp2],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp2, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp2,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "LogViewer.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "LogViewer.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

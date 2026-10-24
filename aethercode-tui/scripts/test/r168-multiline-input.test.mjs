@@ -39,8 +39,11 @@ test("R168: InputBox no longer uses borderStyle (no box border)", () => {
   // rendered the input inside a <Box borderStyle="round"
   // borderColor={...}> ... </Box>.
   const body = inputBoxBody(src);
-  assert.doesNotMatch(body, /borderStyle=/,
-    "InputBox body still uses borderStyle — R168 should remove it");
+  assert.doesNotMatch(
+    body,
+    /borderStyle=/,
+    "InputBox body still uses borderStyle — R168 should remove it",
+  );
 });
 
 test("R168: InputBox no longer uses ink-text-input (replaced with useInput)", () => {
@@ -88,7 +91,7 @@ test("R168: InputBox handles backspace / delete", () => {
   assert.match(body, /state\.input\.slice\(0, -1\)/);
 });
 
-test("R168: InputBox renders multi-line input as flexDirection=\"column\"", () => {
+test('R168: InputBox renders multi-line input as flexDirection="column"', () => {
   const src = readFileSync(join(root, "src", "components", "InputBox.tsx"), "utf-8");
   const body = inputBoxBody(src);
   // The pre-R168 input was a single TextInput on a single line.

@@ -20,7 +20,9 @@ export function exportToMarkdown(turns: Turn[], model: string, sessionId: string
   const lines: string[] = [];
   lines.push(`# AetherCode session ${sessionId.slice(0, 8)}`);
   lines.push("");
-  lines.push(`Model: \`${model}\`  ·  Turns: ${turns.length}  ·  Generated: ${new Date().toISOString()}`);
+  lines.push(
+    `Model: \`${model}\`  ·  Turns: ${turns.length}  ·  Generated: ${new Date().toISOString()}`,
+  );
   lines.push("");
   lines.push("---");
   lines.push("");
@@ -48,11 +50,15 @@ export function exportToMarkdown(turns: Turn[], model: string, sessionId: string
 
 /** Render the scrollback as JSON. */
 export function exportToJson(turns: Turn[]): string {
-  return JSON.stringify({
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    turns,
-  }, null, 2);
+  return JSON.stringify(
+    {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      turns,
+    },
+    null,
+    2,
+  );
 }
 
 /** Write to file. Throws on error. */

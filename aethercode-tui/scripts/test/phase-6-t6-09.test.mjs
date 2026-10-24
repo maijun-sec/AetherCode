@@ -44,8 +44,10 @@ test("T-6-09: ConsentModal.tsx exists and exports the 10-option modal + pure hel
 const tmp = join(root, "tmp-t6-09-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "consent", "_t6_09_helpers.ts");
@@ -56,13 +58,28 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
 {
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
@@ -167,14 +184,19 @@ test("T-6-09: ConsentModal.tsx wires useInput for ↑/↓/Enter/Esc + numeric qu
 // ----- 8. tsc: ConsentModal.tsx compiles cleanly -----------------------
 
 test("T-6-09: TypeScript compile of ConsentModal.tsx is clean", () => {
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "consent", "ConsentModal.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "consent", "ConsentModal.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }
   assert.equal(r.status, 0, "tsc compile failed for T-6-09 ConsentModal");
 });
 
-try { writeFileSync(shimPath, "", "utf-8"); /* leave a no-op for the next test */ } catch { /* ignore */ }
+try {
+  writeFileSync(shimPath, "", "utf-8"); /* leave a no-op for the next test */
+} catch {
+  /* ignore */
+}

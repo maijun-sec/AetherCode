@@ -230,9 +230,7 @@ export const ConsentPrompt: React.FC<ConsentPromptProps> = ({
         const decisionColor = isAllow ? "green" : "red";
         return (
           <Box key={opt.index} flexDirection="row">
-            <Text color={isHighlighted ? "cyan" : undefined}>
-              {isHighlighted ? "▶" : " "}{" "}
-            </Text>
+            <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
             <Text color={isHighlighted ? "cyan" : undefined} bold={isHighlighted}>
               {String(opt.index).padStart(2, " ")}.{" "}
             </Text>
@@ -241,17 +239,13 @@ export const ConsentPrompt: React.FC<ConsentPromptProps> = ({
             </Text>
             <Text> </Text>
             <Text color={isHighlighted ? "white" : undefined}>{opt.label}</Text>
-            {opt.wildcardSubCategory ? (
-              <Text dimColor>{" "}({SCOPE_LABEL[opt.scope]})</Text>
-            ) : null}
+            {opt.wildcardSubCategory ? <Text dimColor> ({SCOPE_LABEL[opt.scope]})</Text> : null}
           </Box>
         );
       })}
 
       <Text> </Text>
-      <Text dimColor>
-        ↑/↓ navigate · Enter confirm · 1-0 quick · ? help · Esc cancel
-      </Text>
+      <Text dimColor>↑/↓ navigate · Enter confirm · 1-0 quick · ? help · Esc cancel</Text>
     </Box>
   );
 };
@@ -267,15 +261,11 @@ const HelpView: React.FC<{
   projectId?: string;
 }> = ({ category, projectId }) => {
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Text>
-        <Text color="cyan" bold>Why is this risky?</Text>
+        <Text color="cyan" bold>
+          Why is this risky?
+        </Text>
       </Text>
       <Text> </Text>
       <Text>
@@ -303,21 +293,21 @@ const HelpView: React.FC<{
       ) : (
         category.matchedRules.map((r, i) => (
           <Text key={i}>
-            <Text color="yellow">  • {r}</Text>
+            <Text color="yellow"> • {r}</Text>
           </Text>
         ))
       )}
       <Text> </Text>
       <Text dimColor>Default rule table (excerpt):</Text>
-      <Text dimColor>  read_file / glob / grep / ls       — low</Text>
-      <Text dimColor>  bash "ls …" / bash "cat …"           — medium</Text>
-      <Text dimColor>  bash "rm …" / "mv …"                — high  (shell.destructive)</Text>
-      <Text dimColor>  bash "npm install" / "pip install"  — high  (shell.package_install)</Text>
-      <Text dimColor>  write_file to existing file        — medium (file.overwrite_existing)</Text>
-      <Text dimColor>  delete_file                          — high  (file.delete)</Text>
-      <Text dimColor>  git push --force / git reset --hard  — high  (shell.git_mutation)</Text>
-      <Text dimColor>  mcp_* tool                           — high  (mcp.tool_invocation)</Text>
-      <Text dimColor>  python_run with exec/eval           — high  (code.python_run)</Text>
+      <Text dimColor> read_file / glob / grep / ls — low</Text>
+      <Text dimColor> bash "ls …" / bash "cat …" — medium</Text>
+      <Text dimColor> bash "rm …" / "mv …" — high (shell.destructive)</Text>
+      <Text dimColor> bash "npm install" / "pip install" — high (shell.package_install)</Text>
+      <Text dimColor> write_file to existing file — medium (file.overwrite_existing)</Text>
+      <Text dimColor> delete_file — high (file.delete)</Text>
+      <Text dimColor> git push --force / git reset --hard — high (shell.git_mutation)</Text>
+      <Text dimColor> mcp_* tool — high (mcp.tool_invocation)</Text>
+      <Text dimColor> python_run with exec/eval — high (code.python_run)</Text>
       <Text> </Text>
       <Text dimColor>Press ? or Esc to return to the options.</Text>
     </Box>

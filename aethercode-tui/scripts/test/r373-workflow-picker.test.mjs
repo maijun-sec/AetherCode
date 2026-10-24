@@ -63,16 +63,41 @@ const tmp = join(root, "tmp-r373-workflow-picker");
 
 const tuiSrc = codeOf(readFileSync(join(root, "src", "tui.tsx"), "utf-8"), "tui.tsx");
 const lineSrc = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
-const rowsSrc = codeOf(readFileSync(join(root, "src", "workflowRows.ts"), "utf-8"), "workflowRows.ts");
+const rowsSrc = codeOf(
+  readFileSync(join(root, "src", "workflowRows.ts"), "utf-8"),
+  "workflowRows.ts",
+);
 const pickerSrc = codeOf(
   readFileSync(join(root, "src", "components", "WorkflowPicker.tsx"), "utf-8"),
   "WorkflowPicker.tsx",
 );
 
-const methodsPath = join(repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java");
-const httpPath = join(repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java");
+const methodsPath = join(
+  repo,
+  "aethercode",
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "methods",
+  "AetherCodeMethods.java",
+);
+const httpPath = join(
+  repo,
+  "aethercode",
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "http",
+  "HttpJsonRpcServer.java",
+);
 const methodsCode = javaCode(readFileSync(methodsPath, "utf-8"));
 const httpCode = javaCode(readFileSync(httpPath, "utf-8"));
 
@@ -120,14 +145,30 @@ if (existsSync(tmp)) {
 mkdirSync(tmp, { recursive: true });
 
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-const compile = spawnSync(`"${tscBin}"`, [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
-  `"${join(root, "src", "workflowRows.ts")}"`,
-  `"${join(root, "src", "state.ts")}"`,
-], { encoding: "utf-8", shell: true });
+const compile = spawnSync(
+  `"${tscBin}"`,
+  [
+    "--outDir",
+    join(tmp, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    `"${join(root, "src", "workflowRows.ts")}"`,
+    `"${join(root, "src", "state.ts")}"`,
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (compile.status !== 0) {
   console.error("tsc failed:\n" + compile.stdout + "\n" + compile.stderr);
   process.exit(1);
@@ -146,27 +187,38 @@ test("the workflow-picker row claims BOTH renderers", () => {
   // the full derivation. This gate only needs the ONE row, so it
   // reads the source — the row is an object literal, and
   // `enclosingObject` scopes the read to it.
-  const src = codeOf(readFileSync(join(root, "src", "panelIntents.ts"), "utf-8"), "panelIntents.ts");
-  const row = enclosingObject(src, /id:\s*'workflow-picker'/);
-  assert.ok(/ink:\s*'mounted'/.test(row),
-    "the workflow-picker row must claim Ink is mounted:\n" + row);
-  assert.ok(/line:\s*'rendered'/.test(row),
-    "the workflow-picker row must claim line mode is rendered:\n" + row);
-  assert.ok(!/blocker:/.test(row),
-    "a fully-mounted row must not carry a blocker:\n" + row);
-  assert.ok(/component:\s*'components\/WorkflowPicker\.tsx'/.test(row),
-    "the row must name the component that implements it:\n" + row);
+  const src = codeOf(
+    readFileSync(join(root, "src", "panelIntents.ts"), "utf-8"),
+    "panelIntents.ts",
+  );
+  const row = enclosingObject(src, /id:\s*['"]workflow-picker['"]/);
+  assert.ok(
+    /ink:\s*['"]mounted['"]/.test(row),
+    "the workflow-picker row must claim Ink is mounted:\n" + row,
+  );
+  assert.ok(
+    /line:\s*['"]rendered['"]/.test(row),
+    "the workflow-picker row must claim line mode is rendered:\n" + row,
+  );
+  assert.ok(!/blocker:/.test(row), "a fully-mounted row must not carry a blocker:\n" + row);
+  assert.ok(
+    /component:\s*["']components\/WorkflowPicker\.tsx["']/.test(row),
+    "the row must name the component that implements it:\n" + row,
+  );
 });
 
 // --- reachability -----------------------------------------------------------
 
 test("both renderers claim the __WORKFLOW_PICKER__ sentinel", () => {
-  assert.ok(/case\s+"__WORKFLOW_PICKER__":/.test(lineSrc),
-    "line mode has no arm for __WORKFLOW_PICKER__");
-  assert.ok(/"workflow-picker":\s*"workflows"/.test(tuiSrc),
-    "PANEL_BY_INTENT does not map workflow-picker to a panel");
-  assert.ok(/case\s+"workflows":/.test(tuiSrc),
-    "tui.tsx has no case for the workflows panel");
+  assert.ok(
+    /case\s+"__WORKFLOW_PICKER__":/.test(lineSrc),
+    "line mode has no arm for __WORKFLOW_PICKER__",
+  );
+  assert.ok(
+    /"workflow-picker":\s*"workflows"/.test(tuiSrc),
+    "PANEL_BY_INTENT does not map workflow-picker to a panel",
+  );
+  assert.ok(/case\s+"workflows":/.test(tuiSrc), "tui.tsx has no case for the workflows panel");
 });
 
 test("the Ink panel is reachable through the sentinel, not a private path", () => {
@@ -183,68 +235,97 @@ test("the Ink panel is reachable through the sentinel, not a private path", () =
   const at = tuiSrc.search(/const panelLocal = slash\?\.local;/);
   assert.notEqual(at, -1, "the sentinel claim block moved — re-anchor this test");
   const claim = block(tuiSrc, /const panelLocal = slash\?\.local;/);
-  assert.ok(/intentForSentinel\(/.test(claim),
-    "the panel claim no longer goes through the registry:\n" + claim);
-  assert.ok(/PANEL_BY_INTENT\[/.test(claim),
-    "the panel claim no longer goes through PANEL_BY_INTENT:\n" + claim);
-  assert.ok(/type:\s*"openPanel"/.test(claim),
-    "the panel claim does not open a panel:\n" + claim);
+  assert.ok(
+    /intentForSentinel\(/.test(claim),
+    "the panel claim no longer goes through the registry:\n" + claim,
+  );
+  assert.ok(
+    /PANEL_BY_INTENT\[/.test(claim),
+    "the panel claim no longer goes through PANEL_BY_INTENT:\n" + claim,
+  );
+  assert.ok(/type:\s*"openPanel"/.test(claim), "the panel claim does not open a panel:\n" + claim);
 });
 
 // --- the daemon contract ----------------------------------------------------
 
 test("the Ink panel fetches with the daemon's REAL method name", () => {
   const fetchBlock = block(tuiSrc, /if \(panel === "workflows"\)/);
-  assert.ok(/request\("listWorkflows"/.test(fetchBlock),
-    "the workflows panel does not call listWorkflows:\n" + fetchBlock);
-  assert.ok(!/request\("workflow\/list"/.test(fetchBlock),
-    "the panel calls `workflow/list`, which lives on SupervisorRpcServer — "
-    + "a separate CLI the TUI never starts");
+  assert.ok(
+    /request\("listWorkflows"/.test(fetchBlock),
+    "the workflows panel does not call listWorkflows:\n" + fetchBlock,
+  );
+  assert.ok(
+    !/request\("workflow\/list"/.test(fetchBlock),
+    "the panel calls `workflow/list`, which lives on SupervisorRpcServer — " +
+      "a separate CLI the TUI never starts",
+  );
 });
 
 test("the run uses the daemon's REAL method name and sends the id", () => {
   const runBlock = block(tuiSrc, /case "workflows":/);
-  assert.ok(/request\("runWorkflow"/.test(runBlock),
-    "the workflows panel does not call runWorkflow:\n" + runBlock);
-  assert.ok(!/request\("workflow\/run"/.test(runBlock),
-    "the panel calls `workflow/run`, which lives on SupervisorRpcServer");
+  assert.ok(
+    /request\("runWorkflow"/.test(runBlock),
+    "the workflows panel does not call runWorkflow:\n" + runBlock,
+  );
+  assert.ok(
+    !/request\("workflow\/run"/.test(runBlock),
+    "the panel calls `workflow/run`, which lives on SupervisorRpcServer",
+  );
   // The DECISIVE part: the `name` param must be the id, not the
   // display name. `runWorkflow` resolves a FILE.
-  assert.ok(/request\("runWorkflow",\s*\{\s*name:\s*id\s*\}/.test(runBlock),
-    "runWorkflow is not sent the addressable id:\n" + runBlock);
-  assert.ok(!/request\("runWorkflow",\s*\{\s*name:\s*name\s*\}/.test(runBlock),
-    "runWorkflow is sent the DISPLAY name, which does not resolve a file");
+  assert.ok(
+    /request\("runWorkflow",\s*\{\s*name:\s*id\s*\}/.test(runBlock),
+    "runWorkflow is not sent the addressable id:\n" + runBlock,
+  );
+  assert.ok(
+    !/request\("runWorkflow",\s*\{\s*name:\s*name\s*\}/.test(runBlock),
+    "runWorkflow is sent the DISPLAY name, which does not resolve a file",
+  );
 });
 
 test("the picker hands the id to onRun, never the display name", () => {
-  assert.ok(/onRun\(w\.id\)/.test(pickerSrc),
-    "the picker calls onRun with something other than the id:\n" + pickerSrc);
+  assert.ok(
+    /onRun\(w\.id\)/.test(pickerSrc),
+    "the picker calls onRun with something other than the id:\n" + pickerSrc,
+  );
 });
 
 test("the run is reported as ACCEPTED, not finished", () => {
   const runBlock = block(tuiSrc, /case "workflows":/);
-  assert.ok(/accepted/.test(runBlock),
-    "the toast does not use the daemon's own word for this state");
-  assert.ok(!/\bstarted\b|\bfinished\b|\bcompleted\b/.test(runBlock),
-    "the toast claims an outcome the RPC did not report:\n" + runBlock);
+  assert.ok(
+    /accepted/.test(runBlock),
+    "the toast does not use the daemon's own word for this state",
+  );
+  assert.ok(
+    !/\bstarted\b|\bfinished\b|\bcompleted\b/.test(runBlock),
+    "the toast claims an outcome the RPC did not report:\n" + runBlock,
+  );
 });
 
 test("both renderers call the daemon's real method names", () => {
   const lineBlock = block(lineSrc, /async function panelWorkflow\(/);
-  assert.ok(/probe\(ctx, "listWorkflows"\)/.test(lineBlock),
-    "line mode does not probe listWorkflows:\n" + lineBlock);
-  assert.ok(/probe\(ctx, "runWorkflow"/.test(lineBlock),
-    "line mode does not probe runWorkflow:\n" + lineBlock);
+  assert.ok(
+    /probe\(ctx, "listWorkflows"\)/.test(lineBlock),
+    "line mode does not probe listWorkflows:\n" + lineBlock,
+  );
+  assert.ok(
+    /probe\(ctx, "runWorkflow"/.test(lineBlock),
+    "line mode does not probe runWorkflow:\n" + lineBlock,
+  );
 });
 
 test("line mode sends the ADDRESSABLE id, not the display name", () => {
   // R373. Line mode had the same bug the Ink panel would have had:
   // it picked `nameOf(w)` and sent that to `runWorkflow`.
   const lineBlock = block(lineSrc, /async function panelWorkflow\(/);
-  assert.ok(/value:\s*idOf\(w\)/.test(lineBlock),
-    "line mode sends the display name to runWorkflow:\n" + lineBlock);
-  assert.ok(/const idOf = \(w: unknown\): string => fieldStr\(w, \["id", "name"\], ""\)/.test(lineBlock),
-    "line mode has no id reader:\n" + lineBlock);
+  assert.ok(
+    /value:\s*idOf\(w\)/.test(lineBlock),
+    "line mode sends the display name to runWorkflow:\n" + lineBlock,
+  );
+  assert.ok(
+    /const idOf = \(w: unknown\): string => fieldStr\(w, \["id", "name"\], ""\)/.test(lineBlock),
+    "line mode has no id reader:\n" + lineBlock,
+  );
 });
 
 // --- the daemon registers both methods on BOTH transports -------------------
@@ -253,14 +334,19 @@ test("the daemon serves listWorkflows and runWorkflow on BOTH transports", () =>
   // The TUI speaks stdio (it spawns the jar itself); the desktop
   // speaks HTTP+WS. A stdio-only registration is the R720/R367/R371
   // shape all over again.
-  assert.ok(/dispatcher\.register\("listWorkflows"/.test(methodsCode),
-    "listWorkflows is not on the stdio dispatcher");
-  assert.ok(/dispatcher\.register\("runWorkflow"/.test(methodsCode),
-    "runWorkflow is not on the stdio dispatcher");
-  assert.ok(/case "listWorkflows"/.test(httpCode),
-    "HttpJsonRpcServer does not route listWorkflows");
-  assert.ok(/case "runWorkflow"/.test(httpCode),
-    "HttpJsonRpcServer does not route runWorkflow");
+  assert.ok(
+    /dispatcher\.register\("listWorkflows"/.test(methodsCode),
+    "listWorkflows is not on the stdio dispatcher",
+  );
+  assert.ok(
+    /dispatcher\.register\("runWorkflow"/.test(methodsCode),
+    "runWorkflow is not on the stdio dispatcher",
+  );
+  assert.ok(
+    /case "listWorkflows"/.test(httpCode),
+    "HttpJsonRpcServer does not route listWorkflows",
+  );
+  assert.ok(/case "runWorkflow"/.test(httpCode), "HttpJsonRpcServer does not route runWorkflow");
 });
 
 test("every RPC the workflow surfaces call is registered on the daemon", () => {
@@ -284,12 +370,16 @@ test("every RPC the workflow surfaces call is registered on the daemon", () => {
   const lineBlock = block(lineSrc, /async function panelWorkflow\(/);
   for (const m of lineBlock.matchAll(/probe\(ctx, "([^"]+)"/g)) called.add(m[1]);
 
-  assert.ok(called.size >= 2,
-    `only ${called.size} workflow RPC(s) found — the anchors probably moved`);
+  assert.ok(
+    called.size >= 2,
+    `only ${called.size} workflow RPC(s) found — the anchors probably moved`,
+  );
   for (const m of called) {
-    assert.ok(new RegExp(`dispatcher\\.register\\("${m}"`).test(methodsCode),
+    assert.ok(
+      new RegExp(`dispatcher\\.register\\("${m}"`).test(methodsCode),
       `the TUI calls "${m}" but the daemon does not register it — every ` +
-      `call would be -32601 method not found`);
+        `call would be -32601 method not found`,
+    );
   }
 });
 
@@ -297,17 +387,27 @@ test("the daemon publishes the addressable id and the unreadable files", () => {
   // Without `id` the client cannot address what it was shown; without
   // `skipped` an empty list cannot say WHY it is empty.
   const listBlock = block(methodsCode, /public Object listWorkflows\(/);
-  assert.ok(/m\.put\("id"/.test(listBlock),
-    "listWorkflows does not publish an addressable id:\n" + listBlock);
-  assert.ok(/r\.put\("skipped"/.test(listBlock),
-    "listWorkflows does not publish the files it could not read:\n" + listBlock);
+  assert.ok(
+    /m\.put\("id"/.test(listBlock),
+    "listWorkflows does not publish an addressable id:\n" + listBlock,
+  );
+  assert.ok(
+    /r\.put\("skipped"/.test(listBlock),
+    "listWorkflows does not publish the files it could not read:\n" + listBlock,
+  );
 });
 
 // --- behaviour: the normaliser ---------------------------------------------
 
 test("the normaliser keeps the display name and the addressable id apart", () => {
   const row = normalizeWorkflowRow(
-    { name: "ship-it", id: "deploy.yaml", description: "ship it", stepCount: 2, inputs: ["target"] },
+    {
+      name: "ship-it",
+      id: "deploy.yaml",
+      description: "ship it",
+      stepCount: 2,
+      inputs: ["target"],
+    },
     0,
   );
   assert.equal(row.name, "ship-it", "the display name is the declared name");
@@ -370,10 +470,14 @@ test("an empty directory says so, and says WHERE", () => {
   const st = workflowEmptyState([], [], "D:/proj/.aethercode/workflows");
   assert.ok(st, "an empty list must have an empty state");
   assert.equal(st.tone, "info", "an empty directory is not a problem");
-  assert.ok(st.lines.some((l) => l.includes("no workflows defined")),
-    "the empty state does not say the directory is empty:\n" + st.lines.join(" | "));
-  assert.ok(st.lines.some((l) => l.includes("D:/proj/.aethercode/workflows")),
-    "the empty state does not say where to put one:\n" + st.lines.join(" | "));
+  assert.ok(
+    st.lines.some((l) => l.includes("no workflows defined")),
+    "the empty state does not say the directory is empty:\n" + st.lines.join(" | "),
+  );
+  assert.ok(
+    st.lines.some((l) => l.includes("D:/proj/.aethercode/workflows")),
+    "the empty state does not say where to put one:\n" + st.lines.join(" | "),
+  );
 });
 
 test("unreadable files are NOT reported as an empty directory", () => {
@@ -382,26 +486,36 @@ test("unreadable files are NOT reported as an empty directory", () => {
   const st = workflowEmptyState([], ["broken.yaml", "locked.yml"], "D:/p/wf");
   assert.ok(st, "an empty list must have an empty state");
   assert.equal(st.tone, "warn", "unreadable files are a problem the user can fix");
-  assert.ok(st.lines.some((l) => l.includes("2 workflow files could not be read")),
-    "the empty state does not report the unreadable files:\n" + st.lines.join(" | "));
-  assert.ok(st.lines.some((l) => l.includes("broken.yaml")),
-    "the unreadable file is not named:\n" + st.lines.join(" | "));
-  assert.ok(!st.lines.some((l) => l.includes("no workflows defined")),
-    "the empty state claims the directory is empty when it is not:\n" + st.lines.join(" | "));
+  assert.ok(
+    st.lines.some((l) => l.includes("2 workflow files could not be read")),
+    "the empty state does not report the unreadable files:\n" + st.lines.join(" | "),
+  );
+  assert.ok(
+    st.lines.some((l) => l.includes("broken.yaml")),
+    "the unreadable file is not named:\n" + st.lines.join(" | "),
+  );
+  assert.ok(
+    !st.lines.some((l) => l.includes("no workflows defined")),
+    "the empty state claims the directory is empty when it is not:\n" + st.lines.join(" | "),
+  );
 });
 
 test("one unreadable file reads as one file", () => {
   const st = workflowEmptyState([], ["broken.yaml"], null);
-  assert.ok(st.lines.some((l) => l.includes("1 workflow file could not be read")),
-    "the count is not singularised:\n" + st.lines.join(" | "));
+  assert.ok(
+    st.lines.some((l) => l.includes("1 workflow file could not be read")),
+    "the count is not singularised:\n" + st.lines.join(" | "),
+  );
 });
 
 test("a daemon that has not said where it scans does not invent a path", () => {
   const st = workflowEmptyState([], [], null);
   assert.ok(st, "an empty list must have an empty state");
   assert.equal(st.tone, "info");
-  assert.ok(st.lines.some((l) => l.includes("has not said which directory")),
-    "the empty state invents a directory:\n" + st.lines.join(" | "));
+  assert.ok(
+    st.lines.some((l) => l.includes("has not said which directory")),
+    "the empty state invents a directory:\n" + st.lines.join(" | "),
+  );
 });
 
 test("a non-empty list has no empty state", () => {
@@ -443,33 +557,51 @@ test("the workflow row type is declared ONCE", () => {
   // Two declarations of "a workflow" drift, and the drift shows up as
   // a panel that renders a field the reducer dropped.
   const stateSrc = codeOf(readFileSync(join(root, "src", "state.ts"), "utf-8"), "state.ts");
-  assert.ok(!/export interface WorkflowRow\s*\{/.test(stateSrc),
-    "state.ts declares its own WorkflowRow — the type must live in workflowRows.ts");
-  assert.ok(/export type \{ WorkflowRow \} from "\.\/workflowRows\.js"/.test(stateSrc),
-    "state.ts does not re-export the shared WorkflowRow");
-  assert.ok(/export interface WorkflowRow\s*\{/.test(rowsSrc),
-    "workflowRows.ts does not declare WorkflowRow");
+  assert.ok(
+    !/export interface WorkflowRow\s*\{/.test(stateSrc),
+    "state.ts declares its own WorkflowRow — the type must live in workflowRows.ts",
+  );
+  assert.ok(
+    /export type \{ WorkflowRow \} from "\.\/workflowRows\.js"/.test(stateSrc),
+    "state.ts does not re-export the shared WorkflowRow",
+  );
+  assert.ok(
+    /export interface WorkflowRow\s*\{/.test(rowsSrc),
+    "workflowRows.ts does not declare WorkflowRow",
+  );
 });
 
 test("both renderers share the empty-state copy", () => {
-  assert.ok(/export function workflowEmptyCopy\(/.test(rowsSrc),
-    "the shared empty-state copy is missing");
-  assert.ok(/export function workflowEmptyState\(/.test(rowsSrc),
-    "the shared empty-state selector is missing");
+  assert.ok(
+    /export function workflowEmptyCopy\(/.test(rowsSrc),
+    "the shared empty-state copy is missing",
+  );
+  assert.ok(
+    /export function workflowEmptyState\(/.test(rowsSrc),
+    "the shared empty-state selector is missing",
+  );
   // The CALL, not the import. `import { workflowEmptyState } from …`
   // contains the name, so a plain `/workflowEmptyState/` assertion
   // stays green when a renderer stops calling it and keeps only the
   // unused import — which is the "a source pin cannot see a dead
   // branch" trap. The open paren is what distinguishes a call from an
   // import.
-  assert.ok(/workflowEmptyState\(/.test(pickerSrc),
-    "the Ink panel does not CALL the shared empty state:\n" + pickerSrc);
-  assert.ok(/workflowEmptyCopy\(/.test(lineSrc),
-    "line mode does not CALL the shared empty-state copy:\n" + lineSrc);
+  assert.ok(
+    /workflowEmptyState\(/.test(pickerSrc),
+    "the Ink panel does not CALL the shared empty state:\n" + pickerSrc,
+  );
+  assert.ok(
+    /workflowEmptyCopy\(/.test(lineSrc),
+    "line mode does not CALL the shared empty-state copy:\n" + lineSrc,
+  );
   // ...and both come from the SAME module, so the two renderers
   // cannot drift apart.
-  assert.ok(/from "\.\.\/workflowRows\.js"/.test(pickerSrc),
-    "the Ink panel does not take its empty state from workflowRows.ts");
-  assert.ok(/from "\.\/workflowRows\.js"/.test(lineSrc),
-    "line mode does not take its empty state from workflowRows.ts");
+  assert.ok(
+    /from "\.\.\/workflowRows\.js"/.test(pickerSrc),
+    "the Ink panel does not take its empty state from workflowRows.ts",
+  );
+  assert.ok(
+    /from "\.\/workflowRows\.js"/.test(lineSrc),
+    "line mode does not take its empty state from workflowRows.ts",
+  );
 });

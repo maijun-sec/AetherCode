@@ -35,11 +35,7 @@
 import React, { useState, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import { t, icon } from "../../theme.js";
-import {
-  PresetSelector,
-  PRESETS,
-  type PresetId,
-} from "./PresetSelector.js";
+import { PresetSelector, PRESETS, type PresetId } from "./PresetSelector.js";
 
 // --------------------------------------------------------------------
 //  Types
@@ -103,9 +99,7 @@ export function groupGrantsByScope(
   const order: Grant["scope"][] = ["session", "project", "user"];
   const out: Array<{ scope: Grant["scope"]; items: Grant[] }> = [];
   for (const s of order) {
-    const items = grants
-      .filter((g) => g.scope === s)
-      .sort((a, b) => b.createdAt - a.createdAt);
+    const items = grants.filter((g) => g.scope === s).sort((a, b) => b.createdAt - a.createdAt);
     if (items.length > 0) out.push({ scope: s, items });
   }
   return out;
@@ -158,7 +152,9 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
   initialScopeFilter = "all",
   initialCategoryFilter = "",
 }) => {
-  const [scopeFilter, setScopeFilter] = useState<"all" | "session" | "project" | "user">(initialScopeFilter);
+  const [scopeFilter, setScopeFilter] = useState<"all" | "session" | "project" | "user">(
+    initialScopeFilter,
+  );
   const [categoryFilter, setCategoryFilter] = useState<string>(initialCategoryFilter);
   const [focusId, setFocusId] = useState<string | null>(null);
 
@@ -198,19 +194,26 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
       return;
     }
     // 1/2/3 — switch scope filter
-    if (input === "1") { setScopeFilter("all"); return; }
-    if (input === "2") { setScopeFilter("session"); return; }
-    if (input === "3") { setScopeFilter("project"); return; }
-    if (input === "4") { setScopeFilter("user"); return; }
+    if (input === "1") {
+      setScopeFilter("all");
+      return;
+    }
+    if (input === "2") {
+      setScopeFilter("session");
+      return;
+    }
+    if (input === "3") {
+      setScopeFilter("project");
+      return;
+    }
+    if (input === "4") {
+      setScopeFilter("user");
+      return;
+    }
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={t.dim}
-      paddingX={1}
-    >
+    <Box flexDirection="column" borderStyle="round" borderColor={t.dim} paddingX={1}>
       <Box>
         <Text color={t.brand} bold>
           {icon.tool} Grants Manager
@@ -222,7 +225,13 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
       <Text> </Text>
       <Box flexDirection="row">
         {/* LEFT — list */}
-        <Box flexDirection="column" width={36} borderStyle="single" borderColor={t.dim} paddingX={1}>
+        <Box
+          flexDirection="column"
+          width={36}
+          borderStyle="single"
+          borderColor={t.dim}
+          paddingX={1}
+        >
           <Text bold>grants ({filtered.length})</Text>
           {filtered.length === 0 ? (
             <Text dimColor>(no grants — change filter or /grants clear)</Text>
@@ -234,15 +243,13 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
                   const isFocused = g.id === focusId;
                   return (
                     <Box key={g.id} flexDirection="column">
-                      <Text
-                        color={isFocused ? "cyan" : undefined}
-                        bold={isFocused}
-                      >
+                      <Text color={isFocused ? "cyan" : undefined} bold={isFocused}>
                         {isFocused ? "▶ " : "  "}
                         {DECISION_ICON[g.decision]} {g.category || "(uncategorized)"}
                       </Text>
                       <Text dimColor>
-                        {"    "}{g.scopeId} · {fmtRel(g.createdAt)}
+                        {"    "}
+                        {g.scopeId} · {fmtRel(g.createdAt)}
                       </Text>
                     </Box>
                   );
@@ -253,48 +260,55 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
         </Box>
 
         {/* MIDDLE — details */}
-        <Box flexDirection="column" flexGrow={1} marginLeft={1} borderStyle="single" borderColor={t.dim} paddingX={1}>
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          marginLeft={1}
+          borderStyle="single"
+          borderColor={t.dim}
+          paddingX={1}
+        >
           <Text bold>details</Text>
           {focused ? (
             <Box flexDirection="column" marginTop={1}>
               <Text>
-                <Text dimColor>id:        </Text>
+                <Text dimColor>id: </Text>
                 <Text>{focused.id}</Text>
               </Text>
               <Text>
-                <Text dimColor>scope:     </Text>
+                <Text dimColor>scope: </Text>
                 <Text bold>{SCOPE_LABEL[focused.scope]}</Text>
                 <Text dimColor> ({focused.scopeId})</Text>
               </Text>
               <Text>
-                <Text dimColor>category:  </Text>
+                <Text dimColor>category: </Text>
                 <Text>{focused.category || "(uncategorized)"}</Text>
               </Text>
               <Text>
-                <Text dimColor>decision:  </Text>
+                <Text dimColor>decision: </Text>
                 <Text color={DECISION_COLOR[focused.decision]} bold>
                   {focused.decision.toUpperCase()} {DECISION_ICON[focused.decision]}
                 </Text>
               </Text>
               <Text>
-                <Text dimColor>reason:    </Text>
+                <Text dimColor>reason: </Text>
                 <Text>{focused.reason || "(none)"}</Text>
               </Text>
               <Text>
-                <Text dimColor>created:   </Text>
+                <Text dimColor>created: </Text>
                 <Text>{fmtTs(focused.createdAt)}</Text>
               </Text>
               <Text>
-                <Text dimColor>expires:   </Text>
-                <Text>
-                  {focused.expiresAt
-                    ? fmtTs(focused.expiresAt)
-                    : "(never)"}
-                </Text>
+                <Text dimColor>expires: </Text>
+                <Text>{focused.expiresAt ? fmtTs(focused.expiresAt) : "(never)"}</Text>
               </Text>
               {onRevoke ? (
                 <Text dimColor>
-                  press <Text color={t.err} bold>r</Text> to revoke
+                  press{" "}
+                  <Text color={t.err} bold>
+                    r
+                  </Text>{" "}
+                  to revoke
                 </Text>
               ) : null}
             </Box>
@@ -304,7 +318,14 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
         </Box>
 
         {/* RIGHT — filter + preset */}
-        <Box flexDirection="column" width={32} marginLeft={1} borderStyle="single" borderColor={t.dim} paddingX={1}>
+        <Box
+          flexDirection="column"
+          width={32}
+          marginLeft={1}
+          borderStyle="single"
+          borderColor={t.dim}
+          paddingX={1}
+        >
           <Text bold>filter</Text>
           <Text>
             <Text dimColor>scope: </Text>
@@ -313,19 +334,25 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
             </Text>
           </Text>
           <Text>
-            <Text dimColor>      </Text>
-            <Text color={scopeFilter === "session" ? "cyan" : undefined} bold={scopeFilter === "session"}>
+            <Text dimColor> </Text>
+            <Text
+              color={scopeFilter === "session" ? "cyan" : undefined}
+              bold={scopeFilter === "session"}
+            >
               [2] session
             </Text>
           </Text>
           <Text>
-            <Text dimColor>      </Text>
-            <Text color={scopeFilter === "project" ? "cyan" : undefined} bold={scopeFilter === "project"}>
+            <Text dimColor> </Text>
+            <Text
+              color={scopeFilter === "project" ? "cyan" : undefined}
+              bold={scopeFilter === "project"}
+            >
               [3] project
             </Text>
           </Text>
           <Text>
-            <Text dimColor>      </Text>
+            <Text dimColor> </Text>
             <Text color={scopeFilter === "user" ? "cyan" : undefined} bold={scopeFilter === "user"}>
               [4] user
             </Text>
@@ -336,17 +363,12 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
             <Text color="cyan">{categoryFilter || "(any)"}</Text>
           </Text>
           <Text> </Text>
-          <PresetSelector
-            active={activePreset}
-            onApply={onApplyPreset}
-            compact
-          />
+          <PresetSelector active={activePreset} onApply={onApplyPreset} compact />
         </Box>
       </Box>
       <Text> </Text>
       <Text dimColor>
-        ↑/↓ navigate · r revoke · 1-4 scope filter · {" "}
-        {PRESETS.length} presets available
+        ↑/↓ navigate · r revoke · 1-4 scope filter · {PRESETS.length} presets available
       </Text>
     </Box>
   );

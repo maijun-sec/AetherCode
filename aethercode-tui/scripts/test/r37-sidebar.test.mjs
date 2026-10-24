@@ -16,16 +16,30 @@ const tmp = join(root, "tmp-r37-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 {
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "state.ts")}"`], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
@@ -49,7 +63,10 @@ test("R37: toggleSidebar flips sidebarVisible", () => {
 
 test("R37: setRecentTasks replaces and caps at 20", () => {
   const many = Array.from({ length: 50 }, (_, i) => ({
-    id: "t" + i, name: "task-" + i, status: "done", ts: 1000 + i,
+    id: "t" + i,
+    name: "task-" + i,
+    status: "done",
+    ts: 1000 + i,
   }));
   const s = reducer(INITIAL, { type: "setRecentTasks", tasks: many });
   assert.equal(s.recentTasks.length, 20);
@@ -102,19 +119,34 @@ test("R37: tui.tsx fetches listTasks on sidebar open and on task_state", () => {
 test("R37: TypeScript compile of new Sidebar.tsx is clean", () => {
   const tmp2 = join(root, "tmp-r37-tsc2");
   if (existsSync(tmp2)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp2] : ["-rf", tmp2]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp2] : ["-rf", tmp2],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp2, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp2,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Sidebar.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "Sidebar.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

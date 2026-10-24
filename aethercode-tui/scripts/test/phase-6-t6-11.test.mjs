@@ -37,8 +37,10 @@ test("T-6-11: PresetSelector.tsx exists and exports the picker + PRESETS + isVal
 const tmp = join(root, "tmp-t6-11-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "permissions", "_t6_11_helpers.ts");
@@ -49,20 +51,36 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
 {
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
   }
 }
 const helpers = await import(
-  "file:///" + join(tmp, "out", "components", "permissions", "_t6_11_helpers.js").replace(/\\/g, "/")
+  "file:///" +
+    join(tmp, "out", "components", "permissions", "_t6_11_helpers.js").replace(/\\/g, "/")
 );
 const { PRESETS, isValidPreset, formatPresetLine } = helpers;
 
@@ -95,7 +113,10 @@ test("T-6-11: isValidPreset accepts only the 3 known IDs", () => {
 // ----- 4. Source: PresetSelector wiring -------------------------------
 
 test("T-6-11: PresetSelector.tsx renders 3 cards + onApply + Enter/1/2/3", () => {
-  const src = readFileSync(join(root, "src", "components", "permissions", "PresetSelector.tsx"), "utf-8");
+  const src = readFileSync(
+    join(root, "src", "components", "permissions", "PresetSelector.tsx"),
+    "utf-8",
+  );
   // 3 cards.
   assert.match(src, /PRESETS\.map/);
   // Active marker.
@@ -118,10 +139,11 @@ test("T-6-11: PresetSelector.tsx renders 3 cards + onApply + Enter/1/2/3", () =>
 // ----- 5. tsc: PresetSelector.tsx compiles cleanly ---------------------
 
 test("T-6-11: TypeScript compile of PresetSelector.tsx is clean", () => {
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "permissions", "PresetSelector.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "permissions", "PresetSelector.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

@@ -25,7 +25,10 @@ test("R166: themes.ts declares 5 theme names", () => {
   const src = readFileSync(join(root, "src", "themes.ts"), "utf-8");
   assert.match(src, /"default" \| "solarized" \| "monokai" \| "kanagawa" \| "opencode"/);
   // THEME_NAMES array is updated to include both new names.
-  assert.match(src, /THEME_NAMES: ThemeName\[\] = \["default", "solarized", "monokai", "kanagawa", "opencode"\]/);
+  assert.match(
+    src,
+    /THEME_NAMES: ThemeName\[\] = \["default", "solarized", "monokai", "kanagawa", "opencode"\]/,
+  );
 });
 
 test("R166: themes.ts defines a KANAGAWA palette with autumn-red brand colour", () => {
@@ -62,8 +65,10 @@ test("R166: every palette has all 18 required fields (no half-themed TUI)", () =
   // We use a regex to ensure the `catAgent` / `catOther` (the
   // last fields added) are present in every palette.
   const paletteMatches = src.match(/const \w+: Palette = \{[^}]+\}/g) || [];
-  assert.ok(paletteMatches.length >= 5,
-    `expected at least 5 palettes, found ${paletteMatches.length}`);
+  assert.ok(
+    paletteMatches.length >= 5,
+    `expected at least 5 palettes, found ${paletteMatches.length}`,
+  );
   for (const m of paletteMatches) {
     assert.match(m, /catAgent:/, `palette missing catAgent:\n${m}`);
     assert.match(m, /catOther:/, `palette missing catOther:\n${m}`);
@@ -78,9 +83,12 @@ test("R166: /theme command lists kanagawa + opencode as available themes", () =>
   // hookup is via rankCommands or similar — we just check the
   // list of theme-name strings appears in commands.ts.
   // Pre-R166 had only 3 names; post-R166 has 5.
-  const themeNamesMatches = (src.match(/"default"|"solarized"|"monokai"|"kanagawa"|"opencode"/g) || []);
-  assert.ok(themeNamesMatches.length >= 2,
-    `expected at least 2 theme names in commands.ts, got ${themeNamesMatches.length}`);
+  const themeNamesMatches =
+    src.match(/"default"|"solarized"|"monokai"|"kanagawa"|"opencode"/g) || [];
+  assert.ok(
+    themeNamesMatches.length >= 2,
+    `expected at least 2 theme names in commands.ts, got ${themeNamesMatches.length}`,
+  );
 });
 
 test("R166: pickPalette returns the new themes when asked", () => {

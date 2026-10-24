@@ -56,7 +56,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
 const commandsSrc = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8"), "commands.ts");
-const capsSrc = codeOf(readFileSync(join(root, "src", "rpcCapabilities.ts"), "utf-8"), "rpcCapabilities.ts");
+const capsSrc = codeOf(
+  readFileSync(join(root, "src", "rpcCapabilities.ts"), "utf-8"),
+  "rpcCapabilities.ts",
+);
 const lineSrc = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
 
 /** Compile the two modules under test and import the real values. */
@@ -64,11 +67,23 @@ async function load() {
   const tmp = join(tmpdir(), `r369-${process.pid}`);
   mkdirSync(tmp, { recursive: true });
   const tsc = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tsc}"`, [
-    "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--rootDir", join(root, "src"),
-    `"${join(root, "src", "commands.ts")}"`,
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tsc}"`,
+    [
+      "--outDir",
+      join(tmp, "out"),
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--rootDir",
+      join(root, "src"),
+      `"${join(root, "src", "commands.ts")}"`,
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
@@ -94,14 +109,18 @@ test("the capability table is not empty and every reason is user-facing", () => 
   // entries. R375 removed them (the TUI stopped naming those methods
   // altogether), so the measured count is 4 as of 2026-10-24.
   const entries = [...capsSrc.matchAll(/^\s*\[\s*"[a-z][\w/]*",/gm)];
-  assert.ok(entries.length >= 4,
+  assert.ok(
+    entries.length >= 4,
     `only ${entries.length} entries parsed from rpcCapabilities.ts — the table ` +
-    "probably stopped parsing, which would make the honesty checks vacuous");
+      "probably stopped parsing, which would make the honesty checks vacuous",
+  );
 
   const reasons = [...capsSrc.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)];
-  assert.ok(reasons.length >= 4,
+  assert.ok(
+    reasons.length >= 4,
     `only ${reasons.length} reasons parsed — the per-reason check would run ` +
-    "zero times and pass on a table it never read");
+      "zero times and pass on a table it never read",
+  );
   for (const m of reasons) {
     assert.ok(m[2].length > 25, `${m[1]}'s reason is too terse to show a user: ${m[2]}`);
   }
@@ -123,16 +142,27 @@ test("every backend-missing command answers in words, not with an rpcMethod", ()
   ];
   for (const [input, method] of CASES) {
     const res = handleSlash(input);
-    assert.equal(res?.rpcMethod, undefined,
+    assert.equal(
+      res?.rpcMethod,
+      undefined,
       `${input} still returns rpcMethod=${res?.rpcMethod} — the capability filter ` +
-      "is not running, so this answers -32601");
+        "is not running, so this answers -32601",
+    );
     assert.ok(res?.local, `${input} returned neither local nor rpcMethod`);
-    assert.ok(res.local.includes(method),
-      `${input} should name ${method} in its refusal, got: ${res.local}`);
-    assert.doesNotMatch(res.local, /__[A-Z0-9_]+__/,
-      "a refusal must be a sentence, never a leaked sentinel token");
-    assert.doesNotMatch(res.local, /-32601|method not found/i,
-      "the refusal must not leak the JSON-RPC error the user cannot act on");
+    assert.ok(
+      res.local.includes(method),
+      `${input} should name ${method} in its refusal, got: ${res.local}`,
+    );
+    assert.doesNotMatch(
+      res.local,
+      /__[A-Z0-9_]+__/,
+      "a refusal must be a sentence, never a leaked sentinel token",
+    );
+    assert.doesNotMatch(
+      res.local,
+      /-32601|method not found/i,
+      "the refusal must not leak the JSON-RPC error the user cannot act on",
+    );
   }
 });
 
@@ -150,8 +180,11 @@ test("the filter does not touch commands that DO work", () => {
   for (const [input, expectRpc] of OK) {
     const res = handleSlash(input);
     if (expectRpc) {
-      assert.equal(res?.rpcMethod, expectRpc,
-        `${input} should still reach ${expectRpc}, got local="${res?.local}"`);
+      assert.equal(
+        res?.rpcMethod,
+        expectRpc,
+        `${input} should still reach ${expectRpc}, got local="${res?.local}"`,
+      );
     } else {
       assert.equal(res?.rpcMethod, undefined, `${input} unexpectedly grew an rpcMethod`);
       assert.ok(res?.local, `${input} should still answer locally`);
@@ -170,12 +203,18 @@ test("the filter lives in handleSlash, not in the five case bodies", () => {
   // If somebody "fixes" this later by editing each case instead, this
   // goes red: the next command naming a missing method would go
   // straight back to -32601 with nothing to catch it.
-  assert.match(commandsSrc, /export function handleSlash[\s\S]*unsupportedReason\(result\?\.rpcMethod\)/,
+  assert.match(
+    commandsSrc,
+    /export function handleSlash[\s\S]*unsupportedReason\(result\?\.rpcMethod\)/,
     "handleSlash must apply the capability filter — otherwise a newly added " +
-    "command that names a missing method silently regresses");
-  assert.match(commandsSrc, /function routeSlash\(/,
+      "command that names a missing method silently regresses",
+  );
+  assert.match(
+    commandsSrc,
+    /function routeSlash\(/,
     "handleSlash should delegate to an unrouted inner function and filter its " +
-    "result; a filter written INTO the switch cannot see future commands");
+      "result; a filter written INTO the switch cannot see future commands",
+  );
 });
 
 test("line mode's direct probes consult the same table", () => {
@@ -183,12 +222,17 @@ test("line mode's direct probes consult the same table", () => {
   // they call probe() directly after the user picks. Those two were
   // still returning raw -32601 while the Ink side already warned.
   for (const m of ["agent/setDefault", "effort/set"]) {
-    assert.ok(lineSrc.includes(`unsupportedReason("${m}")`),
+    assert.ok(
+      lineSrc.includes(`unsupportedReason("${m}")`),
       `line.ts must check unsupportedReason("${m}") before probing it — the ` +
-      "Ink panel already refuses in words and line mode would still emit a raw error");
+        "Ink panel already refuses in words and line mode would still emit a raw error",
+    );
   }
-  assert.match(lineSrc, /import \{ unsupportedReason, unsupportedMessage \} from "\.\/rpcCapabilities\.js"/,
-    "line.ts must read the same table handleSlash does, not a local copy");
+  assert.match(
+    lineSrc,
+    /import \{ unsupportedReason, unsupportedMessage \} from "\.\/rpcCapabilities\.js"/,
+    "line.ts must read the same table handleSlash does, not a local copy",
+  );
 });
 
 // --- R375: naming a method the daemon cannot serve -------------------------
@@ -210,9 +254,15 @@ test("REGRESSION R375: the TUI names no method the daemon cannot serve", () => {
   // mentions the old names in prose) does not trip the scan. That is
   // deliberate: prose about a removed method is not a call site.
   const SOURCES = [
-    "src/tui.tsx", "src/line.ts", "src/commands.ts", "src/ac-tui.ts",
-    "src/memory-rpc.ts", "src/panelIntents.ts", "src/state.ts",
-    "src/runControl.ts", "src/rpcCapabilities.ts",
+    "src/tui.tsx",
+    "src/line.ts",
+    "src/commands.ts",
+    "src/ac-tui.ts",
+    "src/memory-rpc.ts",
+    "src/panelIntents.ts",
+    "src/state.ts",
+    "src/runControl.ts",
+    "src/rpcCapabilities.ts",
   ];
   const offenders = [];
   for (const rel of SOURCES) {
@@ -221,11 +271,15 @@ test("REGRESSION R375: the TUI names no method the daemon cannot serve", () => {
       offenders.push(`${m[1]}  <- ${rel}`);
     }
   }
-  assert.deepEqual(offenders, [],
+  assert.deepEqual(
+    offenders,
+    [],
     "the TUI names task/* methods, which this daemon does not register — every\n" +
-    "  call site is a -32601. Before R375 the status bar's buttons did exactly\n" +
-    "  that and swallowed the rejection, so they silently did nothing.\n" +
-    "  Use `cancel` (stop the run in flight) and `setContinuationStopped`\n" +
-    "  (pause/resume this session's automatic continuation) instead:\n" +
-    "  " + offenders.join("\n  "));
+      "  call site is a -32601. Before R375 the status bar's buttons did exactly\n" +
+      "  that and swallowed the rejection, so they silently did nothing.\n" +
+      "  Use `cancel` (stop the run in flight) and `setContinuationStopped`\n" +
+      "  (pause/resume this session's automatic continuation) instead:\n" +
+      "  " +
+      offenders.join("\n  "),
+  );
 });

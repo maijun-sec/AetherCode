@@ -58,24 +58,24 @@ export interface LineOptions {
 }
 
 const C = {
-  reset:        "\x1b[0m",
-  bold:         "\x1b[1m",
-  dim:          "\x1b[2m",
-  italic:       "\x1b[3m",
-  underline:    "\x1b[4m",
-  red:          "\x1b[31m",
-  green:        "\x1b[32m",
-  yellow:       "\x1b[33m",
-  blue:         "\x1b[34m",
-  magenta:      "\x1b[35m",
-  cyan:         "\x1b[36m",
-  gray:         "\x1b[90m",
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  italic: "\x1b[3m",
+  underline: "\x1b[4m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  gray: "\x1b[90m",
   yellowBright: "\x1b[93m",
-  cyanBright:   "\x1b[96m",
+  cyanBright: "\x1b[96m",
   // R346: a few more reserved for new visual surfaces
-  bgGray:       "\x1b[100m", // used for permission prompt footer
-  bgYellow:     "\x1b[43m",
-  bgBlue:       "\x1b[44m",
+  bgGray: "\x1b[100m", // used for permission prompt footer
+  bgYellow: "\x1b[43m",
+  bgBlue: "\x1b[44m",
 } as const;
 
 /** R346: tool-running spinner frames. The spinner is updated by
@@ -83,8 +83,16 @@ const C = {
  *  current millisecond clock — since the line renderer doesn't
  *  redraw in place, each new line prints the next frame and the
  *  user sees the sequence tick forward. */
-const SPINNER_FRAMES = ["\u280B", "\u2819", "\u2838", "\u2834",
-                        "\u2826", "\u2827", "\u2807", "\u280F"];
+const SPINNER_FRAMES = [
+  "\u280B",
+  "\u2819",
+  "\u2838",
+  "\u2834",
+  "\u2826",
+  "\u2827",
+  "\u2807",
+  "\u280F",
+];
 const SPINNER_PERIOD_MS = 120;
 function spinnerFrame(elapsedMs: number): string {
   const idx = Math.floor(elapsedMs / SPINNER_PERIOD_MS) % SPINNER_FRAMES.length;
@@ -95,7 +103,11 @@ function spinnerFrame(elapsedMs: number): string {
  *  AFTER the leading "  " indent and any prefix glyph. We use
  *  U+2500 (BOX DRAWINGS LIGHT HORIZONTAL) for a calmer look than
  *  the heavier U+2501. */
-function renderDivider(width: number = 60, indent: boolean = true, noColor: boolean = false): string {
+function renderDivider(
+  width: number = 60,
+  indent: boolean = true,
+  noColor: boolean = false,
+): string {
   const safeW = Math.max(8, Math.min(width, 120));
   const line = "\u2500".repeat(safeW);
   const prefix = indent ? "  " : "";
@@ -149,7 +161,8 @@ function classifyStopReason(reason: string | null | undefined): StopKind {
   if (reason == null) return null;
   const r = reason.toLowerCase();
   if (r === "loop_detected" || r.startsWith("loop_")) return "loop";
-  if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations") return "max_turns";
+  if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations")
+    return "max_turns";
   if (r === "empty_input" || r === "empty") return "empty";
   if (r === "error" || r.startsWith("error_") || r.endsWith("_error")) return "error";
   return "ok";
@@ -157,23 +170,35 @@ function classifyStopReason(reason: string | null | undefined): StopKind {
 
 function stopKindLabel(kind: StopKind, rawReason?: string): string {
   switch (kind) {
-    case "loop":      return "stopped — loop";
-    case "max_turns": return "stopped — max turns";
-    case "error":     return "stopped — error";
-    case "empty":     return "empty input";
-    case "ok":        return "✓ ready";
-    default:          return `run_end: ${rawReason ?? "?"}`;
+    case "loop":
+      return "stopped — loop";
+    case "max_turns":
+      return "stopped — max turns";
+    case "error":
+      return "stopped — error";
+    case "empty":
+      return "empty input";
+    case "ok":
+      return "✓ ready";
+    default:
+      return `run_end: ${rawReason ?? "?"}`;
   }
 }
 
 function stopKindColor(kind: StopKind): string {
   switch (kind) {
-    case "loop":      return C.red;
-    case "max_turns": return C.yellow;
-    case "error":     return C.red;
-    case "empty":     return C.gray;
-    case "ok":        return C.green;
-    default:          return C.dim;
+    case "loop":
+      return C.red;
+    case "max_turns":
+      return C.yellow;
+    case "error":
+      return C.red;
+    case "empty":
+      return C.gray;
+    case "ok":
+      return C.green;
+    default:
+      return C.dim;
   }
 }
 
@@ -182,20 +207,61 @@ type LineCategory = "read" | "write" | "search" | "run" | "agent" | "other";
 function categorizeLine(name: string | undefined | null): LineCategory {
   if (!name) return "other";
   const n = name.toLowerCase();
-  if (n === "file_read" || n === "read" || n.startsWith("read_") || n === "cat" || n === "show" || n === "view") return "read";
-  if (n === "glob" || n === "grep" || n === "search" || n.startsWith("search_") || n === "find") return "search";
-  if (n === "file_write" || n === "file_edit" || n === "file_create" || n.startsWith("write_") || n.startsWith("edit_")) return "write";
-  if (n === "bash" || n === "shell" || n === "exec" || n === "run_command" || n.startsWith("bash_") || n === "test" || n === "build") return "run";
-  if (n === "agent" || n === "task" || n === "delegate" || n.startsWith("agent_") || n.startsWith("task_")) return "agent";
+  if (
+    n === "file_read" ||
+    n === "read" ||
+    n.startsWith("read_") ||
+    n === "cat" ||
+    n === "show" ||
+    n === "view"
+  )
+    return "read";
+  if (n === "glob" || n === "grep" || n === "search" || n.startsWith("search_") || n === "find")
+    return "search";
+  if (
+    n === "file_write" ||
+    n === "file_edit" ||
+    n === "file_create" ||
+    n.startsWith("write_") ||
+    n.startsWith("edit_")
+  )
+    return "write";
+  if (
+    n === "bash" ||
+    n === "shell" ||
+    n === "exec" ||
+    n === "run_command" ||
+    n.startsWith("bash_") ||
+    n === "test" ||
+    n === "build"
+  )
+    return "run";
+  if (
+    n === "agent" ||
+    n === "task" ||
+    n === "delegate" ||
+    n.startsWith("agent_") ||
+    n.startsWith("task_")
+  )
+    return "agent";
   return "other";
 }
 
-const CAT_ICON:  Record<LineCategory, string> = {
-  read:   "\u25CB", write: "\u270E", search: "\u25CE", run: "\u25B7", agent: "\u2756", other: "\u2692",
+const CAT_ICON: Record<LineCategory, string> = {
+  read: "\u25CB",
+  write: "\u270E",
+  search: "\u25CE",
+  run: "\u25B7",
+  agent: "\u2756",
+  other: "\u2692",
 };
 const CAT_COLOR: Record<LineCategory, string> = {
-  read:   C.blue, write: C.yellowBright, search: C.cyan,
-  run:    C.red, agent: C.magenta,      other: C.gray,
+  read: C.blue,
+  write: C.yellowBright,
+  search: C.cyan,
+  run: C.red,
+  agent: C.magenta,
+  other: C.gray,
 };
 
 function inputDigest(input: unknown): string {
@@ -206,10 +272,10 @@ function inputDigest(input: unknown): string {
     return cmd.length > 60 ? cmd.slice(0, 57) + "\u2026" : cmd;
   }
   if (typeof o.file_path === "string") return String(o.file_path);
-  if (typeof o.path === "string")      return String(o.path);
-  if (typeof o.url === "string")       return String(o.url);
-  if (typeof o.pattern === "string")   return `pattern=${o.pattern}`;
-  if (typeof o.query === "string")     return `q=${o.query}`;
+  if (typeof o.path === "string") return String(o.path);
+  if (typeof o.url === "string") return String(o.url);
+  if (typeof o.pattern === "string") return `pattern=${o.pattern}`;
+  if (typeof o.query === "string") return `q=${o.query}`;
   return "";
 }
 
@@ -238,19 +304,19 @@ function modeStyle(mode: string): { label: string; bg: string; fg: string } {
   switch (m) {
     case "DEFAULT":
     case "ASK_BEFORE_TOOL":
-      return { label: "ASK",    bg: C.yellowBright, fg: C.bold };
+      return { label: "ASK", bg: C.yellowBright, fg: C.bold };
     case "ACCEPT_TASK":
-      return { label: "TASK",   bg: C.green,        fg: C.bold };
+      return { label: "TASK", bg: C.green, fg: C.bold };
     case "ACCEPT_EDITS":
-      return { label: "EDITS",  bg: C.green,        fg: C.bold };
+      return { label: "EDITS", bg: C.green, fg: C.bold };
     case "BYPASS_PERMISSIONS":
-      return { label: "BYPASS", bg: C.red,          fg: C.bold };
+      return { label: "BYPASS", bg: C.red, fg: C.bold };
     case "PLAN":
-      return { label: "PLAN",   bg: C.magenta,      fg: C.bold };
+      return { label: "PLAN", bg: C.magenta, fg: C.bold };
     case "AUTO_READ_ONLY":
-      return { label: "READ",   bg: C.cyan,         fg: C.bold };
+      return { label: "READ", bg: C.cyan, fg: C.bold };
     default:
-      return { label: m,        bg: C.gray,         fg: C.bold };
+      return { label: m, bg: C.gray, fg: C.bold };
   }
 }
 
@@ -260,7 +326,11 @@ function modePill(mode: string, noColor: boolean): string {
   return `${s.bg}[${s.label}]${C.reset}`;
 }
 
-function ctxFillGlyph(inputTok: number | null, outputTok: number | null, ctxWindow: number): string {
+function ctxFillGlyph(
+  inputTok: number | null,
+  outputTok: number | null,
+  ctxWindow: number,
+): string {
   if (!ctxWindow || ctxWindow <= 0) return "";
   const total = (inputTok ?? 0) + (outputTok ?? 0);
   const ratio = Math.max(0, Math.min(1, total / ctxWindow));
@@ -269,10 +339,7 @@ function ctxFillGlyph(inputTok: number | null, outputTok: number | null, ctxWind
   const empty = cells - filled;
   const glyph = "\u2586".repeat(filled) + "\u2591".repeat(empty);
   const pct = Math.round(ratio * 100);
-  const color =
-    ratio > 0.8 ? C.red :
-    ratio > 0.5 ? C.yellowBright :
-                  C.green;
+  const color = ratio > 0.8 ? C.red : ratio > 0.5 ? C.yellowBright : C.green;
   return `${color}${glyph}${C.reset} ${pct}%`;
 }
 
@@ -359,19 +426,19 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
       const body = headingMatch[2];
       const level = hashes.length;
       const color =
-        level === 1 ? C.bold + C.cyanBright
-      : level === 2 ? C.bold + C.cyan
-      : level === 3 ? C.bold + C.magenta
-                    : C.bold + C.gray;
+        level === 1
+          ? C.bold + C.cyanBright
+          : level === 2
+            ? C.bold + C.cyan
+            : level === 3
+              ? C.bold + C.magenta
+              : C.bold + C.gray;
       const inlineBody = body; // heading text — keep literal (no bold/italic inside it for now)
       // Compute underline width: max(visible width of "level body", 8),
       // capped at terminal-friendly width.
       const visibleW = inlineBody.length + 2; // "  # " + body
       const uW = Math.min(RULE_W, Math.max(visibleW, 8));
-      const underlineChar =
-        level === 1 ? RULE_HEAVY
-      : level === 2 ? RULE_LIGHT
-                    : null;
+      const underlineChar = level === 1 ? RULE_HEAVY : level === 2 ? RULE_LIGHT : null;
       // Block spacing — heading is its own group.
       if (lastKind !== "" && lastKind !== "heading") pushSpace();
       out.push(colorize(`  ${hashes} ${inlineBody}`, color, noColor));
@@ -392,7 +459,9 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
       const fenceLen = fenceMatch[2].length;
       const lang = fenceMatch[3] || "";
       // Find closing fence (same indent, same char, length >= fenceLen)
-      const closeRe = new RegExp(`^${indent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*${fenceChar === "`" ? "\\`" : "~"}{${fenceLen},}\\s*$`);
+      const closeRe = new RegExp(
+        `^${indent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*${fenceChar === "`" ? "\\`" : "~"}{${fenceLen},}\\s*$`,
+      );
       let j = i + 1;
       while (j < lines.length && !closeRe.test(lines[j])) j++;
       const codeLines = lines.slice(i + 1, j);
@@ -400,7 +469,10 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
       const topFill = Math.max(0, RULE_W - label.length - 4);
       // Block spacing — code is its own group.
       if (lastKind !== "" && lastKind !== "code") pushSpace();
-      out.push(colorize(`  \u256D\u2501${label}`, C.dim, noColor) + colorize(RULE_LIGHT.repeat(topFill) + "\u256E", C.dim, noColor));
+      out.push(
+        colorize(`  \u256D\u2501${label}`, C.dim, noColor) +
+          colorize(RULE_LIGHT.repeat(topFill) + "\u256E", C.dim, noColor),
+      );
       for (const cl of codeLines) {
         out.push(colorize("  \u2503 ", C.dim, noColor) + colorize(cl || " ", C.cyan, noColor));
       }
@@ -435,8 +507,8 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
         : `${C.dim}${rendered.replace(/\x1b\[0m/g, "\x1b[0m\x1b[2m")}${C.reset}`;
       out.push(
         (indent ? colorize(indent, C.reset, noColor) : "") +
-        colorize("  \u2503 ", C.cyan, noColor) +
-        dimWrap,
+          colorize("  \u2503 ", C.cyan, noColor) +
+          dimWrap,
       );
       lastKind = "quote";
       i++;
@@ -450,7 +522,11 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
       const content = bulletMatch[3];
       // List is a contiguous group — no leading blank within.
       if (lastKind !== "" && lastKind !== "list") pushSpace();
-      out.push((indent ? colorize(indent, C.reset, noColor) : "") + colorize("  \u25B8 ", C.cyan, noColor) + inlineSpan(content));
+      out.push(
+        (indent ? colorize(indent, C.reset, noColor) : "") +
+          colorize("  \u25B8 ", C.cyan, noColor) +
+          inlineSpan(content),
+      );
       lastKind = "list";
       i++;
       continue;
@@ -465,7 +541,11 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
       // Same group as bullet list (both render as the same "list"
       // family — we treat them as contiguous with each other too).
       if (lastKind !== "" && lastKind !== "list") pushSpace();
-      out.push((indent ? colorize(indent, C.reset, noColor) : "") + colorize(`  ${num}. `, C.cyan, noColor) + inlineSpan(content));
+      out.push(
+        (indent ? colorize(indent, C.reset, noColor) : "") +
+          colorize(`  ${num}. `, C.cyan, noColor) +
+          inlineSpan(content),
+      );
       lastKind = "list";
       i++;
       continue;
@@ -499,7 +579,10 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
         }
         // Compute column widths — max of header / data, pad to 3 min.
         const colW = headerCells.map((h, idx) => {
-          const widths = [stripAnsi(h).length, ...dataRows.map((r) => stripAnsi(r[idx] ?? "").length)];
+          const widths = [
+            stripAnsi(h).length,
+            ...dataRows.map((r) => stripAnsi(r[idx] ?? "").length),
+          ];
           return Math.max(3, ...widths);
         });
         // Border builders.
@@ -519,13 +602,19 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
         ): string => padCell(content, w, align);
         const headerRow =
           "  " +
-          colorize("\u2503", C.dim, noColor) + " " +
+          colorize("\u2503", C.dim, noColor) +
+          " " +
           headerCells
             .map((c, idx) =>
-              colorize(renderCell(colorize(c, C.bold + C.cyan, noColor), colW[idx], aligns[idx]), C.reset, noColor),
+              colorize(
+                renderCell(colorize(c, C.bold + C.cyan, noColor), colW[idx], aligns[idx]),
+                C.reset,
+                noColor,
+              ),
             )
             .join(" " + colorize("\u2503", C.dim, noColor) + " ") +
-          " " + colorize("\u2503", C.dim, noColor);
+          " " +
+          colorize("\u2503", C.dim, noColor);
         out.push(headerRow);
         // Mid border ├─╮┼─┤.
         out.push(border("\u251C", "\u253C", "\u2524", RULE_LIGHT));
@@ -534,11 +623,13 @@ function renderInlineMarkdown(text: string, noColor: boolean): string {
           const cells = headerCells.map((_, idx) => row[idx] ?? "");
           const rowLine =
             "  " +
-            colorize("\u2503", C.dim, noColor) + " " +
+            colorize("\u2503", C.dim, noColor) +
+            " " +
             cells
               .map((c, idx) => renderCell(inlineSpan(c), colW[idx], aligns[idx]))
               .join(" " + colorize("\u2503", C.dim, noColor) + " ") +
-            " " + colorize("\u2503", C.dim, noColor);
+            " " +
+            colorize("\u2503", C.dim, noColor);
           out.push(rowLine);
         }
         // Bottom border ╰─╯.
@@ -603,7 +694,9 @@ function renderStatusLine(state: DisplayState, inFlight: number, noColor: boolea
   const ms = Date.now() - state.startedAt;
   parts.push(colorize(fmtDuration(ms), C.dim, noColor));
   if (inFlight > 0) {
-    parts.push(colorize(` \u00B7 ${inFlight} tool${inFlight === 1 ? "" : "s"} in flight`, C.yellow, noColor));
+    parts.push(
+      colorize(` \u00B7 ${inFlight} tool${inFlight === 1 ? "" : "s"} in flight`, C.yellow, noColor),
+    );
   }
   return parts.join("");
 }
@@ -616,15 +709,16 @@ function renderSplash(state: DisplayState, noColor: boolean): string {
   // keep the box width <= terminal width - 4 to leave breathing
   // room and avoid line-wrap disasters.
   const innerWidth = 56;
-  const top    = "  " + "\u256D" + "\u2500".repeat(innerWidth + 2) + "\u256E";
+  const top = "  " + "\u256D" + "\u2500".repeat(innerWidth + 2) + "\u256E";
   const bottom = "  " + "\u2570" + "\u2500".repeat(innerWidth + 2) + "\u256F";
-  const sep    = "  " + "\u251C" + "\u2500".repeat(innerWidth + 2) + "\u2524";
+  const sep = "  " + "\u251C" + "\u2500".repeat(innerWidth + 2) + "\u2524";
 
-  const titleLine = colorize("AetherCode", C.bold + C.cyanBright, noColor) +
-                    colorize(" v0.2.1", C.dim, noColor);
+  const titleLine =
+    colorize("AetherCode", C.bold + C.cyanBright, noColor) + colorize(" v0.2.1", C.dim, noColor);
   const subtitleLine = colorize("type a prompt, press Enter", C.dim, noColor);
   const ctxLine =
-    colorize("\u232C ", C.cyan, noColor) + colorize(state.model, C.bold, noColor) +
+    colorize("\u232C ", C.cyan, noColor) +
+    colorize(state.model, C.bold, noColor) +
     colorize("  \u00B7  ", C.dim, noColor) +
     modePill(state.permissionMode, noColor);
   const sessionLine =
@@ -634,19 +728,26 @@ function renderSplash(state: DisplayState, noColor: boolean): string {
   // one logical row inside the box.
   const ctxRow = ctxLine + "  " + sessionLine;
   const cwdLine =
-    colorize("\u21B5 ", C.cyan, noColor) + colorize(shortCwd(state.cwd || process.cwd(), 48), C.dim, noColor);
+    colorize("\u21B5 ", C.cyan, noColor) +
+    colorize(shortCwd(state.cwd || process.cwd(), 48), C.dim, noColor);
   const slashLine =
-    colorize("/", C.yellowBright, noColor) + colorize("help", C.dim, noColor) +
+    colorize("/", C.yellowBright, noColor) +
+    colorize("help", C.dim, noColor) +
     colorize(" \u00B7 ", C.dim, noColor) +
-    colorize("/", C.yellowBright, noColor) + colorize("clear", C.dim, noColor) +
+    colorize("/", C.yellowBright, noColor) +
+    colorize("clear", C.dim, noColor) +
     colorize(" \u00B7 ", C.dim, noColor) +
-    colorize("/", C.yellowBright, noColor) + colorize("exit", C.dim, noColor) +
+    colorize("/", C.yellowBright, noColor) +
+    colorize("exit", C.dim, noColor) +
     colorize(" \u00B7 ", C.dim, noColor) +
-    colorize("/", C.yellowBright, noColor) + colorize("demo", C.dim, noColor) +
+    colorize("/", C.yellowBright, noColor) +
+    colorize("demo", C.dim, noColor) +
     colorize(" \u00B7 ", C.dim, noColor) +
-    colorize("/", C.yellowBright, noColor) + colorize("mode", C.dim, noColor) +
+    colorize("/", C.yellowBright, noColor) +
+    colorize("mode", C.dim, noColor) +
     colorize(" \u00B7 ", C.dim, noColor) +
-    colorize("/", C.yellowBright, noColor) + colorize("no-confirm", C.dim, noColor);
+    colorize("/", C.yellowBright, noColor) +
+    colorize("no-confirm", C.dim, noColor);
   const historyLine =
     colorize("\u2191/\u2193", C.cyan, noColor) +
     colorize(" history in Ink TUI  \u00B7  ", C.dim, noColor) +
@@ -657,7 +758,12 @@ function renderSplash(state: DisplayState, noColor: boolean): string {
   function row(content: string): string {
     const used = stripAnsi(content).length;
     const pad = Math.max(0, innerWidth - used);
-    return colorize("  \u2502 ", C.dim, noColor) + content + " ".repeat(pad) + colorize(" \u2502", C.dim, noColor);
+    return (
+      colorize("  \u2502 ", C.dim, noColor) +
+      content +
+      " ".repeat(pad) +
+      colorize(" \u2502", C.dim, noColor)
+    );
   }
   const out: string[] = [];
   out.push("");
@@ -688,7 +794,11 @@ function stripAnsi(s: string): string {
  * surfaces cannot drift apart on padding rules, which is the
  * failure mode that makes a "consistent" UI look inconsistent.
  */
-function padCell(content: string, w: number, align: "left" | "right" | "center" | null = "left"): string {
+function padCell(
+  content: string,
+  w: number,
+  align: "left" | "right" | "center" | null = "left",
+): string {
   const pad = w - stripAnsi(content).length;
   if (pad <= 0) return content;
   const left = align === "right" ? pad : align === "center" ? Math.floor(pad / 2) : 0;
@@ -723,15 +833,24 @@ function toolStartLine(t: ToolTrack, noColor: boolean): string[] {
   return [header.join("")];
 }
 
-function toolDoneLine(t: ToolTrack, isErr: boolean, resultPreview: string, noColor: boolean): string[] {
+function toolDoneLine(
+  t: ToolTrack,
+  isErr: boolean,
+  resultPreview: string,
+  noColor: boolean,
+): string[] {
   const cat = categorizeLine(t.name);
   const icon = CAT_ICON[cat];
   const nameCol = CAT_COLOR[cat];
   const out: string[] = [];
-  out.push(colorize("  ", C.dim, noColor) + colorize(icon, nameCol, noColor) + " " +
-           colorize(isErr ? "\u2717" : "\u2713", isErr ? C.red : C.green, noColor) +
-           colorize(` tool: ${t.name}`, C.dim, noColor) +
-           colorize(`  ${fmtDuration(Date.now() - t.startedAt)}`, C.dim, noColor));
+  out.push(
+    colorize("  ", C.dim, noColor) +
+      colorize(icon, nameCol, noColor) +
+      " " +
+      colorize(isErr ? "\u2717" : "\u2713", isErr ? C.red : C.green, noColor) +
+      colorize(` tool: ${t.name}`, C.dim, noColor) +
+      colorize(`  ${fmtDuration(Date.now() - t.startedAt)}`, C.dim, noColor),
+  );
   if (resultPreview) {
     for (const line of resultPreview.split("\n")) {
       out.push(colorize("    \u2502 ", C.dim, noColor) + renderInlineMarkdown(line, noColor));
@@ -855,11 +974,7 @@ async function pickFromList<T>(
         C.dim,
         noColor,
       );
-      const bottom = colorize(
-        "  \u2570" + "\u2500".repeat(innerW + 2) + "\u256F",
-        C.dim,
-        noColor,
-      );
+      const bottom = colorize("  \u2570" + "\u2500".repeat(innerW + 2) + "\u256F", C.dim, noColor);
       // Each line ends with \x1b[K (clear from cursor to end of line)
       // so the previous frame's longer lines don't bleed into the new
       // shorter frame (e.g. when an option label shrinks after
@@ -873,9 +988,9 @@ async function pickFromList<T>(
         const arrowColor = isSel ? C.yellowBright : C.dim;
         process.stdout.write(
           colorize("  \u2502 ", C.dim, noColor) +
-          colorize(arrow, arrowColor, noColor) +
-          colorize(opt.label, labelColor, noColor) +
-          "\x1b[K\n",
+            colorize(arrow, arrowColor, noColor) +
+            colorize(opt.label, labelColor, noColor) +
+            "\x1b[K\n",
         );
       }
       process.stdout.write(
@@ -889,7 +1004,9 @@ async function pickFromList<T>(
       process.stdin.removeListener("keypress", onKeypress as never);
       try {
         (process.stdin as unknown as { setRawMode: (b: boolean) => void }).setRawMode(false);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
 
     function decide(idx: number): void {
@@ -928,7 +1045,9 @@ async function pickFromList<T>(
             "D:\\tmp\\ac-tui-picker-diag.log",
             `[${new Date().toISOString()}] pickFromList: ${msg}\n`,
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       };
     })();
     let escBuf = "";
@@ -962,14 +1081,18 @@ async function pickFromList<T>(
             escBuf = "";
             continue;
           }
-          if (escBuf === "\x1b[5~" || escBuf === "\x1b[6~" ||
-              escBuf === "\x1b[H"  || escBuf === "\x1b[F") {
+          if (
+            escBuf === "\x1b[5~" ||
+            escBuf === "\x1b[6~" ||
+            escBuf === "\x1b[H" ||
+            escBuf === "\x1b[F"
+          ) {
             escBuf = "";
             continue;
           }
           if (escBuf.length >= 3) {
             const lastCode = escBuf.charCodeAt(escBuf.length - 1);
-            if (lastCode >= 0x40 && lastCode <= 0x7E) {
+            if (lastCode >= 0x40 && lastCode <= 0x7e) {
               escBuf = "";
               continue;
             }
@@ -1039,7 +1162,9 @@ async function pickFromList<T>(
       // 3-byte CSI sequence to the data listener. Required because
       // we don't go through readline.createInterface().
       readline.emitKeypressEvents(process.stdin);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // R354c: Node's setRawMode(true) may or may not set
     // ENABLE_VIRTUAL_TERMINAL_INPUT and may or may not clear
@@ -1081,16 +1206,13 @@ async function pickPermission(
   if (!process.stdout.isTTY) return "deny";
 
   const options = [
-    { label: "[1] A \u2014 allow once",                  value: "allow" as const },
-    { label: "[2] Y \u2014 always for this session",     value: "always_allow" as const },
-    { label: "[3] D \u2014 deny once",                   value: "deny" as const },
-    { label: "[4] N \u2014 always deny",                 value: "always_deny" as const },
+    { label: "[1] A \u2014 allow once", value: "allow" as const },
+    { label: "[2] Y \u2014 always for this session", value: "always_allow" as const },
+    { label: "[3] D \u2014 deny once", value: "deny" as const },
+    { label: "[4] N \u2014 always deny", value: "always_deny" as const },
   ];
 
-  const riskColor =
-    risk === "CRITICAL" ? C.red :
-    risk === "HIGH"     ? C.yellowBright :
-                          C.yellow;
+  const riskColor = risk === "CRITICAL" ? C.red : risk === "HIGH" ? C.yellowBright : C.yellow;
 
   lineInput.pause();
 
@@ -1128,29 +1250,29 @@ async function pickPermission(
 
       lines.push(
         colorize("  \u2502  ", C.dim, noColor) +
-        colorize("\u26A0 PERMISSION REQUIRED ", riskColor, noColor) +
-        colorize(`[${risk}]`, C.bold, noColor) +
-        colorize("  \u2014  ", C.dim, noColor) +
-        colorize(`tool: ${tool}`, C.bold, noColor),
+          colorize("\u26A0 PERMISSION REQUIRED ", riskColor, noColor) +
+          colorize(`[${risk}]`, C.bold, noColor) +
+          colorize("  \u2014  ", C.dim, noColor) +
+          colorize(`tool: ${tool}`, C.bold, noColor),
       );
       if (argDigest) {
         lines.push(
           colorize("  \u2502  ", C.dim, noColor) +
-          colorize("input: ", C.dim, noColor) +
-          styledLine(argDigest),
+            colorize("input: ", C.dim, noColor) +
+            styledLine(argDigest),
         );
       }
       if (reason) {
         lines.push(
           colorize("  \u2502  ", C.dim, noColor) +
-          colorize("reason: ", C.dim, noColor) +
-          styledLine(reason),
+            colorize("reason: ", C.dim, noColor) +
+            styledLine(reason),
         );
       }
       lines.push(
         colorize("  \u2502  ", C.dim, noColor) +
-        colorize("\u2937 ", C.dim, noColor) +
-        styledLine(guidance),
+          colorize("\u2937 ", C.dim, noColor) +
+          styledLine(guidance),
       );
 
       // Options with the highlighted one.
@@ -1161,13 +1283,17 @@ async function pickPermission(
         const color = isSel ? C.yellowBright : C.dim;
         lines.push(
           colorize("  \u2502 ", C.dim, noColor) +
-          (isSel ? colorize(arrow, C.yellowBright, noColor) : colorize(arrow, C.dim, noColor)) +
-          colorize(opt.label, color, noColor),
+            (isSel ? colorize(arrow, C.yellowBright, noColor) : colorize(arrow, C.dim, noColor)) +
+            colorize(opt.label, color, noColor),
         );
       }
       lines.push(
         colorize("  \u2502 ", C.dim, noColor) +
-        colorize("\u2191/\u2193 move  \u00B7  1/2/3/4  \u00B7  Enter  \u00B7  Esc deny", C.dim, noColor),
+          colorize(
+            "\u2191/\u2193 move  \u00B7  1/2/3/4  \u00B7  Enter  \u00B7  Esc deny",
+            C.dim,
+            noColor,
+          ),
       );
 
       // Repaint: walk up to top, then redraw each line + clear remainder.
@@ -1190,7 +1316,9 @@ async function pickPermission(
       process.stdin.removeListener("keypress", onKeypress as never);
       try {
         (process.stdin as unknown as { setRawMode: (b: boolean) => void }).setRawMode(false);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
 
     function decide(idx: number): void {
@@ -1208,7 +1336,9 @@ async function pickPermission(
       resolvePromise(options[idx].value);
     }
 
-    function cancel(): void { decide(options.length - 1); }
+    function cancel(): void {
+      decide(options.length - 1);
+    }
 
     // R352b: cmd.exe (and any TTY that doesn't have the keypress
     // parser pre-enabled) tends to deliver the 3 bytes of an arrow
@@ -1228,7 +1358,9 @@ async function pickPermission(
             "D:\\tmp\\ac-tui-picker-diag.log",
             `[${new Date().toISOString()}] pickPermission: ${msg}\n`,
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       };
     })();
     let escBuf = "";
@@ -1268,8 +1400,12 @@ async function pickPermission(
             continue;
           }
           // Page Up / Page Down / Home / End — ignore but consume.
-          if (escBuf === "\x1b[5~" || escBuf === "\x1b[6~" ||
-              escBuf === "\x1b[H"  || escBuf === "\x1b[F") {
+          if (
+            escBuf === "\x1b[5~" ||
+            escBuf === "\x1b[6~" ||
+            escBuf === "\x1b[H" ||
+            escBuf === "\x1b[F"
+          ) {
             escBuf = "";
             continue;
           }
@@ -1277,7 +1413,7 @@ async function pickPermission(
           // past that means it's a stale buffer — discard.
           if (escBuf.length >= 3) {
             const lastCode = escBuf.charCodeAt(escBuf.length - 1);
-            if (lastCode >= 0x40 && lastCode <= 0x7E) {
+            if (lastCode >= 0x40 && lastCode <= 0x7e) {
               escBuf = "";
               continue;
             }
@@ -1337,7 +1473,7 @@ async function pickPermission(
     };
 
     // R353: no `\x1b[s` here — pickerTopRow (captured up-front in JS)
-// is what render() uses. See pickerTopRow declaration above.
+    // is what render() uses. See pickerTopRow declaration above.
     render();
     process.stdin.on("data", onData);
     process.stdin.on("keypress", onKeypress as never);
@@ -1348,14 +1484,18 @@ async function pickPermission(
       // `\x1b[A` / `\x1b[B` text). Required because LineInput replaces
       // the readline.Interface that would normally enable this.
       readline.emitKeypressEvents(process.stdin);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     // R354c: re-assert raw + VT mode via koffi so conhost doesn't
     // echo arrow keys as `^[A` / `^[B`. See pickFromList above for
     // the long version.
     lineInput.ensureRawMode();
 
-    setTimeout(() => { if (!resolved) cancel(); }, 300_000);
+    setTimeout(() => {
+      if (!resolved) cancel();
+    }, 300_000);
   });
 }
 
@@ -1372,12 +1512,12 @@ async function pickMode(
   noColor: boolean,
 ): Promise<void> {
   const modes = [
-    { label: "DEFAULT              \u2014 ask before each tool call",   value: "DEFAULT" },
-    { label: "ACCEPT_TASK          \u2014 auto-allow all tools",         value: "ACCEPT_TASK" },
-    { label: "ACCEPT_EDITS         \u2014 auto-allow file edits only",   value: "ACCEPT_EDITS" },
-    { label: "BYPASS_PERMISSIONS   \u2014 no prompts, danger!",          value: "BYPASS_PERMISSIONS" },
-    { label: "PLAN                 \u2014 plan only, don't execute",     value: "PLAN" },
-    { label: "AUTO_READ_ONLY       \u2014 auto-allow read-only tools",   value: "AUTO_READ_ONLY" },
+    { label: "DEFAULT              \u2014 ask before each tool call", value: "DEFAULT" },
+    { label: "ACCEPT_TASK          \u2014 auto-allow all tools", value: "ACCEPT_TASK" },
+    { label: "ACCEPT_EDITS         \u2014 auto-allow file edits only", value: "ACCEPT_EDITS" },
+    { label: "BYPASS_PERMISSIONS   \u2014 no prompts, danger!", value: "BYPASS_PERMISSIONS" },
+    { label: "PLAN                 \u2014 plan only, don't execute", value: "PLAN" },
+    { label: "AUTO_READ_ONLY       \u2014 auto-allow read-only tools", value: "AUTO_READ_ONLY" },
   ];
   const initialIdx = modes.findIndex((m) => m.value === currentMode);
   const result = await pickFromList(
@@ -1396,9 +1536,7 @@ async function pickMode(
     await setMode(result.value);
     logAbove(colorize(`  \u2713 mode \u2192 ${result.value}`, C.green, noColor));
   } catch (e) {
-    logAbove(
-      colorize(`  \u2717 mode change failed: ${(e as Error).message}`, C.red, noColor),
-    );
+    logAbove(colorize(`  \u2717 mode change failed: ${(e as Error).message}`, C.red, noColor));
   }
 }
 
@@ -1530,8 +1668,20 @@ function asRows(v: unknown): unknown[] {
   if (Array.isArray(v)) return v;
   if (v && typeof v === "object") {
     const r = v as Record<string, unknown>;
-    for (const k of ["items", "entries", "rows", "results", "sessions", "agents",
-                     "servers", "todos", "data", "projects", "workflows", "grants"]) {
+    for (const k of [
+      "items",
+      "entries",
+      "rows",
+      "results",
+      "sessions",
+      "agents",
+      "servers",
+      "todos",
+      "data",
+      "projects",
+      "workflows",
+      "grants",
+    ]) {
       if (Array.isArray(r[k])) return r[k] as unknown[];
     }
   }
@@ -1544,7 +1694,10 @@ function asRows(v: unknown): unknown[] {
 
 type PanelTone = "plain" | "strong" | "ok" | "warn" | "err" | "muted";
 
-interface PanelCell { text: string; tone?: PanelTone }
+interface PanelCell {
+  text: string;
+  tone?: PanelTone;
+}
 
 interface PanelColumn {
   header: string;
@@ -1636,7 +1789,10 @@ function allocatePanelWidths(cols: PanelColumn[], rows: PanelCell[][], total: nu
   let leftover = budget - used;
   const totalShare = flex.reduce((a, x) => a + x.share, 0) || 1;
   for (const x of flex) {
-    const give = Math.max(0, Math.min(Math.floor((leftover * x.share) / totalShare), x.max - out[x.i]));
+    const give = Math.max(
+      0,
+      Math.min(Math.floor((leftover * x.share) / totalShare), x.max - out[x.i]),
+    );
     out[x.i] += give;
     leftover -= give;
   }
@@ -1677,9 +1833,7 @@ function renderPanel(o: PanelOpts): string[] {
   const out: string[] = [];
 
   // Title line — the heaviest weight in the block.
-  let head =
-    "  " + colorize("\u25B8 ", C.dim, nc) +
-    colorize(o.title, C.bold + C.cyanBright, nc);
+  let head = "  " + colorize("\u25B8 ", C.dim, nc) + colorize(o.title, C.bold + C.cyanBright, nc);
   if (o.subtitle) head += colorize("  \u00B7  " + o.subtitle, C.dim, nc);
   if (o.note) {
     const gap = total - stripAnsi(head).length - stripAnsi(o.note).length;
@@ -1710,11 +1864,14 @@ function renderPanel(o: PanelOpts): string[] {
 
   out.push(bar("\u256D", "\u252C", "\u256E"));
   out.push(
-    "  " + pipe + " " +
-    o.columns
-      .map((c, i) => padCell(colorize(c.header, C.bold + C.cyan, nc), width[i], c.align))
-      .join(" " + pipe + " ") +
-    " " + pipe,
+    "  " +
+      pipe +
+      " " +
+      o.columns
+        .map((c, i) => padCell(colorize(c.header, C.bold + C.cyan, nc), width[i], c.align))
+        .join(" " + pipe + " ") +
+      " " +
+      pipe,
   );
   out.push(bar("\u251C", "\u253C", "\u2524"));
 
@@ -1737,7 +1894,8 @@ function renderPanel(o: PanelOpts): string[] {
  *  them differently, so they must not collapse into one string. */
 function probeStatus(r: ProbeResult): string {
   if (r.missing) return "not implemented by this daemon";
-  if (/timed?\s*out|timeout/i.test(r.reason)) return `no answer within ${PANEL_PROBE_TIMEOUT_MS / 1000}s`;
+  if (/timed?\s*out|timeout/i.test(r.reason))
+    return `no answer within ${PANEL_PROBE_TIMEOUT_MS / 1000}s`;
   return "the daemon returned an error";
 }
 
@@ -1747,7 +1905,14 @@ function probeStatus(r: ProbeResult): string {
  */
 function panelMissingEndpoint(
   nc: boolean,
-  o: { title: string; subtitle?: string; endpoint: string; instead: string[]; hint?: string; status?: string },
+  o: {
+    title: string;
+    subtitle?: string;
+    endpoint: string;
+    instead: string[];
+    hint?: string;
+    status?: string;
+  },
 ): string[] {
   return renderPanel({
     title: o.title,
@@ -1758,8 +1923,14 @@ function panelMissingEndpoint(
       { header: "status", flex: 1 },
     ],
     rows: [
-      [{ text: o.endpoint, tone: "strong" }, { text: o.status ?? "not available", tone: "err" }],
-      [{ text: "use instead", tone: "muted" }, { text: o.instead[0] ?? "", tone: "plain" }],
+      [
+        { text: o.endpoint, tone: "strong" },
+        { text: o.status ?? "not available", tone: "err" },
+      ],
+      [
+        { text: "use instead", tone: "muted" },
+        { text: o.instead[0] ?? "", tone: "plain" },
+      ],
       ...o.instead.slice(1).map((line): PanelCell[] => [
         { text: "", tone: "plain" },
         { text: line, tone: "plain" },
@@ -1786,7 +1957,10 @@ function panelUnavailable(
       { header: "detail", flex: 1 },
     ],
     rows: [
-      [{ text: "not available", tone: "warn" }, { text: o.reason, tone: "plain" }],
+      [
+        { text: "not available", tone: "warn" },
+        { text: o.reason, tone: "plain" },
+      ],
       ...o.instead.map((line): PanelCell[] => [
         { text: "", tone: "plain" },
         { text: line, tone: "plain" },
@@ -1972,15 +2146,13 @@ async function panelMemory(ctx: PanelCtx, scopeRaw: string): Promise<void> {
   const active = lists.find((l) => l.scope === asked);
 
   const SHOWN = 40;
-  const rows: PanelCell[][] = (active?.entries ?? [])
-    .slice(0, SHOWN)
-    .map((e, i) => [
-      { text: String(i + 1), tone: "muted" },
-      { text: fieldStr(e, ["kind"]), tone: "strong" },
-      { text: fieldStr(e, ["source"]), tone: "muted" },
-      { text: memorySummary(e), tone: "plain" },
-      { text: fmtStamp(field(e, ["ts", "createdAt", "timestamp"])), tone: "muted" },
-    ]);
+  const rows: PanelCell[][] = (active?.entries ?? []).slice(0, SHOWN).map((e, i) => [
+    { text: String(i + 1), tone: "muted" },
+    { text: fieldStr(e, ["kind"]), tone: "strong" },
+    { text: fieldStr(e, ["source"]), tone: "muted" },
+    { text: memorySummary(e), tone: "plain" },
+    { text: fmtStamp(field(e, ["ts", "createdAt", "timestamp"])), tone: "muted" },
+  ]);
 
   const total = active?.entries.length ?? 0;
   emitPanel(
@@ -2038,9 +2210,17 @@ async function panelMcp(
   const nc = ctx.noColor;
   const spec =
     action === "login"
-      ? { endpoint: "mcp/login", params: { name: target }, subtitle: target === "" ? "login" : `login \u00B7 ${target}` }
+      ? {
+          endpoint: "mcp/login",
+          params: { name: target },
+          subtitle: target === "" ? "login" : `login \u00B7 ${target}`,
+        }
       : action === "reconnect"
-        ? { endpoint: "mcp/reconnect", params: target === "" ? {} : { name: target }, subtitle: target === "" ? "reconnect all" : `reconnect \u00B7 ${target}` }
+        ? {
+            endpoint: "mcp/reconnect",
+            params: target === "" ? {} : { name: target },
+            subtitle: target === "" ? "reconnect all" : `reconnect \u00B7 ${target}`,
+          }
         : { endpoint: "mcp/listServers", params: undefined, subtitle: "servers and tools" };
 
   const r = await probe(ctx, spec.endpoint, spec.params as RpcValue | undefined);
@@ -2071,8 +2251,16 @@ async function panelMcp(
         title: `MCP ${action}`,
         subtitle: spec.subtitle,
         noColor: nc,
-        columns: [{ header: "endpoint", min: 14 }, { header: "result", flex: 1 }],
-        rows: [[{ text: spec.endpoint, tone: "strong" }, { text: "accepted", tone: "ok" }]],
+        columns: [
+          { header: "endpoint", min: 14 },
+          { header: "result", flex: 1 },
+        ],
+        rows: [
+          [
+            { text: spec.endpoint, tone: "strong" },
+            { text: "accepted", tone: "ok" },
+          ],
+        ],
         hint: "re-run /mcp to see the refreshed server list",
       }),
     );
@@ -2083,8 +2271,11 @@ async function panelMcp(
   const rows: PanelCell[][] = servers.map((s) => {
     const tools = asRows(field(s, ["tools", "capabilities"]));
     const status = fieldStr(s, ["status", "state", "connected"], "unknown");
-    const tone: PanelTone =
-      /connected|ready|ok/i.test(status) ? "ok" : /error|fail|disconn/i.test(status) ? "err" : "warn";
+    const tone: PanelTone = /connected|ready|ok/i.test(status)
+      ? "ok"
+      : /error|fail|disconn/i.test(status)
+        ? "err"
+        : "warn";
     return [
       { text: fieldStr(s, ["name", "id", "server"]), tone: "strong" },
       { text: status, tone },
@@ -2154,10 +2345,13 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
     ctx,
     renderPanel({
       title: cwdOnly ? `sessions in ${ctx.cwd || "(no cwd)"}` : "session threads",
-      subtitle: cwdOnly ? "continue one of this project's sessions" : "switch the daemon to another thread",
-      note: cwdOnly && other.length > 0
-        ? `${sessions.length} of ${all.length} attributed here · ${other.length} have no recorded directory (/threads shows all)`
-        : `${sessions.length} known`,
+      subtitle: cwdOnly
+        ? "continue one of this project's sessions"
+        : "switch the daemon to another thread",
+      note:
+        cwdOnly && other.length > 0
+          ? `${sessions.length} of ${all.length} attributed here · ${other.length} have no recorded directory (/threads shows all)`
+          : `${sessions.length} known`,
       noColor: nc,
       columns: [
         { header: "id", min: 8 },
@@ -2168,7 +2362,10 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
       ],
       rows,
       empty: cwdOnly
-        ? [`no session is recorded under ${ctx.cwd || "the current directory"}`, "use /threads to see every session"]
+        ? [
+            `no session is recorded under ${ctx.cwd || "the current directory"}`,
+            "use /threads to see every session",
+          ]
         : ["the daemon reports no sessions yet \u2014 start one with a prompt"],
     }),
   );
@@ -2179,8 +2376,14 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
   }
   if (sessions.length === 0) return;
   const picked = await choose(ctx, {
-    options: sessions.map((s) => ({ label: `${idOf(s)}  ${fieldStr(s, ["state", "cwd"], "")}`, value: idOf(s) })),
-    initial: Math.max(0, sessions.findIndex((s) => idOf(s) === ctx.sessionId)),
+    options: sessions.map((s) => ({
+      label: `${idOf(s)}  ${fieldStr(s, ["state", "cwd"], "")}`,
+      value: idOf(s),
+    })),
+    initial: Math.max(
+      0,
+      sessions.findIndex((s) => idOf(s) === ctx.sessionId),
+    ),
     title: cwdOnly ? "Continue a session" : "Switch session thread",
     alt: "use `/session <id>` instead",
   });
@@ -2219,13 +2422,17 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
         ctx.turns.push(
           t.role === "tool"
             ? {
-              id: t.id,
-              role: "assistant",
-              text: `[tool] ${t.toolName ?? t.text}` +
-                (t.toolResult ? `\n${t.toolResult}` : ""),
-              ts: t.ts,
-            }
-            : { id: t.id, role: t.role === "assistant" ? "assistant" : "user", text: t.text, ts: t.ts },
+                id: t.id,
+                role: "assistant",
+                text: `[tool] ${t.toolName ?? t.text}` + (t.toolResult ? `\n${t.toolResult}` : ""),
+                ts: t.ts,
+              }
+            : {
+                id: t.id,
+                role: t.role === "assistant" ? "assistant" : "user",
+                text: t.text,
+                ts: t.ts,
+              },
         );
       }
       repaint(ctx);
@@ -2269,7 +2476,9 @@ async function panelContext(ctx: PanelCtx): Promise<void> {
   }
   const v = (r.value ?? {}) as Record<string, unknown>;
   if (v.ok === false) {
-    emitPanel(ctx, [colorize(`  \u2717 getContextInfo refused: ${String(v.error ?? "no engine")}`, C.red, nc)]);
+    emitPanel(ctx, [
+      colorize(`  \u2717 getContextInfo refused: ${String(v.error ?? "no engine")}`, C.red, nc),
+    ]);
     return;
   }
   const n = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
@@ -2278,27 +2487,44 @@ async function panelContext(ctx: PanelCtx): Promise<void> {
     // An `ok:true` answer with a zero window would render "0 / 0",
     // which reads as "you have no context at all" rather than "the
     // daemon did not know". Same reasoning as the Ink side.
-    emitPanel(ctx, [colorize("  \u2014 the daemon reported no context window for this model", C.dim, nc)]);
+    emitPanel(ctx, [
+      colorize("  \u2014 the daemon reported no context window for this model", C.dim, nc),
+    ]);
     return;
   }
   const compact = await probe(ctx, "compact/status");
   const cv = (compact.ok ? compact.value : null) as Record<string, unknown> | null;
   const disabled = cv?.autoCompactDisabled === true;
   const ev = (cv?.lastEvent ?? null) as Record<string, unknown> | null;
-  const lastCompact = ev && typeof ev.ts === "number" && ev.ts > 0
-    ? new Date(ev.ts).toLocaleTimeString()
-    : "";
+  const lastCompact =
+    ev && typeof ev.ts === "number" && ev.ts > 0 ? new Date(ev.ts).toLocaleTimeString() : "";
 
   const rows: PanelCell[][] = [
-    [{ text: "model", tone: "muted" }, { text: `${String(v.provider ?? "—")}/${String(v.model ?? "—")}` }],
-    [{ text: "window", tone: "muted" }, { text: `${window.toLocaleString()} tokens (max output ${n(v.maxOutputTokens).toLocaleString()})` }],
-    [{ text: "in use", tone: "muted" }, { text: `~${n(v.estimatedTokens).toLocaleString()} tokens — ${n(v.usagePercent)}%` }],
-    [{ text: "transcript", tone: "muted" }, { text: `${n(v.transcriptChars).toLocaleString()} characters` }],
+    [
+      { text: "model", tone: "muted" },
+      { text: `${String(v.provider ?? "—")}/${String(v.model ?? "—")}` },
+    ],
+    [
+      { text: "window", tone: "muted" },
+      {
+        text: `${window.toLocaleString()} tokens (max output ${n(v.maxOutputTokens).toLocaleString()})`,
+      },
+    ],
+    [
+      { text: "in use", tone: "muted" },
+      { text: `~${n(v.estimatedTokens).toLocaleString()} tokens — ${n(v.usagePercent)}%` },
+    ],
+    [
+      { text: "transcript", tone: "muted" },
+      { text: `${n(v.transcriptChars).toLocaleString()} characters` },
+    ],
     [
       { text: "auto-compact", tone: "muted" },
       {
         text: compact.ok
-          ? (disabled ? "OFF — the window fills until the provider rejects the turn" : "on")
+          ? disabled
+            ? "OFF — the window fills until the provider rejects the turn"
+            : "on"
           : "unknown (compact/status unavailable)",
         tone: disabled ? "err" : "muted",
       },
@@ -2312,7 +2538,10 @@ async function panelContext(ctx: PanelCtx): Promise<void> {
       title: "context window",
       subtitle: "what is filling the window",
       noColor: nc,
-      columns: [{ header: "field", min: 13 }, { header: "value", flex: 3 }],
+      columns: [
+        { header: "field", min: 13 },
+        { header: "value", flex: 3 },
+      ],
       rows,
       empty: ["the daemon reported nothing about the context window"],
     }),
@@ -2414,12 +2643,15 @@ const NOTICE_TONE: Record<LineNotice["level"], PanelTone> = {
 
 function panelNotifications(ctx: PanelCtx): void {
   const nc = ctx.noColor;
-  const rows: PanelCell[][] = ctx.notices.slice(-40).reverse().map((n) => [
-    { text: fmtStamp(n.ts), tone: "muted" },
-    { text: n.level, tone: NOTICE_TONE[n.level] },
-    { text: n.source, tone: "muted" },
-    { text: n.text, tone: "plain" },
-  ]);
+  const rows: PanelCell[][] = ctx.notices
+    .slice(-40)
+    .reverse()
+    .map((n) => [
+      { text: fmtStamp(n.ts), tone: "muted" },
+      { text: n.level, tone: NOTICE_TONE[n.level] },
+      { text: n.source, tone: "muted" },
+      { text: n.text, tone: "plain" },
+    ]);
   emitPanel(
     ctx,
     renderPanel({
@@ -2499,16 +2731,16 @@ async function panelAgentPick(ctx: PanelCtx): Promise<void> {
   repaint(ctx);
   if (picked === null) return;
   // R369: probe this and it returns -32601, because the daemon
-    // registers no such method. The Ink side already says so in plain
-    // words before the user picks (tui.tsx `case "agents"`), so line
-    // mode should not be the one that fails with a raw error code.
-    // Same table `handleSlash` consults.
-    const agentWhy = unsupportedReason("agent/setDefault");
-    if (agentWhy) {
-      ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("agent/setDefault", agentWhy)}`, C.red, nc));
-      return;
-    }
-    const res = await probe(ctx, "agent/setDefault", { name: picked } as RpcValue);
+  // registers no such method. The Ink side already says so in plain
+  // words before the user picks (tui.tsx `case "agents"`), so line
+  // mode should not be the one that fails with a raw error code.
+  // Same table `handleSlash` consults.
+  const agentWhy = unsupportedReason("agent/setDefault");
+  if (agentWhy) {
+    ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("agent/setDefault", agentWhy)}`, C.red, nc));
+    return;
+  }
+  const res = await probe(ctx, "agent/setDefault", { name: picked } as RpcValue);
   ctx.logAbove(
     res.ok
       ? colorize(`  \u2713 default agent \u2192 ${picked}`, C.green, nc)
@@ -2550,7 +2782,10 @@ async function pickEffort(ctx: PanelCtx): Promise<void> {
     }),
   );
   const picked = await choose(ctx, {
-    options: EFFORT_LEVELS.map((lv) => ({ label: `${lv}  \u2014  ${EFFORT_EFFECT[lv]}`, value: lv })),
+    options: EFFORT_LEVELS.map((lv) => ({
+      label: `${lv}  \u2014  ${EFFORT_EFFECT[lv]}`,
+      value: lv,
+    })),
     initial: 1,
     title: "Pick reasoning effort",
     alt: "use `/effort low|medium|high|xhigh` instead",
@@ -2558,13 +2793,13 @@ async function pickEffort(ctx: PanelCtx): Promise<void> {
   repaint(ctx);
   if (picked === null) return;
   // R369: same as above — `effort/set` is not registered either, so the
-    // picker must say so in words instead of probing into -32601.
-    const effortWhy = unsupportedReason("effort/set");
-    if (effortWhy) {
-      ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("effort/set", effortWhy)}`, C.red, nc));
-      return;
-    }
-    const res = await probe(ctx, "effort/set", { effort: picked } as RpcValue);
+  // picker must say so in words instead of probing into -32601.
+  const effortWhy = unsupportedReason("effort/set");
+  if (effortWhy) {
+    ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("effort/set", effortWhy)}`, C.red, nc));
+    return;
+  }
+  const res = await probe(ctx, "effort/set", { effort: picked } as RpcValue);
   ctx.logAbove(
     res.ok
       ? colorize(`  \u2713 effort \u2192 ${picked}`, C.green, nc)
@@ -2579,10 +2814,19 @@ async function pickEffort(ctx: PanelCtx): Promise<void> {
 async function panelCwdPick(ctx: PanelCtx): Promise<void> {
   const nc = ctx.noColor;
   const r = await probe(ctx, "listProjects");
-  const fromDaemon = r.ok ? asRows(r.value).map((p) => fieldStr(p, ["path", "cwd", "project", "id"], "")) : [];
+  const fromDaemon = r.ok
+    ? asRows(r.value).map((p) => fieldStr(p, ["path", "cwd", "project", "id"], ""))
+    : [];
   const here = ctx.cwd || process.cwd();
-  const parent = here.replace(/[\\/]+$/, "").split(/[\\/]/).slice(0, -1).join("/") || "/";
-  const candidates = [...new Set([here, parent, process.env.HOME ?? "", ...fromDaemon])].filter(Boolean);
+  const parent =
+    here
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .slice(0, -1)
+      .join("/") || "/";
+  const candidates = [...new Set([here, parent, process.env.HOME ?? "", ...fromDaemon])].filter(
+    Boolean,
+  );
 
   emitPanel(
     ctx,
@@ -2669,7 +2913,7 @@ function panelTodos(ctx: PanelCtx): void {
         "no plan yet.",
         "",
         "the todo list is written by the model through its todo_write tool.",
-        "ask for a plan (\"draft a 4-step plan for X\") and it appears here as",
+        'ask for a plan ("draft a 4-step plan for X") and it appears here as',
         "the run progresses \u2014 the daemon re-sends the whole list on each",
         "update, so this view is always the current snapshot.",
       ],
@@ -2793,14 +3037,18 @@ async function panelUpdate(ctx: PanelCtx, verb: UpdateVerb): Promise<void> {
           { text: v, tone: "plain" },
         ]),
         // The honest answer leads the prose, then the manual path.
-        [{ text: "status", tone: "muted" },
-         { text: model.headline, tone: model.endpointMissing ? "err" : "plain" }],
+        [
+          { text: "status", tone: "muted" },
+          { text: model.headline, tone: model.endpointMissing ? "err" : "plain" },
+        ],
         ...model.manual.map((line): PanelCell[] => [
           { text: "", tone: "plain" },
           { text: line, tone: "plain" },
         ]),
-        [{ text: "changelog", tone: "muted" },
-         { text: model.changelogUrl, tone: "plain" }],
+        [
+          { text: "changelog", tone: "muted" },
+          { text: model.changelogUrl, tone: "plain" },
+        ],
       ],
     }),
   );
@@ -2820,10 +3068,7 @@ async function panelSddStatus(ctx: PanelCtx): Promise<void> {
         title: "SDD run status",
         endpoint: "sdd.status",
         status: probeStatus(r),
-        instead: [
-          `the daemon answered: ${r.reason}`,
-          "/sdd <intent>   start a spec-driven run",
-        ],
+        instead: [`the daemon answered: ${r.reason}`, "/sdd <intent>   start a spec-driven run"],
       }),
     );
     return;
@@ -2833,10 +3078,22 @@ async function panelSddStatus(ctx: PanelCtx): Promise<void> {
   const phase = fieldStr(state, ["phase", "currentPhase"], "not started");
   const slug = fieldStr(state, ["slug", "id"], "");
   const rows: PanelCell[][] = [
-    [{ text: "slug", tone: "muted" }, { text: slug, tone: "strong" }],
-    [{ text: "phase", tone: "muted" }, { text: phase, tone: "plain" }],
-    [{ text: "intent", tone: "muted" }, { text: fieldStr(state, ["intent", "title"]), tone: "plain" }],
-    [{ text: "updated", tone: "muted" }, { text: fmtStamp(field(state, ["updatedAt", "ts"])), tone: "muted" }],
+    [
+      { text: "slug", tone: "muted" },
+      { text: slug, tone: "strong" },
+    ],
+    [
+      { text: "phase", tone: "muted" },
+      { text: phase, tone: "plain" },
+    ],
+    [
+      { text: "intent", tone: "muted" },
+      { text: fieldStr(state, ["intent", "title"]), tone: "plain" },
+    ],
+    [
+      { text: "updated", tone: "muted" },
+      { text: fmtStamp(field(state, ["updatedAt", "ts"])), tone: "muted" },
+    ],
   ];
   const history = asRows(field(state, ["history", "phases", "steps"]));
   emitPanel(
@@ -2891,7 +3148,11 @@ async function panelSddAction(
   const ok = field(obj, ["ok"]) !== false;
   ctx.logAbove(
     ok
-      ? colorize(`  \u2713 ${o.title} \u2014 ${fieldStr(obj, ["state", "phase", "status"], "accepted")}`, C.green, nc)
+      ? colorize(
+          `  \u2713 ${o.title} \u2014 ${fieldStr(obj, ["state", "phase", "status"], "accepted")}`,
+          C.green,
+          nc,
+        )
       : colorize(`  \u2717 ${o.title} \u2014 ${fieldStr(obj, ["error"], "rejected")}`, C.red, nc),
   );
 }
@@ -2911,9 +3172,7 @@ async function panelBank(ctx: PanelCtx, recall: boolean, kind: string, n: number
       readBankStats?: () => Promise<{ text?: string }>;
       readBankRecall?: (kind: string, n: number) => Promise<{ text?: string }>;
     };
-    const summary = recall
-      ? await mod.readBankRecall!(kind, n)
-      : await mod.readBankStats!();
+    const summary = recall ? await mod.readBankRecall!(kind, n) : await mod.readBankStats!();
     emitPanel(
       ctx,
       panelReport(nc, {
@@ -2979,14 +3238,38 @@ function panelTutorial(ctx: PanelCtx): void {
         { header: "does", flex: 1 },
       ],
       rows: [
-        [{ text: "/help", tone: "strong" }, { text: "every slash command, grouped", tone: "plain" }],
-        [{ text: "/mode", tone: "strong" }, { text: "pick the permission mode (arrow keys)", tone: "plain" }],
-        [{ text: "/memory", tone: "strong" }, { text: "browse the 3-layer memory", tone: "plain" }],
-        [{ text: "/todos", tone: "strong" }, { text: "the model's current plan", tone: "plain" }],
-        [{ text: "/threads", tone: "strong" }, { text: "switch session thread", tone: "plain" }],
-        [{ text: "/consents", tone: "strong" }, { text: "review and revoke stored tool grants", tone: "plain" }],
-        [{ text: "/export md", tone: "strong" }, { text: "write this session to markdown", tone: "plain" }],
-        [{ text: "/exit", tone: "strong" }, { text: "leave (Ctrl+C works too)", tone: "plain" }],
+        [
+          { text: "/help", tone: "strong" },
+          { text: "every slash command, grouped", tone: "plain" },
+        ],
+        [
+          { text: "/mode", tone: "strong" },
+          { text: "pick the permission mode (arrow keys)", tone: "plain" },
+        ],
+        [
+          { text: "/memory", tone: "strong" },
+          { text: "browse the 3-layer memory", tone: "plain" },
+        ],
+        [
+          { text: "/todos", tone: "strong" },
+          { text: "the model's current plan", tone: "plain" },
+        ],
+        [
+          { text: "/threads", tone: "strong" },
+          { text: "switch session thread", tone: "plain" },
+        ],
+        [
+          { text: "/consents", tone: "strong" },
+          { text: "review and revoke stored tool grants", tone: "plain" },
+        ],
+        [
+          { text: "/export md", tone: "strong" },
+          { text: "write this session to markdown", tone: "plain" },
+        ],
+        [
+          { text: "/exit", tone: "strong" },
+          { text: "leave (Ctrl+C works too)", tone: "plain" },
+        ],
       ],
       hint: "line mode is the cmd.exe path: no full-screen UI, same daemon",
     }),
@@ -2997,7 +3280,9 @@ function panelBookmark(ctx: PanelCtx, target: string): void {
   const nc = ctx.noColor;
   const assistantTurns = ctx.turns.filter((t) => t.role === "assistant");
   if (assistantTurns.length === 0) {
-    ctx.logAbove(colorize("  nothing to bookmark yet \u2014 let one turn complete first", C.dim, nc));
+    ctx.logAbove(
+      colorize("  nothing to bookmark yet \u2014 let one turn complete first", C.dim, nc),
+    );
     return;
   }
   const idx = target === "" ? assistantTurns.length : Number(target);
@@ -3008,10 +3293,19 @@ function panelBookmark(ctx: PanelCtx, target: string): void {
         title: "bookmark",
         subtitle: `/bookmark ${target}`,
         noColor: nc,
-        columns: [{ header: "field", min: 8 }, { header: "value", flex: 1 }],
+        columns: [
+          { header: "field", min: 8 },
+          { header: "value", flex: 1 },
+        ],
         rows: [
-          [{ text: "turn", tone: "muted" }, { text: target, tone: "err" }],
-          [{ text: "valid", tone: "muted" }, { text: `1 \u2013 ${assistantTurns.length} assistant turns`, tone: "plain" }],
+          [
+            { text: "turn", tone: "muted" },
+            { text: target, tone: "err" },
+          ],
+          [
+            { text: "valid", tone: "muted" },
+            { text: `1 \u2013 ${assistantTurns.length} assistant turns`, tone: "plain" },
+          ],
         ],
         hint: "/bookmark with no argument marks the most recent turn",
       }),
@@ -3033,11 +3327,13 @@ function panelBookmark(ctx: PanelCtx, target: string): void {
         { header: "when", min: 11 },
         { header: "first line", flex: 2 },
       ],
-      rows: [[
-        { text: `${idx}/${assistantTurns.length}`, tone: "strong" },
-        { text: fmtStamp(turn.ts), tone: "muted" },
-        { text: turn.text.replace(/\s+/g, " ").trim(), tone: "plain" },
-      ]],
+      rows: [
+        [
+          { text: `${idx}/${assistantTurns.length}`, tone: "strong" },
+          { text: fmtStamp(turn.ts), tone: "muted" },
+          { text: turn.text.replace(/\s+/g, " ").trim(), tone: "plain" },
+        ],
+      ],
       hint: wasSet
         ? "removed"
         : "line mode keeps bookmarks for this session only \u2014 run /bookmark <n> again to clear",
@@ -3076,21 +3372,31 @@ function panelSnippet(ctx: PanelCtx, op: string, name: string): void {
       return;
     }
     case "save": {
-      const last = [...ctx.turns].reverse().find((t) => t.role === "assistant" && t.text.trim().length > 0);
+      const last = [...ctx.turns]
+        .reverse()
+        .find((t) => t.role === "assistant" && t.text.trim().length > 0);
       if (!last) {
-        ctx.logAbove(colorize("  nothing to save yet \u2014 let one turn complete first", C.dim, nc));
+        ctx.logAbove(
+          colorize("  nothing to save yet \u2014 let one turn complete first", C.dim, nc),
+        );
         return;
       }
       ctx.snippets.set(name, last.text);
       ctx.logAbove(
-        colorize(`  \u2713 snippet \u201c${name}\u201d \u2192 ${last.text.length} chars from the last reply`, C.green, nc),
+        colorize(
+          `  \u2713 snippet \u201c${name}\u201d \u2192 ${last.text.length} chars from the last reply`,
+          C.green,
+          nc,
+        ),
       );
       return;
     }
     case "load": {
       const body = ctx.snippets.get(name);
       if (body === undefined) {
-        ctx.logAbove(colorize(`  \u2717 no snippet \u201c${name}\u201d \u2014 /snippet list`, C.red, nc));
+        ctx.logAbove(
+          colorize(`  \u2717 no snippet \u201c${name}\u201d \u2014 /snippet list`, C.red, nc),
+        );
         return;
       }
       ctx.logAbove(renderInlineMarkdown(body, nc));
@@ -3098,7 +3404,9 @@ function panelSnippet(ctx: PanelCtx, op: string, name: string): void {
     }
     case "delete": {
       if (!ctx.snippets.delete(name)) {
-        ctx.logAbove(colorize(`  \u2717 no snippet \u201c${name}\u201d \u2014 /snippet list`, C.red, nc));
+        ctx.logAbove(
+          colorize(`  \u2717 no snippet \u201c${name}\u201d \u2014 /snippet list`, C.red, nc),
+        );
         return;
       }
       ctx.logAbove(colorize(`  \u2713 deleted snippet \u201c${name}\u201d`, C.green, nc));
@@ -3116,7 +3424,9 @@ function panelSnippet(ctx: PanelCtx, op: string, name: string): void {
 /** `__MEMORY_PANEL__:project` -> `__MEMORY_PANEL__` / `project`. */
 function splitSentinel(local: string): { base: string; payload: string } {
   const i = local.indexOf(":");
-  return i < 0 ? { base: local, payload: "" } : { base: local.slice(0, i), payload: local.slice(i + 1) };
+  return i < 0
+    ? { base: local, payload: "" }
+    : { base: local.slice(0, i), payload: local.slice(i + 1) };
 }
 
 /** Only `__X__`-shaped tokens get sanitised; see the fallback. */
@@ -3151,9 +3461,7 @@ function humanizeSentinelLine(local: string, noColor: boolean): string {
   }
   const { base, payload } = splitSentinel(local);
   const sentence = describeSentinel(base, "line").split(MOJIBAKE_DASH).join("\u2014 ");
-  const where = payload === "" || intentForSentinel(base) === undefined
-    ? ""
-    : `  (${payload})`;
+  const where = payload === "" || intentForSentinel(base) === undefined ? "" : `  (${payload})`;
   return colorize("  \u00B7 " + sentence + where, C.dim, noColor);
 }
 
@@ -3272,17 +3580,24 @@ async function renderPanelSentinel(
       });
       return true;
     case "__SDD_ABORT__":
-      await panelSddAction(ctx, { title: "sdd abort", method: "sdd.abort", params: {} as RpcValue });
+      await panelSddAction(ctx, {
+        title: "sdd abort",
+        method: "sdd.abort",
+        params: {} as RpcValue,
+      });
       return true;
     case "__SDD_VIEW__":
     case "__SDD_DIFF__":
     case "__SDD_SNAPSHOT__":
     case "__SDD_CLEAR_CACHE__": {
       const what =
-        base === "__SDD_DIFF__" ? "diff a phase" :
-        base === "__SDD_SNAPSHOT__" ? "snapshot a phase" :
-        base === "__SDD_CLEAR_CACHE__" ? "clear the phase cache" :
-        "view a phase";
+        base === "__SDD_DIFF__"
+          ? "diff a phase"
+          : base === "__SDD_SNAPSHOT__"
+            ? "snapshot a phase"
+            : base === "__SDD_CLEAR_CACHE__"
+              ? "clear the phase cache"
+              : "view a phase";
       emitPanel(
         ctx,
         panelUnavailable(nc, {
@@ -3341,9 +3656,13 @@ async function renderPanelSentinel(
       emitPanel(
         ctx,
         panelUnavailable(nc, {
-          title: base.replace(/^__|__$/g, "").replace(/_/g, " ").toLowerCase(),
+          title: base
+            .replace(/^__|__$/g, "")
+            .replace(/_/g, " ")
+            .toLowerCase(),
           subtitle: payload || undefined,
-          reason: "line mode's palette is fixed at startup \u2014 there is no theme, layout or budget state to change here.",
+          reason:
+            "line mode's palette is fixed at startup \u2014 there is no theme, layout or budget state to change here.",
           instead: ["/mode   permission mode does change in line mode"],
         }),
       );
@@ -3405,11 +3724,9 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   void (async () => {
     try {
       const projects = (await client.request("listProjects")) as
-        | Array<{ cwd?: string; active?: boolean }>
-        | null
-        | undefined;
+        Array<{ cwd?: string; active?: boolean }> | null | undefined;
       const current = Array.isArray(projects)
-        ? projects.find((p) => p?.active) ?? projects[0]
+        ? (projects.find((p) => p?.active) ?? projects[0])
         : undefined;
       const daemonCwd = String(current?.cwd ?? "").trim();
       if (daemonCwd && daemonCwd !== displayState.cwd) displayState.cwd = daemonCwd;
@@ -3527,7 +3844,10 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         textBuffer += String(ev.text ?? "");
         scheduleFlush();
       } else if (t === "tool_use_start") {
-        if (textFlushTimer) { clearTimeout(textFlushTimer); textFlushTimer = null; }
+        if (textFlushTimer) {
+          clearTimeout(textFlushTimer);
+          textFlushTimer = null;
+        }
         flushText();
         const name = String(ev.name ?? "?");
         const args = ev.input as unknown;
@@ -3541,8 +3861,12 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       } else if (t === "tool_result") {
         const isErr = Boolean(ev.isError);
         const name = String(ev.id ?? currentTool?.name ?? "?");
-        const resultStr = typeof ev.result === "string" ? ev.result :
-                         ev.result != null ? JSON.stringify(ev.result) : "";
+        const resultStr =
+          typeof ev.result === "string"
+            ? ev.result
+            : ev.result != null
+              ? JSON.stringify(ev.result)
+              : "";
         lastToolWas = name;
         lastToolDigest = resultDigest(resultStr, 2);
         const track = currentTool ?? { name, argsDigest: "", startedAt: Date.now() };
@@ -3551,7 +3875,10 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         currentTool = null;
         runState = "streaming";
       } else if (t === "run_end") {
-        if (textFlushTimer) { clearTimeout(textFlushTimer); textFlushTimer = null; }
+        if (textFlushTimer) {
+          clearTimeout(textFlushTimer);
+          textFlushTimer = null;
+        }
         // R347: capture the full assistant text into the turn
         // buffer right BEFORE flushing so /export gets the
         // complete response (not just the unstreamed tail).
@@ -3559,18 +3886,37 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         flushText();
         runState = "idle";
         if (assistantText && assistantText.length > 0) {
-          turnsBuffer.push({ id: ++turnCounter, role: "assistant", text: assistantText, ts: Date.now() });
+          turnsBuffer.push({
+            id: ++turnCounter,
+            role: "assistant",
+            text: assistantText,
+            ts: Date.now(),
+          });
         }
         const stopReason = String(ev.stopReason ?? "end_turn");
         const kind = classifyStopReason(stopReason);
         const tag = stopKindLabel(kind, stopReason);
         const color = stopKindColor(kind);
-        logAbove(colorize(`  [${tag}]`, color, noColor) +
-                 colorize(`  (reason: ${stopReason})`, C.dim, noColor));
+        logAbove(
+          colorize(`  [${tag}]`, color, noColor) +
+            colorize(`  (reason: ${stopReason})`, C.dim, noColor),
+        );
         if (kind === "loop") {
-          logAbove(colorize("  (the model repeated the same call or hit a long-running output; daemon stopped it)", C.dim, noColor));
+          logAbove(
+            colorize(
+              "  (the model repeated the same call or hit a long-running output; daemon stopped it)",
+              C.dim,
+              noColor,
+            ),
+          );
         } else if (kind === "max_turns") {
-          logAbove(colorize("  (the run hit the per-query turn cap; raise it with --max-turns, or narrow the prompt)", C.dim, noColor));
+          logAbove(
+            colorize(
+              "  (the run hit the per-query turn cap; raise it with --max-turns, or narrow the prompt)",
+              C.dim,
+              noColor,
+            ),
+          );
         } else if (kind === "error") {
           logAbove(colorize("  (check the daemon log on stderr for details)", C.dim, noColor));
         }
@@ -3580,7 +3926,8 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         if (kind !== "ok" && kind !== null) {
           recordNotice(kind === "error" ? "err" : "warn", "run", `stopped \u2014 ${stopReason}`);
         }
-        const usage = (ev as { usage?: { input?: number; output?: number; costUsd?: number } }).usage;
+        const usage = (ev as { usage?: { input?: number; output?: number; costUsd?: number } })
+          .usage;
         if (usage) {
           displayState.inputTokens = usage.input ?? displayState.inputTokens;
           displayState.outputTokens = usage.output ?? displayState.outputTokens;
@@ -3620,18 +3967,40 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
         const msg = String(ev.message ?? "");
         const kind = String((ev as { kind?: string }).kind ?? "");
         if (kind === "memory") {
-          logAbove(colorize("  \u250C\u2500 memory \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510", C.cyan, noColor));
+          logAbove(
+            colorize(
+              "  \u250C\u2500 memory \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+              C.cyan,
+              noColor,
+            ),
+          );
           for (const line of msg.split(/\r?\n/)) {
             logAbove(colorize("  \u2502 ", C.cyan, noColor) + colorize(line, C.dim, noColor));
           }
-          logAbove(colorize("  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518", C.cyan, noColor));
+          logAbove(
+            colorize(
+              "  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
+              C.cyan,
+              noColor,
+            ),
+          );
         } else {
           logAbove(colorize(`  \u00B7 ${msg}`, C.dim, noColor));
         }
       } else if (t === "plan") {
         const items = Array.isArray(ev.items) ? ev.items : [];
-        const lines = items.map((it, i) => colorize(`  ${String(i + 1).padStart(2, " ")}. `, C.dim, noColor) + renderInlineMarkdown(String(it), noColor));
-        logAbove(colorize(`\u2731 Plan (${items.length} item${items.length === 1 ? "" : "s"}):`, C.cyan, noColor));
+        const lines = items.map(
+          (it, i) =>
+            colorize(`  ${String(i + 1).padStart(2, " ")}. `, C.dim, noColor) +
+            renderInlineMarkdown(String(it), noColor),
+        );
+        logAbove(
+          colorize(
+            `\u2731 Plan (${items.length} item${items.length === 1 ? "" : "s"}):`,
+            C.cyan,
+            noColor,
+          ),
+        );
         for (const l of lines) logAbove(l);
       }
     } else if (method === "cwd_changed") {
@@ -3663,7 +4032,12 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // STATE, not an event: the model re-sends the whole list on
       // every change, so logging it produced a `[task ? -> ?]`
       // line per update and left /todos with nothing to render.
-      const p = (params ?? {}) as { taskId?: string; status?: string; kind?: string; params?: { todos?: unknown } };
+      const p = (params ?? {}) as {
+        taskId?: string;
+        status?: string;
+        kind?: string;
+        params?: { todos?: unknown };
+      };
       if (p.kind === "todo_update") {
         const incoming = asRows(p.params?.todos);
         todos.length = 0;
@@ -3699,17 +4073,23 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       const guidance = (() => {
         switch (risk) {
           case "CRITICAL":
-            return tool === "bash" ? "this shell command can read, write, or delete anything on this machine" :
-                   tool === "file_write" ? "this will overwrite or create a file on disk" :
-                   `this is a ${tool} call that the daemon flagged as CRITICAL`;
+            return tool === "bash"
+              ? "this shell command can read, write, or delete anything on this machine"
+              : tool === "file_write"
+                ? "this will overwrite or create a file on disk"
+                : `this is a ${tool} call that the daemon flagged as CRITICAL`;
           case "HIGH":
-            return tool === "bash" ? "this shell command runs outside the sandbox" :
-                   tool === "file_write" ? "this will create or change a file" :
-                   `this is a ${tool} call that the daemon flagged as HIGH`;
+            return tool === "bash"
+              ? "this shell command runs outside the sandbox"
+              : tool === "file_write"
+                ? "this will create or change a file"
+                : `this is a ${tool} call that the daemon flagged as HIGH`;
           case "MEDIUM":
-            return tool === "bash" ? "this shell command will run with your user permissions" :
-                   tool === "file_read" ? "this reads the file contents" :
-                   `this is a ${tool} call that the daemon flagged as MEDIUM`;
+            return tool === "bash"
+              ? "this shell command will run with your user permissions"
+              : tool === "file_read"
+                ? "this reads the file contents"
+                : `this is a ${tool} call that the daemon flagged as MEDIUM`;
           default:
             return `this is a ${tool} call (LOW risk)`;
         }
@@ -3723,15 +4103,9 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // visually.
       logAbove("");
       void (async () => {
-        const decision = await runPicker(() => pickPermission(
-          lineInput,
-          risk,
-          tool,
-          argDigest,
-          reason,
-          guidance,
-          noColor,
-        ));
+        const decision = await runPicker(() =>
+          pickPermission(lineInput, risk, tool, argDigest, reason, guidance, noColor),
+        );
         if (!rlClosed) lineInput.redraw();
         try {
           await client.request("permissionResponse", {
@@ -3787,7 +4161,9 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // Esc is dead for the rest of the session.
       cancelSent = false;
       activeRunId = null;
-      logAbove(colorize(`  ${runOutcome("stop", false, { error: (e as Error).message })}`, C.red, noColor));
+      logAbove(
+        colorize(`  ${runOutcome("stop", false, { error: (e as Error).message })}`, C.red, noColor),
+      );
     }
     if (!rlClosed) lineInput.redraw();
   }
@@ -3811,14 +4187,13 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       }
     }
     try {
-      await client.request(
-        RUN_PAUSE_METHOD,
-        runParams(action),
-      );
+      await client.request(RUN_PAUSE_METHOD, runParams(action));
       continuationPaused = paused;
       logAbove(colorize(`  ${runOutcome(action, true)}`, C.dim, noColor));
     } catch (e) {
-      logAbove(colorize(`  ${runOutcome(action, false, { error: (e as Error).message })}`, C.red, noColor));
+      logAbove(
+        colorize(`  ${runOutcome(action, false, { error: (e as Error).message })}`, C.red, noColor),
+      );
     }
     if (!rlClosed) lineInput.redraw();
   }
@@ -3884,7 +4259,7 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   // render — the prompt would drift down the screen by one row
   // per render because we never get back to the right anchor.
   const splashLines = Math.max(1, renderSplash(displayState, noColor).split("\n").length - 1);
-  lineInput.setInputTopRow(splashLines + 1);  // +1 for the trailing "\n" we wrote
+  lineInput.setInputTopRow(splashLines + 1); // +1 for the trailing "\n" we wrote
 
   let inFlight = 0;
   let sawRunEnd = false;
@@ -3892,7 +4267,9 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   // on run_start, read on run_end. Zero before the first turn.
   let runStartedAt = 0;
   let exitResolve: ((code: number) => void) | null = null;
-  const exitPromise = new Promise<number>((resolve) => { exitResolve = resolve; });
+  const exitPromise = new Promise<number>((resolve) => {
+    exitResolve = resolve;
+  });
 
   function tryExit(): void {
     if (!rlClosed || !exitResolve) return;
@@ -3966,7 +4343,13 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       return;
     }
     if (slash?.local === "__HISTORY__") {
-      logAbove(colorize("(history navigation is only available in the Ink TUI; use \u2191/\u2193 in a real terminal)", C.dim, noColor));
+      logAbove(
+        colorize(
+          "(history navigation is only available in the Ink TUI; use \u2191/\u2193 in a real terminal)",
+          C.dim,
+          noColor,
+        ),
+      );
       return;
     }
     if (slash?.local === "__DEMO__") {
@@ -3984,25 +4367,46 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       }
       return;
     }
-    if (slash?.local?.startsWith("__EXPORT_MD__:") || slash?.local?.startsWith("__EXPORT_JSON__:")) {
+    if (
+      slash?.local?.startsWith("__EXPORT_MD__:") ||
+      slash?.local?.startsWith("__EXPORT_JSON__:")
+    ) {
       // R347: line-mode export. Mirrors the Ink TUI tui.tsx
       // handler but writes straight to disk and surfaces a
       // logAbove ack instead of a toast. Empty path = the
       // default `<cwd>/.aethercode/exports/session-<id>-<YYYYMMDD-HHMM>.{md,json}`.
       const isJson = slash.local.startsWith("__EXPORT_JSON__:");
-      const userPath = slash.local.slice(isJson ? "__EXPORT_JSON__:".length : "__EXPORT_MD__:".length);
+      const userPath = slash.local.slice(
+        isJson ? "__EXPORT_JSON__:".length : "__EXPORT_MD__:".length,
+      );
       inFlight++;
       try {
-        const { exportToMarkdown, exportToJson, exportWithFrontmatter, defaultExportPath, writeExport } = await import("./exportScrollback.js");
+        const {
+          exportToMarkdown,
+          exportToJson,
+          exportWithFrontmatter,
+          defaultExportPath,
+          writeExport,
+        } = await import("./exportScrollback.js");
         const { mkdirSync } = await import("node:fs");
-        const path = userPath && userPath.length > 0
-          ? userPath
-          // R364: displayState.cwd is daemon-owned and updated on cwd_changed.
-        : defaultExportPath(displayState.cwd || opts.cwd || process.cwd(), displayState.sessionId, isJson ? "json" : "md");
+        const path =
+          userPath && userPath.length > 0
+            ? userPath
+            : // R364: displayState.cwd is daemon-owned and updated on cwd_changed.
+              defaultExportPath(
+                displayState.cwd || opts.cwd || process.cwd(),
+                displayState.sessionId,
+                isJson ? "json" : "md",
+              );
         mkdirSync(path.replace(/[\\/][^\\/]+$/, ""), { recursive: true });
         const body = isJson
           ? exportToJson(turnsBuffer as unknown as Parameters<typeof exportToJson>[0])
-          : exportWithFrontmatter(turnsBuffer as unknown as Parameters<typeof exportWithFrontmatter>[0], displayState.model, displayState.sessionId, { cwd: displayState.cwd || opts.cwd || process.cwd() });
+          : exportWithFrontmatter(
+              turnsBuffer as unknown as Parameters<typeof exportWithFrontmatter>[0],
+              displayState.model,
+              displayState.sessionId,
+              { cwd: displayState.cwd || opts.cwd || process.cwd() },
+            );
         writeExport(path, body);
         logAbove(colorize(`  ✓ exported ${turnsBuffer.length} turns → ${path}`, C.green, noColor));
       } catch (e) {
@@ -4056,7 +4460,9 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
             noColor,
             lineInput,
             logAbove,
-            repaint: () => { if (!rlClosed) lineInput.redraw(); },
+            repaint: () => {
+              if (!rlClosed) lineInput.redraw();
+            },
             sessionId: displayState.sessionId,
             cwd: displayState.cwd,
             state: displayState,
@@ -4119,13 +4525,14 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // is where we learn the id that `cancel` needs. A daemon refusal
       // (`{ok:false, busyRunId}`) is adopted too, so Esc stops the run
       // that is actually blocking us instead of dead-ending.
-      const resp = (await client.request<{
-        runId?: string;
-        accepted?: boolean;
-        ok?: boolean;
-        busyRunId?: string;
-        error?: string;
-      }>("query", { prompt: text })) ?? {};
+      const resp =
+        (await client.request<{
+          runId?: string;
+          accepted?: boolean;
+          ok?: boolean;
+          busyRunId?: string;
+          error?: string;
+        }>("query", { prompt: text })) ?? {};
       if (resp.runId) activeRunId = resp.runId;
       else if (resp.busyRunId) {
         activeRunId = resp.busyRunId;
@@ -4159,7 +4566,8 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
 
   async function runLineDemo(): Promise<void> {
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-    const say = (text: string, color: string = C.dim) => logAbove(colorize("  " + text, color, noColor));
+    const say = (text: string, color: string = C.dim) =>
+      logAbove(colorize("  " + text, color, noColor));
     const sayMarkdown = (text: string) => logAbove("  " + renderInlineMarkdown(text, noColor));
     logAbove("");
     say("(demo) starting canned conversation", C.gray);
@@ -4169,14 +4577,25 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     for (const line of toolStartLine(currentTool, noColor)) logAbove(line);
     await sleep(400);
     {
-      const track = currentTool ?? { name: "file_read", argsDigest: "package.json", startedAt: Date.now() };
-      for (const l of toolDoneLine(track, false, resultDigest('{ "name": "aethercode-tui", "version": "0.2.1" }', 2), noColor)) {
+      const track = currentTool ?? {
+        name: "file_read",
+        argsDigest: "package.json",
+        startedAt: Date.now(),
+      };
+      for (const l of toolDoneLine(
+        track,
+        false,
+        resultDigest('{ "name": "aethercode-tui", "version": "0.2.1" }', 2),
+        noColor,
+      )) {
         logAbove(l);
       }
       currentTool = null;
     }
     await sleep(400);
-    sayMarkdown("Sure \u2014 let me read the manifest. The TUI is built on **Ink 5** (React for CLI) and bundles into ~2.3 MB.");
+    sayMarkdown(
+      "Sure \u2014 let me read the manifest. The TUI is built on **Ink 5** (React for CLI) and bundles into ~2.3 MB.",
+    );
     await sleep(600);
     currentTool = { name: "file_write", argsDigest: "package.json", startedAt: Date.now() };
     for (const line of toolStartLine(currentTool, noColor)) logAbove(line);
@@ -4195,16 +4614,25 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       noColor,
     );
     if (!rlClosed) lineInput.redraw();
-    const decisionLabel = ({
-      allow: "1\u2003allow once",
-      always_allow: "2\u2003always for this session",
-      deny: "3\u2004deny once",
-      always_deny: "4\u2004always deny",
-    } as const)[decision];
-    say(`(demo) you picked [${decisionLabel}] \u2014 ${decision === "allow" || decision === "always_allow" ? "tool allowed" : "tool denied"}`, C.cyan);
+    const decisionLabel = (
+      {
+        allow: "1\u2003allow once",
+        always_allow: "2\u2003always for this session",
+        deny: "3\u2004deny once",
+        always_deny: "4\u2004always deny",
+      } as const
+    )[decision];
+    say(
+      `(demo) you picked [${decisionLabel}] \u2014 ${decision === "allow" || decision === "always_allow" ? "tool allowed" : "tool denied"}`,
+      C.cyan,
+    );
 
     {
-      const track = currentTool ?? { name: "file_write", argsDigest: "package.json", startedAt: Date.now() };
+      const track = currentTool ?? {
+        name: "file_write",
+        argsDigest: "package.json",
+        startedAt: Date.now(),
+      };
       const ok = decision === "allow" || decision === "always_allow";
       const resultText = ok ? "wrote 47 bytes to package.json" : "denied by user (demo)";
       for (const l of toolDoneLine(track, !ok, resultDigest(resultText, 1), noColor)) {
@@ -4214,8 +4642,10 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     }
     await sleep(400);
     sayMarkdown("Updated the manifest and bumped the patch version. Ready for review.");
-    logAbove(colorize("  [\u2713 ready]", C.green, noColor) +
-             colorize("  (reason: end_turn)", C.dim, noColor));
+    logAbove(
+      colorize("  [\u2713 ready]", C.green, noColor) +
+        colorize("  (reason: end_turn)", C.dim, noColor),
+    );
     await sleep(400);
     say("(demo) conversation complete \u2014 restart to clear", C.gray);
     if (!rlClosed) lineInput.redraw();

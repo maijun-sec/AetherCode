@@ -11,10 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Pure-helper tests ------------------------------------
@@ -100,7 +97,10 @@ test("T-6-18: STALE_THRESHOLD_MS constant is exported (= 30 min)", () => {
 test("T-6-18: focus swaps between Re-attach and Cancel via Tab", () => {
   const src = read("src/components/StaleWarning.tsx");
   assert.match(src, /useState<"reattach"\s*\|\s*"cancel">/);
-  assert.match(src, /setFocus\(\(f\)\s*=>\s*\(f\s*===\s*"reattach"\s*\?\s*"cancel"\s*:\s*"reattach"\)/);
+  assert.match(
+    src,
+    /setFocus\(\(f\)\s*=>\s*\(f\s*===\s*"reattach"\s*\?\s*"cancel"\s*:\s*"reattach"\)/,
+  );
 });
 
 test("T-6-18: warning uses double border + warn colour", () => {
@@ -120,18 +120,39 @@ test("T-6-18: formatStaleDuration + shouldWarnStale are exported", () => {
 test("T-6-18: tsc --strict compile of StaleWarning.tsx is clean", () => {
   const tmp = join(root, "tmp-t6-sw-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true", "--noUncheckedIndexedAccess", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "components", "StaleWarning.tsx"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "components", "StaleWarning.tsx"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error(r.stdout);
     console.error(r.stderr);

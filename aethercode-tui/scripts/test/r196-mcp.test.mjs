@@ -26,8 +26,10 @@ const root = join(here, "..", "..");
 const tmp = join(root, "tmp-r196-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "_r196_helpers.ts");
@@ -40,12 +42,27 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+  encoding: "utf-8",
+  shell: true,
+});
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
@@ -53,8 +70,16 @@ if (r.status !== 0) {
 const helpers = await import(
   "file:///" + join(tmp, "out", "components", "_r196_helpers.js").replace(/\\/g, "/")
 );
-const { formatLoginState, reconnectChoice, forceConfirmChoice,
-  statusGlyph, statusColor, dismissServer, dismissReconnect, dismissCancel } = helpers;
+const {
+  formatLoginState,
+  reconnectChoice,
+  forceConfirmChoice,
+  statusGlyph,
+  statusColor,
+  dismissServer,
+  dismissReconnect,
+  dismissCancel,
+} = helpers;
 
 // ----- 1. formatLoginState -----------------------------------------
 
@@ -63,7 +88,10 @@ test("R196: formatLoginState — starting", () => {
 });
 
 test("R196: formatLoginState — awaiting-authorize", () => {
-  assert.equal(formatLoginState("awaiting-authorize", "github"), "mcp login github: waiting for callback");
+  assert.equal(
+    formatLoginState("awaiting-authorize", "github"),
+    "mcp login github: waiting for callback",
+  );
 });
 
 test("R196: formatLoginState — device-code", () => {
@@ -161,4 +189,8 @@ test("R196: dismissCancel — builds cancel dismissal", () => {
 });
 
 // ----- Cleanup -----------------------------------------------
-try { unlinkSync(shimPath); } catch { /* ignore */ }
+try {
+  unlinkSync(shimPath);
+} catch {
+  /* ignore */
+}

@@ -41,13 +41,27 @@ if (existsSync(tmp)) {
 mkdirSync(tmp, { recursive: true });
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "panelIntents.ts")}"`],
-  { encoding: "utf-8", shell: true });
+const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "panelIntents.ts")}"`], {
+  encoding: "utf-8",
+  shell: true,
+});
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
@@ -84,9 +98,22 @@ const commandsSrc = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8
  * regex. — Lesson 1120, fourth occurrence.
  */
 const INLINE_FAMILIES = [
-  "EXIT", "CLEAR", "HISTORY", "DEMO", "THEME", "LAYOUT", "BUDGET",
-  "BOOKMARK", "SNIPPET", "EXPORT", "THEMES_PICK", "TUTORIAL", "BANK",
-  "SDD", "MEMORY_AUDIT", "PICK_MODE",
+  "EXIT",
+  "CLEAR",
+  "HISTORY",
+  "DEMO",
+  "THEME",
+  "LAYOUT",
+  "BUDGET",
+  "BOOKMARK",
+  "SNIPPET",
+  "EXPORT",
+  "THEMES_PICK",
+  "TUTORIAL",
+  "BANK",
+  "SDD",
+  "MEMORY_AUDIT",
+  "PICK_MODE",
 ];
 const INLINE_OK = new RegExp(`__(${INLINE_FAMILIES.join("|")})`);
 
@@ -145,8 +172,11 @@ test("every panel sentinel commands.ts can emit has a registry entry", () => {
   const missing = [...emitted].filter(
     (s) => !ALL_DECLARED_SENTINELS.includes(s) && !INLINE_OK.test(s),
   );
-  assert.deepEqual(missing, [],
-    `panel sentinels with no PANEL_INTENTS entry: ${missing.join(", ")}`);
+  assert.deepEqual(
+    missing,
+    [],
+    `panel sentinels with no PANEL_INTENTS entry: ${missing.join(", ")}`,
+  );
 });
 
 test("every INLINE_OK sentinel is actually claimed by a renderer", () => {
@@ -163,23 +193,29 @@ test("every INLINE_OK sentinel is actually claimed by a renderer", () => {
   // parameterised ones. (Guessing 25 here is exactly how a threshold
   // becomes a lie — Lesson 1117.)
   const relevant = [...emittedSentinels()].filter((s) => INLINE_OK.test(s));
-  assert.ok(relevant.length >= 29,
+  assert.ok(
+    relevant.length >= 29,
     `only ${relevant.length} sentinels matched INLINE_OK — the family list probably ` +
-    "stopped matching, which would make every assertion below vacuous");
+      "stopped matching, which would make every assertion below vacuous",
+  );
 
   const unclaimed = relevant.filter((s) => !claimedBy(lineSrc, s) && !claimedBy(tuiSrc, s));
-  assert.deepEqual(unclaimed, [],
+  assert.deepEqual(
+    unclaimed,
+    [],
     "these sentinels are excused by INLINE_OK but NO renderer names them, so " +
-    `they leak the raw token to the user: ${unclaimed.join(", ")}`);
+      `they leak the raw token to the user: ${unclaimed.join(", ")}`,
+  );
 
   // And a family nobody emits is dead weight in an allowlist — it is
   // pure future suppression.
-  const unused = INLINE_FAMILIES.filter(
-    (f) => !relevant.some((s) => s.includes(f)),
-  );
-  assert.deepEqual(unused, [],
+  const unused = INLINE_FAMILIES.filter((f) => !relevant.some((s) => s.includes(f)));
+  assert.deepEqual(
+    unused,
+    [],
     `INLINE_FAMILIES entries that match no emitted sentinel: ${unused.join(", ")}. ` +
-    "An allowlist entry for a sentinel nobody can emit is suppression waiting to happen.");
+      "An allowlist entry for a sentinel nobody can emit is suppression waiting to happen.",
+  );
 });
 
 test("every unavailable entry carries a gapNote", () => {
@@ -195,8 +231,11 @@ test("every unavailable entry carries a gapNote", () => {
   const bad = PANEL_INTENTS.filter(
     (p) => (p.ink === "unavailable" || p.line === "unavailable") && !(p.gapNote || "").trim(),
   );
-  assert.deepEqual(bad.map((p) => p.id), [],
-    "unavailable intents must explain themselves via gapNote");
+  assert.deepEqual(
+    bad.map((p) => p.id),
+    [],
+    "unavailable intents must explain themselves via gapNote",
+  );
 });
 
 test("sentinels are unique across the registry", () => {
@@ -228,7 +267,16 @@ test("every declared component file exists on disk", () => {
       join(root, "src", p.component),
       join(root, "src", "components", p.component),
     ];
-    if (!candidates.some((c) => { try { readFileSync(c); return true; } catch { return false; } })) {
+    if (
+      !candidates.some((c) => {
+        try {
+          readFileSync(c);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+    ) {
       missing.push(`${p.id} -> ${p.component}`);
     }
   }
@@ -238,18 +286,22 @@ test("every declared component file exists on disk", () => {
 test("registry titles are user-facing copy, not dev notes", () => {
   // P0.3 strips dev notes from /help. The registry feeds /help, so the
   // same standard applies: no round ids, no T-numbers, no "对应历史 round".
-  const dirty = PANEL_INTENTS.filter((p) =>
-    /\bR\d{3}\b|\bT-\d+|round:|历史/i.test(p.title));
-  assert.deepEqual(dirty.map((p) => `${p.id}: ${p.title}`), [],
-    "registry titles leak development notes into user-facing copy");
+  const dirty = PANEL_INTENTS.filter((p) => /\bR\d{3}\b|\bT-\d+|round:|历史/i.test(p.title));
+  assert.deepEqual(
+    dirty.map((p) => `${p.id}: ${p.title}`),
+    [],
+    "registry titles leak development notes into user-facing copy",
+  );
 });
 
 test("gapNote may mention rounds (it's internal), titles may not", () => {
   // Guards the other direction: the gapNote is an internal engineering
   // record, so it is ALLOWED (and expected) to cite round numbers.
   const withRoundRef = PANEL_INTENTS.filter((p) => /R\d{3}/.test(p.gapNote || ""));
-  assert.ok(withRoundRef.length > 0,
-    "gapNotes should cite the round that found the gap — that is the audit trail");
+  assert.ok(
+    withRoundRef.length > 0,
+    "gapNotes should cite the round that found the gap — that is the audit trail",
+  );
 });
 
 test("describeSentinel never leaks the raw token", () => {
@@ -258,8 +310,10 @@ test("describeSentinel never leaks the raw token", () => {
   for (const s of ALL_DECLARED_SENTINELS) {
     for (const surface of ["ink", "line"]) {
       const d = describeSentinel(s, surface);
-      assert.ok(!d.includes("__"),
-        `describeSentinel("${s}", "${surface}") leaked the raw token: ${d}`);
+      assert.ok(
+        !d.includes("__"),
+        `describeSentinel("${s}", "${surface}") leaked the raw token: ${d}`,
+      );
     }
   }
   assert.match(describeSentinel("__MEMORY_PANEL__", "line"), /not available in line mode/);
@@ -323,8 +377,11 @@ test("the advertised:false escape hatch actually excludes a row", () => {
   };
   const withSynthetic = rows.concat([synthetic]);
   const filtered = withSynthetic.filter((p) => p.advertised !== false);
-  assert.equal(filtered.length, rows.length,
-    "advertised:false did NOT exclude the synthetic row — the escape hatch is broken");
+  assert.equal(
+    filtered.length,
+    rows.length,
+    "advertised:false did NOT exclude the synthetic row — the escape hatch is broken",
+  );
   assert.ok(!filtered.some((p) => p.id === synthetic.id));
   // ...and the SAME row without the flag would be advertised, so the
   // assertion above is measuring the filter rather than the input.
@@ -337,8 +394,10 @@ test("the advertised:false escape hatch actually excludes a row", () => {
   const withoutFlag = { ...synthetic };
   delete withoutFlag.advertised;
   const control = withSynthetic.concat([withoutFlag]);
-  assert.ok(control.filter((p) => p.advertised !== false).some((p) => p.id === synthetic.id),
-    "an un-flagged row is ALSO excluded — the probe row was not a fair test of the flag");
+  assert.ok(
+    control.filter((p) => p.advertised !== false).some((p) => p.id === synthetic.id),
+    "an un-flagged row is ALSO excluded — the probe row was not a fair test of the flag",
+  );
 });
 
 test("regression: the 15 orphaned sentinels are all accounted for", () => {
@@ -346,14 +405,26 @@ test("regression: the 15 orphaned sentinels are all accounted for", () => {
   // "fixes" one by deleting it from commands.ts, this test tells them
   // the gap count moved rather than silently shrinking.
   const ORPHANS = [
-    "__AGENT_PICK__", "__CWD_PICK__", "__EFFORT_PICK__", "__GRANTS_MANAGER__",
-    "__MCP_LOGIN__", "__MCP_VIEWER__", "__MEMORY_EDIT__", "__MEMORY_PANEL__",
-    "__NOTIFICATION_CENTER__", "__THREAD_SELECTOR__", "__TODO_BOARD__",
-    "__UPDATE_AVAILABLE__", "__UPDATE_DEPS__", "__UPDATE_INSTALL__",
+    "__AGENT_PICK__",
+    "__CWD_PICK__",
+    "__EFFORT_PICK__",
+    "__GRANTS_MANAGER__",
+    "__MCP_LOGIN__",
+    "__MCP_VIEWER__",
+    "__MEMORY_EDIT__",
+    "__MEMORY_PANEL__",
+    "__NOTIFICATION_CENTER__",
+    "__THREAD_SELECTOR__",
+    "__TODO_BOARD__",
+    "__UPDATE_AVAILABLE__",
+    "__UPDATE_DEPS__",
+    "__UPDATE_INSTALL__",
     "__WORKFLOW_PICKER__",
   ];
   for (const s of ORPHANS) {
-    assert.ok(intentForSentinel(s),
-      `${s} was orphaned on 2026-10-21 and must stay in the registry until it is claimed`);
+    assert.ok(
+      intentForSentinel(s),
+      `${s} was orphaned on 2026-10-21 and must stay in the registry until it is claimed`,
+    );
   }
 });

@@ -29,12 +29,32 @@ const PATHS = {
   intents: join(root, "src", "panelIntents.ts"),
   sb: join(root, "src", "components", "StatusBar.tsx"),
   meter: join(root, "src", "components", "ContextMeter.tsx"),
-  runner: join(repo, "aethercode", "aethercode-cli", "src", "main", "java",
-    "org", "aethercode", "cli", "DaemonRunner.java"),
-  http: join(repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-    "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+  runner: join(
+    repo,
+    "aethercode",
+    "aethercode-cli",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "cli",
+    "DaemonRunner.java",
+  ),
+  http: join(
+    repo,
+    "aethercode",
+    "aethercode-protocol",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "protocol",
+    "http",
+    "HttpJsonRpcServer.java",
+  ),
 };
-
 
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
@@ -45,7 +65,10 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(PATHS).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -56,102 +79,237 @@ function runGate() {
 
 const CASES = [
   // --- layer 1: CompactMethods was never constructed ---------------------
-  ["drop the stdio registration of CompactMethods",
-    [["runner", (s) => s.replace("compactRpcs.registerAll(server.dispatcher());", "")]]],
+  [
+    "drop the stdio registration of CompactMethods",
+    [["runner", (s) => s.replace("compactRpcs.registerAll(server.dispatcher());", "")]],
+  ],
 
-  ["drop the HTTP setCompactMethods call",
-    [["runner", (s) => s.replace("http.setCompactMethods(httpCompactRpcs);", "")]]],
+  [
+    "drop the HTTP setCompactMethods call",
+    [["runner", (s) => s.replace("http.setCompactMethods(httpCompactRpcs);", "")]],
+  ],
 
-  ["hand CompactMethods a null compactor on the HTTP path",
-    [["runner", (s) => s.replace("? sdkHttp.compactor()", "? null")]]],
+  [
+    "hand CompactMethods a null compactor on the HTTP path",
+    [["runner", (s) => s.replace("? sdkHttp.compactor()", "? null")]],
+  ],
 
-  ["drop the compact/status case arm from the HTTP switch",
-    [["http", (s) => s.replace(/\s*case "compact\/status"\s*->\s*routeCompact\(m -> m\.status\(params\)\);/, "")]]],
+  [
+    "drop the compact/status case arm from the HTTP switch",
+    [
+      [
+        "http",
+        (s) =>
+          s.replace(
+            /\s*case "compact\/status"\s*->\s*routeCompact\(m -> m\.status\(params\)\);/,
+            "",
+          ),
+      ],
+    ],
+  ],
 
-  ["drop the compact/run case arm from the HTTP switch",
-    [["http", (s) => s.replace(/\s*case "compact\/run"\s*->\s*routeCompact\(m -> m\.run\(params\)\);/, "")]]],
+  [
+    "drop the compact/run case arm from the HTTP switch",
+    [
+      [
+        "http",
+        (s) =>
+          s.replace(/\s*case "compact\/run"\s*->\s*routeCompact\(m -> m\.run\(params\)\);/, ""),
+      ],
+    ],
+  ],
 
   // Single-line, CRLF-safe on purpose. The first two drafts of this
   // case matched across a newline and went NO-OP — which is how a case
   // that tests nothing gets reported as a hole.
-  ["remove routeCompact's unwired guard (a dead branch the old /throw/ pin could not see)",
-    [["http", (s) => s.replace("if (cm == null) {", "if (false) {")]]],
+  [
+    "remove routeCompact's unwired guard (a dead branch the old /throw/ pin could not see)",
+    [["http", (s) => s.replace("if (cm == null) {", "if (false) {")]],
+  ],
 
   // --- layer 2: the State fields had no writers -------------------------
-  ["setContextInfo stops writing contextMaxTokens",
-    [["state", (s) => s.replace(/return \{ \.\.\.state, contextInfo: info, contextMaxTokens: info\.contextWindow \};/,
-      "return { ...state, contextInfo: info };")]]],
+  [
+    "setContextInfo stops writing contextMaxTokens",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            /return \{ \.\.\.state, contextInfo: info, contextMaxTokens: info\.contextWindow \};/,
+            "return { ...state, contextInfo: info };",
+          ),
+      ],
+    ],
+  ],
 
-  ["setCompactStatus stops writing autoCompactDisabled",
-    [["state", (s) => s.replace(/return \{ \.\.\.state, autoCompactDisabled: action\.autoCompactDisabled, lastCompactTs \};/,
-      "return { ...state, lastCompactTs };")]]],
+  [
+    "setCompactStatus stops writing autoCompactDisabled",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            /return \{ \.\.\.state, autoCompactDisabled: action\.autoCompactDisabled, lastCompactTs \};/,
+            "return { ...state, lastCompactTs };",
+          ),
+      ],
+    ],
+  ],
 
-  ["lastCompactTs can rewind",
-    [["state", (s) => s.replace("next != null && (state.lastCompactTs == null || next > state.lastCompactTs)",
-      "next != null")]]],
+  [
+    "lastCompactTs can rewind",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            "next != null && (state.lastCompactTs == null || next > state.lastCompactTs)",
+            "next != null",
+          ),
+      ],
+    ],
+  ],
 
-  ["the poll adopts a zero contextWindow",
-    [["tui", (s) => s.replace("if (window <= 0) return;", "")]]],
+  [
+    "the poll adopts a zero contextWindow",
+    [["tui", (s) => s.replace("if (window <= 0) return;", "")]],
+  ],
 
-  ["the poll stops swallowing getContextInfo failures",
-    [["tui", (s) => s.replace(/catch \{ \/\* best-effort \*\/ \}/, "catch (e) { throw e; }")]]],
+  [
+    "the poll stops swallowing getContextInfo failures",
+    [["tui", (s) => s.replace(/catch \{\s*\/\* best-effort \*\/\s*\}/, "catch (e) { throw e; }")]],
+  ],
 
   // --- layer 3: nothing emitted the sentinel ----------------------------
-  ["delete the /context command",
-    [["commands", (s) => s.replace(/case "context":\n\s*case "ctx": \{[\s\S]*?\n\s*\}\n/, "")]]],
+  [
+    "delete the /context command",
+    [["commands", (s) => s.replace(/case "context":\n\s*case "ctx": \{[\s\S]*?\n\s*\}\n/, "")]],
+  ],
 
-  ["the registry row stays a no-command placeholder",
-    [["intents", (s) => s.replace(/id: 'context-meter',[\s\S]*?\n    ink: 'mounted',/,
-      "id: 'context-meter',\n    ink: 'unavailable',")]]],
+  [
+    "the registry row stays a no-command placeholder",
+    [
+      [
+        "intents",
+        (s) =>
+          s.replace(
+            /id: (["'])context-meter\1,[\s\S]*?\n\s*ink: (["'])mounted\2,/,
+            "id: $1context-meter$1,\n    ink: $2unavailable$2,",
+          ),
+      ],
+    ],
+  ],
 
-  ["PANEL_BY_INTENT drops the context-meter entry",
-    [["tui", (s) => s.replace('"context-meter": "context",', "")]]],
+  [
+    "PANEL_BY_INTENT drops the context-meter entry",
+    [["tui", (s) => s.replace('"context-meter": "context",', "")]],
+  ],
 
-  ["delete the line-mode __CONTEXT_METER__ arm",
-    [["line", (s) => s.replace(/case "__CONTEXT_METER__":[\s\S]*?return true;\n/, "")]]],
+  [
+    "delete the line-mode __CONTEXT_METER__ arm",
+    [["line", (s) => s.replace(/case "__CONTEXT_METER__":[\s\S]*?return true;\n/, "")]],
+  ],
 
-  ["delete the `case \"context\":` render branch",
-    [["tui", (s) => s.replace(/case "context": \{[\s\S]*?\n      \}\n\n      case "grants": \{/, 'case "grants": {')]]],
+  [
+    'delete the `case "context":` render branch',
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            /case "context": \{[\s\S]*?\n      \}\n\n      case "grants": \{/,
+            'case "grants": {',
+          ),
+      ],
+    ],
+  ],
 
   // --- StatusBar reverts to the T-441 half-finished state ---------------
-  ["StatusBar stops importing ContextMeter",
-    [["sb", (s) => s.replace(/import \{ ContextMeter, type ContextInfo \} from "\.\/ContextMeter\.js";/, "")]]],
+  [
+    "StatusBar stops importing ContextMeter",
+    [
+      [
+        "sb",
+        (s) =>
+          s.replace(/import \{ ContextMeter, type ContextInfo \} from "\.\/ContextMeter\.js";/, ""),
+      ],
+    ],
+  ],
 
-  ["StatusBar stops rendering the meter",
-    [["sb", (s) => s.replace(/<ContextMeter[\s\S]*?\/>/, "")]]],
+  [
+    "StatusBar stops rendering the meter",
+    [["sb", (s) => s.replace(/<ContextMeter[\s\S]*?\/>/, "")]],
+  ],
 
-  ["the meter goes back to a 200-char default (off an 80-column terminal)",
-    [["sb", (s) => s.replace("width={24}", "width={200}")]]],
+  [
+    "the meter goes back to a 200-char default (off an 80-column terminal)",
+    [["sb", (s) => s.replace("width={24}", "width={200}")]],
+  ],
 
-  ["ContextInfo.inputTokens is coerced to 0 (the invented measurement)",
-    [["sb", (s) => s.replace("inputTokens: state.inputTokens,", "inputTokens: state.inputTokens ?? 0,")]]],
+  [
+    "ContextInfo.inputTokens is coerced to 0 (the invented measurement)",
+    [
+      [
+        "sb",
+        (s) => s.replace("inputTokens: state.inputTokens,", "inputTokens: state.inputTokens ?? 0,"),
+      ],
+    ],
+  ],
 
-  ["the meter loses its no-measurement label",
-    [["meter", (s) => s.replace("no usage reported yet", "0%")]]],
+  [
+    "the meter loses its no-measurement label",
+    [["meter", (s) => s.replace("no usage reported yet", "0%")]],
+  ],
 
   // --- gate mutations: does an edit here mask a real defect? ------------
   // Each pairs a gate edit with a genuine defect and must STILL go red.
-  ["GATE: neuter the HTTP case-arm loop + drop the compact/run arm",
-    [["gate", (s) => s.replace(/for \(const name of \["compact\/run"[\s\S]*?\n  \}\n/, "")],
-     ["http", (s) => s.replace(/\s*case "compact\/run"\s*->\s*routeCompact\(m -> m\.run\(params\)\);/, "")]]],
+  [
+    "GATE: neuter the HTTP case-arm loop + drop the compact/run arm",
+    [
+      ["gate", (s) => s.replace(/for \(const name of \["compact\/run"[\s\S]*?\n  \}\n/, "")],
+      [
+        "http",
+        (s) =>
+          s.replace(/\s*case "compact\/run"\s*->\s*routeCompact\(m -> m\.run\(params\)\);/, ""),
+      ],
+    ],
+  ],
 
-  ["GATE: neuter the renderers-claim check + delete the line arm",
-    [["gate", (s) => s.replace("const arm = /case", "const arm = /x-never-emitted-x/ && /case")],
-     ["line", (s) => s.replace(/case "__CONTEXT_METER__":[\s\S]*?return true;\n/, "")]]],
+  [
+    "GATE: neuter the renderers-claim check + delete the line arm",
+    [
+      ["gate", (s) => s.replace("const arm = /case", "const arm = /x-never-emitted-x/ && /case")],
+      ["line", (s) => s.replace(/case "__CONTEXT_METER__":[\s\S]*?return true;\n/, "")],
+    ],
+  ],
 
-  ["GATE: stop reading the DAO's compactor + null it on stdio",
-    [["gate", (s) => s.replace(".test(runInternal) &&", ".test(runInternal || null ||")],
-     ["runner", (s) => s.replace("? sdk.compactor()", "? null")]]],
+  [
+    "GATE: stop reading the DAO's compactor + null it on stdio",
+    [
+      ["gate", (s) => s.replace(".test(runInternal) &&", ".test(runInternal || null ||")],
+      ["runner", (s) => s.replace("? sdk.compactor()", "? null")],
+    ],
+  ],
 
   // Overload blindness: the extraction that read runHttp's DELEGATE.
   // Reinstating a delegating overload in front of the implementation
   // must not make the gate read the wrong method — that is the failure
   // this gate shipped with twice.
-  ["GATE: add a delegating runHttp overload in front of the real one",
-    [["gate", (s) => s.replace('const runHttp = javaMethod(runnerCode, RUN_HTTP_IMPL, 2);',
-      'const runHttp = javaMethod(runnerCode, RUN_HTTP_IMPL, 1);')]],
+  [
+    "GATE: add a delegating runHttp overload in front of the real one",
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            "const runHttp = javaMethod(runnerCode, RUN_HTTP_IMPL, 2);",
+            "const runHttp = javaMethod(runnerCode, RUN_HTTP_IMPL, 1);",
+          ),
+      ],
+    ],
     // ...and the paired real defect: remove the HTTP wiring entirely.
-    ["runner", (s) => s.replace("http.setCompactMethods(httpCompactRpcs);", "")]],
+    ["runner", (s) => s.replace("http.setCompactMethods(httpCompactRpcs);", "")],
+  ],
 ];
 
 console.log(`r371 mutation battery — ${CASES.length} cases\n`);
@@ -164,12 +322,18 @@ for (const [name, edits] of CASES) {
   for (const [key, mutate] of edits) {
     const before = original[key];
     const after = mutate(before);
-    if (after === before) { broken = key; break; }
+    if (after === before) {
+      broken = key;
+      break;
+    }
     applied.push([key, before, after]);
   }
   if (broken) {
-    holes++; noops++;
-    console.log(`  ??  ${name}\n      NO-OP on ${broken} — the pattern did not match, so this case tests nothing`);
+    holes++;
+    noops++;
+    console.log(
+      `  ??  ${name}\n      NO-OP on ${broken} — the pattern did not match, so this case tests nothing`,
+    );
     continue;
   }
 
@@ -207,7 +371,9 @@ for (const [k, p] of Object.entries(PATHS)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 if (noops) console.log(`${noops} case(s) were no-ops and did not test anything`);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

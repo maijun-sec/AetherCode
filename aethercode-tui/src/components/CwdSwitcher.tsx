@@ -29,11 +29,7 @@ import TextInput from "ink-text-input";
  *  so the host can decide whether to surface a toast or a
  *  side-note. */
 export type CwdValidationKind =
-  | "empty"
-  | "not-found"
-  | "not-directory"
-  | "not-absolute"
-  | "permission-denied";
+  "empty" | "not-found" | "not-directory" | "not-absolute" | "permission-denied";
 
 export interface CwdValidationResult {
   /** True if the path is acceptable. */
@@ -117,16 +113,12 @@ export const CwdSwitcher: React.FC<CwdSwitcherProps> = ({
   };
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  Enter: switch  Esc: cancel</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor> Enter: switch Esc: cancel</Text>
       </Box>
       <Text> </Text>
       <Text>
@@ -144,13 +136,11 @@ export const CwdSwitcher: React.FC<CwdSwitcherProps> = ({
           placeholder="absolute path…  (e.g. /work/my-project)"
         />
       </Box>
-      {err ? (
-        <Text color="red">  ✗ {err}</Text>
-      ) : null}
+      {err ? <Text color="red"> ✗ {err}</Text> : null}
       {noticeReload ? (
         <Box marginTop={1} flexDirection="column">
-          <Text dimColor>  Switching reloads project-specific config (rules, MCP,</Text>
-          <Text dimColor>  skills, .env, AGENTS.md).</Text>
+          <Text dimColor> Switching reloads project-specific config (rules, MCP,</Text>
+          <Text dimColor> skills, .env, AGENTS.md).</Text>
         </Box>
       ) : null}
     </Box>
@@ -167,10 +157,12 @@ export function makeStatValidator(
   return (path: string) => {
     const v = path.trim();
     if (!v) return { ok: false, kind: "empty", message: "path is empty" };
-    if (!isAbsolute(v)) return { ok: false, kind: "not-absolute", message: `not an absolute path: ${v}` };
+    if (!isAbsolute(v))
+      return { ok: false, kind: "not-absolute", message: `not an absolute path: ${v}` };
     const s = stat(v);
     if (s === null) return { ok: false, kind: "not-found", message: `path does not exist: ${v}` };
-    if (!s.isDirectory()) return { ok: false, kind: "not-directory", message: `not a directory: ${v}` };
+    if (!s.isDirectory())
+      return { ok: false, kind: "not-directory", message: `not a directory: ${v}` };
     return { ok: true };
   };
 }

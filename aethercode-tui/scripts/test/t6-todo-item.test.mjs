@@ -11,10 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Pure-helper tests ------------------------------------
@@ -23,11 +20,16 @@ test("T-6-08: todoIcon maps status → checkbox glyph", () => {
   // Mirror the implementation in TodoItem.tsx.
   function todoIcon(status) {
     switch (status) {
-      case "pending":     return "☐";
-      case "in_progress": return "◐";
-      case "completed":   return "☑";
-      case "cancelled":   return "⊘";
-      default:            return "·";
+      case "pending":
+        return "☐";
+      case "in_progress":
+        return "◐";
+      case "completed":
+        return "☑";
+      case "cancelled":
+        return "⊘";
+      default:
+        return "·";
     }
   }
   assert.equal(todoIcon("pending"), "☐");
@@ -41,11 +43,16 @@ test("T-6-08: todoColor returns a colour tier per status", () => {
   // Mirror the implementation.
   function todoColor(status) {
     switch (status) {
-      case "pending":     return "dim";
-      case "in_progress": return "warn";
-      case "completed":   return "ok";
-      case "cancelled":   return "dim";
-      default:            return "dim";
+      case "pending":
+        return "dim";
+      case "in_progress":
+        return "warn";
+      case "completed":
+        return "ok";
+      case "cancelled":
+        return "dim";
+      default:
+        return "dim";
     }
   }
   assert.equal(todoColor("pending"), "dim");
@@ -69,11 +76,16 @@ test("T-6-08: truncate adds an ellipsis when over the cap", () => {
 test("T-6-08: statusPill renders a human label", () => {
   function statusPill(status) {
     switch (status) {
-      case "pending":     return "pending";
-      case "in_progress": return "in progress";
-      case "completed":   return "done";
-      case "cancelled":   return "cancelled";
-      default:            return status;
+      case "pending":
+        return "pending";
+      case "in_progress":
+        return "in progress";
+      case "completed":
+        return "done";
+      case "cancelled":
+        return "cancelled";
+      default:
+        return status;
     }
   }
   assert.equal(statusPill("pending"), "pending");
@@ -133,18 +145,39 @@ test("T-6-08: all four pure helpers are exported", () => {
 test("T-6-08: tsc --strict compile of TodoItem.tsx is clean", () => {
   const tmp = join(root, "tmp-t6-ti-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true", "--noUncheckedIndexedAccess", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "components", "todo", "TodoItem.tsx"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "components", "todo", "TodoItem.tsx"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error(r.stdout);
     console.error(r.stderr);

@@ -42,7 +42,8 @@ test("R78: formatTraces prints header with in-flight + completed", () => {
 
 test("R78: formatTraces shows ok icon for ok spans", () => {
   const out = formatTraces({
-    inFlight: 0, completed: 1,
+    inFlight: 0,
+    completed: 1,
     traces: [{ name: "query", status: "ok", durationMs: 250 }],
   });
   assert.match(out, /✓ query\s+250ms\s+ok/);
@@ -50,7 +51,8 @@ test("R78: formatTraces shows ok icon for ok spans", () => {
 
 test("R78: formatTraces shows error icon for error spans", () => {
   const out = formatTraces({
-    inFlight: 0, completed: 1,
+    inFlight: 0,
+    completed: 1,
     traces: [{ name: "tool.bash", status: "error", durationMs: 12 }],
   });
   assert.match(out, /✗ tool\.bash\s+12ms\s+error/);
@@ -58,7 +60,8 @@ test("R78: formatTraces shows error icon for error spans", () => {
 
 test("R78: formatTraces converts long durations to seconds", () => {
   const out = formatTraces({
-    inFlight: 0, completed: 1,
+    inFlight: 0,
+    completed: 1,
     traces: [{ name: "query", status: "ok", durationMs: 3500 }],
   });
   assert.match(out, /3\.50s/);
@@ -77,7 +80,19 @@ test("R78: formatTraces handles missing fields gracefully", () => {
 // ----- 2. Source code assertions -----------------------------------
 
 test("R78: backend TraceRecorder.java exists", () => {
-  const path = join(root, "..", "aethercode-core", "src", "main", "java", "org", "aethercode", "core", "trace", "TraceRecorder.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-core",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "core",
+    "trace",
+    "TraceRecorder.java",
+  );
   assert.ok(existsSync(path), "TraceRecorder.java missing in aethercode-core");
   const src = readFileSync(path, "utf-8");
   assert.match(src, /public final class TraceRecorder/);
@@ -89,7 +104,19 @@ test("R78: backend TraceRecorder.java exists", () => {
 });
 
 test("R78: AetherCodeMethods registers getTraces", () => {
-  const path = join(root, "..", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-protocol",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "protocol",
+    "methods",
+    "AetherCodeMethods.java",
+  );
   const src = readFileSync(path, "utf-8");
   assert.match(src, /dispatcher\.register\("getTraces",\s+this::getTraces\)/);
   assert.match(src, /public Object getTraces\(Object params\)/);
@@ -97,7 +124,19 @@ test("R78: AetherCodeMethods registers getTraces", () => {
 });
 
 test("R78: AetherCodeMethods.query() opens and closes spans", () => {
-  const path = join(root, "..", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-protocol",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "protocol",
+    "methods",
+    "AetherCodeMethods.java",
+  );
   const src = readFileSync(path, "utf-8");
   // The root span is opened at the top of the worker thread and
   // closed on RunEnd (or in the catch block). R79: the tool
@@ -110,7 +149,18 @@ test("R78: AetherCodeMethods.query() opens and closes spans", () => {
 });
 
 test("R78: AetherCodeEngine has a traces() method", () => {
-  const path = join(root, "..", "aethercode-sdk", "src", "main", "java", "org", "aethercode", "sdk", "AetherCodeEngine.java");
+  const path = join(
+    root,
+    "..",
+    "aethercode-sdk",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "sdk",
+    "AetherCodeEngine.java",
+  );
   const src = readFileSync(path, "utf-8");
   assert.match(src, /public org\.aethercode\.core\.trace\.TraceRecorder traces\(\)/);
   assert.match(src, /this\.traces = new org\.aethercode\.core\.trace\.TraceRecorder\(\)/);
@@ -149,30 +199,53 @@ test("R78: SLASH_COMMANDS includes 'trace'", () => {
   // The list is a flat string[] — make sure "trace" is one of the entries.
   // The simplest check: it appears as a literal in the SLASH_COMMANDS array.
   const lines = cmds.split("\n").map((l) => l.trim());
-  const slashLine = lines.find((l) => l.startsWith("\"trace\","));
-  assert.ok(slashLine !== undefined, "expected \"trace\", as a SLASH_COMMANDS entry");
+  const slashLine = lines.find((l) => l.startsWith('"trace",'));
+  assert.ok(slashLine !== undefined, 'expected "trace", as a SLASH_COMMANDS entry');
 });
 
 // ----- 3. Build smoke test ------------------------------------------
 
 test("R78: TypeScript compile of the new TUI code is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r78-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "tui.tsx") + '"',
-    '"' + join(root, "src", "commands.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "tui.tsx") + '"',
+      '"' + join(root, "src", "commands.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

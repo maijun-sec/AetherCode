@@ -110,9 +110,7 @@ export function extractSummary(text: string): Summary | null {
  *  (in practice this is rare — the spec puts the summary at
  *  the very end — but we handle it for robustness).
  */
-export function splitAssistantMessage(
-  text: string,
-): { lead: string; summary: Summary | null } {
+export function splitAssistantMessage(text: string): { lead: string; summary: Summary | null } {
   if (typeof text !== "string" || text.length === 0) {
     return { lead: "", summary: null };
   }
@@ -184,7 +182,9 @@ export const SummaryFooter: React.FC<Props> = ({ summary, visible = true }) => {
         borderColor={t.warn}
       >
         <Text>
-          <Text color={t.warn} bold>⚠ auto-summary pending</Text>
+          <Text color={t.warn} bold>
+            ⚠ auto-summary pending
+          </Text>
         </Text>
       </Box>
     );
@@ -201,8 +201,10 @@ export const SummaryFooter: React.FC<Props> = ({ summary, visible = true }) => {
         borderColor={t.warn}
       >
         <Text>
-          <Text color={t.warn} bold>⚠ auto-summary</Text>
-          <Text dimColor>  (injected by post-turn hook)</Text>
+          <Text color={t.warn} bold>
+            ⚠ auto-summary
+          </Text>
+          <Text dimColor> (injected by post-turn hook)</Text>
         </Text>
         {summary.text.split(/\r?\n/).map((line, i) => (
           <Text key={i}>{line}</Text>
@@ -221,7 +223,9 @@ export const SummaryFooter: React.FC<Props> = ({ summary, visible = true }) => {
       borderColor="yellowBright"
     >
       <Text>
-        <Text color="yellowBright" bold>SUMMARY</Text>
+        <Text color="yellowBright" bold>
+          SUMMARY
+        </Text>
       </Text>
       {summary.text.split(/\r?\n/).map((line, i) => (
         <Text key={i}>{line}</Text>

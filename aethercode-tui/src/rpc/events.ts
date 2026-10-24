@@ -27,7 +27,7 @@ export interface SubscribeOptions {
 export function subscribeEvents(
   sessionId: string,
   onEvent: (ev: RpcEvent) => void,
-  opts: SubscribeOptions = {}
+  opts: SubscribeOptions = {},
 ): Subscription {
   const client = opts.client;
   if (!client) {
@@ -36,9 +36,7 @@ export function subscribeEvents(
   const lastSeq = opts.lastSeq ?? -1;
   const k = opts.kind;
   const prev = client.onNotification;
-  const allowedSet = k
-    ? new Set(Array.isArray(k) ? (k as string[]) : [k as string])
-    : null;
+  const allowedSet = k ? new Set(Array.isArray(k) ? (k as string[]) : [k as string]) : null;
   const wrap = (method: string, params: RpcValue | undefined): void => {
     if (allowedSet && !allowedSet.has(method)) return;
     const seq = Number((params as any)?.seq ?? lastSeq + 1);
@@ -50,10 +48,14 @@ export function subscribeEvents(
       ts: Number((params as any)?.ts ?? Date.now()),
       params,
     };
-    try { onEvent(ev); } catch (e) {
+    try {
+      onEvent(ev);
+    } catch (e) {
       try {
         process.stderr.write(`[rpc] subscribeEvents handler threw: ${(e as Error).message}\n`);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   };
   client.onNotification = wrap;

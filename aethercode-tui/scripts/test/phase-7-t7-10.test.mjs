@@ -27,10 +27,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. RPC client surface (8 checks) -------------------------
@@ -55,7 +52,7 @@ test("T-7-10: rpc/client.ts supports the Windows pipe path", () => {
 test("T-7-10: rpc/client.ts line-delimited JSON-RPC 2.0", () => {
   const src = read("src/rpc/client.ts");
   assert.match(src, /jsonrpc:\s*"2\.0"/);
-  assert.match(src, /\\n/);  // newline delimiter
+  assert.match(src, /\\n/); // newline delimiter
 });
 test("T-7-10: rpc/client.ts has a public onNotification", () => {
   const src = read("src/rpc/client.ts");
@@ -69,7 +66,8 @@ test("T-7-10: rpc/types.ts exports RpcEvent + Subscription", () => {
 
 // ----- 2. Mock server (6 checks) --------------------------------
 
-test("T-7-10: rpc/MockRpcServer.ts exists", () => assert.ok(existsSync(join(root, "src/rpc/MockRpcServer.ts"))));
+test("T-7-10: rpc/MockRpcServer.ts exists", () =>
+  assert.ok(existsSync(join(root, "src/rpc/MockRpcServer.ts"))));
 test("T-7-10: rpc/MockRpcServer.ts exports the MockRpcServer class", () => {
   assert.match(read("src/rpc/MockRpcServer.ts"), /export\s+class\s+MockRpcServer\b/);
 });
@@ -98,7 +96,8 @@ test("T-7-10: rpc/MockRpcServer.ts pushes events through the wire (not just in-p
 
 // ----- 3. Reconnect (5 checks) ----------------------------------
 
-test("T-7-10: rpc/reconnect.ts exists", () => assert.ok(existsSync(join(root, "src/rpc/reconnect.ts"))));
+test("T-7-10: rpc/reconnect.ts exists", () =>
+  assert.ok(existsSync(join(root, "src/rpc/reconnect.ts"))));
 test("T-7-10: rpc/reconnect.ts exports ReconnectManager + createClientAndReconnect", () => {
   const src = read("src/rpc/reconnect.ts");
   assert.match(src, /export\s+class\s+ReconnectManager\b/);
@@ -144,7 +143,8 @@ test("T-7-10: rpc/events.ts handles unsubscribe cleanly", () => {
 
 // ----- 5. Components (6 checks) --------------------------------
 
-test("T-7-10: components/session/SessionDetailsPanel.tsx exists", () => assert.ok(existsSync(join(root, "src/components/session/SessionDetailsPanel.tsx"))));
+test("T-7-10: components/session/SessionDetailsPanel.tsx exists", () =>
+  assert.ok(existsSync(join(root, "src/components/session/SessionDetailsPanel.tsx"))));
 test("T-7-10: components/session/SessionControl.tsx exports SessionControl", () => {
   const src = read("src/components/session/SessionControl.tsx");
   assert.match(src, /export\s+const\s+SessionControl\b/);
@@ -196,21 +196,32 @@ test("T-7-10: tui.tsx renders the right panel conditionally", () => {
 function tscCompile(label, files, options = {}) {
   const tmp = join(root, `tmp-t7-10-${label}-tsc`);
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
   mkdirSync(tmp, { recursive: true });
   const args = [
-    "--outDir", tmp,
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--strict", "true",
-    "--noUncheckedIndexedAccess", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--noUncheckedIndexedAccess",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   if (options.jsx) args.push("--jsx", "react");
   for (const f of files) args.push(join(root, "src", f));
@@ -234,29 +245,31 @@ test("T-7-10: tsc --strict compile of rpc/*.ts", () => {
 });
 
 test("T-7-10: tsc --strict compile of session/* + todo/* + StaleWarning", () => {
-  tscCompile("components", [
-    "components/session/SessionDetailsPanel.tsx",
-    "components/session/SessionControl.tsx",
-    "components/todo/TodoBoard.tsx",
-    "components/todo/TodoItem.tsx",
-    "components/StaleWarning.tsx",
-  ], { jsx: true });
+  tscCompile(
+    "components",
+    [
+      "components/session/SessionDetailsPanel.tsx",
+      "components/session/SessionControl.tsx",
+      "components/todo/TodoBoard.tsx",
+      "components/todo/TodoItem.tsx",
+      "components/StaleWarning.tsx",
+    ],
+    { jsx: true },
+  );
 });
 
 test("T-7-10: tsc --strict compile of TranscriptEnricher.ts", () => {
-  tscCompile("enricher", [
-    "components/chat/TranscriptEnricher.ts",
-  ], { jsx: true });
+  tscCompile("enricher", ["components/chat/TranscriptEnricher.ts"], { jsx: true });
 });
 
 test("T-7-10: tsc --noEmit of the full project is clean", () => {
   // The full-project compile is slow; only run it as
   // the last smoke check. We use --noEmit to skip
   // writing files.
-  const r = spawnSync(`"${tscBin}"`, [
-    "--noEmit",
-    "-p", join(root, "tsconfig.json"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, ["--noEmit", "-p", join(root, "tsconfig.json")], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error(r.stdout);
     console.error(r.stderr);

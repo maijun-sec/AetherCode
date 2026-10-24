@@ -60,22 +60,32 @@ export interface TodoItemProps {
 /** Map a status to a checkbox glyph. Pure helper. */
 export function todoIcon(status: TodoStatus): string {
   switch (status) {
-    case "pending":     return "☐";
-    case "in_progress": return "◐";
-    case "completed":   return "☑";
-    case "cancelled":   return "⊘";
-    default:            return "·";
+    case "pending":
+      return "☐";
+    case "in_progress":
+      return "◐";
+    case "completed":
+      return "☑";
+    case "cancelled":
+      return "⊘";
+    default:
+      return "·";
   }
 }
 
 /** Map a status to a colour tier. Pure helper. */
 export function todoColor(status: TodoStatus): string {
   switch (status) {
-    case "pending":     return t.dim;
-    case "in_progress": return t.warn;
-    case "completed":   return t.ok;
-    case "cancelled":   return t.dim;
-    default:            return t.dim;
+    case "pending":
+      return t.dim;
+    case "in_progress":
+      return t.warn;
+    case "completed":
+      return t.ok;
+    case "cancelled":
+      return t.dim;
+    default:
+      return t.dim;
   }
 }
 
@@ -89,11 +99,16 @@ export function truncate(s: string, n: number): string {
 /** A short status pill (e.g. "in progress", "done"). */
 export function statusPill(status: TodoStatus): string {
   switch (status) {
-    case "pending":     return "pending";
-    case "in_progress": return "in progress";
-    case "completed":   return "done";
-    case "cancelled":   return "cancelled";
-    default:            return status;
+    case "pending":
+      return "pending";
+    case "in_progress":
+      return "in progress";
+    case "completed":
+      return "done";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return status;
   }
 }
 
@@ -119,7 +134,7 @@ export const TodoItem: React.FC<TodoItemProps> = ({
 
   return (
     <Box flexDirection="row" alignItems="center">
-      {focused ? <Text color="cyan">▶ </Text> : <Text>  </Text>}
+      {focused ? <Text color="cyan">▶ </Text> : <Text> </Text>}
       <Text color={color}>{icon} </Text>
       <Text
         color={focused ? "cyan" : color}
@@ -129,16 +144,17 @@ export const TodoItem: React.FC<TodoItemProps> = ({
       >
         {title}
       </Text>
-      {item.owner ? (
-        <Text dimColor>  · {ownerLabel(item.owner)}</Text>
-      ) : null}
+      {item.owner ? <Text dimColor> · {ownerLabel(item.owner)}</Text> : null}
       {item.completedAt ? (
-        <Text dimColor>  · done {formatRelative(now - item.completedAt, 0)} ago</Text>
+        <Text dimColor> · done {formatRelative(now - item.completedAt, 0)} ago</Text>
       ) : item.startedAt ? (
-        <Text dimColor>  · {formatRelative(now - item.startedAt, 0)}</Text>
+        <Text dimColor> · {formatRelative(now - item.startedAt, 0)}</Text>
       ) : null}
       {isDone ? null : (
-        <Text color={color} dimColor>  [{statusPill(item.status)}]</Text>
+        <Text color={color} dimColor>
+          {" "}
+          [{statusPill(item.status)}]
+        </Text>
       )}
     </Box>
   );

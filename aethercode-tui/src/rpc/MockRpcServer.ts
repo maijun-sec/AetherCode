@@ -40,10 +40,7 @@ import type { RpcNotification, SocketLike, Subscription } from "./types.js";
 //  Wire-protocol side
 // --------------------------------------------------------------------
 
-export type MockHandler = (
-  params: any,
-  ctx: { session: MockSession | null }
-) => any | Promise<any>;
+export type MockHandler = (params: any, ctx: { session: MockSession | null }) => any | Promise<any>;
 
 export interface MockSession {
   id: string;
@@ -103,7 +100,7 @@ export function err(
   id: number,
   code: number,
   message: string,
-  data?: unknown
+  data?: unknown,
 ): { jsonrpc: "2.0"; id: number; error: { code: number; message: string; data?: unknown } } {
   return { jsonrpc: "2.0", id, error: { code, message, data } };
 }
@@ -210,8 +207,12 @@ export class MockRpcServer extends EventEmitter {
     // build a fresh MockRpcServer per test.
   }
 
-  setNow(fn: () => number): void { this.nowFn = fn; }
-  now(): number { return this.nowFn(); }
+  setNow(fn: () => number): void {
+    this.nowFn = fn;
+  }
+  now(): number {
+    return this.nowFn();
+  }
 
   // --- Handler registration -----------------------------------------
 
@@ -219,7 +220,9 @@ export class MockRpcServer extends EventEmitter {
     this.handlers.set(method, handler);
   }
 
-  remove(method: string): void { this.handlers.delete(method); }
+  remove(method: string): void {
+    this.handlers.delete(method);
+  }
 
   // --- Wire-level entry points --------------------------------------
 
@@ -242,7 +245,7 @@ export class MockRpcServer extends EventEmitter {
 
   pushEvent(
     sessionId: string,
-    ev: Omit<MockEvent, "seq" | "ts"> & { seq?: number; ts?: number }
+    ev: Omit<MockEvent, "seq" | "ts"> & { seq?: number; ts?: number },
   ): MockEvent {
     const session = this.wireSessions.get(sessionId);
     if (!session) throw new Error(`unknown session: ${sessionId}`);
@@ -278,10 +281,7 @@ export class MockRpcServer extends EventEmitter {
     return full;
   }
 
-  async *streamEvents(
-    sessionId: string,
-    sinceSeq: number = -1
-  ): AsyncGenerator<MockEvent> {
+  async *streamEvents(sessionId: string, sinceSeq: number = -1): AsyncGenerator<MockEvent> {
     const queue = this.eventQueues.get(sessionId) ?? [];
     let i = 0;
     if (sinceSeq >= 0) {
@@ -338,10 +338,14 @@ export class MockRpcServer extends EventEmitter {
     return s;
   }
 
-  getSession(id: string): MockSession | undefined { return this.wireSessions.get(id); }
+  getSession(id: string): MockSession | undefined {
+    return this.wireSessions.get(id);
+  }
   listSessions(): MockSession[] {
     const out: MockSession[] = [];
-    this.wireSessions.forEach((s) => { out.push(s); });
+    this.wireSessions.forEach((s) => {
+      out.push(s);
+    });
     return out;
   }
   ensureSession(id?: string): MockSession {
@@ -375,21 +379,32 @@ export class MockRpcServer extends EventEmitter {
       injectEnvelope: (env: any) => {
         if (dataListener) dataListener(Buffer.from(JSON.stringify(env) + "\n", "utf-8"));
       },
-      setOnClose: (fn) => { closeListener = fn; },
+      setOnClose: (fn) => {
+        closeListener = fn;
+      },
       write: (data: string | Buffer, _cb?: (err?: Error | null) => void) => {
         const text = typeof data === "string" ? data : data.toString("utf-8");
         for (const line of text.split("\n")) {
           if (line.trim().length === 0) continue;
           let parsed: any;
-          try { parsed = JSON.parse(line); } catch { continue; }
+          try {
+            parsed = JSON.parse(line);
+          } catch {
+            continue;
+          }
           this.handleIncoming(parsed);
         }
         return true;
       },
       on: (event: string, listener: any) => {
-        if (event === "data") { dataListener = listener; sock.attached = true; }
-        else if (event === "error") { errorListener = listener; }
-        else if (event === "close") { closeListener = listener; }
+        if (event === "data") {
+          dataListener = listener;
+          sock.attached = true;
+        } else if (event === "error") {
+          errorListener = listener;
+        } else if (event === "close") {
+          closeListener = listener;
+        }
         return sock;
       },
       end: () => {
@@ -400,7 +415,9 @@ export class MockRpcServer extends EventEmitter {
         sock.closed = true;
         if (closeListener) closeListener();
       },
-      setNoDelay: () => { /* noop for mock */ },
+      setNoDelay: () => {
+        /* noop for mock */
+      },
     };
     void errorListener;
     return sock;
@@ -426,7 +443,9 @@ export class MockRpcServer extends EventEmitter {
       })
       .catch((e: any) => {
         if (e && typeof e === "object" && "code" in e && "message" in e) {
-          this.sendReply(err(req.id, Number((e as any).code), String((e as any).message), (e as any).data));
+          this.sendReply(
+            err(req.id, Number((e as any).code), String((e as any).message), (e as any).data),
+          );
         } else {
           this.sendReply(err(req.id, -32603, e?.message ?? String(e)));
         }
@@ -440,9 +459,9 @@ export class MockRpcServer extends EventEmitter {
   }
 
   private isRequest(env: any): env is { jsonrpc: "2.0"; id: number; method: string; params?: any } {
-    return env && typeof env === "object"
-      && typeof env.method === "string"
-      && typeof env.id === "number";
+    return (
+      env && typeof env === "object" && typeof env.method === "string" && typeof env.id === "number"
+    );
   }
 
   private broadcastEvent(ev: MockEvent): void {
@@ -454,9 +473,15 @@ export class MockRpcServer extends EventEmitter {
     const listeners = this.sessionListeners.get(ev.sessionId ?? this.defaultSessionId);
     if (listeners) {
       const arr: Array<(ev: MockEvent) => void> = [];
-      listeners.forEach((h) => { arr.push(h); });
+      listeners.forEach((h) => {
+        arr.push(h);
+      });
       for (const h of arr) {
-        try { h(ev); } catch (e) { /* ignore */ }
+        try {
+          h(ev);
+        } catch (e) {
+          /* ignore */
+        }
       }
     }
   }
@@ -478,7 +503,9 @@ export class MockRpcServer extends EventEmitter {
 
   // -- Client bridge ------------------------------------------------
 
-  buildClient(overrides: Partial<ConstructorParameters<typeof JsonRpcClient>[0]> = {}): JsonRpcClient {
+  buildClient(
+    overrides: Partial<ConstructorParameters<typeof JsonRpcClient>[0]> = {},
+  ): JsonRpcClient {
     const sock = this.peerSocket();
     const client = new JsonRpcClient(
       {
@@ -486,7 +513,7 @@ export class MockRpcServer extends EventEmitter {
         timeoutMs: 5_000,
         ...overrides,
       },
-      { socketFactory: () => sock, preConnectedSocket: sock } satisfies JsonRpcClientDeps
+      { socketFactory: () => sock, preConnectedSocket: sock } satisfies JsonRpcClientDeps,
     );
     return client;
   }
@@ -498,7 +525,11 @@ export class MockRpcServer extends EventEmitter {
   // -- session lifecycle ---------------------------------------------
 
   /** `session/spawn` — create a session and start it. */
-  async sessionSpawn(opts: { title?: string; cwd?: string; model?: string }): Promise<{ id: string }> {
+  async sessionSpawn(opts: {
+    title?: string;
+    cwd?: string;
+    model?: string;
+  }): Promise<{ id: string }> {
     const id = `ses-${this.state.sessions.size + 1}-${Date.now()}`;
     const now = Date.now();
     const session: Session = {
@@ -575,7 +606,10 @@ export class MockRpcServer extends EventEmitter {
 
   /** `session/tokens` — return token usage for the active session. */
   async sessionTokens(opts: { id?: string }): Promise<{
-    input: number; output: number; total: number; costUsd: number;
+    input: number;
+    output: number;
+    total: number;
+    costUsd: number;
   }> {
     const id = opts.id ?? this.state.currentSessionId;
     if (!id) throw new Error("no active session");
@@ -606,7 +640,9 @@ export class MockRpcServer extends EventEmitter {
   }
 
   /** `grants/setPreset` — record the active preset. */
-  async grantsSetPreset(opts: { preset: "permissive" | "cautious" | "strict" }): Promise<{ ok: true }> {
+  async grantsSetPreset(opts: {
+    preset: "permissive" | "cautious" | "strict";
+  }): Promise<{ ok: true }> {
     this.state.presets.clear();
     this.state.presets.add(opts.preset);
     return { ok: true };
@@ -665,7 +701,11 @@ export class MockRpcServer extends EventEmitter {
 
   /** Internal: push a single event through the wire
    *  (notification envelope) to all attached peers. */
-  private broadcastWireEvent(sessionId: string, kind: string, ev: { seq: number; ts: number; payload: any }): void {
+  private broadcastWireEvent(
+    sessionId: string,
+    kind: string,
+    ev: { seq: number; ts: number; payload: any },
+  ): void {
     const env: RpcNotification = {
       jsonrpc: "2.0",
       method: kind,

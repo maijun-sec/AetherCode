@@ -49,13 +49,29 @@ if (existsSync(tmp)) {
 }
 mkdirSync(tmp, { recursive: true });
 
-const r = spawnSync(`"${tscBin}"`, [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
-  `"${join(root, "src", "panelIntents.ts")}"`,
-], { encoding: "utf-8", shell: true });
+const r = spawnSync(
+  `"${tscBin}"`,
+  [
+    "--outDir",
+    join(tmp, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    `"${join(root, "src", "panelIntents.ts")}"`,
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
@@ -72,13 +88,29 @@ const { PANEL_INTENTS, ADVERTISED_INTENTS, helpByGroup, intentForCommand } = mod
  *  by the rule behind it. */
 const commandsOut = join(tmp, "out", "commands.js");
 if (!existsSync(commandsOut)) {
-  const rc = spawnSync(`"${tscBin}"`, [
-    "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
-    `"${join(root, "src", "commands.ts")}"`,
-  ], { encoding: "utf-8", shell: true });
+  const rc = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      join(tmp, "out"),
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      `"${join(root, "src", "commands.ts")}"`,
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (rc.status !== 0) {
     console.error("tsc (commands.ts) failed:\n" + rc.stdout + "\n" + rc.stderr);
     process.exit(1);
@@ -125,9 +157,15 @@ function deriveInk(intent) {
   const panelId = PANEL_BY_INTENT.get(intent.id);
   if (!panelId) return { mounted: false, why: `no PANEL_BY_INTENT entry for "${intent.id}"` };
   if (!INK_CASES.has(panelId)) {
-    return { mounted: false, why: `PANEL_BY_INTENT maps to "${panelId}" but tui.tsx has no case "${panelId}":` };
+    return {
+      mounted: false,
+      why: `PANEL_BY_INTENT maps to "${panelId}" but tui.tsx has no case "${panelId}":`,
+    };
   }
-  return { mounted: true, why: `PANEL_BY_INTENT["${intent.id}"] = "${panelId}" + case "${panelId}":` };
+  return {
+    mounted: true,
+    why: `PANEL_BY_INTENT["${intent.id}"] = "${panelId}" + case "${panelId}":`,
+  };
 }
 
 /** line: EVERY sentinel of the intent has an arm. */
@@ -143,8 +181,10 @@ test("PANEL_BY_INTENT parses and is non-trivial", () => {
   // If this ever silently degrades to an empty map, every "mounted"
   // derivation below would flip to unavailable and the gate would go
   // green for the wrong reason.
-  assert.ok(PANEL_BY_INTENT.size >= 8,
-    `PANEL_BY_INTENT parsed only ${PANEL_BY_INTENT.size} entries — the anchor probably moved`);
+  assert.ok(
+    PANEL_BY_INTENT.size >= 8,
+    `PANEL_BY_INTENT parsed only ${PANEL_BY_INTENT.size} entries — the anchor probably moved`,
+  );
 });
 
 // --- the whole point -------------------------------------------------------
@@ -158,8 +198,11 @@ test("DECLARED ink status matches what tui.tsx actually renders", () => {
       wrong.push(`${p.id}: registry says ink:'${p.ink}' — ${actual.why}`);
     }
   }
-  assert.deepEqual(wrong, [],
-    "the registry's ink column has drifted from tui.tsx.\n  " + wrong.join("\n  "));
+  assert.deepEqual(
+    wrong,
+    [],
+    "the registry's ink column has drifted from tui.tsx.\n  " + wrong.join("\n  "),
+  );
 });
 
 test("DECLARED line status matches what line.ts actually renders", () => {
@@ -171,8 +214,11 @@ test("DECLARED line status matches what line.ts actually renders", () => {
       wrong.push(`${p.id}: registry says line:'${p.line}' — ${actual.why}`);
     }
   }
-  assert.deepEqual(wrong, [],
-    "the registry's line column has drifted from line.ts.\n  " + wrong.join("\n  "));
+  assert.deepEqual(
+    wrong,
+    [],
+    "the registry's line column has drifted from line.ts.\n  " + wrong.join("\n  "),
+  );
 });
 
 // --- the blocker vocabulary ------------------------------------------------
@@ -182,29 +228,39 @@ test("every unavailable row declares WHICH kind of gap it is", () => {
   // "nobody wrote the UI" from "the daemon has no such RPC" — and
   // those call for opposite responses (write code vs. do not write
   // code). The R362 table conflated them for a full round.
-  const bad = PANEL_INTENTS
-    .filter((p) => p.ink === "unavailable" || p.line === "unavailable")
-    .filter((p) => !["not-wired", "backend-missing", "no-command"].includes(p.blocker));
-  assert.deepEqual(bad.map((p) => `${p.id} (blocker=${p.blocker})`), [],
-    "every unavailable row needs a structured blocker, not just a prose note");
+  const bad = PANEL_INTENTS.filter(
+    (p) => p.ink === "unavailable" || p.line === "unavailable",
+  ).filter((p) => !["not-wired", "backend-missing", "no-command"].includes(p.blocker));
+  assert.deepEqual(
+    bad.map((p) => `${p.id} (blocker=${p.blocker})`),
+    [],
+    "every unavailable row needs a structured blocker, not just a prose note",
+  );
 });
 
 test("every blocked row carries a gapNote explaining itself", () => {
-  const bad = PANEL_INTENTS
-    .filter((p) => p.ink === "unavailable" || p.line === "unavailable")
-    .filter((p) => !(p.gapNote || "").trim());
-  assert.deepEqual(bad.map((p) => p.id), [],
-    "a blocker without a note is just an assertion");
+  const bad = PANEL_INTENTS.filter(
+    (p) => p.ink === "unavailable" || p.line === "unavailable",
+  ).filter((p) => !(p.gapNote || "").trim());
+  assert.deepEqual(
+    bad.map((p) => p.id),
+    [],
+    "a blocker without a note is just an assertion",
+  );
 });
 
 test("a mounted-on-one-renderer row does not claim to be blocked there", () => {
   // workflow-picker and update-available are real on line mode and
   // absent on Ink. If someone later wires Ink and forgets to clear
   // `blocker`, the row would claim a gap that no longer exists.
-  const inconsistent = PANEL_INTENTS.filter((p) =>
-    p.ink !== "unavailable" && p.line !== "unavailable" && p.blocker);
-  assert.deepEqual(inconsistent.map((p) => p.id), [],
-    "a fully-mounted intent must not carry a blocker");
+  const inconsistent = PANEL_INTENTS.filter(
+    (p) => p.ink !== "unavailable" && p.line !== "unavailable" && p.blocker,
+  );
+  assert.deepEqual(
+    inconsistent.map((p) => p.id),
+    [],
+    "a fully-mounted intent must not carry a blocker",
+  );
 });
 
 // --- /help must not advertise a dead command -------------------------------
@@ -219,8 +275,11 @@ test("/help never lists a command that does not exist", () => {
     // handleSlash is a switch on the bare command name.
     return !new RegExp(`case\\s+"${cmd}"\\s*:`).test(commandsCode);
   });
-  assert.deepEqual(dead.map((p) => p.command), [],
-    "these commands are advertised by /help but handleSlash has no case for them");
+  assert.deepEqual(
+    dead.map((p) => p.command),
+    [],
+    "these commands are advertised by /help but handleSlash has no case for them",
+  );
 });
 
 test("an advertised command must actually emit one of its sentinels", () => {
@@ -234,14 +293,20 @@ test("an advertised command must actually emit one of its sentinels", () => {
     const returnsSentinel = /local:\s*[`'"]?(__[A-Z_0-9]+__)/.test(m[0]);
     return returnsSentinel && !p.sentinels.some((s) => m[0].includes(s));
   });
-  assert.deepEqual(mismatched.map((p) => `${p.command} -> ${p.sentinels.join(",")}`), [],
-    "a command returns a sentinel its own registry row does not claim");
+  assert.deepEqual(
+    mismatched.map((p) => `${p.command} -> ${p.sentinels.join(",")}`),
+    [],
+    "a command returns a sentinel its own registry row does not claim",
+  );
 });
 
 test("helpByGroup excludes non-advertised rows and keeps the rest", () => {
   const total = helpByGroup().reduce((n, g) => n + g.entries.length, 0);
-  assert.equal(total, ADVERTISED_INTENTS.length,
-    "helpByGroup must list exactly the advertised rows");
+  assert.equal(
+    total,
+    ADVERTISED_INTENTS.length,
+    "helpByGroup must list exactly the advertised rows",
+  );
   const cmds = helpByGroup().flatMap((g) => g.entries.map((e) => e.command));
 
   // Was: `assert.ok(!cmds.includes("/context"))`, named after the one
@@ -255,8 +320,10 @@ test("helpByGroup excludes non-advertised rows and keeps the rest", () => {
   // deletes it, and the next placeholder ships advertised.
   for (const p of PANEL_INTENTS) {
     if (p.blocker === "no-command") {
-      assert.ok(!cmds.includes(p.command),
-        `${p.command} is declared \`no-command\` and must not be advertised in /help`);
+      assert.ok(
+        !cmds.includes(p.command),
+        `${p.command} is declared \`no-command\` and must not be advertised in /help`,
+      );
     }
   }
   // ...and the advertised ones are still there.
@@ -271,10 +338,14 @@ test("every advertised row has a command that actually answers", () => {
   // command"; that is the R362/R365 defect class.
   for (const p of ADVERTISED_INTENTS) {
     const r = routeSlash(p.command);
-    assert.ok(r !== null && r !== undefined,
-      `${p.command} is advertised in /help but handleSlash does not recognise it`);
-    assert.ok(!(typeof r.local === "string" && /^unknown slash command/.test(r.local)),
-      `${p.command} is advertised but answers "unknown slash command"`);
+    assert.ok(
+      r !== null && r !== undefined,
+      `${p.command} is advertised in /help but handleSlash does not recognise it`,
+    );
+    assert.ok(
+      !(typeof r.local === "string" && /^unknown slash command/.test(r.local)),
+      `${p.command} is advertised but answers "unknown slash command"`,
+    );
   }
 });
 

@@ -130,9 +130,11 @@ export const SessionDetailsPanel: React.FC<SessionDetailsPanelProps> = ({
   if (!details) {
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Text color={t.brand} bold>session</Text>
+        <Text color={t.brand} bold>
+          session
+        </Text>
         <Text dimColor>{"─".repeat(20)}</Text>
-        <Text dimColor>  (no session loaded)</Text>
+        <Text dimColor> (no session loaded)</Text>
       </Box>
     );
   }
@@ -146,45 +148,59 @@ export const SessionDetailsPanel: React.FC<SessionDetailsPanelProps> = ({
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box flexDirection="row" justifyContent="space-between">
-        <Text color={t.brand} bold>session</Text>
+        <Text color={t.brand} bold>
+          session
+        </Text>
         {stale ? <Text color={t.warn}>· stale</Text> : null}
       </Box>
       <Text dimColor>{"─".repeat(20)}</Text>
 
-      <Row label="id"        value={shortId(details.id)} onClick={onCopyId ? () => onCopyId(details.id) : undefined} />
-      <Row label="title"     value={details.title || "—"} />
-      <Row label="cwd"       value={details.cwd || "—"} />
-      <Row label="model"     value={details.model || "—"} />
+      <Row
+        label="id"
+        value={shortId(details.id)}
+        onClick={onCopyId ? () => onCopyId(details.id) : undefined}
+      />
+      <Row label="title" value={details.title || "—"} />
+      <Row label="cwd" value={details.cwd || "—"} />
+      <Row label="model" value={details.model || "—"} />
       {details.effort ? <Row label="effort" value={details.effort} /> : null}
-      <Row label="state"     value={details.state} />
-      <Row label="started"   value={formatTimeAgo(details.startedAt, now)} />
-      <Row label="active"    value={formatTimeAgo(details.lastActiveAt, now)} />
-      {stale ? <Row label="stale" value={staleLabel(details.lastActiveAt, now)} color={t.warn} /> : null}
+      <Row label="state" value={details.state} />
+      <Row label="started" value={formatTimeAgo(details.startedAt, now)} />
+      <Row label="active" value={formatTimeAgo(details.lastActiveAt, now)} />
+      {stale ? (
+        <Row label="stale" value={staleLabel(details.lastActiveAt, now)} color={t.warn} />
+      ) : null}
       {details.parentSessionId ? (
-        <Row label="parent" value={shortId(details.parentSessionId) + (details.parentNote ? ` (${details.parentNote})` : "")} />
+        <Row
+          label="parent"
+          value={
+            shortId(details.parentSessionId) +
+            (details.parentNote ? ` (${details.parentNote})` : "")
+          }
+        />
       ) : null}
       <Text dimColor>{"─".repeat(20)}</Text>
 
       <Text color={t.accent}>tokens</Text>
       <Text>
-        <Text dimColor>  in  </Text>
+        <Text dimColor> in </Text>
         <Text>{formatTokens(details.tokensIn)}</Text>
-        <Text dimColor>  ·  out  </Text>
+        <Text dimColor> · out </Text>
         <Text>{formatTokens(details.tokensOut)}</Text>
-        <Text dimColor>  ·  total  </Text>
+        <Text dimColor> · total </Text>
         <Text>{formatTokens(tokensTotal)}</Text>
       </Text>
       <Text>
-        <Text dimColor>  cost  </Text>
+        <Text dimColor> cost </Text>
         <Text>{formatCost(null)}</Text>
-        <Text dimColor>  ·  msgs  </Text>
+        <Text dimColor> · msgs </Text>
         <Text>{details.messageCount}</Text>
       </Text>
 
       <Text dimColor>{"─".repeat(20)}</Text>
       <Text color={t.accent}>todos</Text>
       <Text>
-        <Text dimColor>  </Text>
+        <Text dimColor> </Text>
         <Text>{todoSummaryLine(todoSummary)}</Text>
       </Text>
 
@@ -192,18 +208,25 @@ export const SessionDetailsPanel: React.FC<SessionDetailsPanelProps> = ({
         <>
           <Text dimColor>{"─".repeat(20)}</Text>
           <Text color={t.accent}>preview</Text>
-          <Text>  {details.preview}</Text>
+          <Text> {details.preview}</Text>
         </>
       ) : null}
     </Box>
   );
 };
 
-const Row: React.FC<{ label: string; value: string; color?: string; onClick?: () => void }> = ({ label, value, color, onClick }) => (
+const Row: React.FC<{ label: string; value: string; color?: string; onClick?: () => void }> = ({
+  label,
+  value,
+  color,
+  onClick,
+}) => (
   <Box flexDirection="row">
     <Text dimColor>{label.padEnd(9, " ")} </Text>
     {onClick ? (
-      <Text color="cyan" underline>{value}</Text>
+      <Text color="cyan" underline>
+        {value}
+      </Text>
     ) : (
       <Text color={color}>{value}</Text>
     )}

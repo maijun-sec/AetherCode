@@ -31,13 +31,29 @@ if (existsSync(tmp)) {
 }
 mkdirSync(tmp, { recursive: true });
 
-const r = spawnSync(`"${tscBin}"`, [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
-  `"${join(root, "src", "commands.ts")}"`,
-], { encoding: "utf-8", shell: true });
+const r = spawnSync(
+  `"${tscBin}"`,
+  [
+    "--outDir",
+    join(tmp, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    `"${join(root, "src", "commands.ts")}"`,
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
@@ -64,13 +80,19 @@ function extractGroupedCommands(groupsSrc) {
 test("SLASH_HELP is derived, not a hand-written literal", () => {
   // The regression guard for the whole change. If someone re-inlines a
   // hand-written array, this fails and points at the drift that caused it.
-  assert.ok(src.includes("function renderSlashHelp"),
-    "commands.ts must render /help from the catalog via renderSlashHelp()");
-  assert.ok(src.includes("const SLASH_COMMAND_GROUPS"),
-    "commands.ts must declare the grouping table");
-  assert.doesNotMatch(src.slice(src.indexOf("export const SLASH_HELP")),
+  assert.ok(
+    src.includes("function renderSlashHelp"),
+    "commands.ts must render /help from the catalog via renderSlashHelp()",
+  );
+  assert.ok(
+    src.includes("const SLASH_COMMAND_GROUPS"),
+    "commands.ts must declare the grouping table",
+  );
+  assert.doesNotMatch(
+    src.slice(src.indexOf("export const SLASH_HELP")),
     /SLASH_HELP\s*=\s*\[/,
-    "SLASH_HELP must be assigned from the renderer, not a literal array");
+    "SLASH_HELP must be assigned from the renderer, not a literal array",
+  );
 });
 
 test("the renderer is declared AFTER the catalog it reads", () => {
@@ -83,9 +105,11 @@ test("the renderer is declared AFTER the catalog it reads", () => {
   const det = src.indexOf("export const SLASH_COMMANDS_DETAILED");
   const help = src.indexOf("export const SLASH_HELP = renderSlashHelp()");
   assert.ok(det > 0 && help > 0, "both declarations must exist");
-  assert.ok(det < help,
+  assert.ok(
+    det < help,
     "renderSlashHelp must be DEFINED and CALLED after SLASH_COMMANDS_DETAILED " +
-    "(TDZ crash otherwise; tsc will not warn you)");
+      "(TDZ crash otherwise; tsc will not warn you)",
+  );
 });
 
 test("every grouped command exists in the catalog", () => {
@@ -99,8 +123,11 @@ test("every grouped command exists in the catalog", () => {
   const grouped = extractGroupedCommands(groupsSrc);
   const catalogNames = new Set(SLASH_COMMANDS_DETAILED.map((c) => c.name));
   const orphans = grouped.filter((n) => !catalogNames.has(n));
-  assert.deepEqual(orphans, [],
-    `group table names commands missing from SLASH_COMMANDS_DETAILED: ${orphans.join(", ")}`);
+  assert.deepEqual(
+    orphans,
+    [],
+    `group table names commands missing from SLASH_COMMANDS_DETAILED: ${orphans.join(", ")}`,
+  );
 });
 
 test("every grouped command renders a non-empty row in /help", () => {
@@ -110,8 +137,10 @@ test("every grouped command renders a non-empty row in /help", () => {
   );
   const grouped = extractGroupedCommands(groupsSrc);
   for (const name of grouped) {
-    assert.ok(SLASH_HELP.includes(`/${name}`),
-      `/help does not render /${name} even though it is in the group table`);
+    assert.ok(
+      SLASH_HELP.includes(`/${name}`),
+      `/help does not render /${name} even though it is in the group table`,
+    );
   }
 });
 
@@ -119,16 +148,19 @@ test("/help carries no development notes", () => {
   // This is the user-facing copy. Round ids and T-numbers are engineering
   // records and belong in comments or in a registry `gapNote`, never here.
   for (const pat of [/R\d{3}/, /\bT-\d/, /鍘嗗彶/, /round:/i, /瀵瑰簲鍘嗗彶/]) {
-    assert.doesNotMatch(SLASH_HELP, pat,
-      `/help leaks a development note matching ${pat}`);
+    assert.doesNotMatch(SLASH_HELP, pat, `/help leaks a development note matching ${pat}`);
   }
 });
 
 test("catalog descriptions carry no development notes", () => {
   const dirty = SLASH_COMMANDS_DETAILED.filter((c) =>
-    /\bR\d{3}\b|\bT-\d+|瀵瑰簲鍘嗗彶|round:/i.test(c.description));
-  assert.deepEqual(dirty.map((c) => c.name), [],
-    "autocomplete descriptions leak development notes into the Tab dropdown");
+    /\bR\d{3}\b|\bT-\d+|瀵瑰簲鍘嗗彶|round:/i.test(c.description),
+  );
+  assert.deepEqual(
+    dirty.map((c) => c.name),
+    [],
+    "autocomplete descriptions leak development notes into the Tab dropdown",
+  );
 });
 
 test("argument hints render in /help", () => {
@@ -159,13 +191,42 @@ test("regression: the R362 rewrite kept every command that used to be listed", (
   // The old hand-written SLASH_HELP advertised these. Dropping any of them
   // is a user-visible loss even if they now live in a different group.
   for (const c of [
-    "/help", "/clear", "/exit", "/tools", "/model", "/mode", "/sessions",
-    "/stats", "/history", "/memory", "/memory-edit", "/memory-compact",
-    "/agent-pick", "/effort-pick", "/cwd-pick", "/mcp", "/mcp-login",
-    "/mcp-reconnect", "/threads", "/update", "/update-deps",
-    "/notifications", "/continue", "/pause", "/stop", "/todos", "/tokens",
-    "/consents", "/grants", "/workflow", "/skip", "/tool-actions",
-    "/bank-stats", "/bank-recall", "/memory-audit", "/sdd",
+    "/help",
+    "/clear",
+    "/exit",
+    "/tools",
+    "/model",
+    "/mode",
+    "/sessions",
+    "/stats",
+    "/history",
+    "/memory",
+    "/memory-edit",
+    "/memory-compact",
+    "/agent-pick",
+    "/effort-pick",
+    "/cwd-pick",
+    "/mcp",
+    "/mcp-login",
+    "/mcp-reconnect",
+    "/threads",
+    "/update",
+    "/update-deps",
+    "/notifications",
+    "/continue",
+    "/pause",
+    "/stop",
+    "/todos",
+    "/tokens",
+    "/consents",
+    "/grants",
+    "/workflow",
+    "/skip",
+    "/tool-actions",
+    "/bank-stats",
+    "/bank-recall",
+    "/memory-audit",
+    "/sdd",
   ]) {
     assert.ok(SLASH_HELP.includes(c), `/help lost the ${c} entry in the R362 rewrite`);
   }
@@ -176,9 +237,14 @@ test("SLASH_COMMANDS (the flat array) is unchanged in size", () => {
   // other tests depend on. 76 as of the R362 baseline, 77 as of R371
   // (which added `/context` — the command the context-meter placeholder
   // had been advertising without one since R362).
-  assert.equal(SLASH_COMMANDS.length, 77,
-    "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident");
-  assert.ok(SLASH_COMMANDS.includes("context"),
+  assert.equal(
+    SLASH_COMMANDS.length,
+    77,
+    "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident",
+  );
+  assert.ok(
+    SLASH_COMMANDS.includes("context"),
     "R371 added /context; the completion array must know about it or it " +
-    "is unreachable by tab-completion");
+      "is unreachable by tab-completion",
+  );
 });

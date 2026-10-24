@@ -65,9 +65,8 @@ export function SubagentSpawnCard({ card, onOpen, onDismiss, width = 60 }: Subag
   const [open, setOpen] = useState(false);
   const icon = STATUS_ICON[card.status] ?? "·";
   const color = STATUS_COLOR[card.status] ?? "gray";
-  const idShort = card.subagentId.length > 12
-    ? card.subagentId.slice(0, 10) + "…"
-    : card.subagentId;
+  const idShort =
+    card.subagentId.length > 12 ? card.subagentId.slice(0, 10) + "…" : card.subagentId;
 
   useInput((input, key) => {
     if (input === "x" && onDismiss) {
@@ -85,16 +84,19 @@ export function SubagentSpawnCard({ card, onOpen, onDismiss, width = 60 }: Subag
     >
       <Box>
         <Text color={color}>{icon} </Text>
-        <Text bold color={color}>{card.role || "subagent"}</Text>
-        <Text dimColor>  {idShort}</Text>
-        <Text color={color} dimColor>  [{card.status}]</Text>
-        <Text dimColor>  {open ? "▾" : "▸"} (Enter expand)</Text>
+        <Text bold color={color}>
+          {card.role || "subagent"}
+        </Text>
+        <Text dimColor> {idShort}</Text>
+        <Text color={color} dimColor>
+          {" "}
+          [{card.status}]
+        </Text>
+        <Text dimColor> {open ? "▾" : "▸"} (Enter expand)</Text>
       </Box>
       {open ? (
         <Box flexDirection="column" marginTop={1}>
-          {card.description ? (
-            <Text>{card.description}</Text>
-          ) : null}
+          {card.description ? <Text>{card.description}</Text> : null}
           {onOpen ? (
             <Box marginTop={1}>
               <Text color="cyan" underline>
@@ -104,7 +106,7 @@ export function SubagentSpawnCard({ card, onOpen, onDismiss, width = 60 }: Subag
           ) : null}
           {onDismiss ? (
             <Box marginTop={1}>
-              <Text dimColor>  (press x to dismiss)</Text>
+              <Text dimColor> (press x to dismiss)</Text>
             </Box>
           ) : null}
         </Box>

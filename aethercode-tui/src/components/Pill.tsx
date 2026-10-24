@@ -52,7 +52,7 @@ export const Pill: React.FC<PillProps> = ({ icon, label, color, bg, dim, bold = 
       <Box>
         {icon ? <Text dimColor>{icon} </Text> : null}
         <Text dimColor>{label}</Text>
-        {hint ? <Text dimColor>  {hint}</Text> : null}
+        {hint ? <Text dimColor> {hint}</Text> : null}
       </Box>
     );
   }
@@ -63,14 +63,15 @@ export const Pill: React.FC<PillProps> = ({ icon, label, color, bg, dim, bold = 
         // Filled pill: same color foreground + background.
         <Text color={color} backgroundColor={bg} bold={bold}>
           {" "}
-          {label}
-          {" "}
+          {label}{" "}
         </Text>
       ) : (
         // Outlined pill: just bold colored text, no bg.
-        <Text color={color} bold={bold}>{label}</Text>
+        <Text color={color} bold={bold}>
+          {label}
+        </Text>
       )}
-      {hint ? <Text dimColor>  {hint}</Text> : null}
+      {hint ? <Text dimColor> {hint}</Text> : null}
     </Box>
   );
 };

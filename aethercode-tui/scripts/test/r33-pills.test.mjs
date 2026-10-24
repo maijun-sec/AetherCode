@@ -63,8 +63,10 @@ test("R33: dist/ac-tui.js is fresh (was rebuilt after Pill.tsx was added)", () =
   const content = readFileSync(dist, "utf-8");
   // We just check that "Pill" appears in the bundle (it's a unique-enough marker).
   // esbuild keeps the original component names by default.
-  assert.ok(content.includes("Pill") || content.includes("modeToColor") || content.includes("shortenPath"),
-    "bundle doesn't include new pill code");
+  assert.ok(
+    content.includes("Pill") || content.includes("modeToColor") || content.includes("shortenPath"),
+    "bundle doesn't include new pill code",
+  );
 });
 
 // ----- 2. Behavioural test for the helper functions -------------------
@@ -77,22 +79,36 @@ test("R33: dist/ac-tui.js is fresh (was rebuilt after Pill.tsx was added)", () =
 
 function modeToColor(mode) {
   switch ((mode || "").toUpperCase()) {
-    case "DEFAULT": case "AUTO": case "PLAN": case "ASK": return "black";
-    case "DENY": return "white";
-    case "BYPASS": return "white";
-    default: return "black";
+    case "DEFAULT":
+    case "AUTO":
+    case "PLAN":
+    case "ASK":
+      return "black";
+    case "DENY":
+      return "white";
+    case "BYPASS":
+      return "white";
+    default:
+      return "black";
   }
 }
 
 function modeToBg(mode) {
   switch ((mode || "").toUpperCase()) {
-    case "DEFAULT": return "yellow";
-    case "AUTO": return "cyan";
-    case "PLAN": return "magenta";
-    case "ASK": return "yellowBright";
-    case "DENY": return "red";
-    case "BYPASS": return "gray";
-    default: return "gray";
+    case "DEFAULT":
+      return "yellow";
+    case "AUTO":
+      return "cyan";
+    case "PLAN":
+      return "magenta";
+    case "ASK":
+      return "yellowBright";
+    case "DENY":
+      return "red";
+    case "BYPASS":
+      return "gray";
+    default:
+      return "gray";
   }
 }
 
@@ -132,8 +148,10 @@ test("R33: shortenPath truncates long paths to last 2 segments", () => {
   assert.ok(out.length <= 20, `output too long: ${out} (${out.length})`);
   assert.match(out, /\.\.\.\//);
   // The last 2 segments should be preserved.
-  assert.ok(out.endsWith("nested/project") || out.endsWith("project/folder"),
-    `unexpected tail: ${out}`);
+  assert.ok(
+    out.endsWith("nested/project") || out.endsWith("project/folder"),
+    `unexpected tail: ${out}`,
+  );
 });
 
 test("R33: shortenPath handles empty / undefined cwd", () => {
@@ -144,29 +162,53 @@ test("R33: shortenPath handles empty / undefined cwd", () => {
 // ----- 3. Build smoke test -------------------------------------------
 
 test("R33: TypeScript compile of the TUI source is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r33-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp,
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--jsx", "react",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const sources = [
-    "Pill.tsx", "Header.tsx", "StatusBar.tsx", "InputBox.tsx",
-    "Scrollback.tsx", "HelpOverlay.tsx", "PermissionModal.tsx",
-    "Markdown.tsx", "PlanList.tsx", "ToolCard.tsx", "Welcome.tsx",
+    "Pill.tsx",
+    "Header.tsx",
+    "StatusBar.tsx",
+    "InputBox.tsx",
+    "Scrollback.tsx",
+    "HelpOverlay.tsx",
+    "PermissionModal.tsx",
+    "Markdown.tsx",
+    "PlanList.tsx",
+    "ToolCard.tsx",
+    "Welcome.tsx",
   ].map((f) => '"' + join(root, "src", "components", f) + '"');
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, ...sources], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);

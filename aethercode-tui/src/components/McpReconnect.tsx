@@ -30,9 +30,9 @@ export type ForceConfirmChoice = boolean;
 
 /** Which sub-prompt this is. Drives title + body text. */
 export type McpReconnectKind =
-  | "post-login"        // ✓ Connected to <name>  →  Reconnect to load new tools.
-  | "apply-changes"     // Apply MCP server changes?  →  Reconnect to apply <names>.
-  | "force";            // Force reconnect?  →  no login queued.
+  | "post-login" // ✓ Connected to <name>  →  Reconnect to load new tools.
+  | "apply-changes" // Apply MCP server changes?  →  Reconnect to apply <names>.
+  | "force"; // Force reconnect?  →  no login queued.
 
 export interface McpReconnectProps {
   /** Which sub-prompt. */
@@ -66,7 +66,11 @@ function defaultTitle(kind: McpReconnectKind): string {
 }
 
 /** Derive the default body from the kind. */
-function defaultBody(kind: McpReconnectKind, serverName?: string, serverNames?: ReadonlyArray<string>): string {
+function defaultBody(
+  kind: McpReconnectKind,
+  serverName?: string,
+  serverNames?: ReadonlyArray<string>,
+): string {
   switch (kind) {
     case "post-login":
       return `✓ Connected to ${serverName ?? "(unknown)"}\nReconnect to load new tools.`;
@@ -117,22 +121,18 @@ export const McpReconnect: React.FC<McpReconnectProps> = ({
   const h = help ?? defaultHelp(kind);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color={kind === "force" ? "yellow" : "cyan"} bold>◆ {t}</Text>
+        <Text color={kind === "force" ? "yellow" : "cyan"} bold>
+          ◆ {t}
+        </Text>
       </Box>
       <Text> </Text>
       {b.split("\n").map((line, i) => (
         <Text key={i}>{line}</Text>
       ))}
       <Text> </Text>
-      <Text dimColor>  {h}</Text>
+      <Text dimColor> {h}</Text>
     </Box>
   );
 };

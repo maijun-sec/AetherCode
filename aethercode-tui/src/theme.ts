@@ -9,31 +9,31 @@
 
 export const t = {
   // Foreground colors (chalk-compatible names; Ink understands them).
-  brand: "yellowBright",       // AetherCode / brand text
-  brandBold: "#FFB347",        // bold brand
-  accent: "cyan",              // model name, key labels
-  ok: "green",                 // success
-  warn: "yellow",              // warning
-  err: "red",                  // error
-  dim: "gray",                 // de-emphasised text
-  user: "blue",                // user prompts
-  asst: "white",               // assistant prose
-  code: "magenta",             // inline code
+  brand: "yellowBright", // AetherCode / brand text
+  brandBold: "#FFB347", // bold brand
+  accent: "cyan", // model name, key labels
+  ok: "green", // success
+  warn: "yellow", // warning
+  err: "red", // error
+  dim: "gray", // de-emphasised text
+  user: "blue", // user prompts
+  asst: "white", // assistant prose
+  code: "magenta", // inline code
   // code backgrounds (used by inline code pill + code block surface).
   // We use the same color as the foreground for "filled" + the dim grey
   // for a contrasting outline. Terminal bg support is uneven, so the
   // inline code "pill" uses `backgroundColor` with the same hue as
   // the foreground and falls back to a bold + dim treatment where bg
   // isn't supported.
-  codeBg: "#3F1A47",           // dark magenta bg for inline code (subtle)
-  codeBlockBg: "#1F1326",      // very dark magenta bg for code blocks
-  codeBorder: "#5A2A6A",       // dim purple border around code blocks
-  panel: "gray",               // borders
-  panelHot: "yellowBright",    // running tool border
-  panelOk: "green",            // ok tool border
-  panelErr: "red",             // error tool border
-  header: "yellowBright",      // header bar
-  spinner: "yellowBright",     // spinner color
+  codeBg: "#3F1A47", // dark magenta bg for inline code (subtle)
+  codeBlockBg: "#1F1326", // very dark magenta bg for code blocks
+  codeBorder: "#5A2A6A", // dim purple border around code blocks
+  panel: "gray", // borders
+  panelHot: "yellowBright", // running tool border
+  panelOk: "green", // ok tool border
+  panelErr: "red", // error tool border
+  header: "yellowBright", // header bar
+  spinner: "yellowBright", // spinner color
   // heading colors. H1/H2 carry the brand weight; H3/H4 are
   // accent-tinted so the user can scan document structure by colour
   // alone. H5/H6 fade to dim — they're "sub-section" markers.
@@ -60,20 +60,20 @@ export const t = {
   // the dark-magenta `codeBlockBg` surface; nothing is bold
   // (the inline-code pill is the bold thing — the code body
   // is monospace + colour-coded).
-  tokKeyword:  "magenta",      // if const class function (control flow)
-  tokString:   "green",        // "hello" 'world' `template`
-  tokNumber:   "yellowBright", // 123 0xFF 3.14
-  tokComment:  "gray",         // // # /* */ — italic in render
-  tokBuiltin:  "cyan",         // true false null console Math
-  tokOperator: "white",        // = + - * / => ===  (low-emphasis)
+  tokKeyword: "magenta", // if const class function (control flow)
+  tokString: "green", // "hello" 'world' `template`
+  tokNumber: "yellowBright", // 123 0xFF 3.14
+  tokComment: "gray", // // # /* */ — italic in render
+  tokBuiltin: "cyan", // true false null console Math
+  tokOperator: "white", // = + - * / => ===  (low-emphasis)
   // tool-category colors. The user can identify the *type* of
   // a tool call by its color even without reading the name.
-  catRead:   "blue",            // file_read / glob / grep
-  catWrite:  "yellowBright",    // file_write / file_edit
-  catSearch: "cyan",            // search / find
-  catRun:    "red",             // bash / shell / exec / test
-  catAgent:  "magenta",         // agent / task / delegate
-  catOther:  "gray",            // unknown
+  catRead: "blue", // file_read / glob / grep
+  catWrite: "yellowBright", // file_write / file_edit
+  catSearch: "cyan", // search / find
+  catRun: "red", // bash / shell / exec / test
+  catAgent: "magenta", // agent / task / delegate
+  catOther: "gray", // unknown
 } as const;
 
 export const icon = {
@@ -90,36 +90,36 @@ export const icon = {
   dot: "●",
   ring: "○",
   // pill icons — one per chip in the header.
-  model: "⌬",     // model name
-  mode:  "⚙",     // permission mode
-  live:  "●",     // connected / live
-  dead:  "○",     // disconnected
-  id:    "#",     // session id
-  path:  "↳",     // working directory
-  time:  "⏱",     // elapsed time
-  cost:  "$",     // cost
-  in:    "↑",     // input tokens
-  out:   "↓",     // output tokens
-  think: "✦",     // thinking
-  stream: "▍",    // streaming
-  toolRun: "▸",   // tool call running
-  ask: "?",       // user ask
-  pause: "‖",     // paused
+  model: "⌬", // model name
+  mode: "⚙", // permission mode
+  live: "●", // connected / live
+  dead: "○", // disconnected
+  id: "#", // session id
+  path: "↳", // working directory
+  time: "⏱", // elapsed time
+  cost: "$", // cost
+  in: "↑", // input tokens
+  out: "↓", // output tokens
+  think: "✦", // thinking
+  stream: "▍", // streaming
+  toolRun: "▸", // tool call running
+  ask: "?", // user ask
+  pause: "‖", // paused
   // R344 additions: provider pill + memory-bank status pill.
-  provider: "⌃",  // provider name (e.g. minmax, openai)
-  bank:     "◐",  // memory bank status (live count + kinds)
+  provider: "⌃", // provider name (e.g. minmax, openai)
+  bank: "◐", // memory bank status (live count + kinds)
   // tool-category icons — one per ToolCategory.
-  catRead:   "○",  // read (file_read, glob, grep)
-  catWrite:  "✎",  // write/edit (file_write, file_edit)
-  catSearch: "◎",  // search (find, search)
-  catRun:    "▷",  // run (bash, shell, exec, test)
-  catAgent:  "❖",  // agent / task / subagent
-  catOther:  "⚒",  // generic tool
+  catRead: "○", // read (file_read, glob, grep)
+  catWrite: "✎", // write/edit (file_write, file_edit)
+  catSearch: "◎", // search (find, search)
+  catRun: "▷", // run (bash, shell, exec, test)
+  catAgent: "❖", // agent / task / subagent
+  catOther: "⚒", // generic tool
   // misc UI.
-  detail: "≡",     // details / expanded view
-  timer: "⏱",     // duration timer
+  detail: "≡", // details / expanded view
+  timer: "⏱", // duration timer
   // search.
-  search: "⌕",     // search / find
+  search: "⌕", // search / find
 } as const;
 
 export const banner = String.raw`

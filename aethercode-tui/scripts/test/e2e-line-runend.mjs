@@ -69,12 +69,23 @@ setTimeout(() => {
   let beats = 0;
   const beat = setInterval(() => {
     beats++;
-    if (beats > 8) { clearInterval(beat); return; }
-    try { child.stdin.write(" \n"); } catch { clearInterval(beat); }
+    if (beats > 8) {
+      clearInterval(beat);
+      return;
+    }
+    try {
+      child.stdin.write(" \n");
+    } catch {
+      clearInterval(beat);
+    }
   }, 4000);
   // Hard timeout at 40s.
   setTimeout(() => {
     console.log("[e2e] hard timeout 40s — closing stdin");
-    try { child.stdin.end(); } catch { /* ignore */ }
+    try {
+      child.stdin.end();
+    } catch {
+      /* ignore */
+    }
   }, 40000);
 }, 5000);

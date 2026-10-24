@@ -56,11 +56,7 @@ test("R216: theme.ts exposes 6 token colour tokens", () => {
     "tokBuiltin",
     "tokOperator",
   ]) {
-    assert.match(
-      theme,
-      new RegExp(`${tok}\\s*:`),
-      `theme.ts must export ${tok} token`,
-    );
+    assert.match(theme, new RegExp(`${tok}\\s*:`), `theme.ts must export ${tok} token`);
   }
 });
 
@@ -74,15 +70,7 @@ test("R216: highlight.ts exports highlightCode + tokenKindToColor", () => {
 });
 
 test("R216: highlight.ts defines all 7 token kinds", () => {
-  for (const kind of [
-    "plain",
-    "keyword",
-    "string",
-    "number",
-    "comment",
-    "builtin",
-    "operator",
-  ]) {
+  for (const kind of ["plain", "keyword", "string", "number", "comment", "builtin", "operator"]) {
     assert.match(hl, new RegExp(`["']${kind}["']`));
   }
 });
@@ -140,7 +128,19 @@ function extractFunctionBody(source, name) {
 // ----- 3. bash tokenizer covers the right tokens ----------------------
 
 test("R216: bash tokenizer includes control-flow keywords", () => {
-  for (const kw of ["if", "then", "else", "fi", "for", "while", "do", "done", "case", "esac", "function"]) {
+  for (const kw of [
+    "if",
+    "then",
+    "else",
+    "fi",
+    "for",
+    "while",
+    "do",
+    "done",
+    "case",
+    "esac",
+    "function",
+  ]) {
     assert.ok(
       hl.includes(`"${kw}"`) || hl.includes(`'${kw}'`),
       `bash tokenizer must include keyword "${kw}"`,
@@ -234,28 +234,35 @@ test("R216: js tokenizer handles // and /* */ comments", () => {
 test("R216: js tokenizer includes const / function / class / async", () => {
   // Sanity: the keyword set should include the ES6+ basics.
   assert.match(hl, /JS_KEYWORDS/);
-  for (const kw of ["const", "function", "class", "async", "await", "let", "return", "import", "export"]) {
-    assert.ok(
-      hl.includes(`"${kw}"`),
-      `JS_KEYWORDS must include "${kw}"`,
-    );
+  for (const kw of [
+    "const",
+    "function",
+    "class",
+    "async",
+    "await",
+    "let",
+    "return",
+    "import",
+    "export",
+  ]) {
+    assert.ok(hl.includes(`"${kw}"`), `JS_KEYWORDS must include "${kw}"`);
   }
 });
 
 test("R216: ts tokenizer extras: interface / type / enum", () => {
   assert.match(hl, /TS_EXTRA_KEYWORDS/);
   for (const kw of ["interface", "type", "enum", "namespace", "declare"]) {
-    assert.ok(
-      hl.includes(`"${kw}"`),
-      `TS_EXTRA_KEYWORDS must include "${kw}"`,
-    );
+    assert.ok(hl.includes(`"${kw}"`), `TS_EXTRA_KEYWORDS must include "${kw}"`);
   }
 });
 
 // ----- 6. Markdown.tsx uses the tokenizer -----------------------------
 
 test("R216: Markdown.tsx imports highlightCode + tokenKindToColor", () => {
-  assert.match(md, /import\s*\{[^}]*highlightCode[^}]*\}\s*from\s*["']\.\/markdown\/highlight\.js["']/);
+  assert.match(
+    md,
+    /import\s*\{[^}]*highlightCode[^}]*\}\s*from\s*["']\.\/markdown\/highlight\.js["']/,
+  );
   assert.match(md, /tokenKindToColor/);
   assert.match(md, /type TokenKind/);
 });
@@ -311,24 +318,47 @@ test("R216: package.json does NOT add a syntax highlighter", () => {
 // ----- 8. tsc smoke test ----------------------------------------------
 
 test("R216: TypeScript compile of highlight.ts + Markdown.tsx + theme.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r216-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Markdown.tsx") + '"',
-    '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
-    '"' + join(root, "src", "theme.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "Markdown.tsx") + '"',
+      '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
+      '"' + join(root, "src", "theme.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -368,7 +398,7 @@ test("R216 (runtime): bash tokenizer splits `if [ $foo -gt 0 ]; then` into expec
   assert.equal(tokenKindToColor("number"), "tokNumber");
 });
 
-test("R216 (runtime): json tokenizer splits `{\"a\": 1, \"b\": true}` into expected kinds", () => {
+test('R216 (runtime): json tokenizer splits `{"a": 1, "b": true}` into expected kinds', () => {
   const compiled = join(root, "tmp-r216-tsc", "components", "markdown", "highlight.js");
   if (!existsSync(compiled)) {
     return;
@@ -383,7 +413,7 @@ test("R216 (runtime): json tokenizer splits `{\"a\": 1, \"b\": true}` into expec
   assert.ok(kinds.has("operator"), "expected operator ({ } : ,) in json tokens");
 });
 
-test("R216 (runtime): js tokenizer splits `const x = \"hi\"; // c` into expected kinds", () => {
+test('R216 (runtime): js tokenizer splits `const x = "hi"; // c` into expected kinds', () => {
   const compiled = join(root, "tmp-r216-tsc", "components", "markdown", "highlight.js");
   if (!existsSync(compiled)) {
     return;
@@ -393,7 +423,7 @@ test("R216 (runtime): js tokenizer splits `const x = \"hi\"; // c` into expected
   const tokens = highlightCode('const x = "hi"; // c', "ts");
   const kinds = new Set(tokens.map((t) => t.kind));
   assert.ok(kinds.has("keyword"), "expected keyword (const) in ts tokens");
-  assert.ok(kinds.has("string"), "expected string (\"hi\") in ts tokens");
+  assert.ok(kinds.has("string"), 'expected string ("hi") in ts tokens');
   assert.ok(kinds.has("comment"), "expected comment (// c) in ts tokens");
   assert.ok(kinds.has("operator"), "expected operator (= ;) in ts tokens");
 });

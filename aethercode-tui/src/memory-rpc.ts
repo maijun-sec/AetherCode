@@ -156,15 +156,11 @@ export interface MemoryRpcClient {
     params: MemoryAppendProjectChangeParams,
   ): Promise<MemoryAppendProjectChangeResult>;
   /** T-072 / design §1.6 — append a session-scoped fact. */
-  appendSessionFact(
-    params: MemoryAppendSessionFactParams,
-  ): Promise<MemoryAppendSessionFactResult>;
+  appendSessionFact(params: MemoryAppendSessionFactParams): Promise<MemoryAppendSessionFactResult>;
   /** T-073 / design §1.6 — force a compression pass. */
   compact(params?: MemoryCompactParams): Promise<MemoryCompactResult>;
   /** T-074 / design §1.6 — switch the active project. */
-  switchProject(
-    params: MemorySwitchProjectParams,
-  ): Promise<MemorySwitchProjectResult>;
+  switchProject(params: MemorySwitchProjectParams): Promise<MemorySwitchProjectResult>;
   /** T-075 / design §1.6 — list entries of a layer. */
   list(params: MemoryListParams): Promise<MemoryListResultWire>;
 }
@@ -205,12 +201,17 @@ function normalizeEntry(v: unknown): MemoryEntryWire | null {
     return null;
   }
   const scope = asString(r["scope"]);
-  const validScope = scope === "global" || scope === "project" || scope === "session"
-    ? scope
-    : "project";
+  const validScope =
+    scope === "global" || scope === "project" || scope === "session" ? scope : "project";
   const source = asString(r["source"]);
-  const validSource = (source === "user" || source === "llm" || source === "system" ||
-    source === "tool" || source === "imported") ? source : "system";
+  const validSource =
+    source === "user" ||
+    source === "llm" ||
+    source === "system" ||
+    source === "tool" ||
+    source === "imported"
+      ? source
+      : "system";
   const out: MemoryEntryWire = {
     kind,
     id: asString(r["id"]),
@@ -234,9 +235,8 @@ function normalizeRead(v: unknown): MemoryReadResultWire {
   }
   const r = v as Record<string, unknown>;
   const source = asString(r["source"]);
-  const validSource = source === "cache" || source === "sqlite" || source === "file"
-    ? source
-    : "file";
+  const validSource =
+    source === "cache" || source === "sqlite" || source === "file" ? source : "file";
   const rawEntries = Array.isArray(r["entries"]) ? r["entries"] : [];
   const entries: MemoryEntryWire[] = [];
   for (const e of rawEntries) {
@@ -344,20 +344,14 @@ export class RemoteMemoryRpc implements MemoryRpcClient {
   async appendProjectChange(
     params: MemoryAppendProjectChangeParams,
   ): Promise<MemoryAppendProjectChangeResult> {
-    const v = await this.client.request<unknown>(
-      "memory/appendProjectChange",
-      params as never,
-    );
+    const v = await this.client.request<unknown>("memory/appendProjectChange", params as never);
     return normalizeAppendChange(v);
   }
 
   async appendSessionFact(
     params: MemoryAppendSessionFactParams,
   ): Promise<MemoryAppendSessionFactResult> {
-    const v = await this.client.request<unknown>(
-      "memory/appendSessionFact",
-      params as never,
-    );
+    const v = await this.client.request<unknown>("memory/appendSessionFact", params as never);
     return normalizeAppendFact(v);
   }
 
@@ -366,13 +360,8 @@ export class RemoteMemoryRpc implements MemoryRpcClient {
     return normalizeCompact(v);
   }
 
-  async switchProject(
-    params: MemorySwitchProjectParams,
-  ): Promise<MemorySwitchProjectResult> {
-    const v = await this.client.request<unknown>(
-      "memory/switchProject",
-      params as never,
-    );
+  async switchProject(params: MemorySwitchProjectParams): Promise<MemorySwitchProjectResult> {
+    const v = await this.client.request<unknown>("memory/switchProject", params as never);
     return normalizeSwitchProject(v);
   }
 
@@ -420,9 +409,7 @@ export class LocalMemoryRpc implements MemoryRpcClient {
     return this.invoke.compact(params);
   }
 
-  async switchProject(
-    params: MemorySwitchProjectParams,
-  ): Promise<MemorySwitchProjectResult> {
+  async switchProject(params: MemorySwitchProjectParams): Promise<MemorySwitchProjectResult> {
     return this.invoke.switchProject(params);
   }
 
@@ -439,13 +426,9 @@ export interface LocalInvoke {
   appendProjectChange(
     params: MemoryAppendProjectChangeParams,
   ): Promise<MemoryAppendProjectChangeResult>;
-  appendSessionFact(
-    params: MemoryAppendSessionFactParams,
-  ): Promise<MemoryAppendSessionFactResult>;
+  appendSessionFact(params: MemoryAppendSessionFactParams): Promise<MemoryAppendSessionFactResult>;
   compact(params: MemoryCompactParams): Promise<MemoryCompactResult>;
-  switchProject(
-    params: MemorySwitchProjectParams,
-  ): Promise<MemorySwitchProjectResult>;
+  switchProject(params: MemorySwitchProjectParams): Promise<MemorySwitchProjectResult>;
   list(params: MemoryListParams): Promise<MemoryListResultWire>;
 }
 
@@ -502,7 +485,9 @@ export function buildLocalInvoke(impl: MemoryRpcShim): LocalInvoke {
  *  `aethercode-memory`. The six methods map 1:1 to the RPC
  *  handlers in `aethercode-memory/src/rpc.ts`. */
 export interface MemoryRpcShim {
-  get(params: MemoryGetParams): Promise<{ result?: unknown; error?: unknown }> | { result?: unknown; error?: unknown };
+  get(
+    params: MemoryGetParams,
+  ): Promise<{ result?: unknown; error?: unknown }> | { result?: unknown; error?: unknown };
   appendProjectChange(
     params: MemoryAppendProjectChangeParams,
   ): Promise<{ result?: unknown; error?: unknown }> | { result?: unknown; error?: unknown };
@@ -570,9 +555,7 @@ export class NullMemoryRpc implements MemoryRpcClient {
     };
   }
 
-  async switchProject(
-    _params: MemorySwitchProjectParams,
-  ): Promise<MemorySwitchProjectResult> {
+  async switchProject(_params: MemorySwitchProjectParams): Promise<MemorySwitchProjectResult> {
     return { ok: true, projectId: "" };
   }
 

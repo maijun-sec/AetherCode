@@ -21,8 +21,10 @@ const root = join(here, "..", "..");
 const tmp = join(root, "tmp-t7-14-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "consent", "_t7_14_helpers.ts");
@@ -33,13 +35,28 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
 {
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
@@ -112,7 +129,11 @@ test("T-7-14: 8-option flow: non-shell categories (fs.*, search.*, mcp.*) suppre
     const opts = buildOptions(cat);
     assert.equal(opts.length, 8, `expected 8 options for ${cat}, got ${opts.length}`);
     for (const o of opts) {
-      assert.equal(o.wildcardSubCategory, undefined, `unexpected wildcard on ${o.index} for ${cat}`);
+      assert.equal(
+        o.wildcardSubCategory,
+        undefined,
+        `unexpected wildcard on ${o.index} for ${cat}`,
+      );
     }
   }
 });

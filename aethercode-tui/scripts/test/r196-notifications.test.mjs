@@ -21,8 +21,10 @@ const root = join(here, "..", "..");
 const tmp = join(root, "tmp-r196-notif-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 //
@@ -48,12 +50,27 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", root,
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  root,
 ];
-const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+  encoding: "utf-8",
+  shell: true,
+});
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
@@ -61,8 +78,17 @@ if (r.status !== 0) {
 const helpers = await import(
   "file:///" + join(tmp, "out", "tmp-r196-notif-tsc", "_r196_notif_helpers.js").replace(/\\/g, "/")
 );
-const { buildActionResult, pendingCount, buildDetailResult, formatDetailTitle,
-  labelFor, flipToggle, defaultToggleState, countEnabled, WARNING_TOGGLES } = helpers;
+const {
+  buildActionResult,
+  pendingCount,
+  buildDetailResult,
+  formatDetailTitle,
+  labelFor,
+  flipToggle,
+  defaultToggleState,
+  countEnabled,
+  WARNING_TOGGLES,
+} = helpers;
 
 // ----- 1. buildActionResult ----------------------------------------
 
@@ -128,7 +154,10 @@ test("R196: formatDetailTitle — without body", () => {
 });
 
 test("R196: formatDetailTitle — with body", () => {
-  const s = formatDetailTitle("Welcome", "this is a long welcome body that should get truncated for display");
+  const s = formatDetailTitle(
+    "Welcome",
+    "this is a long welcome body that should get truncated for display",
+  );
   assert.match(s, /Welcome/);
   assert.match(s, /…$/);
 });

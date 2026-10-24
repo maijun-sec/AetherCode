@@ -51,12 +51,12 @@ import { Markdown } from "./Markdown.js";
  *  so the user can identify what the model is doing without
  *  reading the tool name. */
 const CATEGORY_SPINNER: Record<ToolCategory, SpinnerName> = {
-  read:   "dots",
-  write:  "line",
+  read: "dots",
+  write: "line",
   search: "arc",
-  run:    "triangle",
-  agent:  "star",
-  other:  "dots2",
+  run: "triangle",
+  agent: "star",
+  other: "dots2",
 };
 
 function truncate(s: string, n: number): string {
@@ -66,32 +66,32 @@ function truncate(s: string, n: number): string {
 
 const STATUS_COLOR: Record<ToolStatus, string> = {
   running: t.panelHot,
-  ok:      t.panelOk,
-  error:   t.panelErr,
+  ok: t.panelOk,
+  error: t.panelErr,
 };
 
 const STATUS_ICON: Record<ToolStatus, string> = {
   running: icon.running,
-  ok:      icon.ok,
-  error:   icon.err,
+  ok: icon.ok,
+  error: icon.err,
 };
 
 const CATEGORY_ICON: Record<ToolCategory, string> = {
-  read:   icon.catRead,
-  write:  icon.catWrite,
+  read: icon.catRead,
+  write: icon.catWrite,
   search: icon.catSearch,
-  run:    icon.catRun,
-  agent:  icon.catAgent,
-  other:  icon.catOther,
+  run: icon.catRun,
+  agent: icon.catAgent,
+  other: icon.catOther,
 };
 
 const CATEGORY_COLOR: Record<ToolCategory, string> = {
-  read:   t.catRead,
-  write:  t.catWrite,
+  read: t.catRead,
+  write: t.catWrite,
   search: t.catSearch,
-  run:    t.catRun,
-  agent:  t.catAgent,
-  other:  t.catOther,
+  run: t.catRun,
+  agent: t.catAgent,
+  other: t.catOther,
 };
 
 function formatArgs(args?: string): string {
@@ -152,16 +152,20 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
           <Text>
             <Text color={catColor}>{catIcon} </Text>
             <Text dimColor>{turn.toolName ?? "tool"}</Text>
-            {argsLine ? <Text dimColor>  {truncate(argsLine, 60)}</Text> : null}
+            {argsLine ? <Text dimColor> {truncate(argsLine, 60)}</Text> : null}
           </Text>
           <Text dimColor>
             {status === "running" ? (
-              <Text color={catColor}><Spinner type={CATEGORY_SPINNER[cat]} /> </Text>
+              <Text color={catColor}>
+                <Spinner type={CATEGORY_SPINNER[cat]} />{" "}
+              </Text>
             ) : (
               <Text color={borderColor}>{sym} </Text>
             )}
-            <Text color={veryLong ? t.warn : undefined}>{status === "running" ? `${duration}…` : `${duration} ${status}`}</Text>
-            {longRunning ? <Text dimColor>  ·  still running</Text> : null}
+            <Text color={veryLong ? t.warn : undefined}>
+              {status === "running" ? `${duration}…` : `${duration} ${status}`}
+            </Text>
+            {longRunning ? <Text dimColor> · still running</Text> : null}
           </Text>
         </Box>
       </Box>
@@ -182,13 +186,15 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
         <Box flexDirection="row" paddingX={1} justifyContent="space-between">
           <Text>
             {status === "running" ? (
-              <Text color={catColor}><Spinner type={CATEGORY_SPINNER[cat]} /> </Text>
+              <Text color={catColor}>
+                <Spinner type={CATEGORY_SPINNER[cat]} />{" "}
+              </Text>
             ) : (
               <Text color={borderColor}>{sym} </Text>
             )}
             <Text color={catColor}>{catIcon} </Text>
             <Text bold>{turn.toolName ?? "tool"}</Text>
-            {argsLine ? <Text dimColor>  {argsLine}</Text> : null}
+            {argsLine ? <Text dimColor> {argsLine}</Text> : null}
           </Text>
           <Text dimColor>
             {duration}
@@ -217,7 +223,9 @@ export const ToolCard: React.FC<Props> = ({ turn, showResult, collapsed }) => {
       <Box flexDirection="row" paddingX={1} justifyContent="space-between">
         <Text>
           {status === "running" ? (
-            <Text color={catColor}><Spinner type={CATEGORY_SPINNER[cat]} /> </Text>
+            <Text color={catColor}>
+              <Spinner type={CATEGORY_SPINNER[cat]} />{" "}
+            </Text>
           ) : (
             <Text color={borderColor}>{sym} </Text>
           )}

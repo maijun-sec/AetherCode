@@ -140,24 +140,23 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
   // Scroll window.
   const start = useMemo(() => {
     if (filtered.length <= maxVisible) return 0;
-    return Math.max(0, Math.min(highlight - Math.floor(maxVisible / 2), filtered.length - maxVisible));
+    return Math.max(
+      0,
+      Math.min(highlight - Math.floor(maxVisible / 2), filtered.length - maxVisible),
+    );
   }, [highlight, filtered.length, maxVisible]);
   const end = Math.min(filtered.length, start + maxVisible);
   const visible = filtered.slice(start, end);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  type to filter  ↑/↓ (j/k): navigate  Enter: select  Esc: cancel</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor> type to filter ↑/↓ (j/k): navigate Enter: select Esc: cancel</Text>
       </Box>
-      {subtitle ? <Text dimColor>  {subtitle}</Text> : null}
+      {subtitle ? <Text dimColor> {subtitle}</Text> : null}
       <Text> </Text>
       <Box>
         <Text color="yellow">{">"}</Text>
@@ -170,9 +169,9 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
       </Box>
       <Text> </Text>
       {threads.length === 0 ? (
-        <Text dimColor>  {emptyLabel}</Text>
+        <Text dimColor> {emptyLabel}</Text>
       ) : filtered.length === 0 ? (
-        <Text dimColor>  no matches for "{filter}"</Text>
+        <Text dimColor> no matches for "{filter}"</Text>
       ) : (
         visible.map((t, i) => {
           const realIndex = start + i;
@@ -188,32 +187,29 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
           return (
             <Box key={t.threadId} flexDirection="column">
               <Box flexDirection="row">
-                <Text color={isHighlighted ? "cyan" : undefined}>
-                  {isHighlighted ? "▶" : " "}{" "}
-                </Text>
+                <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
                 <Text bold={isHighlighted}>{t.threadId.padEnd(20)}</Text>
-                <Text>  </Text>
+                <Text> </Text>
                 <Text>{t.agentName}</Text>
-                <Text dimColor>  ·  {t.messages} msgs</Text>
-                {showBranch && t.gitBranch ? (
-                  <Text color="magenta">  ·  {t.gitBranch}</Text>
-                ) : null}
-                {cwdMismatch ? <Text color="yellow">  ·  cwd≠</Text> : null}
-                {cwdUnknown ? <Text dimColor>  ·  cwd unrecorded</Text> : null}
+                <Text dimColor> · {t.messages} msgs</Text>
+                {showBranch && t.gitBranch ? <Text color="magenta"> · {t.gitBranch}</Text> : null}
+                {cwdMismatch ? <Text color="yellow"> · cwd≠</Text> : null}
+                {cwdUnknown ? <Text dimColor> · cwd unrecorded</Text> : null}
                 {/* R370: `updatedAt` was carried on every row and
                     rendered nowhere, so "which one did I leave" was
                     unanswerable in a list whose ids are timestamps. */}
-                {t.updatedAt ? <Text dimColor>  ·  {t.updatedAt}</Text> : null}
+                {t.updatedAt ? <Text dimColor> · {t.updatedAt}</Text> : null}
               </Box>
-              {t.prompt ? (
-                <Text dimColor>     {truncate(t.prompt, 80)}</Text>
-              ) : null}
+              {t.prompt ? <Text dimColor> {truncate(t.prompt, 80)}</Text> : null}
             </Box>
           );
         })
       )}
       {filtered.length > maxVisible ? (
-        <Text dimColor>  {start + 1}–{end} of {filtered.length}</Text>
+        <Text dimColor>
+          {" "}
+          {start + 1}–{end} of {filtered.length}
+        </Text>
       ) : null}
     </Box>
   );

@@ -18,7 +18,8 @@ import { pickPalette, type Palette, type ThemeName } from "./themes.js";
 const ThemeContext = createContext<Palette>(DEFAULT);
 
 export const ThemeProvider: React.FC<{ themeName: ThemeName; children: React.ReactNode }> = ({
-  themeName, children,
+  themeName,
+  children,
 }) => {
   const palette = pickPalette(themeName);
   return <ThemeContext.Provider value={palette}>{children}</ThemeContext.Provider>;

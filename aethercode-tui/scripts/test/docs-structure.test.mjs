@@ -26,8 +26,14 @@ test("docs/README.md exists and lists the structure", () => {
 });
 
 test("docs/user-guide/ has the 6 user-facing files", () => {
-  for (const f of ["getting-started.md", "tui-guide.md", "keybindings.md",
-                   "slash-commands.md", "features.md", "themes.md"]) {
+  for (const f of [
+    "getting-started.md",
+    "tui-guide.md",
+    "keybindings.md",
+    "slash-commands.md",
+    "features.md",
+    "themes.md",
+  ]) {
     const p = join(docsRoot, "user-guide", f);
     assert.ok(existsSync(p), `docs/user-guide/${f} missing`);
   }

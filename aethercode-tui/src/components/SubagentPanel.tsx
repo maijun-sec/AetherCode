@@ -70,26 +70,41 @@ export interface SubagentPanelProps {
 }
 
 const STATUS_ICON: Record<SubagentJobView["status"], string> = {
-  RUNNING:   "▶",
+  RUNNING: "▶",
   COMPLETED: "✓",
-  FAILED:    "✗",
+  FAILED: "✗",
   CANCELLED: "⊘",
 };
 
 const STATUS_COLOR: Record<SubagentJobView["status"], string> = {
-  RUNNING:   "cyan",
+  RUNNING: "cyan",
   COMPLETED: "green",
-  FAILED:    "red",
+  FAILED: "red",
   CANCELLED: "gray",
 };
 
-export function SubagentPanel({ state, now = Date.now(), width, onCancel, onInsert, onView }: SubagentPanelProps) {
+export function SubagentPanel({
+  state,
+  now = Date.now(),
+  width,
+  onCancel,
+  onInsert,
+  onView,
+}: SubagentPanelProps) {
   const ids = subagentJobIdsInOrder(state.subagentJobs);
   if (ids.length === 0) {
     return (
-      <Box flexDirection="column" width={width} borderStyle="single" borderColor="gray" paddingX={1}>
+      <Box
+        flexDirection="column"
+        width={width}
+        borderStyle="single"
+        borderColor="gray"
+        paddingX={1}
+      >
         <Text dimColor>Subagents</Text>
-        <Text dimColor>{`  (no background subagents yet — ask the model to run one in the background)`}</Text>
+        <Text
+          dimColor
+        >{`  (no background subagents yet — ask the model to run one in the background)`}</Text>
       </Box>
     );
   }
@@ -97,7 +112,9 @@ export function SubagentPanel({ state, now = Date.now(), width, onCancel, onInse
     <Box flexDirection="column" width={width} borderStyle="single" borderColor="gray" paddingX={1}>
       <Box>
         <Text bold>Subagents</Text>
-        <Text dimColor>{`  (${ids.length} recent — ↑/↓ select, Enter insert, c cancel, Esc close)`}</Text>
+        <Text
+          dimColor
+        >{`  (${ids.length} recent — ↑/↓ select, Enter insert, c cancel, Esc close)`}</Text>
       </Box>
       {ids.map((id) => {
         const j = state.subagentJobs[id];
@@ -114,13 +131,16 @@ export function SubagentPanel({ state, now = Date.now(), width, onCancel, onInse
         // waiting for the terminal event. The preview
         // is only shown for the focused row to keep
         // the panel quiet when nothing is selected.
-        const partial = j.status === "RUNNING" && j.partialResult
-          ? lastLine(j.partialResult, Math.max(20, width - 12))
-          : null;
+        const partial =
+          j.status === "RUNNING" && j.partialResult
+            ? lastLine(j.partialResult, Math.max(20, width - 12))
+            : null;
         return (
           <Box key={id} flexDirection="column">
             <Box>
-              <Text inverse={focused} color={focused ? "black" : color}>{focused ? "▶" : " "} {icon} </Text>
+              <Text inverse={focused} color={focused ? "black" : color}>
+                {focused ? "▶" : " "} {icon}{" "}
+              </Text>
               <Text {...(focusedStyle ? { inverse: true } : {})}>{truncate(row, width - 8)}</Text>
               {/* T-444: show the model on the same row
                   when the focused job has one. We render
@@ -130,30 +150,24 @@ export function SubagentPanel({ state, now = Date.now(), width, onCancel, onInse
                   result. Fits inline as long as the
                   panel is wide enough. */}
               {focused && j.model ? (
-                <Text dimColor>  · {truncate(j.model, Math.max(8, width - row.length - 14))}</Text>
+                <Text dimColor> · {truncate(j.model, Math.max(8, width - row.length - 14))}</Text>
               ) : null}
-              {focused && j.status === "RUNNING" ? (
-                <Text dimColor>  [c cancel]</Text>
-              ) : null}
-              {focused && (j.status === "RUNNING" || j.status === "COMPLETED" || j.status === "FAILED" || j.status === "CANCELLED") ? (
+              {focused && j.status === "RUNNING" ? <Text dimColor> [c cancel]</Text> : null}
+              {focused &&
+              (j.status === "RUNNING" ||
+                j.status === "COMPLETED" ||
+                j.status === "FAILED" ||
+                j.status === "CANCELLED") ? (
                 // 'v' switches the active transcript
                 // to this subagent. Mirrors the desktop
                 // SubagentPanel's "View subagent →" link.
-                <Text dimColor>  [v view]</Text>
+                <Text dimColor> [v view]</Text>
               ) : null}
-              {focused && j.status === "COMPLETED" ? (
-                <Text dimColor>  [⏎ insert]</Text>
-              ) : null}
-              {focused && j.status === "FAILED" ? (
-                <Text dimColor>  [⏎ insert error]</Text>
-              ) : null}
-              {focused && j.status === "CANCELLED" ? (
-                <Text dimColor>  [⏎ insert note]</Text>
-              ) : null}
+              {focused && j.status === "COMPLETED" ? <Text dimColor> [⏎ insert]</Text> : null}
+              {focused && j.status === "FAILED" ? <Text dimColor> [⏎ insert error]</Text> : null}
+              {focused && j.status === "CANCELLED" ? <Text dimColor> [⏎ insert note]</Text> : null}
             </Box>
-            {partial && focused ? (
-              <Text dimColor>{`   ↳ ${partial}`}</Text>
-            ) : null}
+            {partial && focused ? <Text dimColor>{`   ↳ ${partial}`}</Text> : null}
             {/* T-444: show the error inline on FAILED
                 rows. The deepagents-code SubagentRecord
                 keeps the error string; the panel surfaces

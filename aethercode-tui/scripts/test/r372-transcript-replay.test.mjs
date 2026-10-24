@@ -47,10 +47,32 @@ const tuiSrc = codeOf(readFileSync(join(root, "src", "tui.tsx"), "utf-8"), "tui.
 const lineSrc = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
 const stateSrc = codeOf(readFileSync(join(root, "src", "state.ts"), "utf-8"), "state.ts");
 
-const methodsPath = join(repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java");
-const httpPath = join(repo, "aethercode", "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java");
+const methodsPath = join(
+  repo,
+  "aethercode",
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "methods",
+  "AetherCodeMethods.java",
+);
+const httpPath = join(
+  repo,
+  "aethercode",
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "http",
+  "HttpJsonRpcServer.java",
+);
 const methodsCode = javaCode(readFileSync(methodsPath, "utf-8"));
 const httpCode = javaCode(readFileSync(httpPath, "utf-8"));
 
@@ -86,7 +108,10 @@ function catchBodies(src) {
     let depth = 0;
     for (let i = open; i < src.length; i++) {
       if (src[i] === "{") depth++;
-      else if (src[i] === "}" && --depth === 0) { out.push(src.slice(open + 1, i)); break; }
+      else if (src[i] === "}" && --depth === 0) {
+        out.push(src.slice(open + 1, i));
+        break;
+      }
     }
   }
   return out;
@@ -96,20 +121,37 @@ function catchBodies(src) {
 
 const tmp = mkdtempSync(join(tmpdir(), "r372-"));
 const tsc = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-const compiled = spawnSync(`"${tsc}"`, [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
-  `"${join(root, "src", "transcriptHydrate.ts")}"`,
-  `"${join(root, "src", "state.ts")}"`,
-], { encoding: "utf-8", shell: true });
+const compiled = spawnSync(
+  `"${tsc}"`,
+  [
+    "--outDir",
+    join(tmp, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    `"${join(root, "src", "transcriptHydrate.ts")}"`,
+    `"${join(root, "src", "state.ts")}"`,
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (compiled.status !== 0) {
   console.error("tsc failed:\n" + compiled.stdout + "\n" + compiled.stderr);
   process.exit(1);
 }
 const imp = (f) => import(pathToFileURL(join(tmp, "out", f)).href);
-const { replayTranscript, toolResultText, extractMessages, DEFAULT_REPLAY_LIMIT } = await imp("transcriptHydrate.js");
+const { replayTranscript, toolResultText, extractMessages, DEFAULT_REPLAY_LIMIT } =
+  await imp("transcriptHydrate.js");
 const { reducer, INITIAL } = await imp("state.js");
 
 /** A wire message, as `Message.toMap()` emits it. */
@@ -117,10 +159,13 @@ const msg = (role, content, ts = 1000) => ({ id: `m${ts}`, role, content, timest
 
 // =========================================================================
 test("a text message becomes one turn per text block, in order", () => {
-  const r = replayTranscript([
-    msg("user", [{ type: "text", text: "hello" }]),
-    msg("assistant", [{ type: "text", text: "hi there" }], 2000),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("user", [{ type: "text", text: "hello" }]),
+      msg("assistant", [{ type: "text", text: "hi there" }], 2000),
+    ],
+    1,
+  );
   assert.equal(r.turns.length, 2);
   assert.equal(r.turns[0].role, "user");
   assert.equal(r.turns[0].text, "hello");
@@ -139,7 +184,10 @@ test("the answer's envelope shape is accepted as well as a bare array", () => {
   // surfaces have answered a bare array. Accept both, or the replay
   // silently produces nothing on one of them.
   const bare = replayTranscript([msg("user", [{ type: "text", text: "x" }])], 1);
-  const wrapped = replayTranscript({ ok: true, sessionId: "s", messages: [msg("user", [{ type: "text", text: "x" }])] }, 1);
+  const wrapped = replayTranscript(
+    { ok: true, sessionId: "s", messages: [msg("user", [{ type: "text", text: "x" }])] },
+    1,
+  );
   assert.equal(bare.turns.length, 1);
   assert.equal(wrapped.turns.length, 1);
   assert.deepEqual(extractMessages({ messages: [1, 2] }), [1, 2]);
@@ -152,10 +200,17 @@ test("a tool_use and its tool_result become ONE turn, not two", () => {
   // user message). If the converter emitted a separate turn for it,
   // the user would see a second, unlabelled blob after every tool
   // card.
-  const r = replayTranscript([
-    msg("assistant", [{ type: "tool_use", id: "call_1", name: "file_read", input: { file_path: "a.ts" } }]),
-    msg("tool_result", [{ type: "tool_result", toolUseId: "call_1", content: "the file contents", isError: false }]),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("assistant", [
+        { type: "tool_use", id: "call_1", name: "file_read", input: { file_path: "a.ts" } },
+      ]),
+      msg("tool_result", [
+        { type: "tool_result", toolUseId: "call_1", content: "the file contents", isError: false },
+      ]),
+    ],
+    1,
+  );
   assert.equal(r.turns.length, 1, "the tool result was rendered as its own turn");
   const t = r.turns[0];
   assert.equal(t.role, "tool");
@@ -167,10 +222,15 @@ test("a tool_use and its tool_result become ONE turn, not two", () => {
 });
 
 test("an errored tool is marked as an error", () => {
-  const r = replayTranscript([
-    msg("assistant", [{ type: "tool_use", id: "call_1", name: "bash", input: {} }]),
-    msg("tool_result", [{ type: "tool_result", toolUseId: "call_1", content: "boom", isError: true }]),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("assistant", [{ type: "tool_use", id: "call_1", name: "bash", input: {} }]),
+      msg("tool_result", [
+        { type: "tool_result", toolUseId: "call_1", content: "boom", isError: true },
+      ]),
+    ],
+    1,
+  );
   assert.equal(r.turns[0].toolStatus, "error");
   assert.equal(r.turns[0].toolResult, "boom");
 });
@@ -178,9 +238,14 @@ test("an errored tool is marked as an error", () => {
 test("a tool_result with no matching tool_use is dropped, not rendered as a turn", () => {
   // A result for a call we never saw is noise; rendering it would
   // put an unlabelled blob in the scrollback.
-  const r = replayTranscript([
-    msg("tool_result", [{ type: "tool_result", toolUseId: "call_ghost", content: "orphan", isError: false }]),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("tool_result", [
+        { type: "tool_result", toolUseId: "call_ghost", content: "orphan", isError: false },
+      ]),
+    ],
+    1,
+  );
   assert.equal(r.turns.length, 0, "an orphan tool_result produced a turn");
 });
 
@@ -189,16 +254,28 @@ test("an orphan tool_result does not CONTAMINATE the call before it", () => {
   // "attach to the last turn" implementation gets wrong: the orphan
   // is not merely invisible, it must not overwrite the result of a
   // call that DID get one.
-  const r = replayTranscript([
-    msg("assistant", [{ type: "tool_use", id: "call_1", name: "file_read", input: {} }]),
-    msg("tool_result", [{ type: "tool_result", toolUseId: "call_1", content: "the real result", isError: false }]),
-    msg("tool_result", [{ type: "tool_result", toolUseId: "call_ghost", content: "ORPHAN", isError: false }]),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("assistant", [{ type: "tool_use", id: "call_1", name: "file_read", input: {} }]),
+      msg("tool_result", [
+        { type: "tool_result", toolUseId: "call_1", content: "the real result", isError: false },
+      ]),
+      msg("tool_result", [
+        { type: "tool_result", toolUseId: "call_ghost", content: "ORPHAN", isError: false },
+      ]),
+    ],
+    1,
+  );
   assert.equal(r.turns.length, 1, "the orphan produced a turn of its own");
-  assert.equal(r.turns[0].toolResult, "the real result",
-    `the orphan overwrote a real result: ${JSON.stringify(r.turns[0].toolResult)}`);
-  assert.ok(!/ORPHAN/.test(r.turns[0].toolResult ?? ""),
-    "an orphan result was attached to a call that did not ask for it");
+  assert.equal(
+    r.turns[0].toolResult,
+    "the real result",
+    `the orphan overwrote a real result: ${JSON.stringify(r.turns[0].toolResult)}`,
+  );
+  assert.ok(
+    !/ORPHAN/.test(r.turns[0].toolResult ?? ""),
+    "an orphan result was attached to a call that did not ask for it",
+  );
 });
 
 test("a tool_use with NO result is labelled as interrupted, not as a success", () => {
@@ -206,24 +283,35 @@ test("a tool_use with NO result is labelled as interrupted, not as a success", (
   // one means the run was interrupted. Reporting "ok" with an empty
   // result would be a fabricated success — the exact failure mode
   // this round exists to prevent.
-  const r = replayTranscript([
-    msg("assistant", [{ type: "tool_use", id: "call_1", name: "bash", input: {} }]),
-  ], 1);
+  const r = replayTranscript(
+    [msg("assistant", [{ type: "tool_use", id: "call_1", name: "bash", input: {} }])],
+    1,
+  );
   assert.equal(r.turns.length, 1);
-  assert.ok(/no recorded result/.test(r.turns[0].toolResult ?? ""),
-    `an interrupted tool call was rendered as ${JSON.stringify(r.turns[0].toolResult)}`);
-  assert.equal(r.turns[0].toolStatus, "ok",
-    "the status is not a lie, but the text must say what happened");
+  assert.ok(
+    /no recorded result/.test(r.turns[0].toolResult ?? ""),
+    `an interrupted tool call was rendered as ${JSON.stringify(r.turns[0].toolResult)}`,
+  );
+  assert.equal(
+    r.turns[0].toolStatus,
+    "ok",
+    "the status is not a lie, but the text must say what happened",
+  );
 });
 
 test("no replayed tool call invents a duration", () => {
   // `ToolCard.computeDuration` returns "—" when toolStartedAt is
   // null, so leaving it undefined is the honest rendering. Setting it
   // would draw a made-up number.
-  const r = replayTranscript([
-    msg("assistant", [{ type: "tool_use", id: "call_1", name: "bash", input: {} }]),
-    msg("tool_result", [{ type: "tool_result", toolUseId: "call_1", content: "ok", isError: false }]),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("assistant", [{ type: "tool_use", id: "call_1", name: "bash", input: {} }]),
+      msg("tool_result", [
+        { type: "tool_result", toolUseId: "call_1", content: "ok", isError: false },
+      ]),
+    ],
+    1,
+  );
   assert.equal(r.turns[0].toolStartedAt, undefined, "a replayed tool call claims a start time");
   assert.equal(r.turns[0].toolEndedAt, undefined, "a replayed tool call claims an end time");
 });
@@ -234,41 +322,58 @@ test("the tool_result content shapes that actually occur are all read", () => {
   // Anthropic content-block array.
   assert.equal(toolResultText("plain"), "plain");
   assert.equal(toolResultText({ type: "text", text: "obj" }), "obj");
-  assert.equal(toolResultText([{ type: "text", text: "a" }, { type: "text", text: "b" }]), "a\nb");
+  assert.equal(
+    toolResultText([
+      { type: "text", text: "a" },
+      { type: "text", text: "b" },
+    ]),
+    "a\nb",
+  );
   assert.equal(toolResultText(["raw", { type: "text", text: "b" }]), "raw\nb");
   assert.equal(toolResultText(null), "");
   assert.equal(toolResultText(undefined), "");
   // Something unrecognised is stringified, not dropped: a result the
   // user cannot see is worse than an ugly one.
-  assert.ok(toolResultText({ weird: 1 }).includes("weird"),
-    "an unrecognised result shape was silently dropped");
+  assert.ok(
+    toolResultText({ weird: 1 }).includes("weird"),
+    "an unrecognised result shape was silently dropped",
+  );
 });
 
 test("an empty or whitespace-only text block produces no turn", () => {
-  const r = replayTranscript([
-    msg("assistant", [{ type: "text", text: "" }, { type: "text", text: "   " }]),
-  ], 1);
+  const r = replayTranscript(
+    [
+      msg("assistant", [
+        { type: "text", text: "" },
+        { type: "text", text: "   " },
+      ]),
+    ],
+    1,
+  );
   assert.equal(r.turns.length, 0, "blank text produced empty turns");
 });
 
 test("only the tail is replayed, and the count left out is reported", () => {
   const many = Array.from({ length: 500 }, (_, i) =>
-    msg(i % 2 === 0 ? "user" : "assistant", [{ type: "text", text: `m${i}` }], 1000 + i));
+    msg(i % 2 === 0 ? "user" : "assistant", [{ type: "text", text: `m${i}` }], 1000 + i),
+  );
   const r = replayTranscript(many, 1);
   assert.equal(r.totalMessages, 500);
   assert.equal(r.replayedMessages, DEFAULT_REPLAY_LIMIT);
   assert.equal(r.turns.length, DEFAULT_REPLAY_LIMIT);
   // The TAIL, not the head: the newest messages are the ones the
   // conversation is about.
-  assert.ok(r.turns[r.turns.length - 1].text.includes("m499"),
-    "the replay kept the OLDEST messages instead of the newest");
-  assert.ok(!r.turns[0].text.includes("m0"),
-    "the replay kept the head of the transcript");
+  assert.ok(
+    r.turns[r.turns.length - 1].text.includes("m499"),
+    "the replay kept the OLDEST messages instead of the newest",
+  );
+  assert.ok(!r.turns[0].text.includes("m0"), "the replay kept the head of the transcript");
 });
 
 test("the replay limit is honoured when the caller passes one", () => {
   const many = Array.from({ length: 20 }, (_, i) =>
-    msg("user", [{ type: "text", text: `m${i}` }], 1000 + i));
+    msg("user", [{ type: "text", text: `m${i}` }], 1000 + i),
+  );
   const r = replayTranscript(many, 1, 5);
   assert.equal(r.replayedMessages, 5);
   assert.equal(r.totalMessages, 20);
@@ -276,13 +381,16 @@ test("the replay limit is honoured when the caller passes one", () => {
 });
 
 test("a malformed message does not take the whole replay down", () => {
-  const r = replayTranscript([
-    null,
-    "not an object",
-    { role: "user" },
-    { role: "user", content: "not an array" },
-    { role: "user", content: [null, "x", { type: "text", text: "kept" }] },
-  ], 1);
+  const r = replayTranscript(
+    [
+      null,
+      "not an object",
+      { role: "user" },
+      { role: "user", content: "not an array" },
+      { role: "user", content: [null, "x", { type: "text", text: "kept" }] },
+    ],
+    1,
+  );
   assert.equal(r.turns.length, 1, "malformed input dropped the good messages too");
   assert.equal(r.turns[0].text, "kept");
 });
@@ -299,11 +407,15 @@ test("the daemon really serves the transcript on both transports", () => {
   // on HTTP. The TUI speaks HTTP, so the HTTP arm is the one that
   // matters — and a stdio-only registration is the R720/R367/R371
   // shape all over again.
-  assert.ok(/dispatcher\.register\("getTranscript"/.test(methodsCode),
-    "getTranscript is not on the stdio dispatcher");
+  assert.ok(
+    /dispatcher\.register\("getTranscript"/.test(methodsCode),
+    "getTranscript is not on the stdio dispatcher",
+  );
   const http = javaMethod(httpCode, "private Object dispatch(");
-  assert.ok(/case "getTranscript"/.test(http),
-    "HttpJsonRpcServer does not route getTranscript — the TUI would get -32601");
+  assert.ok(
+    /case "getTranscript"/.test(http),
+    "HttpJsonRpcServer does not route getTranscript — the TUI would get -32601",
+  );
 });
 
 test("both renderers read the transcript after a successful loadSession", () => {
@@ -325,17 +437,34 @@ test("the switch and the replay land in ONE action", () => {
   const ink = block(tuiSrc, /case "threads":/);
   const adopt = /dispatch\(\{\s*type:\s*"adoptSession"[^}]*\}\)/.exec(ink);
   assert.ok(adopt, "the Ink picker never dispatches adoptSession");
-  assert.ok(/turns:\s*replay\.turns/.test(adopt[0]),
+  assert.ok(
+    /turns:\s*replay\.turns/.test(adopt[0]),
     `adoptSession is dispatched WITHOUT the replay — the scrollback would be ` +
-    `cleared and never refilled (${adopt[0]})`);
-  assert.ok(!/type:\s*"adoptSession"[^}]*\}\);\s*dispatch\(\{\s*type:\s*"adoptSession"/.test(ink),
+      `cleared and never refilled (${adopt[0]})`,
+  );
+  assert.ok(
+    !/type:\s*"adoptSession"[^}]*\}\);\s*dispatch\(\{\s*type:\s*"adoptSession"/.test(ink),
     "the session is adopted twice — one of the two dispatches is a window " +
-    "with an empty scrollback");
+      "with an empty scrollback",
+  );
 });
 
 test("adoptSession with a transcript replaces the scrollback atomically", () => {
-  const before = { ...INITIAL, sessionId: "old", turns: [{ id: 1, role: "user", text: "hi", ts: 1 }] };
-  const replayed = [{ id: 50, role: "assistant", text: "old session's answer", ts: 9, collapsed: false, previewChars: 80 }];
+  const before = {
+    ...INITIAL,
+    sessionId: "old",
+    turns: [{ id: 1, role: "user", text: "hi", ts: 1 }],
+  };
+  const replayed = [
+    {
+      id: 50,
+      role: "assistant",
+      text: "old session's answer",
+      ts: 9,
+      collapsed: false,
+      previewChars: 80,
+    },
+  ];
   const after = reducer(before, { type: "adoptSession", sessionId: "new", turns: replayed });
   assert.equal(after.sessionId, "new");
   assert.deepEqual(after.turns, replayed);
@@ -344,7 +473,11 @@ test("adoptSession with a transcript replaces the scrollback atomically", () => 
 test("adoptSession WITHOUT a transcript still clears — the honest fallback", () => {
   // The switch really happened; only the replay failed. An empty
   // scrollback plus a toast that says so is the honest state.
-  const before = { ...INITIAL, sessionId: "old", turns: [{ id: 1, role: "user", text: "hi", ts: 1 }] };
+  const before = {
+    ...INITIAL,
+    sessionId: "old",
+    turns: [{ id: 1, role: "user", text: "hi", ts: 1 }],
+  };
   const after = reducer(before, { type: "adoptSession", sessionId: "new" });
   assert.equal(after.sessionId, "new");
   assert.equal(after.turns.length, 0);
@@ -354,10 +487,14 @@ test("the toast no longer claims the history is absent", () => {
   // R370's toast said "history is not replayed here" — true then,
   // false now, and a toast that lies is the R369 class of defect one
   // layer up.
-  assert.ok(!/history is not replayed here/.test(tuiSrc),
-    "the Ink toast still says the history is not replayed — it is now");
-  assert.ok(!/history is not replayed here/.test(lineSrc),
-    "the line-mode toast still says the history is not replayed — it is now");
+  assert.ok(
+    !/history is not replayed here/.test(tuiSrc),
+    "the Ink toast still says the history is not replayed — it is now",
+  );
+  assert.ok(
+    !/history is not replayed here/.test(lineSrc),
+    "the line-mode toast still says the history is not replayed — it is now",
+  );
 });
 
 test("a failed replay is reported as a failed replay", () => {
@@ -366,7 +503,9 @@ test("a failed replay is reported as a failed replay", () => {
   const ink = block(tuiSrc, /case "threads":/);
   const catches = catchBodies(ink);
   assert.ok(catches.length >= 1, "the Ink picker has no catch at all");
-  assert.ok(catches.some((c) => /history could not be read/.test(c)),
+  assert.ok(
+    catches.some((c) => /history could not be read/.test(c)),
     "a failed replay is not reported — the user sees an empty scrollback " +
-    "and concludes the session was empty");
+      "and concludes the session was empty",
+  );
 });

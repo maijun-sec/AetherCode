@@ -18,12 +18,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,12 +26,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
-const tscBin = join(
-  root,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc",
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
@@ -50,29 +40,34 @@ function tscShim(label, shimBody) {
   if (existsSync(tmpTsc)) {
     spawnSync(
       process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32"
-        ? ["/c", "rmdir", "/s", "/q", tmpTsc]
-        : ["-rf", tmpTsc],
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmpTsc] : ["-rf", tmpTsc],
       { shell: process.platform === "win32" },
     );
   }
   mkdirSync(tmpTsc, { recursive: true });
   writeFileSync(shimPath, shimBody, "utf-8");
   const args = [
-    "--outDir", join(tmpTsc, "out"),
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--jsx", "react",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    join(tmpTsc, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(
-    `"${tscBin}"`,
-    [...args, `"${shimPath}"`],
-    { encoding: "utf-8", shell: true },
-  );
+  const r = spawnSync(`"${tscBin}"`, [...args, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error(`tsc shim failed for ${label}:\n${r.stdout}\n${r.stderr}`);
   }
@@ -270,10 +265,7 @@ test("T-424: MemoryPanel tab-switching + onEditFact callback", () => {
 test("T-424: MemoryPanel types compile via shim", () => {
   tscShim(
     "memory",
-    [
-      `export type { MemoryScope, MemoryPanelEntry } from "./MemoryPanel.js";`,
-      ``,
-    ].join("\n"),
+    [`export type { MemoryScope, MemoryPanelEntry } from "./MemoryPanel.js";`, ``].join("\n"),
   );
 });
 
@@ -285,13 +277,13 @@ test("T-425: ContextMeter.tsx uses three colour tiers (green/yellow/red)", () =>
   const src = read("src/components/ContextMeter.tsx");
   // The 3-tier colour discriminator.
   assert.match(src, /function bandColor\(ratio: number\): "green" \| "yellow" \| "red"/);
-  assert.match(src, /if \(ratio > 0\.80\) return "red"/);
-  assert.match(src, /if \(ratio >= 0\.50\) return "yellow"/);
+  assert.match(src, /if \(ratio > 0\.8(?:0)?\) return "red"/);
+  assert.match(src, /if \(ratio >= 0\.5(?:0)?\) return "yellow"/);
   // 80 % threshold for the 压缩推荐 prompt.
-  assert.match(src, /RECOMMEND_BUTTON_THRESHOLD = 0\.80/);
+  assert.match(src, /RECOMMEND_BUTTON_THRESHOLD = 0\.8(?:0)?/);
   assert.match(src, /\u538b\u7f29\u63a8\u8350/);
   // 30 % drop heuristic.
-  assert.match(src, /COMPACT_DROP_THRESHOLD = 0\.30/);
+  assert.match(src, /COMPACT_DROP_THRESHOLD = 0\.3(?:0)?/);
   // Capped at MAX_SAMPLES (64).
   assert.match(src, /MAX_SAMPLES = 64/);
   assert.match(src, /merged\.length > MAX_SAMPLES/);
@@ -353,8 +345,7 @@ test("T-426: humanDuration pure helper returns the expected strings", () => {
   function humanDuration(ms) {
     if (ms < 1000) return `${ms}ms`;
     if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-    if (ms < 3_600_000)
-      return `${Math.floor(ms / 60_000)}m${Math.floor((ms % 60_000) / 1000)}s`;
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m${Math.floor((ms % 60_000) / 1000)}s`;
     return `${Math.floor(ms / 3_600_000)}h${Math.floor((ms % 3_600_000) / 60_000)}m`;
   }
   assert.equal(humanDuration(500), "500ms");
@@ -366,10 +357,7 @@ test("T-426: humanDuration pure helper returns the expected strings", () => {
 test("T-426: TaskPanel types compile via shim", () => {
   tscShim(
     "task",
-    [
-      `export type { TaskPanelChild, TaskPanelProps } from "./TaskPanel.js";`,
-      ``,
-    ].join("\n"),
+    [`export type { TaskPanelChild, TaskPanelProps } from "./TaskPanel.js";`, ``].join("\n"),
   );
 });
 
@@ -612,10 +600,8 @@ test("T-432: commands.ts lists every §5.3 command for /help", () => {
     "update-deps",
     "notifications",
   ]) {
-    assert.ok(catalog.includes(`name: "${cmd}"`),
-      `/help catalog missing entry for ${cmd}`);
-    assert.ok(groups.includes(`"${cmd}"`),
-      `/help group table missing entry for ${cmd}`);
+    assert.ok(catalog.includes(`name: "${cmd}"`), `/help catalog missing entry for ${cmd}`);
+    assert.ok(groups.includes(`"${cmd}"`), `/help group table missing entry for ${cmd}`);
   }
 });
 
@@ -633,10 +619,7 @@ test("T-432: commands.ts has SLASH_COMMANDS entries for every §5.3 command", ()
     "update-deps",
     "notifications",
   ]) {
-    assert.ok(
-      src.includes(`"${cmd}"`),
-      `SLASH_COMMANDS missing entry for ${cmd}`,
-    );
+    assert.ok(src.includes(`"${cmd}"`), `SLASH_COMMANDS missing entry for ${cmd}`);
   }
 });
 
@@ -654,10 +637,7 @@ test("T-432: commands.ts has SLASH_COMMANDS_DETAILED entries for every §5.3 com
     "update-deps",
     "notifications",
   ]) {
-    assert.ok(
-      src.includes(`name: "${cmd}"`),
-      `SLASH_COMMANDS_DETAILED missing entry for ${cmd}`,
-    );
+    assert.ok(src.includes(`name: "${cmd}"`), `SLASH_COMMANDS_DETAILED missing entry for ${cmd}`);
   }
 });
 
@@ -688,9 +668,7 @@ test("T-433: cleanup the shim file written by tsc", () => {
   if (existsSync(shimPath)) {
     spawnSync(
       process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32"
-        ? ["/c", "del", "/f", "/q", `"${shimPath}"`]
-        : [`"${shimPath}"`],
+      process.platform === "win32" ? ["/c", "del", "/f", "/q", `"${shimPath}"`] : [`"${shimPath}"`],
       { shell: true },
     );
   }
@@ -698,9 +676,7 @@ test("T-433: cleanup the shim file written by tsc", () => {
   if (existsSync(tmpTsc)) {
     spawnSync(
       process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32"
-        ? ["/c", "rmdir", "/s", "/q", `"${tmpTsc}"`]
-        : [`"${tmpTsc}"`],
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", `"${tmpTsc}"`] : [`"${tmpTsc}"`],
       { shell: true },
     );
   }

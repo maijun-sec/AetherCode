@@ -24,22 +24,40 @@ const root = join(here, "..", "..");
 const tmp = join(root, "tmp-test-r112");
 if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
 
-const tscBinAbs = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tscBinAbs = join(
+  root,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc",
+);
 const tscArgs = [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const tsc = spawnSync('"' + tscBinAbs + '"', [...tscArgs, '"' + join(root, "src", "state.ts") + '"'], {
-  encoding: "utf-8",
-  shell: true,
-});
+const tsc = spawnSync(
+  '"' + tscBinAbs + '"',
+  [...tscArgs, '"' + join(root, "src", "state.ts") + '"'],
+  {
+    encoding: "utf-8",
+    shell: true,
+  },
+);
 if (tsc.status !== 0) {
-  console.error("tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr);
+  console.error(
+    "tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr,
+  );
   process.exit(1);
 }
 if (!existsSync(join(tmp, "state.js"))) {
@@ -85,7 +103,10 @@ test("reducer: setLastSkipLow populates the snapshot", () => {
 });
 
 test("reducer: setLastSkipLow replaces an existing snapshot", () => {
-  let s = reducer(INITIAL, { type: "setLastSkipLow", snap: { sessionId: "s1", remaining: 3, atMs: 1 } });
+  let s = reducer(INITIAL, {
+    type: "setLastSkipLow",
+    snap: { sessionId: "s1", remaining: 3, atMs: 1 },
+  });
   s = reducer(s, { type: "setLastSkipLow", snap: { sessionId: "s1", remaining: 2, atMs: 2 } });
   assert.deepEqual(s.lastSkipLow, { sessionId: "s1", remaining: 2, atMs: 2 });
 });
@@ -93,7 +114,10 @@ test("reducer: setLastSkipLow replaces an existing snapshot", () => {
 // ----- 4. clearLastSkipLow -----------------------------------------------
 
 test("reducer: clearLastSkipLow nulls the snapshot", () => {
-  let s = reducer(INITIAL, { type: "setLastSkipLow", snap: { sessionId: "s1", remaining: 3, atMs: 1 } });
+  let s = reducer(INITIAL, {
+    type: "setLastSkipLow",
+    snap: { sessionId: "s1", remaining: 3, atMs: 1 },
+  });
   assert.notEqual(s.lastSkipLow, null);
   s = reducer(s, { type: "clearLastSkipLow" });
   assert.equal(s.lastSkipLow, null);
@@ -108,17 +132,17 @@ test("reducer: setPermissionModeSuggestion populates the field", () => {
 });
 
 test("reducer: setPermissionModeSuggestion to null clears it", () => {
-  let s = reducer(INITIAL, { type: "setPermissionModeSuggestion", suggestion: { mode: "ACCEPT_TASK", reasons: [] } });
+  let s = reducer(INITIAL, {
+    type: "setPermissionModeSuggestion",
+    suggestion: { mode: "ACCEPT_TASK", reasons: [] },
+  });
   s = reducer(s, { type: "setPermissionModeSuggestion", suggestion: null });
   assert.equal(s.permissionModeSuggestion, null);
 });
 
 // ----- 6. StatusBar source has the "low!" badge + "💡 suggested" -------
 
-const statusBarSrc = readFileSync(
-  join(root, "src", "components", "StatusBar.tsx"),
-  "utf-8"
-);
+const statusBarSrc = readFileSync(join(root, "src", "components", "StatusBar.tsx"), "utf-8");
 
 test("StatusBar: contains the (low!) badge logic", () => {
   assert.match(statusBarSrc, /\(low!\)/);

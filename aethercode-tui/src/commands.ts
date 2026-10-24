@@ -27,7 +27,6 @@ import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
 // completion) and optionally a row in the group below for the /help
 // blurb. /help is grouped so a user can scan it without a wall of text.
 
-
 /** the set of slash command names (without the leading "/" and
  *  without arguments). Used by the Tab-completion logic to find
  *  matches as the user types. We list each command's primary name
@@ -35,9 +34,12 @@ import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
  *
  *  Adding a new slash command? Add it here AND in handleSlash. */
 export const SLASH_COMMANDS: string[] = [
-  "help", "?",
+  "help",
+  "?",
   "clear",
-  "exit", "quit", "q",
+  "exit",
+  "quit",
+  "q",
   "tools",
   "state",
   "ping",
@@ -50,7 +52,8 @@ export const SLASH_COMMANDS: string[] = [
   "stats",
   "history",
   "lastplan",
-  "theme", "theme-pick",
+  "theme",
+  "theme-pick",
   "layout",
   "budget",
   "rewind",
@@ -59,7 +62,7 @@ export const SLASH_COMMANDS: string[] = [
   "tutorial",
   "bookmark",
   "metrics",
-  "context",      // R371 — the command the context-meter placeholder needed
+  "context", // R371 — the command the context-meter placeholder needed
   "trace",
   "agents",
   "agent",
@@ -70,54 +73,54 @@ export const SLASH_COMMANDS: string[] = [
   "session",
   "session-new",
   "session-del",
-  "skip",            // R99
-  "skip-stats",      // R106
-  "tool-actions",    // R100
-  "memory",          // T-080
-  "memory-edit",     // T-083
-  "memory-compact",  // T-084
-  "agent-pick",      // T-420
-  "effort-pick",     // T-421
-  "cwd-pick",        // T-423
-  "mcp",             // T-428
-  "mcp-login",       // T-428
-  "mcp-reconnect",   // T-428
-  "threads",         // T-429
-  "update",          // T-430
-  "update-deps",     // T-430
-  "notifications",   // T-431
+  "skip", // R99
+  "skip-stats", // R106
+  "tool-actions", // R100
+  "memory", // T-080
+  "memory-edit", // T-083
+  "memory-compact", // T-084
+  "agent-pick", // T-420
+  "effort-pick", // T-421
+  "cwd-pick", // T-423
+  "mcp", // T-428
+  "mcp-login", // T-428
+  "mcp-reconnect", // T-428
+  "threads", // T-429
+  "update", // T-430
+  "update-deps", // T-430
+  "notifications", // T-431
   // Phase 6.3 (T-6-17) — long-running + must-have commands.
-  "continue",        // task/resume
-  "pause",           // task/pause
-  "stop",            // task/kill
-  "todos",           // open the TodoBoard
-  "tokens",          // show current token usage
-  "consents",        // open the GrantsManager
-  "grants",          // alias for /consents
+  "continue", // task/resume
+  "pause", // task/pause
+  "stop", // task/kill
+  "todos", // open the TodoBoard
+  "tokens", // show current token usage
+  "consents", // open the GrantsManager
+  "grants", // alias for /consents
   // `model` is already in the list (the pre-existing
   // /model <name> → setModel RPC). We re-route its handler
   // so the Phase 6.3 spec'd behaviour wins: it calls
   // `model/set` instead of the legacy `setModel`. The
   // legacy alias still works because the daemon maps both.
-  "workflow",        // run a workflow by name (or open the picker)
+  "workflow", // run a workflow by name (or open the picker)
   // R245.1 (O-10) — daemon bank read commands.
-  "bank-stats",       // snapshot the bank (size + per-kind + ok / notOk)
-  "bank-recall",      // recall top-N units for a task kind
+  "bank-stats", // snapshot the bank (size + per-kind + ok / notOk)
+  "bank-recall", // recall top-N units for a task kind
   // R245.2 (O-6) — cross-process self-eval audit.
-  "memory-audit",     // aggregate self-eval metrics from the daemon bank
+  "memory-audit", // aggregate self-eval metrics from the daemon bank
   // Spec-driven development — 8-phase run with phase artefacts.
-  "sdd",              // start SDD run with intent
-  "sdd-status",       // show current SDD run state
-  "sdd-list",         // list every SDD run under the cwd
-  "sdd-approve",      // approve current phase
-  "sdd-modify",       // re-run current phase with feedback
-  "sdd-skip",         // skip current phase (REQUIRED phases refuse)
-  "sdd-abort",        // abort the current SDD run
+  "sdd", // start SDD run with intent
+  "sdd-status", // show current SDD run state
+  "sdd-list", // list every SDD run under the cwd
+  "sdd-approve", // approve current phase
+  "sdd-modify", // re-run current phase with feedback
+  "sdd-skip", // skip current phase (REQUIRED phases refuse)
+  "sdd-abort", // abort the current SDD run
   // SDD modify-flow helpers (snapshot + diff the phase artefact).
-  "sdd-view",          // show artefact + file:// link
-  "sdd-snapshot",      // cache the current artefact for diff
-  "sdd-diff",          // render diff between snapshot + on-disk
-  "sdd-clear-cache",   // drop every cached snapshot
+  "sdd-view", // show artefact + file:// link
+  "sdd-snapshot", // cache the current artefact for diff
+  "sdd-diff", // render diff between snapshot + on-disk
+  "sdd-clear-cache", // drop every cached snapshot
 ];
 
 /** T-442: structured slash-command catalog. Each entry is
@@ -126,7 +129,11 @@ export const SLASH_COMMANDS: string[] = [
  *  Mirrors the entries in `SLASH_COMMANDS` above (the
  *  flat string array is kept for the legacy
  *  `completeSlash` consumer). */
-export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description: string; args?: string }> = [
+export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
+  name: string;
+  description: string;
+  args?: string;
+}> = [
   { name: "help", description: "show the shortcut + command list (alias: /?)" },
   { name: "?", description: "alias for /help" },
   { name: "clear", description: "clear the scrollback" },
@@ -136,36 +143,40 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "tools", description: "list available tools" },
   { name: "state", description: "show the reducer state (debug)" },
   { name: "ping", description: "round-trip the daemon" },
-  { name: "model", args: "<name>",       description: "show or switch the active model" },
+  { name: "model", args: "<name>", description: "show or switch the active model" },
   { name: "mode", description: "show or switch the permission mode" },
   { name: "sessions", description: "this project's sessions — pick one to continue" },
   { name: "tasks", description: "list recent tasks" },
   { name: "projects", description: "list known projects" },
-  { name: "cwd", args: "<path>",         description: "show or switch the working directory" },
+  { name: "cwd", args: "<path>", description: "show or switch the working directory" },
   { name: "stats", description: "show session stats" },
   { name: "history", description: "show input history" },
   { name: "lastplan", description: "show the most recent plan" },
-  { name: "theme", args: "<name>",       description: "show or set the active theme" },
+  { name: "theme", args: "<name>", description: "show or set the active theme" },
   { name: "theme-pick", description: "open the interactive theme picker" },
-  { name: "layout", args: "<full|focus|minimal>",      description: "switch layout (full / focus / minimal)" },
-  { name: "budget", args: "<usd> [calls]",      description: "set a phase's tool-call / cost cap" },
+  {
+    name: "layout",
+    args: "<full|focus|minimal>",
+    description: "switch layout (full / focus / minimal)",
+  },
+  { name: "budget", args: "<usd> [calls]", description: "set a phase's tool-call / cost cap" },
   { name: "rewind", description: "rewind to a previous turn" },
-  { name: "snippet", args: "<save|load|list|delete> <name>",     description: "save / load a snippet" },
+  { name: "snippet", args: "<save|load|list|delete> <name>", description: "save / load a snippet" },
   { name: "export", description: "export the session to markdown or json" },
   { name: "tutorial", description: "re-show the welcome overlay" },
-  { name: "bookmark", args: "[N]",    description: "bookmark the current turn" },
+  { name: "bookmark", args: "[N]", description: "bookmark the current turn" },
   { name: "metrics", description: "show session metrics" },
   { name: "context", description: "what is filling the context window, itemised" },
   { name: "trace", description: "list recent traces" },
   { name: "agents", description: "list Mavis agents with model column" },
-  { name: "agent", args: "<name>",       description: "show an agent's body + frontmatter" },
-  { name: "prompt", args: "[section]",      description: "show current system prompt sections" },
-  { name: "phase", args: "<name>",       description: "show / transition the current phase" },
+  { name: "agent", args: "<name>", description: "show an agent's body + frontmatter" },
+  { name: "prompt", args: "[section]", description: "show current system prompt sections" },
+  { name: "phase", args: "<name>", description: "show / transition the current phase" },
   { name: "sessions-list", description: "list every session in the daemon" },
-  { name: "session", args: "<id>",     description: "switch the active session" },
+  { name: "session", args: "<id>", description: "switch the active session" },
   { name: "session-new", args: "<id>", description: "create a new session and switch to it" },
   { name: "session-del", args: "<id>", description: "delete a session (default is protected)" },
-  { name: "skip", args: "<N|off>",        description: "arm / clear skip-confirmation (N rounds)" },
+  { name: "skip", args: "<N|off>", description: "arm / clear skip-confirmation (N rounds)" },
   { name: "skip-stats", description: "show skip-confirmation adoption" },
   { name: "tool-actions", description: "list recent tool actions" },
   { name: "memory", description: "open the memory panel (global / project / session)" },
@@ -175,7 +186,11 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "effort-pick", description: "set reasoning effort (low / medium / high / xhigh)" },
   { name: "cwd-pick", description: "switch the daemon working directory" },
   { name: "mcp", description: "open the MCP server + tool viewer" },
-  { name: "mcp-login", args: "<name>",   description: "start the OAuth login flow for an MCP server" },
+  {
+    name: "mcp-login",
+    args: "<name>",
+    description: "start the OAuth login flow for an MCP server",
+  },
   { name: "mcp-reconnect", description: "force a reconnect of the MCP registry" },
   { name: "threads", description: "switch to another session thread" },
   // R374: these two descriptions were T-430's originals — "review an
@@ -188,7 +203,11 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   // The optional `[install]` is the third verb. It existed since T-430
   // and was reachable, but invisible — the catalog advertised one
   // shape for a command that has two.
-  { name: "update", args: "[install]", description: "check for a newer release (add 'install' to see how to apply one)" },
+  {
+    name: "update",
+    args: "[install]",
+    description: "check for a newer release (add 'install' to see how to apply one)",
+  },
   { name: "update-deps", description: "check how to refresh dependencies" },
   // R344: /demo walks the user through a canned conversation
   // that exercises every visual surface (welcome banner, tool
@@ -212,21 +231,37 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
   { name: "workflow", description: "run a workflow by name, or open the picker" },
   // R245.1 (O-10) — daemon bank read commands.
   { name: "bank-stats", description: "snapshot the daemon strategy bank" },
-  { name: "bank-recall", args: "<kind> [n]", description: "recall top-N units for a task kind (default N=3)" },
+  {
+    name: "bank-recall",
+    args: "<kind> [n]",
+    description: "recall top-N units for a task kind (default N=3)",
+  },
   // R245.2 (O-6) — cross-process self-eval audit.
   { name: "memory-audit", description: "aggregate self-eval metrics from the daemon bank" },
   // Spec-driven development — 8-phase run with phase artefacts.
-  { name: "sdd", args: "<intent>",          description: "start an 8-phase spec-driven run with an intent" },
+  { name: "sdd", args: "<intent>", description: "start an 8-phase spec-driven run with an intent" },
   { name: "sdd-status", description: "show the current SDD run state" },
   { name: "sdd-list", description: "list every SDD run under the current cwd" },
   { name: "sdd-approve", description: "approve the current phase and advance" },
-  { name: "sdd-modify", args: "<feedback>",   description: "re-run the current phase with your feedback" },
+  {
+    name: "sdd-modify",
+    args: "<feedback>",
+    description: "re-run the current phase with your feedback",
+  },
   { name: "sdd-skip", description: "skip the current phase (required phases refuse)" },
   { name: "sdd-abort", description: "abort the current SDD run" },
   // SDD modify-flow helpers (snapshot + diff the phase artefact).
-  { name: "sdd-view", args: "[phase]",         description: "show the phase artefact and its path" },
-  { name: "sdd-snapshot", args: "[phase]",     description: "cache the current artefact for a later diff" },
-  { name: "sdd-diff", args: "[phase]",         description: "diff the cached snapshot against the file on disk" },
+  { name: "sdd-view", args: "[phase]", description: "show the phase artefact and its path" },
+  {
+    name: "sdd-snapshot",
+    args: "[phase]",
+    description: "cache the current artefact for a later diff",
+  },
+  {
+    name: "sdd-diff",
+    args: "[phase]",
+    description: "diff the cached snapshot against the file on disk",
+  },
   { name: "sdd-clear-cache", description: "drop every cached per-phase snapshot" },
 ];
 
@@ -253,12 +288,90 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{ name: string; description:
  */
 
 const SLASH_COMMAND_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ["session", ["help", "clear", "exit", "history", "session", "session-new", "session-del", "sessions-list", "sessions", "threads", "lastplan", "tutorial", "rewind", "bookmark", "snippet", "export", "demo"]],
-  ["context", ["memory", "memory-edit", "memory-compact", "memory-audit", "bank-stats", "bank-recall", "todos", "context", "tokens", "metrics", "trace"]],
-  ["config", ["model", "mode", "tool-actions", "theme", "theme-pick", "layout", "budget", "agent-pick", "effort-pick", "cwd-pick", "agents", "agent", "prompt", "phase", "skip", "skip-stats"]],
+  [
+    "session",
+    [
+      "help",
+      "clear",
+      "exit",
+      "history",
+      "session",
+      "session-new",
+      "session-del",
+      "sessions-list",
+      "sessions",
+      "threads",
+      "lastplan",
+      "tutorial",
+      "rewind",
+      "bookmark",
+      "snippet",
+      "export",
+      "demo",
+    ],
+  ],
+  [
+    "context",
+    [
+      "memory",
+      "memory-edit",
+      "memory-compact",
+      "memory-audit",
+      "bank-stats",
+      "bank-recall",
+      "todos",
+      "context",
+      "tokens",
+      "metrics",
+      "trace",
+    ],
+  ],
+  [
+    "config",
+    [
+      "model",
+      "mode",
+      "tool-actions",
+      "theme",
+      "theme-pick",
+      "layout",
+      "budget",
+      "agent-pick",
+      "effort-pick",
+      "cwd-pick",
+      "agents",
+      "agent",
+      "prompt",
+      "phase",
+      "skip",
+      "skip-stats",
+    ],
+  ],
   ["mcp & integrations", ["mcp", "mcp-login", "mcp-reconnect", "consents", "notifications"]],
-  ["workflows & sdd", ["workflow", "continue", "pause", "stop", "sdd", "sdd-status", "sdd-list", "sdd-approve", "sdd-modify", "sdd-skip", "sdd-abort", "sdd-view", "sdd-snapshot", "sdd-diff", "sdd-clear-cache"]],
-  ["diagnostics", ["tools", "state", "stats", "ping", "tasks", "projects", "cwd", "update", "update-deps"]],
+  [
+    "workflows & sdd",
+    [
+      "workflow",
+      "continue",
+      "pause",
+      "stop",
+      "sdd",
+      "sdd-status",
+      "sdd-list",
+      "sdd-approve",
+      "sdd-modify",
+      "sdd-skip",
+      "sdd-abort",
+      "sdd-view",
+      "sdd-snapshot",
+      "sdd-diff",
+      "sdd-clear-cache",
+    ],
+  ],
+  [
+    "diagnostics",
+    ["tools", "state", "stats", "ping", "tasks", "projects", "cwd", "update", "update-deps"],
+  ],
 ];
 
 /**
@@ -509,7 +622,10 @@ export function routeSlash(input: string): SlashResult | null {
       // under its own name.
       return { local: "__SESSION_PICKER__" };
     case "stats":
-      return { local: "session stats: see the status bar for token / cost counters; /state for the full snapshot" };
+      return {
+        local:
+          "session stats: see the status bar for token / cost counters; /state for the full snapshot",
+      };
     case "history":
       return { local: "__HISTORY__" };
     case "tasks":
@@ -520,13 +636,17 @@ export function routeSlash(input: string): SlashResult | null {
       if (rest.length === 0) return { local: "usage: /cwd <path>" };
       return { rpcMethod: "switchProject", rpcParams: { cwd: rest[0] } };
     case "lastplan":
-      return { local: "last plan: run a multi-step query to populate the plan view; use the IDEA plugin for a fuller view" };
+      return {
+        local:
+          "last plan: run a multi-step query to populate the plan view; use the IDEA plugin for a fuller view",
+      };
     case "theme": {
       // switch color palette. We don't change the input
       // here — we surface a side note telling the user to use
       // the dedicated dispatch in tui.tsx. Actually, simpler:
       // we emit a special local token that tui.tsx catches.
-      if (rest.length === 0) return { local: "usage: /theme <default|solarized|monokai> | /theme-pick" };
+      if (rest.length === 0)
+        return { local: "usage: /theme <default|solarized|monokai> | /theme-pick" };
       const name = String(rest[0]).toLowerCase();
       if (name === "pick") {
         // T-422: open the aethercode-themes picker modal.
@@ -697,7 +817,10 @@ export function routeSlash(input: string): SlashResult | null {
       if (rest.length === 0) {
         return { rpcMethod: "getSystemPrompt" };
       }
-      const name = rest.map(s => String(s)).join(" ").trim();
+      const name = rest
+        .map((s) => String(s))
+        .join(" ")
+        .trim();
       return { rpcMethod: "getSystemPromptSection", rpcParams: { name } };
     }
     case "phase": {
@@ -754,7 +877,10 @@ export function routeSlash(input: string): SlashResult | null {
       if (rest.length === 0) {
         return { local: "usage: /session <id>  (id of an existing engine)" };
       }
-      const id = rest.map(s => String(s)).join(" ").trim();
+      const id = rest
+        .map((s) => String(s))
+        .join(" ")
+        .trim();
       return { rpcMethod: "setActiveEngine", rpcParams: { sessionId: id } };
     }
     case "session-new": {
@@ -763,7 +889,10 @@ export function routeSlash(input: string): SlashResult | null {
       if (rest.length === 0) {
         return { local: "usage: /session-new <id>" };
       }
-      const newId = rest.map(s => String(s)).join(" ").trim();
+      const newId = rest
+        .map((s) => String(s))
+        .join(" ")
+        .trim();
       return { rpcMethod: "createEngine", rpcParams: { sessionId: newId } };
     }
     case "session-del": {
@@ -773,7 +902,10 @@ export function routeSlash(input: string): SlashResult | null {
       if (rest.length === 0) {
         return { local: "usage: /session-del <id>" };
       }
-      const delId = rest.map(s => String(s)).join(" ").trim();
+      const delId = rest
+        .map((s) => String(s))
+        .join(" ")
+        .trim();
       return { rpcMethod: "deleteEngine", rpcParams: { sessionId: delId } };
     }
     case "memory": {
@@ -1091,7 +1223,9 @@ export function routeSlash(input: string): SlashResult | null {
     }
     case "sdd-modify": {
       if (rest.length === 0) {
-        return { local: "usage: /sdd-modify <feedback>   (e.g. /sdd-modify add max-array-size = 10000)" };
+        return {
+          local: "usage: /sdd-modify <feedback>   (e.g. /sdd-modify add max-array-size = 10000)",
+        };
       }
       const feedback = rest.join(" ").trim();
       return { local: "__SDD_ADVANCE__", rpcParams: { action: "modify", feedback } };

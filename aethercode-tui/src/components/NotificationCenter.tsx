@@ -90,7 +90,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   // Total selectable rows: notifications + (when expanded) toggles + 1 for the header.
   const settingsHeaderIndex = entries.length;
   const toggleStart = entries.length + 1;
-  const totalSelectable = settingsExpanded ? toggleStart + toggleList.length : settingsHeaderIndex + 1;
+  const totalSelectable = settingsExpanded
+    ? toggleStart + toggleList.length
+    : settingsHeaderIndex + 1;
 
   // Clamp when the entry list shrinks.
   useEffect(() => {
@@ -142,31 +144,28 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  ↑/↓ (j/k): navigate  Enter: select  Tab: settings  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor> ↑/↓ (j/k): navigate Enter: select Tab: settings Esc: close</Text>
       </Box>
       <Text> </Text>
       {entries.length === 0 ? (
-        <Text dimColor>  No pending notifications.</Text>
+        <Text dimColor> No pending notifications.</Text>
       ) : (
         entries.map((p, i) => {
           const isHighlighted = i === selectedRow;
           return (
             <Box key={p.key} flexDirection="row">
-              <Text color={isHighlighted ? "cyan" : undefined}>
-                {isHighlighted ? "▶" : " "}{" "}
-              </Text>
+              <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
               <Text color={p.title ? undefined : "gray"}>{p.title || "(untitled)"}</Text>
               {p.actions.length > 0 ? (
-                <Text dimColor>  ·  {p.actions.length} action{p.actions.length === 1 ? "" : "s"}</Text>
+                <Text dimColor>
+                  {" "}
+                  · {p.actions.length} action{p.actions.length === 1 ? "" : "s"}
+                </Text>
               ) : null}
             </Box>
           );
@@ -189,18 +188,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             const enabled = toggleState[t.warningKey] ?? true;
             return (
               <Box key={t.warningKey} flexDirection="row">
-                <Text color={isHighlighted ? "cyan" : undefined}>
-                  {isHighlighted ? "▶" : " "}{" "}
-                </Text>
+                <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
                 <Text>{enabled ? "[x]" : "[ ]"}</Text>
-                <Text>  {t.label}</Text>
+                <Text> {t.label}</Text>
               </Box>
             );
           })}
         </Box>
       ) : null}
       <Text> </Text>
-      <Text dimColor>  ↑/↓ navigate  Enter select  Tab expand settings  Esc close</Text>
+      <Text dimColor> ↑/↓ navigate Enter select Tab expand settings Esc close</Text>
     </Box>
   );
 };

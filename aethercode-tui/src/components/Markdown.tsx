@@ -103,13 +103,20 @@ function parseBlocks(src: string): Block[] {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (line.trim().length === 0) { out.push({ kind: "blank", body: "" }); i++; continue; }
+    if (line.trim().length === 0) {
+      out.push({ kind: "blank", body: "" });
+      i++;
+      continue;
+    }
     const fence = line.match(/^```(\w*)\s*$/);
     if (fence) {
       const lang = fence[1] ?? "";
       const body: string[] = [];
       i++;
-      while (i < lines.length && !/^```\s*$/.test(lines[i])) { body.push(lines[i]); i++; }
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+        body.push(lines[i]);
+        i++;
+      }
       // keep the language in the block metadata so the
       // renderer can show a tiny `lang` tag above the code.
       // `level` is reused as "has language" since the existing
@@ -119,11 +126,16 @@ function parseBlocks(src: string): Block[] {
       continue;
     }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) { out.push({ kind: "heading", body: h[2], level: h[1].length }); i++; continue; }
+    if (h) {
+      out.push({ kind: "heading", body: h[2], level: h[1].length });
+      i++;
+      continue;
+    }
     // horizontal rules — a line that's only -, *, or _ (3+ chars).
     if (/^([-*_])\1{2,}\s*$/.test(line.trim())) {
       out.push({ kind: "rule", body: "" });
-      i++; continue;
+      i++;
+      continue;
     }
     // blockquote.
     const q = line.match(/^>\s+(.*)$/);
@@ -162,7 +174,10 @@ function parseBlocks(src: string): Block[] {
       // support it but we don't want to crash on it).
       const isOrdered = /^\s*\d+\.\s+/.test(line);
       const items: string[] = [];
-      while (i < lines.length && (/^(\s*)[-*+]\s+/.test(lines[i]) || /^\s*\d+\.\s+/.test(lines[i]))) {
+      while (
+        i < lines.length &&
+        (/^(\s*)[-*+]\s+/.test(lines[i]) || /^\s*\d+\.\s+/.test(lines[i]))
+      ) {
         items.push(lines[i].replace(/^(\s*)(?:[-*+]|\d+\.)\s+/, ""));
         i++;
       }
@@ -172,11 +187,16 @@ function parseBlocks(src: string): Block[] {
     // Paragraph: consume until blank or block-start
     const para: string[] = [line];
     i++;
-    while (i < lines.length && lines[i].trim().length > 0
-           && !/^```/.test(lines[i]) && !/^#{1,6}\s+/.test(lines[i])
-           && !/^([-*_])\1{2,}\s*$/.test(lines[i].trim())
-           && !/^>\s+/.test(lines[i])
-           && !/^(\s*)[-*+]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i])) {
+    while (
+      i < lines.length &&
+      lines[i].trim().length > 0 &&
+      !/^```/.test(lines[i]) &&
+      !/^#{1,6}\s+/.test(lines[i]) &&
+      !/^([-*_])\1{2,}\s*$/.test(lines[i].trim()) &&
+      !/^>\s+/.test(lines[i]) &&
+      !/^(\s*)[-*+]\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i])
+    ) {
       para.push(lines[i]);
       i++;
     }
@@ -217,7 +237,10 @@ function parseAligns(sep: string): ("left" | "right" | "center" | null)[] {
  *  column dividers. The table has a 2-char left indent so it
  *  nests inside the chat gutter without colliding with the
  *  conversation rail. */
-function renderTable(rows: string[][], aligns: ("left" | "right" | "center" | null)[]): React.ReactNode {
+function renderTable(
+  rows: string[][],
+  aligns: ("left" | "right" | "center" | null)[],
+): React.ReactNode {
   if (rows.length === 0) return null;
   // Compute column widths (max cell length per column).
   const cols = rows[0].length;
@@ -248,31 +271,36 @@ function renderTable(rows: string[][], aligns: ("left" | "right" | "center" | nu
       cells.push(
         <Text key={`c${c}`} color={isHeader ? t.tableHeader : undefined} bold={isHeader}>
           {padded}
-        </Text>
+        </Text>,
       );
       if (c < cols - 1) {
         // heavy `┃` column divider so the table structure
         // is unmistakable. (We use `┃` rather than `║` because
         // the latter is double-line — single heavy is the
         // convention for code-block / log tables.)
-        cells.push(<Text key={`s${c}`} color={t.tableSep} bold> ┃ </Text>);
+        cells.push(
+          <Text key={`s${c}`} color={t.tableSep} bold>
+            {" "}
+            ┃{" "}
+          </Text>,
+        );
       }
     }
     // header is the only row that gets a trailing
     // accent (the full-width `━` underline drawn *outside* the
     // cells), so the user gets a strong "this is the label row"
     // signal even before reading the cell content.
-    lines.push(
-      <Text key={`r${r}`}>
-        {cells}
-      </Text>
-    );
+    lines.push(<Text key={`r${r}`}>{cells}</Text>);
     if (isHeader) {
       // Add the separator line as its own row. R215: heavy `━`
       // in `t.tableSep` (dim grey) so it reads as a structural
       // divider, not a continuation of the header.
       const sepLine = widths.map((w) => "━".repeat(w)).join("─╂─");
-      lines.push(<Text key={`sep`} color={t.tableSep} bold>{sepLine}</Text>);
+      lines.push(
+        <Text key={`sep`} color={t.tableSep} bold>
+          {sepLine}
+        </Text>,
+      );
     }
   }
   // wrap the table in a 2-char left indent so it sits
@@ -329,11 +357,7 @@ function shortenUrl(url: string, maxLen: number = 32): string {
 /** Render a non-link chunk via the INLINE regex.
  * extracted from `renderInline` so the link
  *  outer loop can recurse on each non-link sub-string. */
-function renderInlineChunk(
-  s: string,
-  keyPrefix: string,
-  baseOffset: number,
-): React.ReactNode[] {
+function renderInlineChunk(s: string, keyPrefix: string, baseOffset: number): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -344,20 +368,28 @@ function renderInlineChunk(
     if (m[2] != null) {
       // bold keeps its existing treatment — bold itself is
       // already a strong visual signal, no extra colour needed.
-      out.push(<Text key={`${keyPrefix}-b${baseOffset}-${idx}`} bold>{m[2]}</Text>);
+      out.push(
+        <Text key={`${keyPrefix}-b${baseOffset}-${idx}`} bold>
+          {m[2]}
+        </Text>,
+      );
     } else if (m[4] != null) {
-      out.push(<Text key={`${keyPrefix}-i${baseOffset}-${idx}`} italic>{m[4]}</Text>);
+      out.push(
+        <Text key={`${keyPrefix}-i${baseOffset}-${idx}`} italic>
+          {m[4]}
+        </Text>,
+      );
     } else if (m[6] != null) {
-      out.push(<Text key={`${keyPrefix}-u${baseOffset}-${idx}`} underline>{m[6]}</Text>);
+      out.push(
+        <Text key={`${keyPrefix}-u${baseOffset}-${idx}`} underline>
+          {m[6]}
+        </Text>,
+      );
     } else if (m[8] != null) {
       // strikethrough — render as dim (Ink has no native
       // strikethrough attribute, so we use dim to signal "removed").
       out.push(
-        <Text
-          key={`${keyPrefix}-s${baseOffset}-${idx}`}
-          dimColor
-          strikethrough
-        >
+        <Text key={`${keyPrefix}-s${baseOffset}-${idx}`} dimColor strikethrough>
           {m[8]}
         </Text>,
       );
@@ -388,10 +420,7 @@ function renderInlineChunk(
       // padding on both sides.
       const tokens = highlightInlineCode(m[10]);
       out.push(
-        <Text
-          key={`${keyPrefix}-c${baseOffset}-${idx}`}
-          backgroundColor={t.codeBg}
-        >
+        <Text key={`${keyPrefix}-c${baseOffset}-${idx}`} backgroundColor={t.codeBg}>
           <Text backgroundColor={t.codeBg}> </Text>
           {tokens.map((tk, k) => {
             const colorKey = tokenKindToColor(tk.kind);
@@ -407,7 +436,7 @@ function renderInlineChunk(
             );
           })}
           <Text backgroundColor={t.codeBg}> </Text>
-        </Text>
+        </Text>,
       );
     }
     last = m.index + m[0].length;
@@ -472,13 +501,20 @@ function renderInline(s: string, keyPrefix: string): React.ReactNode[] {
  *  white so the user can still read it; H5/H6 fade to dim. */
 function headingColor(level: number): string {
   switch (level) {
-    case 1: return t.heading1;
-    case 2: return t.heading2;
-    case 3: return t.heading3;
-    case 4: return t.heading4;
-    case 5: return t.heading5;
-    case 6: return t.heading6;
-    default: return t.heading4;
+    case 1:
+      return t.heading1;
+    case 2:
+      return t.heading2;
+    case 3:
+      return t.heading3;
+    case 4:
+      return t.heading4;
+    case 5:
+      return t.heading5;
+    case 6:
+      return t.heading6;
+    default:
+      return t.heading4;
   }
 }
 
@@ -527,8 +563,14 @@ export const Markdown: React.FC<MdProps> = ({ text }) => {
                     the heading reads as a "section start" even
                     on a single-line view. H2-H6 skip the bar
                     (the colour is enough). */}
-                {level === 1 ? <Text color={color} bold>▌ </Text> : null}
-                <Text color={color} bold>{titleText}</Text>
+                {level === 1 ? (
+                  <Text color={color} bold>
+                    ▌{" "}
+                  </Text>
+                ) : null}
+                <Text color={color} bold>
+                  {titleText}
+                </Text>
               </Text>
               {rule ? <Text color={color}>{rule}</Text> : null}
             </Box>
@@ -561,8 +603,15 @@ export const Markdown: React.FC<MdProps> = ({ text }) => {
           const lang = b.lang ?? "";
           const lines = b.body.split("\n");
           return (
-            <Box key={key} flexDirection="column" marginLeft={2} marginY={1}
-                  borderStyle="round" borderColor={t.codeBorder} paddingX={1}>
+            <Box
+              key={key}
+              flexDirection="column"
+              marginLeft={2}
+              marginY={1}
+              borderStyle="round"
+              borderColor={t.codeBorder}
+              paddingX={1}
+            >
               {lang ? (
                 <Box marginBottom={1}>
                   {/* language tag — a small filled pill
@@ -629,7 +678,9 @@ export const Markdown: React.FC<MdProps> = ({ text }) => {
                 // bullet: brand-coloured `▸` + 1-space hang.
                 return (
                   <Text key={`${key}-i${j}`}>
-                    <Text color={t.brand} bold>{"  ▸ "}</Text>
+                    <Text color={t.brand} bold>
+                      {"  ▸ "}
+                    </Text>
                     {renderInline(it, `${key}-i${j}`)}
                   </Text>
                 );
@@ -656,7 +707,9 @@ export const Markdown: React.FC<MdProps> = ({ text }) => {
           // treatment gives quoted text a clear identity.
           return (
             <Box key={key} flexDirection="row" marginLeft={2} marginY={0}>
-              <Text color={t.quoteBar} bold>{"┃ "}</Text>
+              <Text color={t.quoteBar} bold>
+                {"┃ "}
+              </Text>
               <Box flexDirection="column" flexGrow={1}>
                 <Text color={t.quoteText}>{renderInline(b.body, key)}</Text>
               </Box>

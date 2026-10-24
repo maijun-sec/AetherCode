@@ -19,10 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 test("T-6-16: StatusBar.tsx accepts the new SessionControl + stale props", () => {
@@ -30,7 +27,10 @@ test("T-6-16: StatusBar.tsx accepts the new SessionControl + stale props", () =>
   assert.match(src, /onContinue\?:\s*\(\)\s*=>/);
   assert.match(src, /onPause\?:\s*\(\)\s*=>/);
   assert.match(src, /onStop\?:\s*\(\)\s*=>/);
-  assert.match(src, /staleSession\?:\s*\{\s*id:\s*string;\s*lastActiveAt:\s*number\s*\}\s*\|\s*null/);
+  assert.match(
+    src,
+    /staleSession\?:\s*\{\s*id:\s*string;\s*lastActiveAt:\s*number\s*\}\s*\|\s*null/,
+  );
   assert.match(src, /onReattach\?:\s*\(id:\s*string\)\s*=>/);
 });
 
@@ -62,24 +62,38 @@ test("T-6-16: tsc --strict compile of StatusBar.tsx is clean", () => {
   // IS the smoke test — phase-7-t7-10 covers that.)
   const tmp = join(root, "tmp-t6-sb-sc-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
   mkdirSync(tmp, { recursive: true });
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp,
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--strict", "true",
-    "--jsx", "react",
-    join(root, "src", "components", "StatusBar.tsx"),
-    join(root, "src", "components", "session", "SessionControl.tsx"),
-    join(root, "src", "components", "session", "SessionDetailsPanel.tsx"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--jsx",
+      "react",
+      join(root, "src", "components", "StatusBar.tsx"),
+      join(root, "src", "components", "session", "SessionControl.tsx"),
+      join(root, "src", "components", "session", "SessionDetailsPanel.tsx"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

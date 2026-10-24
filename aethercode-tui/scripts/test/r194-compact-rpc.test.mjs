@@ -24,10 +24,7 @@ const root = join(here, "..", "..");
 
 import { pathToFileURL } from "node:url";
 
-const candidates = [
-  "dist/compact-rpc.js",
-  "compact-rpc.js",
-];
+const candidates = ["dist/compact-rpc.js", "compact-rpc.js"];
 let loaded = null;
 for (const c of candidates) {
   const p = join(root, c);
@@ -40,17 +37,42 @@ if (!loaded) {
   // Use tsc to compile to a tmp dir, then import the .js.
   const tmp = join(root, "tmp-r194");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--strict", "true", "--noUncheckedIndexedAccess",
-    "true", "--rootDir", join(root, "src"),
-    join(root, "src", "compact-rpc.ts"),
-  ], { encoding: "utf-8", shell: true });
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "compact-rpc.ts"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     throw new Error("tsc compile failed for compact-rpc.ts:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -79,7 +101,9 @@ function makeFakeRpcClient(handlers) {
       if (h) return Promise.resolve(h(params));
       return Promise.reject(new Error("unknown method: " + method));
     },
-    setNotificationHandler(fn) { notificationHandler = fn; },
+    setNotificationHandler(fn) {
+      notificationHandler = fn;
+    },
     fire(method, params) {
       if (notificationHandler) notificationHandler(method, params);
     },
@@ -114,7 +138,14 @@ test("T-194: RemoteCompactRpc proxies compact/status", async () => {
       autoCompactDisabled: false,
       consecutiveCompactFailures: 0,
       lastFailureTs: null,
-      lastEvent: { ts: 100, layer: 3, beforeTokens: 1000, afterTokens: 400, elapsedMs: 50, failed: false },
+      lastEvent: {
+        ts: 100,
+        layer: 3,
+        beforeTokens: 1000,
+        afterTokens: 400,
+        elapsedMs: 50,
+        failed: false,
+      },
     }),
   });
   const client = new RemoteCompactRpc(fake);
@@ -158,7 +189,9 @@ test("T-194: RemoteCompactRpc raises CompactRpcError when the daemon returns one
   // it. We throw a synthetic RpcCallError so we can assert both
   // the message AND that the wrapper is the right class.
   const fake = makeFakeRpcClient({
-    "compact/run": () => { throw new RpcCallError(-32603, "internal", { stack: "x" }); },
+    "compact/run": () => {
+      throw new RpcCallError(-32603, "internal", { stack: "x" });
+    },
   });
   const client = new RemoteCompactRpc(fake);
   await assert.rejects(client.run(), (e) => {
@@ -176,7 +209,14 @@ test("T-194: RemoteCompactRpc onEvent dispatches compact/event notifications", a
   const client = new RemoteCompactRpc(fake);
   const events = [];
   client.onEvent((e) => events.push(e));
-  fake.fire("compact/event", { ts: 100, layer: 3, beforeTokens: 1000, afterTokens: 400, elapsedMs: 50, failed: false });
+  fake.fire("compact/event", {
+    ts: 100,
+    layer: 3,
+    beforeTokens: 1000,
+    afterTokens: 400,
+    elapsedMs: 50,
+    failed: false,
+  });
   fake.fire("not/compact", { ignored: true });
   assert.equal(events.length, 1);
   assert.equal(events[0].ts, 100);
@@ -187,9 +227,23 @@ test("T-194: RemoteCompactRpc onEvent dispose removes the handler", async () => 
   const client = new RemoteCompactRpc(fake);
   const events = [];
   const dispose = client.onEvent((e) => events.push(e));
-  fake.fire("compact/event", { ts: 1, layer: 1, beforeTokens: 1, afterTokens: 1, elapsedMs: 1, failed: false });
+  fake.fire("compact/event", {
+    ts: 1,
+    layer: 1,
+    beforeTokens: 1,
+    afterTokens: 1,
+    elapsedMs: 1,
+    failed: false,
+  });
   dispose();
-  fake.fire("compact/event", { ts: 2, layer: 1, beforeTokens: 1, afterTokens: 1, elapsedMs: 1, failed: false });
+  fake.fire("compact/event", {
+    ts: 2,
+    layer: 1,
+    beforeTokens: 1,
+    afterTokens: 1,
+    elapsedMs: 1,
+    failed: false,
+  });
   assert.equal(events.length, 1);
   assert.equal(events[0].ts, 1);
 });
@@ -200,10 +254,19 @@ function makeLocalInvokeStub(overrides = {}) {
   const listeners = new Set();
   return {
     async run(params) {
-      return overrides.run ? overrides.run(params) : { layer: 1, beforeTokens: 100, afterTokens: 50, ms: 10, failed: false };
+      return overrides.run
+        ? overrides.run(params)
+        : { layer: 1, beforeTokens: 100, afterTokens: 50, ms: 10, failed: false };
     },
     async status() {
-      return overrides.status ? overrides.status() : { autoCompactDisabled: false, consecutiveCompactFailures: 0, lastFailureTs: null, lastEvent: null };
+      return overrides.status
+        ? overrides.status()
+        : {
+            autoCompactDisabled: false,
+            consecutiveCompactFailures: 0,
+            lastFailureTs: null,
+            lastEvent: null,
+          };
     },
     async reset() {
       return overrides.reset ? overrides.reset() : { ok: true, clearedFailures: 0 };
@@ -211,17 +274,34 @@ function makeLocalInvokeStub(overrides = {}) {
     async history(params) {
       return overrides.history ? overrides.history(params) : [];
     },
-    onEvent(h) { listeners.add(h); },
-    fire(event) { for (const l of listeners) l(event); },
+    onEvent(h) {
+      listeners.add(h);
+    },
+    fire(event) {
+      for (const l of listeners) l(event);
+    },
   };
 }
 
 test("T-194: LocalCompactRpc surfaces every method", async () => {
   const inv = makeLocalInvokeStub({
-    run: (p) => ({ layer: 3, beforeTokens: 1000, afterTokens: 400, ms: 50, failed: p.force === true }),
-    status: () => ({ autoCompactDisabled: true, consecutiveCompactFailures: 5, lastFailureTs: 1234, lastEvent: null }),
+    run: (p) => ({
+      layer: 3,
+      beforeTokens: 1000,
+      afterTokens: 400,
+      ms: 50,
+      failed: p.force === true,
+    }),
+    status: () => ({
+      autoCompactDisabled: true,
+      consecutiveCompactFailures: 5,
+      lastFailureTs: 1234,
+      lastEvent: null,
+    }),
     reset: () => ({ ok: true, clearedFailures: 5 }),
-    history: () => [{ ts: 1, layer: 1, beforeTokens: 1, afterTokens: 1, elapsedMs: 1, failed: false }],
+    history: () => [
+      { ts: 1, layer: 1, beforeTokens: 1, afterTokens: 1, elapsedMs: 1, failed: false },
+    ],
   });
   const client = new LocalCompactRpc(inv);
   const r = await client.run({ force: true });
@@ -242,10 +322,23 @@ test("T-194: LocalCompactRpc surfaces every method", async () => {
 
 test("T-194: buildLocalInvoke adapts a shim into a LocalInvoke", async () => {
   const shim = {
-    run: (p) => ({ result: { layer: 3, beforeTokens: 100, afterTokens: 40, ms: 10, failed: !!p.force } }),
-    status: () => ({ result: { autoCompactDisabled: false, consecutiveCompactFailures: 0, lastFailureTs: null, lastEvent: null } }),
+    run: (p) => ({
+      result: { layer: 3, beforeTokens: 100, afterTokens: 40, ms: 10, failed: !!p.force },
+    }),
+    status: () => ({
+      result: {
+        autoCompactDisabled: false,
+        consecutiveCompactFailures: 0,
+        lastFailureTs: null,
+        lastEvent: null,
+      },
+    }),
     reset: () => ({ result: { ok: true, clearedFailures: 0 } }),
-    history: (p) => ({ result: p.limit ? [{ ts: 1, layer: 1, beforeTokens: 1, afterTokens: 1, elapsedMs: 1, failed: false }] : [] }),
+    history: (p) => ({
+      result: p.limit
+        ? [{ ts: 1, layer: 1, beforeTokens: 1, afterTokens: 1, elapsedMs: 1, failed: false }]
+        : [],
+    }),
   };
   const inv = buildLocalInvoke(shim);
   const client = new LocalCompactRpc(inv);
@@ -286,7 +379,9 @@ test("T-194: NullCompactRpc.status/reset/history return benign defaults", async 
 
 test("T-194: NullCompactRpc.onEvent returns a no-op dispose", () => {
   const c = new NullCompactRpc();
-  const dispose = c.onEvent(() => { throw new Error("must not be called"); });
+  const dispose = c.onEvent(() => {
+    throw new Error("must not be called");
+  });
   assert.equal(typeof dispose, "function");
   assert.doesNotThrow(() => dispose());
 });

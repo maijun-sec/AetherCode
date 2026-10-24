@@ -117,28 +117,25 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
   });
 
   // Scroll window.
-  const start = Math.max(0, Math.min(highlight - Math.floor(maxVisible / 2), Math.max(0, efforts.length - maxVisible)));
+  const start = Math.max(
+    0,
+    Math.min(highlight - Math.floor(maxVisible / 2), Math.max(0, efforts.length - maxVisible)),
+  );
   const end = Math.min(efforts.length, start + maxVisible);
   const visible = efforts.slice(start, end);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  ↑/↓ (j/k): navigate  Enter: select  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor> ↑/↓ (j/k): navigate Enter: select Esc: close</Text>
       </Box>
-      {modelSpec ? (
-        <Text dimColor>  for {modelSpec}</Text>
-      ) : null}
+      {modelSpec ? <Text dimColor> for {modelSpec}</Text> : null}
       <Text> </Text>
       {efforts.length === 0 ? (
-        <Text dimColor>  no effort levels available for this model</Text>
+        <Text dimColor> no effort levels available for this model</Text>
       ) : (
         visible.map((e, i) => {
           const realIndex = start + i;
@@ -148,24 +145,23 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
           const isDefault = defaultEffort != null && id === defaultEffort;
           return (
             <Box key={id} flexDirection="row">
-              <Text color={isHighlighted ? "cyan" : undefined}>
-                {isHighlighted ? "▶" : " "}{" "}
-              </Text>
-              <Text color={isCurrent ? "yellowBright" : undefined}>
-                {isCurrent ? "●" : " "}{" "}
-              </Text>
+              <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
+              <Text color={isCurrent ? "yellowBright" : undefined}>{isCurrent ? "●" : " "} </Text>
               <Text>
                 <Text bold={isHighlighted}>{e.label.padEnd(12)}</Text>
                 {isDefault ? <Text color="magenta"> (default)</Text> : null}
                 {isCurrent ? <Text color="yellowBright"> (current)</Text> : null}
-                {e.description ? <Text dimColor>  — {e.description}</Text> : null}
+                {e.description ? <Text dimColor> — {e.description}</Text> : null}
               </Text>
             </Box>
           );
         })
       )}
       {efforts.length > maxVisible ? (
-        <Text dimColor>  {start + 1}–{end} of {efforts.length}</Text>
+        <Text dimColor>
+          {" "}
+          {start + 1}–{end} of {efforts.length}
+        </Text>
       ) : null}
     </Box>
   );

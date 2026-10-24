@@ -25,7 +25,12 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBinAbs = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tscBinAbs = join(
+  root,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc",
+);
 
 // Compile the line + theme + commands + state + jsonrpc modules so we
 // can import them. We also need to inject a fake JsonRpcClient that
@@ -34,22 +39,33 @@ const tmp = mkdtempSync(join(tmpdir(), "ac-tui-e2e-"));
 if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
 
 const tscArgs = [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const tsc = spawnSync('"' + tscBinAbs + '"', [
-  ...tscArgs,
-  '"' + join(root, "src", "line.ts") + '"',
-  '"' + join(root, "src", "state.ts") + '"',
-  '"' + join(root, "src", "theme.ts") + '"',
-  '"' + join(root, "src", "commands.ts") + '"',
-  '"' + join(root, "src", "jsonrpc.ts") + '"',
-], { encoding: "utf-8", shell: true });
+const tsc = spawnSync(
+  '"' + tscBinAbs + '"',
+  [
+    ...tscArgs,
+    '"' + join(root, "src", "line.ts") + '"',
+    '"' + join(root, "src", "state.ts") + '"',
+    '"' + join(root, "src", "theme.ts") + '"',
+    '"' + join(root, "src", "commands.ts") + '"',
+    '"' + join(root, "src", "jsonrpc.ts") + '"',
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (tsc.status !== 0) {
   console.error("tsc failed:\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr);
   process.exit(1);
@@ -170,8 +186,16 @@ test("R32-G: line.ts uses STRICT classifyStopReason (no .includes fallbacks)", (
   // r.includes("max_") — those would false-positive on "main_loop"
   // or "max_tokens". The strict prefix-match version in state.ts
   // is the source of truth; line.ts must match it.
-  assert.doesNotMatch(lineTs, /r\.includes\("loop"\)/, "loop.ts must not use r.includes('loop') — would match 'main_loop'");
-  assert.doesNotMatch(lineTs, /r\.includes\("max_"\)/, "line.ts must not use r.includes('max_') — would match 'max_tokens'");
+  assert.doesNotMatch(
+    lineTs,
+    /r\.includes\("loop"\)/,
+    "loop.ts must not use r.includes('loop') — would match 'main_loop'",
+  );
+  assert.doesNotMatch(
+    lineTs,
+    /r\.includes\("max_"\)/,
+    "line.ts must not use r.includes('max_') — would match 'max_tokens'",
+  );
   // The strict versions should be there.
   assert.match(lineTs, /r\.startsWith\("loop_"\)/);
   assert.match(lineTs, /r === "max_iterations"/);
@@ -189,20 +213,39 @@ test("R32-G: state.ts and line.ts classifyStopReason are equivalent", async () =
     if (reason == null) return null;
     const r = reason.toLowerCase();
     if (r === "loop_detected" || r.startsWith("loop_")) return "loop";
-    if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations") return "max_turns";
+    if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations")
+      return "max_turns";
     if (r === "empty_input" || r === "empty") return "empty";
     if (r === "error" || r.startsWith("error_") || r.endsWith("_error")) return "error";
     return "ok";
   };
   // A wide net of inputs that have caused false positives in the past.
   const inputs = [
-    null, undefined,
-    "end_turn", "end_turn_and_tool", "stop", "tool_calls", "max_tokens", "length",
-    "loop_detected", "loop_same_fingerprint", "loop_same_error",
-    "max_iterations", "max_turns", "max_tool_iterations",
-    "main_loop", "mainloop", "loop_", "_loop",
-    "error", "rpc_error", "tool_error", "empty_input", "empty",
-    "weird_thing", "foo_bar",
+    null,
+    undefined,
+    "end_turn",
+    "end_turn_and_tool",
+    "stop",
+    "tool_calls",
+    "max_tokens",
+    "length",
+    "loop_detected",
+    "loop_same_fingerprint",
+    "loop_same_error",
+    "max_iterations",
+    "max_turns",
+    "max_tool_iterations",
+    "main_loop",
+    "mainloop",
+    "loop_",
+    "_loop",
+    "error",
+    "rpc_error",
+    "tool_error",
+    "empty_input",
+    "empty",
+    "weird_thing",
+    "foo_bar",
   ];
   for (const i of inputs) {
     assert.equal(strict(i), classify(i), `mismatch for input=${JSON.stringify(i)}`);

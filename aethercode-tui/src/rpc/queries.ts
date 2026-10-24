@@ -111,26 +111,42 @@ export function useSessionList(opts: UseSessionListOptions = {}): {
   const [state, setState] = useState<QueryState<SessionListResult>>({ status: "idle" });
   const [tick, setTick] = useState(0);
   const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  useEffect(
+    () => () => {
+      aliveRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     aliveRef.current = true;
     setState({ status: "loading" });
     const ac = new AbortController();
-    client.request<SessionListResult>("session/list", {
-      limit: opts.limit ?? null,
-      withPreview: opts.withPreview ?? false,
-    } as unknown as RpcValue, { timeoutMs: 0 }).then(
-      (data) => {
-        if (!aliveRef.current) return;
-        setState(reduceQuery({ status: "idle" }, { status: "success", data, ts: Date.now() }));
-      },
-      (err: Error) => {
-        if (!aliveRef.current) return;
-        setState(reduceQuery({ status: "idle" }, { status: "error", error: err, ts: Date.now() }));
-      }
-    );
-    return () => { aliveRef.current = false; ac.abort(); };
+    client
+      .request<SessionListResult>(
+        "session/list",
+        {
+          limit: opts.limit ?? null,
+          withPreview: opts.withPreview ?? false,
+        } as unknown as RpcValue,
+        { timeoutMs: 0 },
+      )
+      .then(
+        (data) => {
+          if (!aliveRef.current) return;
+          setState(reduceQuery({ status: "idle" }, { status: "success", data, ts: Date.now() }));
+        },
+        (err: Error) => {
+          if (!aliveRef.current) return;
+          setState(
+            reduceQuery({ status: "idle" }, { status: "error", error: err, ts: Date.now() }),
+          );
+        },
+      );
+    return () => {
+      aliveRef.current = false;
+      ac.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, opts.limit, opts.withPreview, opts.refetchKey, tick]);
 
@@ -142,13 +158,18 @@ export function useSessionList(opts: UseSessionListOptions = {}): {
 
 export function useSessionDetail(
   sessionId: string | null,
-  opts: { client?: JsonRpcClient; refetchKey?: string | number } = {}
+  opts: { client?: JsonRpcClient; refetchKey?: string | number } = {},
 ): { state: QueryState<SessionDetail>; refetch: () => void } {
   const client = getClient(opts.client);
   const [state, setState] = useState<QueryState<SessionDetail>>({ status: "idle" });
   const [tick, setTick] = useState(0);
   const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  useEffect(
+    () => () => {
+      aliveRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!sessionId) {
@@ -157,17 +178,23 @@ export function useSessionDetail(
     }
     aliveRef.current = true;
     setState({ status: "loading" });
-    client.request<SessionDetail>("session/show", { sessionId } as unknown as RpcValue, { timeoutMs: 0 }).then(
-      (data) => {
-        if (!aliveRef.current) return;
-        setState({ status: "success", data, ts: Date.now() });
-      },
-      (err: Error) => {
-        if (!aliveRef.current) return;
-        setState({ status: "error", error: err, ts: Date.now() });
-      }
-    );
-    return () => { aliveRef.current = false; };
+    client
+      .request<SessionDetail>("session/show", { sessionId } as unknown as RpcValue, {
+        timeoutMs: 0,
+      })
+      .then(
+        (data) => {
+          if (!aliveRef.current) return;
+          setState({ status: "success", data, ts: Date.now() });
+        },
+        (err: Error) => {
+          if (!aliveRef.current) return;
+          setState({ status: "error", error: err, ts: Date.now() });
+        },
+      );
+    return () => {
+      aliveRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, opts.refetchKey, tick]);
 
@@ -179,14 +206,19 @@ export function useSessionDetail(
 
 export function useSessionTokens(
   sessionId: string | null,
-  opts: { client?: JsonRpcClient; pollMs?: number } = {}
+  opts: { client?: JsonRpcClient; pollMs?: number } = {},
 ): { state: QueryState<SessionTokens>; refetch: () => void } {
   const client = getClient(opts.client);
   const poll = opts.pollMs ?? TOKEN_POLL_MS;
   const [state, setState] = useState<QueryState<SessionTokens>>({ status: "idle" });
   const [tick, setTick] = useState(0);
   const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  useEffect(
+    () => () => {
+      aliveRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!sessionId) {
@@ -196,16 +228,20 @@ export function useSessionTokens(
     aliveRef.current = true;
     let timer: ReturnType<typeof setInterval> | null = null;
     const fetchOnce = (): void => {
-      client.request<SessionTokens>("session/tokens", { sessionId } as unknown as RpcValue, { timeoutMs: 0 }).then(
-        (data) => {
-          if (!aliveRef.current) return;
-          setState({ status: "success", data, ts: Date.now() });
-        },
-        (err: Error) => {
-          if (!aliveRef.current) return;
-          setState({ status: "error", error: err, ts: Date.now() });
-        }
-      );
+      client
+        .request<SessionTokens>("session/tokens", { sessionId } as unknown as RpcValue, {
+          timeoutMs: 0,
+        })
+        .then(
+          (data) => {
+            if (!aliveRef.current) return;
+            setState({ status: "success", data, ts: Date.now() });
+          },
+          (err: Error) => {
+            if (!aliveRef.current) return;
+            setState({ status: "error", error: err, ts: Date.now() });
+          },
+        );
     };
     fetchOnce();
     if (poll > 0) {
@@ -242,31 +278,37 @@ export interface UseMutationResult<P, T> {
  *  wrap this with the right method name. */
 export function useMutation<P, T = unknown>(
   method: string,
-  opts: { client?: JsonRpcClient } = {}
+  opts: { client?: JsonRpcClient } = {},
 ): UseMutationResult<P, T> {
   const client = getClient(opts.client);
   const [state, setState] = useState<MutationState<T>>({ status: "idle" });
   const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  useEffect(
+    () => () => {
+      aliveRef.current = false;
+    },
+    [],
+  );
 
   const mutate = useCallback(
     async (params: P): Promise<T | undefined> => {
       setState({ status: "loading" });
       try {
-        const data = await client.request<T>(method, params as unknown as RpcValue, { timeoutMs: 0 });
+        const data = await client.request<T>(method, params as unknown as RpcValue, {
+          timeoutMs: 0,
+        });
         if (!aliveRef.current) return data;
         setState({ status: "success", data, ts: Date.now() });
         return data;
       } catch (err) {
         if (!aliveRef.current) return undefined;
-        const e = err instanceof RpcCallError
-          ? err
-          : err instanceof Error ? err : new Error(String(err));
+        const e =
+          err instanceof RpcCallError ? err : err instanceof Error ? err : new Error(String(err));
         setState({ status: "error", error: e, ts: Date.now() });
         return undefined;
       }
     },
-    [client, method]
+    [client, method],
   );
 
   const reset = useCallback(() => {

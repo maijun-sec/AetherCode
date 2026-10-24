@@ -58,36 +58,56 @@ interface Props {
 
 /** Stop-reason → user-facing label. */
 const STOP_LABEL: Record<string, string> = {
-  end_turn: "✓ ready", end_turn_and_tool: "✓ ready", tool_use_end: "✓ ready",
-  stop: "✓ ready", tool_calls: "✓ ready", max_tokens: "✓ ready", length: "✓ ready",
-  loop_detected: "stopped: loop", same_fingerprint: "stopped: loop",
-  same_error: "stopped: loop", long_output: "stopped: long output",
+  end_turn: "✓ ready",
+  end_turn_and_tool: "✓ ready",
+  tool_use_end: "✓ ready",
+  stop: "✓ ready",
+  tool_calls: "✓ ready",
+  max_tokens: "✓ ready",
+  length: "✓ ready",
+  loop_detected: "stopped: loop",
+  same_fingerprint: "stopped: loop",
+  same_error: "stopped: loop",
+  long_output: "stopped: long output",
   high_risk_repeat: "stopped: high-risk repeat",
   user_interrupt: "stopped: user interrupt",
-  max_iterations: "stopped: max turns", max_turns: "stopped: max turns",
-  error: "stopped: error", empty_input: "empty input",
+  max_iterations: "stopped: max turns",
+  max_turns: "stopped: max turns",
+  error: "stopped: error",
+  empty_input: "empty input",
 };
 
 /** Run state → running label. */
 function labelForRunning(s: State["status"]): string {
   switch (s) {
-    case "thinking":     return "thinking…";
-    case "streaming":    return "streaming…";
-    case "running-tool": return "running tool…";
-    case "connecting":   return "connecting…";
-    case "exiting":      return "exiting…";
-    default:             return "ready";
+    case "thinking":
+      return "thinking…";
+    case "streaming":
+      return "streaming…";
+    case "running-tool":
+      return "running tool…";
+    case "connecting":
+      return "connecting…";
+    case "exiting":
+      return "exiting…";
+    default:
+      return "ready";
   }
 }
 
 /** Map last stop reason to accent colour. */
 function colorForKind(kind: State["lastStopKind"]): string {
   switch (kind) {
-    case "ok":        return t.ok;
-    case "loop":      return t.err;
-    case "max_turns": return t.warn;
-    case "error":     return t.err;
-    default:          return t.dim;
+    case "ok":
+      return t.ok;
+    case "loop":
+      return t.err;
+    case "max_turns":
+      return t.warn;
+    case "error":
+      return t.err;
+    default:
+      return t.dim;
   }
 }
 
@@ -99,16 +119,22 @@ function jarName(p: string): string {
 }
 
 export const StatusBar: React.FC<Props> = ({
-  state, onContinue, onPause, onStop, staleSession, onReattach,
+  state,
+  onContinue,
+  onPause,
+  onStop,
+  staleSession,
+  onReattach,
 }) => {
   const color = state.submitting ? t.warn : colorForKind(state.lastStopKind);
   const reason = state.lastStopReason ?? "";
-  const label = state.submitting ? labelForRunning(state.status) : (STOP_LABEL[reason] ?? "✓ ready");
+  const label = state.submitting
+    ? labelForRunning(state.status)
+    : (STOP_LABEL[reason] ?? "✓ ready");
 
   const showControl = !!(onContinue || onPause || onStop);
-  const showStale = !!staleSession
-    && isStale(staleSession.lastActiveAt, Date.now())
-    && !!onReattach;
+  const showStale =
+    !!staleSession && isStale(staleSession.lastActiveAt, Date.now()) && !!onReattach;
 
   // ONE-LINE status strip — left to right:
   //   ▌ <kind-glyph> <label>  ·  in 1.2k · out 0.3k · $0.04 · <elapsed> · jar <name>
@@ -118,32 +144,50 @@ export const StatusBar: React.FC<Props> = ({
   const elapsed = state.uptimeStartedAt
     ? Math.max(0, Math.floor((Date.now() - state.uptimeStartedAt) / 1000))
     : 0;
-  const elapsedLabel = elapsed > 0
-    ? elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m${elapsed % 60 ? (elapsed % 60).toString().padStart(2, "0") : ""}`
-    : "—";
-  const connGlyph = (state.connectionState === "connecting") ? (
-    <Text color={t.spinner}><Spinner type="dots" /> </Text>
-  ) : state.connectionState === "reconnecting" ? (
-    <Text color={t.warn}>↻</Text>
-  ) : state.connectionState === "disconnected" ? (
-    <Text color={t.err}>✕</Text>
-  ) : (
-    <Text color={color}>●</Text>
-  );
-  const labelNode = state.connectionState === "disconnected"
-    ? <Text color={t.err} bold>disconnected ({state.reconnectAttempt}/{state.maxReconnectAttempts})</Text>
-    : state.connectionState === "reconnecting"
-    ? <Text color={t.warn} bold>reconnecting ({state.reconnectAttempt}/{state.maxReconnectAttempts})</Text>
-    : state.connectionState === "connecting"
-    ? <Text color={color} bold>connecting…</Text>
-    : <Text color={color} bold>{label}</Text>;
-  const skipNode = state.skipConfirmationRemaining > 0 ? (
-    // R362: R350 collapsed the bar to one line and shortened this badge to
-    // `⏩ 5`, which dropped the word "skip" — a user glancing at the status
-    // strip had no way to tell what the counter meant. Put the label back.
-    // It costs 5 columns and makes the badge self-describing.
-    <Text color={t.warn}> · ⏩ skip {state.skipConfirmationRemaining}</Text>
-  ) : null;
+  const elapsedLabel =
+    elapsed > 0
+      ? elapsed < 60
+        ? `${elapsed}s`
+        : `${Math.floor(elapsed / 60)}m${elapsed % 60 ? (elapsed % 60).toString().padStart(2, "0") : ""}`
+      : "—";
+  const connGlyph =
+    state.connectionState === "connecting" ? (
+      <Text color={t.spinner}>
+        <Spinner type="dots" />{" "}
+      </Text>
+    ) : state.connectionState === "reconnecting" ? (
+      <Text color={t.warn}>↻</Text>
+    ) : state.connectionState === "disconnected" ? (
+      <Text color={t.err}>✕</Text>
+    ) : (
+      <Text color={color}>●</Text>
+    );
+  const labelNode =
+    state.connectionState === "disconnected" ? (
+      <Text color={t.err} bold>
+        disconnected ({state.reconnectAttempt}/{state.maxReconnectAttempts})
+      </Text>
+    ) : state.connectionState === "reconnecting" ? (
+      <Text color={t.warn} bold>
+        reconnecting ({state.reconnectAttempt}/{state.maxReconnectAttempts})
+      </Text>
+    ) : state.connectionState === "connecting" ? (
+      <Text color={color} bold>
+        connecting…
+      </Text>
+    ) : (
+      <Text color={color} bold>
+        {label}
+      </Text>
+    );
+  const skipNode =
+    state.skipConfirmationRemaining > 0 ? (
+      // R362: R350 collapsed the bar to one line and shortened this badge to
+      // `⏩ 5`, which dropped the word "skip" — a user glancing at the status
+      // strip had no way to tell what the counter meant. Put the label back.
+      // It costs 5 columns and makes the badge self-describing.
+      <Text color={t.warn}> · ⏩ skip {state.skipConfirmationRemaining}</Text>
+    ) : null;
 
   // R371 — T-441's ContextInfo, finally wired.
   //
@@ -192,7 +236,10 @@ export const StatusBar: React.FC<Props> = ({
           <Text> </Text>
           {labelNode}
           {state.pending > 0 && state.submitting ? (
-            <Text dimColor> · {state.pending} tool call{state.pending === 1 ? "" : "s"} in flight</Text>
+            <Text dimColor>
+              {" "}
+              · {state.pending} tool call{state.pending === 1 ? "" : "s"} in flight
+            </Text>
           ) : null}
           {skipNode}
         </Box>
@@ -211,11 +258,7 @@ export const StatusBar: React.FC<Props> = ({
       {/* R371: the one-line strip stays one line; the meter gets its
           own row rather than 24 columns inside the strip, which would
           have squeezed the token counters off an 80-column terminal. */}
-      <ContextMeter
-        info={ctxInfo}
-        width={24}
-        sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000}
-      />
+      <ContextMeter info={ctxInfo} width={24} sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000} />
     </Box>
   );
 };
@@ -231,13 +274,19 @@ const StaleBanner: React.FC<{
   });
   return (
     <Box flexDirection="row">
-      <Text color={t.warn} bold>· {staleLabel(lastActiveAt)}</Text>
-      <Text dimColor>  ·  </Text>
-      <Text color={t.accent} underline>{id.slice(0, 12)}</Text>
-      <Text>  </Text>
+      <Text color={t.warn} bold>
+        · {staleLabel(lastActiveAt)}
+      </Text>
+      <Text dimColor> · </Text>
+      <Text color={t.accent} underline>
+        {id.slice(0, 12)}
+      </Text>
+      <Text> </Text>
       <Text color="green">[re-attach]</Text>
-      <Text dimColor>  </Text>
-      <Text color="cyan" underline>(Enter)</Text>
+      <Text dimColor> </Text>
+      <Text color="cyan" underline>
+        (Enter)
+      </Text>
     </Box>
   );
 };

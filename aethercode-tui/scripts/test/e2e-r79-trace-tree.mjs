@@ -25,8 +25,12 @@ const child = spawn(process.execPath, [acTui, "--line", "--jar", jar], {
 });
 
 let out = "";
-child.stdout.on("data", (chunk) => { out += chunk.toString(); });
-child.stderr.on("data", () => { /* ignore daemon stderr */ });
+child.stdout.on("data", (chunk) => {
+  out += chunk.toString();
+});
+child.stderr.on("data", () => {
+  /* ignore daemon stderr */
+});
 
 let stage = "init";
 let listSent = false;
@@ -36,7 +40,11 @@ function fail(msg, code = 1) {
   console.log(`✗ R79: ${msg}`);
   console.log("--- full output ---");
   console.log(out);
-  try { child.kill(); } catch { /* ignore */ }
+  try {
+    child.kill();
+  } catch {
+    /* ignore */
+  }
   process.exit(code);
 }
 
@@ -59,7 +67,9 @@ function tryAdvance() {
     const m = out.match(/getTraces → (\{[\s\S]*?\})\n/);
     if (m) {
       let snap;
-      try { snap = JSON.parse(m[1]); } catch (e) {
+      try {
+        snap = JSON.parse(m[1]);
+      } catch (e) {
         return fail("failed to parse getTraces JSON: " + e.message);
       }
       const traces = Array.isArray(snap.traces) ? snap.traces : [];
@@ -78,13 +88,17 @@ function tryAdvance() {
     if (m && !treeSent) {
       treeSent = true;
       let tree;
-      try { tree = JSON.parse(m[1]); } catch (e) {
+      try {
+        tree = JSON.parse(m[1]);
+      } catch (e) {
         return fail("failed to parse getTrace JSON: " + e.message);
       }
       const spans = Array.isArray(tree.spans) ? tree.spans : [];
       console.log(`[stage] tree: ${spans.length} spans`);
       for (const s of spans) {
-        console.log(`    ${s.parentSpanId ? "└─" : "  "} ${s.name} (${s.status}, ${s.durationMs}ms, parent=${s.parentSpanId ?? "null"})`);
+        console.log(
+          `    ${s.parentSpanId ? "└─" : "  "} ${s.name} (${s.status}, ${s.durationMs}ms, parent=${s.parentSpanId ?? "null"})`,
+        );
       }
       if (spans.length < 2) {
         return fail(`expected >= 2 spans, got ${spans.length}`);
@@ -98,7 +112,11 @@ function tryAdvance() {
         return fail("no span has parentSpanId equal to the root");
       }
       console.log("✓ R79: getTrace returns a proper tree (root + child + correct parent linkage)");
-      try { child.kill(); } catch { /* ignore */ }
+      try {
+        child.kill();
+      } catch {
+        /* ignore */
+      }
       process.exit(0);
     }
   }
@@ -106,7 +124,11 @@ function tryAdvance() {
 
 // Poll the buffer every 200ms.
 const id = setInterval(() => {
-  try { tryAdvance(); } catch (e) { fail("exception: " + e.message); }
+  try {
+    tryAdvance();
+  } catch (e) {
+    fail("exception: " + e.message);
+  }
 }, 200);
 
 setTimeout(() => {

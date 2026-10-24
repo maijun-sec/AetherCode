@@ -35,29 +35,46 @@ interface Props {
 /** Map a permission mode name to a foreground+background pair. */
 function modeStyle(mode: string): { fg: string; bg: string } {
   switch (mode.toUpperCase()) {
-    case "DEFAULT":   return { fg: "black",       bg: "yellowBright" };
-    case "AUTO":      return { fg: "black",       bg: "cyan" };
-    case "PLAN":      return { fg: "black",       bg: "magenta" };
-    case "ASK":       return { fg: "black",       bg: "yellowBright" };
-    case "ASK_BEFORE_TOOL": return { fg: "black", bg: "yellowBright" };
-    case "ACCEPT_EDITS":    return { fg: "black", bg: "green" };
-    case "ACCEPT_TASK":     return { fg: "black", bg: "green" };
-    case "DENY":      return { fg: "white",       bg: "red" };
-    case "BYPASS":    return { fg: "white",       bg: "red" };
-    case "BYPASS_PERMISSIONS": return { fg: "white", bg: "red" };
-    default:          return { fg: "black",       bg: "gray" };
+    case "DEFAULT":
+      return { fg: "black", bg: "yellowBright" };
+    case "AUTO":
+      return { fg: "black", bg: "cyan" };
+    case "PLAN":
+      return { fg: "black", bg: "magenta" };
+    case "ASK":
+      return { fg: "black", bg: "yellowBright" };
+    case "ASK_BEFORE_TOOL":
+      return { fg: "black", bg: "yellowBright" };
+    case "ACCEPT_EDITS":
+      return { fg: "black", bg: "green" };
+    case "ACCEPT_TASK":
+      return { fg: "black", bg: "green" };
+    case "DENY":
+      return { fg: "white", bg: "red" };
+    case "BYPASS":
+      return { fg: "white", bg: "red" };
+    case "BYPASS_PERMISSIONS":
+      return { fg: "white", bg: "red" };
+    default:
+      return { fg: "black", bg: "gray" };
   }
 }
 
 /** Map a permission mode name to a short UI label. */
 function modeLabel(mode: string): string {
   switch (mode.toUpperCase()) {
-    case "ACCEPT_TASK":        return "TASK";
-    case "ACCEPT_EDITS":       return "EDITS";
-    case "ASK_BEFORE_TOOL":    return "ASK";
-    case "BYPASS_PERMISSIONS": return "BYPASS";
-    case "AUTO_READ_ONLY":     return "READ";
-    default:                   return mode.toUpperCase();
+    case "ACCEPT_TASK":
+      return "TASK";
+    case "ACCEPT_EDITS":
+      return "EDITS";
+    case "ASK_BEFORE_TOOL":
+      return "ASK";
+    case "BYPASS_PERMISSIONS":
+      return "BYPASS";
+    case "AUTO_READ_ONLY":
+      return "READ";
+    default:
+      return mode.toUpperCase();
   }
 }
 
@@ -87,9 +104,7 @@ function shortCwd(p: string, maxLen: number = 28): string {
 
 export const Header: React.FC<Props> = ({ state, cwd }) => {
   // Connection pill (filled green when live, red ring when offline).
-  const connPill = state.connected
-    ? <Text color={t.ok}>●</Text>
-    : <Text color={t.err}>○</Text>;
+  const connPill = state.connected ? <Text color={t.ok}>●</Text> : <Text color={t.err}>○</Text>;
 
   // Mode pill (filled coloured badge — bg gives the pill look).
   const ms = modeStyle(state.permissionMode);
@@ -108,35 +123,40 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
   // today, so use the elapsed-since-mount approximation).
   // We approximate by tracking the last "init" event time. For now
   // we display "—" until that becomes a real daemon field.
-  const elapsed = state.uptimeStartedAt
-    ? formatRelative(state.uptimeStartedAt)
-    : "—";
+  const elapsed = state.uptimeStartedAt ? formatRelative(state.uptimeStartedAt) : "—";
 
   return (
     <Box flexDirection="column">
       {/* brand row: wordmark + version. only when viewport is wide enough. */}
       <Box paddingX={1}>
-        <Text color={t.brand} bold>{wordmark}</Text>
+        <Text color={t.brand} bold>
+          {wordmark}
+        </Text>
         <Text dimColor> v0.2.1</Text>
       </Box>
       {/* main status strip — single row, no border, just a rule below. */}
       <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
         <Box flexDirection="row">
           {/* model */}
-          <Text color={t.accent} bold>{icon.model} </Text>
+          <Text color={t.accent} bold>
+            {icon.model}{" "}
+          </Text>
           <Text>{state.model}</Text>
           {/* provider (when known — desktop surfaces this since R341; daemon
               hasn't shipped it on the wire yet, but the field is reserved). */}
           {state.provider ? (
             <>
-              <Text dimColor>  ·  </Text>
+              <Text dimColor> · </Text>
               <Text color={t.brand}>{icon.provider} </Text>
               <Text>{state.provider}</Text>
             </>
           ) : null}
           {/* mode badge */}
-          <Text dimColor>  ·  </Text>
-          <Text color={ms.fg} bold backgroundColor={ms.bg}> {modeShort} </Text>
+          <Text dimColor> · </Text>
+          <Text color={ms.fg} bold backgroundColor={ms.bg}>
+            {" "}
+            {modeShort}{" "}
+          </Text>
         </Box>
         <Box flexDirection="row">
           {/* ctx fill (only when known) */}
@@ -144,15 +164,15 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
             <>
               <Text color={ctx.color}>{ctx.glyph}</Text>
               <Text dimColor> {Math.round(ratio * 100)}%</Text>
-              <Text dimColor>  ·  </Text>
+              <Text dimColor> · </Text>
             </>
           ) : null}
           {/* session id */}
           <Text dimColor>{shortSession}</Text>
-          <Text dimColor>  ·  </Text>
+          <Text dimColor> · </Text>
           {/* connection dot */}
           {connPill}
-          <Text dimColor>  ·  </Text>
+          <Text dimColor> · </Text>
           {/* elapsed */}
           <Text dimColor>{elapsed}</Text>
         </Box>
@@ -161,7 +181,9 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
       <Text dimColor>{"─".repeat(Math.max(60, (cwd?.length ?? 0) + 12))}</Text>
       {/* cwd as a small caption below the rule (dim, max ~28 chars). */}
       <Box paddingX={1}>
-        <Text dimColor>{icon.path} {shortCwd(cwd)}</Text>
+        <Text dimColor>
+          {icon.path} {shortCwd(cwd)}
+        </Text>
       </Box>
     </Box>
   );

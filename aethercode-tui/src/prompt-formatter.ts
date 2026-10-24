@@ -83,11 +83,11 @@ export const FIRST_LINE_ELLIPSIS = "...";
 //  colouring does not bleed into subsequent columns.
 // ---------------------------------------------------------------------------
 
-export const COLOR_DEFAULT  = "\u001b[32m"; // green
-export const COLOR_RULES    = "\u001b[34m"; // blue
-export const COLOR_BUILDER  = "\u001b[33m"; // yellow
-export const COLOR_NEUTRAL  = "\u001b[90m"; // bright black / dark grey
-export const COLOR_RESET    = "\u001b[0m";
+export const COLOR_DEFAULT = "\u001b[32m"; // green
+export const COLOR_RULES = "\u001b[34m"; // blue
+export const COLOR_BUILDER = "\u001b[33m"; // yellow
+export const COLOR_NEUTRAL = "\u001b[90m"; // bright black / dark grey
+export const COLOR_RESET = "\u001b[0m";
 
 /**
  * pick a color for a source label. New sources
@@ -96,9 +96,9 @@ export const COLOR_RESET    = "\u001b[0m";
  */
 export function colorForSource(source: string | null | undefined): string {
   const s = (source ?? "").toLowerCase();
-  if (s.startsWith("rules"))    return COLOR_RULES;
-  if (s === "builder")          return COLOR_BUILDER;
-  if (s === "default")          return COLOR_DEFAULT;
+  if (s.startsWith("rules")) return COLOR_RULES;
+  if (s === "builder") return COLOR_BUILDER;
+  if (s === "default") return COLOR_DEFAULT;
   return COLOR_NEUTRAL;
 }
 
@@ -115,7 +115,7 @@ export const PATHS_DISPLAY_MAX = 3;
  *  / trailing "]" so the column is easy to scan. */
 export function formatPaths(paths: string[] | null | undefined): string {
   if (!Array.isArray(paths) || paths.length === 0) return "";
-  const basenames = paths.map(p => {
+  const basenames = paths.map((p) => {
     // Normalize: support both POSIX and Windows separators
     // (the loader may have produced backslashes on
     // Windows). Split on either, take the last segment.
@@ -135,12 +135,14 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
     return "system prompt: (no response)";
   }
   const sections = Array.isArray(result.sections) ? result.sections : [];
-  const totalChars = typeof result.totalChars === "number"
-    ? result.totalChars
-    : (typeof result.text === "string" ? result.text.length : 0);
-  const sectionCount = typeof result.sectionCount === "number"
-    ? result.sectionCount
-    : sections.length;
+  const totalChars =
+    typeof result.totalChars === "number"
+      ? result.totalChars
+      : typeof result.text === "string"
+        ? result.text.length
+        : 0;
+  const sectionCount =
+    typeof result.sectionCount === "number" ? result.sectionCount : sections.length;
 
   // the rules section now carries a `paths`
   // field. We pre-compute the rendered string per
@@ -158,10 +160,7 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
     return lines.join("\n");
   }
 
-  const nameWidth = Math.max(
-    "section".length,
-    ...sections.map((s) => (s.name ?? "?").length)
-  );
+  const nameWidth = Math.max("section".length, ...sections.map((s) => (s.name ?? "?").length));
   // Source column width is computed from the *plain*
   // source label — the ANSI color codes are zero-width
   // for length math but padEnd() doesn't know that, so
@@ -169,11 +168,9 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
   const plainSource = (s: string | null | undefined) => (s ?? "?").replace(/\u001b\[[0-9;]*m/g, "");
   const sourceWidth = Math.max(
     "source".length,
-    ...sections.map((s) => plainSource(s.source).length)
+    ...sections.map((s) => plainSource(s.source).length),
   );
-  const pathWidth = hasAnyPaths
-    ? Math.max("paths".length, ...pathCells.map((p) => p.length))
-    : 0;
+  const pathWidth = hasAnyPaths ? Math.max("paths".length, ...pathCells.map((p) => p.length)) : 0;
   let header = `  ${"section".padEnd(nameWidth)}  ${"source".padEnd(sourceWidth)}  length`;
   if (hasAnyPaths) header += `  ${"paths".padEnd(pathWidth)}`;
   header += "  first line";
@@ -184,9 +181,10 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
     const source = s.source ?? "?";
     const length = typeof s.length === "number" ? s.length : 0;
     const firstLine = (s.firstLine ?? "").replace(/\s+/g, " ").trim();
-    const truncated = firstLine.length > FIRST_LINE_MAX
-      ? firstLine.slice(0, FIRST_LINE_KEEP) + FIRST_LINE_ELLIPSIS
-      : firstLine;
+    const truncated =
+      firstLine.length > FIRST_LINE_MAX
+        ? firstLine.slice(0, FIRST_LINE_KEEP) + FIRST_LINE_ELLIPSIS
+        : firstLine;
     // source is color-coded. The colored string
     // is laid out so the visible characters line up
     // with the header's sourceWidth. padEnd() pads
@@ -228,7 +226,7 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
  * {@link formatSystemPrompt}.
  */
 export function formatSystemPromptSection(
-  result: SystemPromptSectionResponse | null | undefined
+  result: SystemPromptSectionResponse | null | undefined,
 ): string {
   if (!result || typeof result !== "object") {
     return "system prompt section: (no response)";

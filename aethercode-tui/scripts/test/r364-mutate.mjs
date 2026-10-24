@@ -26,7 +26,6 @@ const T = {
   commands: join(root, "src", "commands.ts"),
 };
 
-
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
 // and the failures would belong to neither round. See
@@ -36,44 +35,108 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(T).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(T).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(T).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
-  const r = spawnSync(process.execPath, ["--test", join(here, "r364-cwd-rpc.test.mjs")],
-    { encoding: "utf-8", cwd: root });
+  const r = spawnSync(process.execPath, ["--test", join(here, "r364-cwd-rpc.test.mjs")], {
+    encoding: "utf-8",
+    cwd: root,
+  });
   const out = (r.stdout ?? "") + (r.stderr ?? "");
   const m = out.match(/^ℹ fail (\d+)$/m);
   return { fail: m ? Number(m[1]) : -1, out };
 }
 
 const CASES = [
-  ["rename the CwdSwitcher call back to the Tauri name",
-    "tui", (s) => s.replace('.request("switchProject", { cwd: path } as RpcValue)',
-      '.request("setCwd", { cwd: path } as RpcValue)')],
-  ["rename the ThreadSelector call back to the Tauri name",
-    "tui", (s) => s.replace('.request("switchProject", { cwd: target.cwd } as RpcValue)',
-      '.request("setCwd", { cwd: target.cwd } as RpcValue)')],
-  ["a 'consistency' refactor drags /cwd back to the broken name",
-    "commands", (s) => s.replace('rpcMethod: "switchProject"', 'rpcMethod: "setCwd"')],
-  ["drop the cwd_changed handler (Ink)",
-    "tui", (s) => s.replace(/case "cwd_changed": \{[\s\S]*?\n        \}\n(?=        case "stream_event": \{)/,
-      'case "stream_event": {')],
-  ["drop the cwd_changed handler (line mode)",
-    "line", (s) => s.replace(/\} else if \(method === "cwd_changed"\) \{[\s\S]*?\n    \} else if \(method === "log"\)/,
-      '} else if (method === "log")')],
-  ["render the launch cwd prop again (Header pill goes stale)",
-    "tui", (s) => s.replace("<Header state={state} cwd={currentCwd} />", "<Header state={state} cwd={cwd} />")],
-  ["send the launch cwd to sdd.status",
-    "tui", (s) => s.replace('"sdd.status", { slug: sddSlug, cwd: currentCwd }', '"sdd.status", { slug: sddSlug, cwd }')],
-  ["stop reconciling against the daemon at startup (Ink)",
-    "tui", (s) => s.replace(/"listProjects"/, '"listProjectsDISABLED"')],
-  ["stop reconciling against the daemon at startup (line)",
-    "line", (s) => s.replace('await client.request("listProjects")', 'await client.request("listProjectsDISABLED")')],
-  ["rename the action back to setCwd",
-    "state", (s) => s.replace('type: "setCurrentCwd"; cwd: string', 'type: "setCwd"; cwd: string')],
-  ["let a blank cwd wipe the current one",
-    "state", (s) => s.replace('if (!next || next === state.cwd) return state;', 'if (next === state.cwd) return state;')],
-  ["re-assert the false 'unavailable' claim for the cwd panel",
+  [
+    "rename the CwdSwitcher call back to the Tauri name",
+    "tui",
+    (s) =>
+      s.replace(
+        '.request("switchProject", { cwd: path } as RpcValue)',
+        '.request("setCwd", { cwd: path } as RpcValue)',
+      ),
+  ],
+  [
+    "rename the ThreadSelector call back to the Tauri name",
+    "tui",
+    (s) =>
+      s.replace(
+        '.request("switchProject", { cwd: target.cwd } as RpcValue)',
+        '.request("setCwd", { cwd: target.cwd } as RpcValue)',
+      ),
+  ],
+  [
+    "a 'consistency' refactor drags /cwd back to the broken name",
+    "commands",
+    (s) => s.replace('rpcMethod: "switchProject"', 'rpcMethod: "setCwd"'),
+  ],
+  [
+    "drop the cwd_changed handler (Ink)",
+    "tui",
+    (s) =>
+      s.replace(
+        /case "cwd_changed": \{[\s\S]*?\n        \}\n(?=        case "stream_event": \{)/,
+        'case "stream_event": {',
+      ),
+  ],
+  [
+    "drop the cwd_changed handler (line mode)",
+    "line",
+    (s) =>
+      s.replace(
+        /\} else if \(method === "cwd_changed"\) \{[\s\S]*?\n    \} else if \(method === "log"\)/,
+        '} else if (method === "log")',
+      ),
+  ],
+  [
+    "render the launch cwd prop again (Header pill goes stale)",
+    "tui",
+    (s) =>
+      s.replace("<Header state={state} cwd={currentCwd} />", "<Header state={state} cwd={cwd} />"),
+  ],
+  [
+    "send the launch cwd to sdd.status",
+    "tui",
+    (s) =>
+      s.replace(
+        /"sdd\.status",\s*\{ slug: sddSlug, cwd: currentCwd \}/,
+        '"sdd.status", { slug: sddSlug, cwd }',
+      ),
+  ],
+  [
+    "stop reconciling against the daemon at startup (Ink)",
+    "tui",
+    (s) => s.replace(/"listProjects"/, '"listProjectsDISABLED"'),
+  ],
+  [
+    "stop reconciling against the daemon at startup (line)",
+    "line",
+    (s) =>
+      s.replace(
+        'await client.request("listProjects")',
+        'await client.request("listProjectsDISABLED")',
+      ),
+  ],
+  [
+    "rename the action back to setCwd",
+    "state",
+    (s) => s.replace('type: "setCurrentCwd"; cwd: string', 'type: "setCwd"; cwd: string'),
+  ],
+  [
+    "let a blank cwd wipe the current one",
+    "state",
+    (s) =>
+      s.replace(
+        "if (!next || next === state.cwd) return state;",
+        "if (next === state.cwd) return state;",
+      ),
+  ],
+  [
+    "re-assert the false 'unavailable' claim for the cwd panel",
     // SCOPED to the cwd-switcher entry. A bare
     // `.replace("ink: 'mounted',\n    line: 'rendered'", ...)` replaces the
     // FIRST match in the file — and after R365 several rows share that
@@ -81,8 +144,13 @@ const CASES = [
     // `memory-panel` instead. Same failure mode as the r364 battery's
     // own `listProjects` case: a mutation that changes the wrong object
     // "passes" because it was never testing the thing it named.
-    "intents", (s) => s.replace(/(id: 'cwd-switcher',[\s\S]*?)ink: 'mounted',\n(\s*)line: 'rendered',/,
-      "$1ink: 'unavailable',\n$2line: 'unavailable',")],
+    "intents",
+    (s) =>
+      s.replace(
+        /(id: ["']cwd-switcher["'],[\s\S]*?)ink: (["'])mounted\2,\n(\s*)line: (["'])rendered\4/,
+        "$1ink: $2unavailable$2,\n$3line: $4unavailable$4,",
+      ),
+  ],
 ];
 
 console.log(`r364 mutation battery — ${CASES.length} cases\n`);
@@ -100,7 +168,9 @@ for (const [name, key, mutate] of CASES) {
     continue;
   }
   if (after === before) {
-    console.log(`  ??  ${name}\n      NO-OP — the pattern did not match, so the gate is not testing anything`);
+    console.log(
+      `  ??  ${name}\n      NO-OP — the pattern did not match, so the gate is not testing anything`,
+    );
     holes++;
     continue;
   }
@@ -120,6 +190,8 @@ for (const [k, p] of Object.entries(T)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

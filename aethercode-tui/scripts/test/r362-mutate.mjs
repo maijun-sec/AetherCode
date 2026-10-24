@@ -31,7 +31,6 @@ const PATHS = {
   tui: join(root, "src", "tui.tsx"),
 };
 
-
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
 // and the failures would belong to neither round. See
@@ -41,7 +40,10 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(PATHS).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -51,27 +53,52 @@ function runGate() {
 }
 
 const CASES = [
-  ["delete the __HISTORY__ handler from BOTH renderers",
-    [["line", (s) => s.split("__HISTORY__").join("__REMOVED__")],
-     ["tui", (s) => s.split("__HISTORY__").join("__REMOVED__")]]],
+  [
+    "delete the __HISTORY__ handler from BOTH renderers",
+    [
+      ["line", (s) => s.split("__HISTORY__").join("__REMOVED__")],
+      ["tui", (s) => s.split("__HISTORY__").join("__REMOVED__")],
+    ],
+  ],
 
-  ["revert emittedSentinels to the two narrow regexes",
+  [
+    "revert emittedSentinels to the two narrow regexes",
     // The gate had `local:\s*[`'"](__[A-Z_0-9]+__)[`'"]` (needs a closing
     // quote) plus a backtick-only variant. Between them they miss every
     // `local: "__X__:value"` form — 9 sentinels the user can trigger.
-    [["gate", (s) => s.replace(
-      /for \(const m of commandsSrc\.matchAll\(\/local:\\s\*\[`'"\]\(__\[A-Z_0-9\]\+__\)\/g\)\) emitted\.add\(m\[1\]\);/,
-      'for (const m of commandsSrc.matchAll(/local:\\s*[`\'"](__[A-Z_0-9]+__)[`\'"]/g)) emitted.add(m[1]);\n  for (const m of commandsSrc.matchAll(/local:\\s*`(__[A-Z_0-9]+__)/g)) emitted.add(m[1]);',
-    )]]],
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            /for \(const m of commandsSrc\.matchAll\(\/local:\\s\*\[`'"\]\(__\[A-Z_0-9\]\+__\)\/g\)\) emitted\.add\(m\[1\]\);/,
+            "for (const m of commandsSrc.matchAll(/local:\\s*[`'\"](__[A-Z_0-9]+__)[`'\"]/g)) emitted.add(m[1]);\n  for (const m of commandsSrc.matchAll(/local:\\s*`(__[A-Z_0-9]+__)/g)) emitted.add(m[1]);",
+          ),
+      ],
+    ],
+  ],
 
-  ["add a bogus family to INLINE_FAMILIES",
+  [
+    "add a bogus family to INLINE_FAMILIES",
     // An allowlist entry for a sentinel nobody emits is suppression
     // waiting to happen. The `unused families` assertion is the only
     // thing that notices.
-    [["gate", (s) => s.replace('"SDD", "MEMORY_AUDIT", "PICK_MODE",', '"SDD", "MEMORY_AUDIT", "PICK_MODE", "NEVER_EMITTED_XYZ",')]]],
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            /"SDD",\s*"MEMORY_AUDIT",\s*"PICK_MODE",/,
+            '"SDD", "MEMORY_AUDIT", "PICK_MODE", "NEVER_EMITTED_XYZ",',
+          ),
+      ],
+    ],
+  ],
 
-  ["drop the 'unused families' assertion entirely",
-    [["gate", (s) => s.replace(/const unused = INLINE_FAMILIES\.filter\([\s\S]*?\n\s*\}\);\n/, "")]]],
+  [
+    "drop the 'unused families' assertion entirely",
+    [["gate", (s) => s.replace(/const unused = INLINE_FAMILIES\.filter\([^;]*\);\n/, "")]],
+  ],
 ];
 
 console.log(`r362 mutation battery — ${CASES.length} cases\n`);
@@ -84,13 +111,19 @@ for (const [name, edits] of CASES) {
     const before = original[key];
     const after = mutate(before);
     if (after === before) {
-      console.log(`  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`);
+      console.log(
+        `  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`,
+      );
       noop = true;
       break;
     }
     applied.push([key, before, after]);
   }
-  if (noop) { holes++; restore(applied); continue; }
+  if (noop) {
+    holes++;
+    restore(applied);
+    continue;
+  }
 
   for (const [key, , after] of applied) writeFileSync(PATHS[key], after, "utf-8");
   const { fail, out } = runGate();
@@ -126,6 +159,8 @@ for (const [k, p] of Object.entries(PATHS)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

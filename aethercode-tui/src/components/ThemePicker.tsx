@@ -141,25 +141,24 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
   });
 
   // Scroll window — keep the highlighted row visible.
-  const start = Math.max(0, Math.min(highlight - Math.floor(maxVisible / 2), themes.length - maxVisible));
+  const start = Math.max(
+    0,
+    Math.min(highlight - Math.floor(maxVisible / 2), themes.length - maxVisible),
+  );
   const end = Math.min(themes.length, start + maxVisible);
   const visible = themes.slice(start, end);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title} picker</Text>
-        <Text dimColor>  ↑/↓ (j/k): navigate  Enter: select  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title} picker
+        </Text>
+        <Text dimColor> ↑/↓ (j/k): navigate Enter: select Esc: close</Text>
       </Box>
       <Text> </Text>
       {themes.length === 0 ? (
-        <Text dimColor>  no themes available</Text>
+        <Text dimColor> no themes available</Text>
       ) : (
         visible.map((t, i) => {
           const realIndex = start + i;
@@ -167,12 +166,8 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
           const isActive = t.name === current;
           return (
             <Box key={t.name} flexDirection="row">
-              <Text color={isHighlighted ? "cyan" : undefined}>
-                {isHighlighted ? "▶" : " "}{" "}
-              </Text>
-              <Text color={isActive ? "yellowBright" : undefined}>
-                {isActive ? "●" : " "}{" "}
-              </Text>
+              <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
+              <Text color={isActive ? "yellowBright" : undefined}>{isActive ? "●" : " "} </Text>
               <Text>
                 <Text bold={isHighlighted}>{t.name.padEnd(18)}</Text>
                 <Text dimColor> </Text>
@@ -187,7 +182,10 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
         })
       )}
       {themes.length > maxVisible ? (
-        <Text dimColor>  {start + 1}–{end} of {themes.length}</Text>
+        <Text dimColor>
+          {" "}
+          {start + 1}–{end} of {themes.length}
+        </Text>
       ) : null}
     </Box>
   );

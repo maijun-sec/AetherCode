@@ -22,7 +22,7 @@ const root = join(here, "..", "..");
 
 // ----- 1. Source-code assertions: StatusBar.tsx ---------------------
 
-test("R167: StatusBar no longer uses borderStyle=\"single\" (no box border)", () => {
+test('R167: StatusBar no longer uses borderStyle="single" (no box border)', () => {
   const src = readFileSync(join(root, "src", "components", "StatusBar.tsx"), "utf-8");
   // The pre-R167 implementation rendered the bar inside a
   // <Box borderStyle="single" borderColor={...}> ... </Box>.
@@ -41,8 +41,11 @@ test("R167: StatusBar no longer uses borderStyle=\"single\" (no box border)", ()
   const fnEnd = afterJsdoc.indexOf("\n};", fnStart);
   assert.ok(fnEnd > 0, "could not find function end");
   const body = afterJsdoc.slice(fnStart, fnEnd);
-  assert.doesNotMatch(body, /borderStyle=/,
-    "StatusBar body still uses borderStyle — R167 should remove it");
+  assert.doesNotMatch(
+    body,
+    /borderStyle=/,
+    "StatusBar body still uses borderStyle — R167 should remove it",
+  );
 });
 
 test("R167: StatusBar uses a left-edge accent character (▌)", () => {
@@ -69,7 +72,7 @@ test("R167: StatusBar renders a horizontal rule (─) above the bar", () => {
   assert.match(body, /["']─["']\.repeat\(/);
 });
 
-test("R167: StatusBar uses flexDirection=\"column\" (rule + content)", () => {
+test('R167: StatusBar uses flexDirection="column" (rule + content)', () => {
   const src = readFileSync(join(root, "src", "components", "StatusBar.tsx"), "utf-8");
   const jsdocEnd = src.indexOf("*/\n");
   const afterJsdoc = src.slice(jsdocEnd);

@@ -139,16 +139,11 @@ export class JsonRpcClient {
    *  reconnection manager to attempt a fresh connect. */
   public onForceReconnect: (() => void) | null = null;
 
-  constructor(
-    config: JsonRpcClientConfig = {},
-    deps: JsonRpcClientDeps = {}
-  ) {
+  constructor(config: JsonRpcClientConfig = {}, deps: JsonRpcClientDeps = {}) {
     const transport = config.transport ?? "auto";
     const socketPath =
       config.socketPath ??
-      (transport === "pipe"
-        ? "\\\\.\\pipe\\aethercode-supervisor"
-        : defaultSocketPath());
+      (transport === "pipe" ? "\\\\.\\pipe\\aethercode-supervisor" : defaultSocketPath());
     this.cfg = {
       socketPath,
       transport,
@@ -204,18 +199,22 @@ export class JsonRpcClient {
     sock.on("error", (err) => this.handleError(err));
     sock.on("close", () => this.handleClose("peer closed"));
     if (typeof (sock as any).setNoDelay === "function") {
-      try { (sock as any).setNoDelay(true); } catch { /* ignore */ }
+      try {
+        (sock as any).setNoDelay(true);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   /** Open the underlying socket. Idempotent. */
   connect(): void {
     if (this.stopped) return;
-    if (this.socket) return;  // already connected (or connecting)
+    if (this.socket) return; // already connected (or connecting)
     if (!this.cfg.socketFactory) {
       throw new Error(
         "JsonRpcClient.connect: no socketFactory configured " +
-        "(test the client by injecting a MockRpcServer via deps.socketFactory)"
+          "(test the client by injecting a MockRpcServer via deps.socketFactory)",
       );
     }
     const sock = this.cfg.socketFactory();
@@ -241,7 +240,11 @@ export class JsonRpcClient {
   /** Send a JSON-RPC request and await the typed result.
    *  Throws `RpcCallError` on a JSON-RPC error envelope,
    *  a timeout, or a socket close mid-flight. */
-  request<T = RpcValue>(method: string, params?: RpcValue, opts: { timeoutMs?: number } = {}): Promise<T> {
+  request<T = RpcValue>(
+    method: string,
+    params?: RpcValue,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.connect();
       const id = this.nextId++;
@@ -256,11 +259,13 @@ export class JsonRpcClient {
       if (timeoutMs > 0) {
         pending.timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(new RpcCallError({
-            code: -32000,
-            message: `timeout after ${timeoutMs}ms`,
-            method,
-          }));
+          reject(
+            new RpcCallError({
+              code: -32000,
+              message: `timeout after ${timeoutMs}ms`,
+              method,
+            }),
+          );
         }, timeoutMs);
       }
       this.pending.set(id, pending);
@@ -292,7 +297,9 @@ export class JsonRpcClient {
     const n: RpcNotification = { jsonrpc: "2.0", method, params };
     try {
       sock.write(JSON.stringify(n) + "\n");
-    } catch { /* ignore — the socket's error handler will reject pending requests */ }
+    } catch {
+      /* ignore — the socket's error handler will reject pending requests */
+    }
   }
 
   /** Disconnect cleanly. After `disconnect()`, the client
@@ -309,8 +316,16 @@ export class JsonRpcClient {
       lastError: "user stopped",
     });
     if (this.socket) {
-      try { this.socket.end(); } catch { /* ignore */ }
-      try { this.socket.destroy(); } catch { /* ignore */ }
+      try {
+        this.socket.end();
+      } catch {
+        /* ignore */
+      }
+      try {
+        this.socket.destroy();
+      } catch {
+        /* ignore */
+      }
       this.socket = null;
     }
   }
@@ -326,7 +341,7 @@ export class JsonRpcClient {
 
   private setState(
     next: ConnectionState,
-    info?: { attempt: number; lastError: string | null }
+    info?: { attempt: number; lastError: string | null },
   ): void {
     this.state = next;
     if (next === "connected") {
@@ -339,7 +354,9 @@ export class JsonRpcClient {
           lastError: info?.lastError ?? null,
           at: Date.now(),
         });
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -374,7 +391,11 @@ export class JsonRpcClient {
         // Don't let a bad handler tear down the socket.
         // We log to stderr in case the host is collecting
         // diagnostics.
-        try { process.stderr.write(`[rpc] onNotification threw: ${(e as Error).message}\n`); } catch { /* ignore */ }
+        try {
+          process.stderr.write(`[rpc] onNotification threw: ${(e as Error).message}\n`);
+        } catch {
+          /* ignore */
+        }
       }
       return;
     }
@@ -384,21 +405,26 @@ export class JsonRpcClient {
     this.pending.delete(r.id);
     if (p.timer) clearTimeout(p.timer);
     if ("error" in r) {
-      p.reject(new RpcCallError({
-        code: r.error.code,
-        message: r.error.message,
-        data: r.error.data as RpcValue,
-        method: p.method,
-      }));
+      p.reject(
+        new RpcCallError({
+          code: r.error.code,
+          message: r.error.message,
+          data: r.error.data as RpcValue,
+          method: p.method,
+        }),
+      );
     } else {
       p.resolve((r as RpcSuccess<RpcValue>).result);
     }
   }
 
   private isNotification(msg: any): msg is RpcNotification {
-    return msg && typeof msg === "object"
-      && typeof msg.method === "string"
-      && (msg.id === undefined || msg.id === null);
+    return (
+      msg &&
+      typeof msg === "object" &&
+      typeof msg.method === "string" &&
+      (msg.id === undefined || msg.id === null)
+    );
   }
 
   private handleError(err: Error): void {
@@ -406,11 +432,13 @@ export class JsonRpcClient {
       attempt: this.connectAttempt,
       lastError: err.message,
     });
-    this.failPending(new RpcCallError({
-      code: -32000,
-      message: `socket error: ${err.message}`,
-      method: "(any)",
-    }));
+    this.failPending(
+      new RpcCallError({
+        code: -32000,
+        message: `socket error: ${err.message}`,
+        method: "(any)",
+      }),
+    );
   }
 
   private handleClose(reason: string): void {
@@ -433,11 +461,17 @@ export class JsonRpcClient {
 
   private failPending(err: Error): void {
     const list: Pending[] = [];
-    this.pending.forEach((p) => { list.push(p); });
+    this.pending.forEach((p) => {
+      list.push(p);
+    });
     this.pending.clear();
     for (const p of list) {
       if (p.timer) clearTimeout(p.timer);
-      try { p.reject(err); } catch { /* ignore */ }
+      try {
+        p.reject(err);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -462,7 +496,7 @@ export const defaultRpcClient = new JsonRpcClient();
  *  client. Mirrors the desktop's `setAutoReconnect`. */
 export function attachReconnectHooks(
   client: JsonRpcClient,
-  hooks: { onSocketClosed: (reason: string) => void; onForceReconnect: () => void }
+  hooks: { onSocketClosed: (reason: string) => void; onForceReconnect: () => void },
 ): void {
   client.onSocketClosed = hooks.onSocketClosed;
   client.onForceReconnect = hooks.onForceReconnect;

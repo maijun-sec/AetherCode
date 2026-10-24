@@ -89,7 +89,15 @@ export function homePrefixed(cwd: string, home: string | null = null): string {
 
 /** T-443: a single label/value row, padded to a
  *  consistent width for visual alignment. */
-function Row({ label, value, color }: { label: string; value: string; color?: string }): React.ReactElement {
+function Row({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}): React.ReactElement {
   return (
     <Box>
       <Text dimColor>{label.padEnd(11, " ")}</Text>
@@ -136,33 +144,24 @@ export const WelcomeBanner: React.FC<Props> = (info) => {
   if (!hideVersion && editableInstall) titleBits.push("(local)");
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={t.brand}
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="round" borderColor={t.brand} paddingX={2} paddingY={1}>
       <Text>
-        <Text color={t.brand} bold>{titleBits[0]}</Text>
+        <Text color={t.brand} bold>
+          {titleBits[0]}
+        </Text>
         {titleBits.slice(1).map((b, i) => (
-          <Text key={i} color={t.brand}>  {b}</Text>
+          <Text key={i} color={t.brand}>
+            {" "}
+            {b}
+          </Text>
         ))}
       </Text>
 
       {showModel && modelName ? (
-        <Row
-          label="model:"
-          value={modelProvider ? `${modelProvider}:${modelName}` : modelName}
-        />
+        <Row label="model:" value={modelProvider ? `${modelProvider}:${modelName}` : modelName} />
       ) : null}
 
-      {showCwd && cwd && !hideCwd ? (
-        <Row
-          label="directory:"
-          value={homePrefixed(cwd)}
-        />
-      ) : null}
+      {showCwd && cwd && !hideCwd ? <Row label="directory:" value={homePrefixed(cwd)} /> : null}
 
       {projectName ? (
         <Row
@@ -185,15 +184,10 @@ export const WelcomeBanner: React.FC<Props> = (info) => {
       ) : null}
 
       {showThreadId && threadId ? (
-        <Row
-          label="thread:"
-          value={`${threadId} (open in langsmith)`}
-        />
+        <Row label="thread:" value={`${threadId} (open in langsmith)`} />
       ) : null}
 
-      {mcpToolCount > 0 ? (
-        <Row label="mcp tools:" value={`${mcpToolCount} loaded`} />
-      ) : null}
+      {mcpToolCount > 0 ? <Row label="mcp tools:" value={`${mcpToolCount} loaded`} /> : null}
 
       {mcpUnauthenticated > 0 ? (
         <Row label="mcp login:" value={`${mcpUnauthenticated} awaiting login`} color={t.warn} />
@@ -204,12 +198,14 @@ export const WelcomeBanner: React.FC<Props> = (info) => {
       ) : null}
 
       {mcpAwaitingReconnect > 0 ? (
-        <Row label="mcp reconnect:" value={`${mcpAwaitingReconnect} awaiting reconnect`} color={t.dim} />
+        <Row
+          label="mcp reconnect:"
+          value={`${mcpAwaitingReconnect} awaiting reconnect`}
+          color={t.dim}
+        />
       ) : null}
 
-      {editableInstall && !hideCwd ? (
-        <Text dimColor>  (running from editable install)</Text>
-      ) : null}
+      {editableInstall && !hideCwd ? <Text dimColor> (running from editable install)</Text> : null}
 
       <Text dimColor>
         {icon.arrow} type a prompt below · / for commands · @ for files · Ctrl-? for shortcuts

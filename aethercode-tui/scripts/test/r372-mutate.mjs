@@ -27,7 +27,6 @@ const PATHS = {
   state: join(root, "src", "state.ts"),
 };
 
-
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
 // and the failures would belong to neither round. See
@@ -37,7 +36,10 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(PATHS).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -48,133 +50,310 @@ function runGate() {
 
 const CASES = [
   // --- the three inventions the module refuses --------------------------
-  ["replayed tool calls claim a duration",
-    [["hyd", (s) => s.replace(
-      "          toolStatus: \"ok\",\n          ts,",
-      "          toolStatus: \"ok\",\n          toolStartedAt: ts,\n          toolEndedAt: ts + 1,\n          ts,")]]],
+  [
+    "replayed tool calls claim a duration",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            /toolStatus: "ok",\n\s*ts,/,
+            '          toolStatus: "ok",\n          toolStartedAt: ts,\n          toolEndedAt: ts + 1,\n          ts,',
+          ),
+      ],
+    ],
+  ],
 
-  ["a tool call with no result is reported as a clean success",
-    [["hyd", (s) => s.replace(
-      '      turn.toolResult = "(no recorded result — the run was interrupted)";',
-      '      turn.toolResult = "";')]]],
+  [
+    "a tool call with no result is reported as a clean success",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            '      turn.toolResult = "(no recorded result — the run was interrupted)";',
+            '      turn.toolResult = "";',
+          ),
+      ],
+    ],
+  ],
 
-  ["the count of messages left out is dropped",
-    [["hyd", (s) => s.replace(
-      "  return { turns, totalMessages, replayedMessages: slice.length };",
-      "  return { turns, totalMessages: slice.length, replayedMessages: slice.length };")]]],
+  [
+    "the count of messages left out is dropped",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "  return { turns, totalMessages, replayedMessages: slice.length };",
+            "  return { turns, totalMessages: slice.length, replayedMessages: slice.length };",
+          ),
+      ],
+    ],
+  ],
 
   // --- pairing -----------------------------------------------------------
-  ["a tool_result becomes its own turn",
-    [["hyd", (s) => s.replace(
-      '        // Handled in the second pass — the owning tool_use is in an\n        // earlier message.\n        continue;',
-      '        turns.push({ id: nextId++, role: "tool", text: toolResultText(b.content), ts, collapsed: true, previewChars: 80 });')]]],
+  [
+    "a tool_result becomes its own turn",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "        // Handled in the second pass — the owning tool_use is in an\n        // earlier message.\n        continue;",
+            '        turns.push({ id: nextId++, role: "tool", text: toolResultText(b.content), ts, collapsed: true, previewChars: 80 });',
+          ),
+      ],
+    ],
+  ],
 
-  ["the tool_result is never matched to its tool_use",
-    [["hyd", (s) => s.replace(
-      "      const turn = owner.get(useId);\n      if (!turn) continue;",
-      "      const turn = undefined;\n      if (!turn) continue;")]]],
+  [
+    "the tool_result is never matched to its tool_use",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "      const turn = owner.get(useId);\n      if (!turn) continue;",
+            "      const turn = undefined;\n      if (!turn) continue;",
+          ),
+      ],
+    ],
+  ],
 
   // The first draft aimed this at a transcript whose ONLY message is
   // the orphan. There, `turns[turns.length - 1]` is undefined and the
   // behaviour is unchanged — the case passed against broken code. The
   // mutation only differs when the orphan FOLLOWS a real call, which
   // is the case that can contaminate it.
-  ["an orphan tool_result overwrites the previous call's result",
-    [["hyd", (s) => s.replace(
-      "      const turn = owner.get(useId);\n      if (!turn) continue;",
-      "      const turn = turns[turns.length - 1];\n      if (!turn) continue;")]]],
+  [
+    "an orphan tool_result overwrites the previous call's result",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "      const turn = owner.get(useId);\n      if (!turn) continue;",
+            "      const turn = turns[turns.length - 1];\n      if (!turn) continue;",
+          ),
+      ],
+    ],
+  ],
 
-  ["the error flag is dropped (every tool reports ok)",
-    [["hyd", (s) => s.replace(
-      'turn.toolStatus = b.isError === true ? "error" : "ok";',
-      'turn.toolStatus = "ok";')]]],
+  [
+    "the error flag is dropped (every tool reports ok)",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            'turn.toolStatus = b.isError === true ? "error" : "ok";',
+            'turn.toolStatus = "ok";',
+          ),
+      ],
+    ],
+  ],
 
   // --- shapes ------------------------------------------------------------
-  ["the wrapped envelope is not unwrapped",
-    [["hyd", (s) => s.replace(
-      "    if (Array.isArray(r.messages)) return r.messages;",
-      "    if (Array.isArray(r.messages)) return [];")]]],
+  [
+    "the wrapped envelope is not unwrapped",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "    if (Array.isArray(r.messages)) return r.messages;",
+            "    if (Array.isArray(r.messages)) return [];",
+          ),
+      ],
+    ],
+  ],
 
-  ["an unrecognised tool_result shape is dropped instead of stringified",
-    [["hyd", (s) => s.replace(
-      "    try {\n      return JSON.stringify(content);\n    } catch {\n      return \"\";\n    }",
-      "    return \"\";")]]],
+  [
+    "an unrecognised tool_result shape is dropped instead of stringified",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            '    try {\n      return JSON.stringify(content);\n    } catch {\n      return "";\n    }',
+            '    return "";',
+          ),
+      ],
+    ],
+  ],
 
   // The first draft added a guard on `Array.isArray(part)` — but
   // `part` is an ELEMENT of the array and never an array itself, so
   // the guard could never fire and the case passed against broken
   // code. Short-circuit the array branch where it actually is.
-  ["the Anthropic content-block array is not read",
-    [["hyd", (s) => s.replace(
-      "  if (Array.isArray(content)) {",
-      "  if (Array.isArray(content)) { return \"\";")]]],
+  [
+    "the Anthropic content-block array is not read",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "  if (Array.isArray(content)) {",
+            '  if (Array.isArray(content)) { return "";',
+          ),
+      ],
+    ],
+  ],
 
-  ["blank text blocks produce turns",
-    [["hyd", (s) => s.replace(
-      "        if (text.trim().length === 0) continue;",
-      "        if (false) continue;")]]],
+  [
+    "blank text blocks produce turns",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "        if (text.trim().length === 0) continue;",
+            "        if (false) continue;",
+          ),
+      ],
+    ],
+  ],
 
-  ["a missing timestamp becomes a plausible number",
-    [["hyd", (s) => s.replace(
-      "      : 0;",
-      "      : Date.now();")]]],
+  [
+    "a missing timestamp becomes a plausible number",
+    [["hyd", (s) => s.replace(/\? msg\.timestamp : 0;/, "? msg.timestamp : Date.now();")]],
+  ],
 
   // --- the tail, not the head -------------------------------------------
-  ["the replay keeps the OLDEST messages",
-    [["hyd", (s) => s.replace(
-      "  const from = Math.max(0, totalMessages - Math.max(1, limit));",
-      "  const from = 0;")]]],
+  [
+    "the replay keeps the OLDEST messages",
+    [
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            "  const from = Math.max(0, totalMessages - Math.max(1, limit));",
+            "  const from = 0;",
+          ),
+      ],
+    ],
+  ],
 
-  ["the replay limit is ignored",
-    [["hyd", (s) => s.replace(
-      "  const slice = all.slice(from);",
-      "  const slice = all;")]]],
+  [
+    "the replay limit is ignored",
+    [["hyd", (s) => s.replace("  const slice = all.slice(from);", "  const slice = all;")]],
+  ],
 
   // --- wiring ------------------------------------------------------------
-  ["the Ink picker stops reading the transcript",
-    [["tui", (s) => s.replace(
-      '.request("getTranscript", {} as RpcValue)',
-      '.request("getNothing", {} as RpcValue)')]]],
+  [
+    "the Ink picker stops reading the transcript",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            '.request("getTranscript", {} as RpcValue)',
+            '.request("getNothing", {} as RpcValue)',
+          ),
+      ],
+    ],
+  ],
 
-  ["line mode stops reading the transcript",
-    [["line", (s) => s.replace(
-      'await probe(ctx, "getTranscript")',
-      'await probe(ctx, "getNothing")')]]],
+  [
+    "line mode stops reading the transcript",
+    [
+      [
+        "line",
+        (s) => s.replace('await probe(ctx, "getTranscript")', 'await probe(ctx, "getNothing")'),
+      ],
+    ],
+  ],
 
-  ["the replay is fetched but not adopted (the scrollback is cleared and never refilled)",
-    [["tui", (s) => s.replace(
-      'dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
-      'dispatch({ type: "adoptSession", sessionId: adopted });')]]],
+  [
+    "the replay is fetched but not adopted (the scrollback is cleared and never refilled)",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            'dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
+            'dispatch({ type: "adoptSession", sessionId: adopted });',
+          ),
+      ],
+    ],
+  ],
 
-  ["the switch is adopted twice (one dispatch leaves an empty scrollback)",
-    [["tui", (s) => s.replace(
-      'dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
-      'dispatch({ type: "adoptSession", sessionId: adopted });\n                      dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });')]]],
+  [
+    "the switch is adopted twice (one dispatch leaves an empty scrollback)",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            'dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
+            'dispatch({ type: "adoptSession", sessionId: adopted });\n                      dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
+          ),
+      ],
+    ],
+  ],
 
-  ["the failure toast claims the history IS there (the opposite lie)",
-    [["tui", (s) => s.replace(
-      "its history could not be read", "its history is replayed")]]],
+  [
+    "the failure toast claims the history IS there (the opposite lie)",
+    [["tui", (s) => s.replace("its history could not be read", "its history is replayed")]],
+  ],
 
-  ["a failed replay is not reported",
-    [["tui", (s) => s.replace(
-      "text: `now working in ${adopted} — its history could not be read (${errMsg(e)})`,",
-      "text: `now working in ${adopted}`,")]]],
+  [
+    "a failed replay is not reported",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            "text: `now working in ${adopted} — its history could not be read (${errMsg(e)})`,",
+            "text: `now working in ${adopted}`,",
+          ),
+      ],
+    ],
+  ],
 
-  ["the toast goes back to claiming the history is absent",
-    [["tui", (s) => s.replace(
-      "text: `now working in ${adopted} — its history could not be read (${errMsg(e)})`,",
-      "text: `now working in ${adopted} — history is not replayed here`,")]]],
+  [
+    "the toast goes back to claiming the history is absent",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            "text: `now working in ${adopted} — its history could not be read (${errMsg(e)})`,",
+            "text: `now working in ${adopted} — history is not replayed here`,",
+          ),
+      ],
+    ],
+  ],
 
   // --- the reducer -------------------------------------------------------
-  ["adoptSession ignores the supplied transcript",
-    [["state", (s) => s.replace(
-      "      const nextTurns = action.turns ?? [];",
-      "      const nextTurns: Turn[] = [];")]]],
+  [
+    "adoptSession ignores the supplied transcript",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            "      const nextTurns = action.turns ?? [];",
+            "      const nextTurns: Turn[] = [];",
+          ),
+      ],
+    ],
+  ],
 
-  ["adoptSession KEEPS the old turns when no transcript is supplied",
-    [["state", (s) => s.replace(
-      "      const nextTurns = action.turns ?? [];",
-      "      const nextTurns = action.turns ?? state.turns;")]]],
+  [
+    "adoptSession KEEPS the old turns when no transcript is supplied",
+    [
+      [
+        "state",
+        (s) =>
+          s.replace(
+            "      const nextTurns = action.turns ?? [];",
+            "      const nextTurns = action.turns ?? state.turns;",
+          ),
+      ],
+    ],
+  ],
 
   // --- gate mutations: does an edit here mask a real defect? ------------
   // The first draft neutered the `toolStartedAt` assertion and then
@@ -183,21 +362,49 @@ const CASES = [
   // proved nothing. Aim it at a rule that has two independent
   // assertions: the orphan must not become a turn, and must not
   // contaminate the call before it.
-  ["GATE: neuter the orphan-dropped check + let the orphan render",
-    [["gate", (s) => s.replace(
-      "  assert.equal(r.turns.length, 0, \"an orphan tool_result produced a turn\");",
-      "  assert.ok(true, \"orphan handling checked elsewhere\");")],
-     ["hyd", (s) => s.replace(
-       "      if (type === \"tool_result\") {",
-       "      if (type === \"tool_result\") { turns.push({ id: nextId++, role: \"tool\", text: \"orphan\", ts, collapsed: true, previewChars: 80 }); }\n      if (type === \"tool_result\") {")]]],
+  [
+    "GATE: neuter the orphan-dropped check + let the orphan render",
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            '  assert.equal(r.turns.length, 0, "an orphan tool_result produced a turn");',
+            '  assert.ok(true, "orphan handling checked elsewhere");',
+          ),
+      ],
+      [
+        "hyd",
+        (s) =>
+          s.replace(
+            '      if (type === "tool_result") {',
+            '      if (type === "tool_result") { turns.push({ id: nextId++, role: "tool", text: "orphan", ts, collapsed: true, previewChars: 80 }); }\n      if (type === "tool_result") {',
+          ),
+      ],
+    ],
+  ],
 
-  ["GATE: neuter the atomicity check + clear without refilling",
-    [["gate", (s) => s.replace(
-      "  assert.ok(/turns:\\s*replay\\.turns/.test(adopt[0]),",
-      "  assert.ok(true, \"atomicity checked elsewhere\");")],
-     ["tui", (s) => s.replace(
-       'dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
-       'dispatch({ type: "adoptSession", sessionId: adopted });')]]],
+  [
+    "GATE: neuter the atomicity check + clear without refilling",
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            /assert\.ok\(\s*\/turns:\\s\*replay\\\.turns\/\.test\(adopt\[0\]\),/,
+            '  assert.ok(true, "atomicity checked elsewhere");',
+          ),
+      ],
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            'dispatch({ type: "adoptSession", sessionId: adopted, turns: replay.turns });',
+            'dispatch({ type: "adoptSession", sessionId: adopted });',
+          ),
+      ],
+    ],
+  ],
 ];
 
 console.log(`r372 mutation battery — ${CASES.length} cases\n`);
@@ -210,12 +417,18 @@ for (const [name, edits] of CASES) {
   for (const [key, mutate] of edits) {
     const before = original[key];
     const after = mutate(before);
-    if (after === before) { broken = key; break; }
+    if (after === before) {
+      broken = key;
+      break;
+    }
     applied.push([key, before, after]);
   }
   if (broken) {
-    holes++; noops++;
-    console.log(`  ??  ${name}\n      NO-OP on ${broken} — the pattern did not match, so this case tests nothing`);
+    holes++;
+    noops++;
+    console.log(
+      `  ??  ${name}\n      NO-OP on ${broken} — the pattern did not match, so this case tests nothing`,
+    );
     continue;
   }
 
@@ -253,7 +466,9 @@ for (const [k, p] of Object.entries(PATHS)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 if (noops) console.log(`${noops} case(s) were no-ops and did not test anything`);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

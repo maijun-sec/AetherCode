@@ -31,28 +31,28 @@ const root = join(here, "..", "..");
 // spec, both implementations change together (and the tsc compile
 // below would still catch the real one).
 function bandColor(ratio) {
-  if (ratio > 0.80) return "red";
-  if (ratio >= 0.50) return "yellow";
+  if (ratio > 0.8) return "red";
+  if (ratio >= 0.5) return "yellow";
   return "green";
 }
 
 test("T-181: bandColor maps < 50% → green", () => {
-  assert.equal(bandColor(0),    "green");
+  assert.equal(bandColor(0), "green");
   assert.equal(bandColor(0.25), "green");
   assert.equal(bandColor(0.49), "green");
 });
 
 test("T-181: bandColor maps 50-80% → yellow (amber)", () => {
-  assert.equal(bandColor(0.50), "yellow");
+  assert.equal(bandColor(0.5), "yellow");
   assert.equal(bandColor(0.65), "yellow");
-  assert.equal(bandColor(0.80), "yellow");
+  assert.equal(bandColor(0.8), "yellow");
 });
 
 test("T-181: bandColor maps > 80% → red", () => {
-  assert.equal(bandColor(0.81),  "red");
-  assert.equal(bandColor(0.95),  "red");
-  assert.equal(bandColor(1.0),   "red");
-  assert.equal(bandColor(1.5),   "red");
+  assert.equal(bandColor(0.81), "red");
+  assert.equal(bandColor(0.95), "red");
+  assert.equal(bandColor(1.0), "red");
+  assert.equal(bandColor(1.5), "red");
 });
 
 // ----- 2. fillBar (T-180) ------------------------------------------
@@ -96,7 +96,7 @@ test("T-180: fillBar with negative or > 1 input is clamped", () => {
 
 // ----- 3. detectCompactDrop (T-183) --------------------------------
 
-function detectCompactDrop(prev, next, threshold = 0.30) {
+function detectCompactDrop(prev, next, threshold = 0.3) {
   if (!prev) return null;
   if (prev.inputTokens <= 0) return null;
   const drop = (prev.inputTokens - next.inputTokens) / prev.inputTokens;
@@ -110,7 +110,7 @@ test("T-183: detects > 30% drop between two samples", () => {
   const drop = detectCompactDrop(
     { ts: 1000, inputTokens: 1000 },
     { ts: 2000, inputTokens: 600 },
-    0.30,
+    0.3,
   );
   assert.ok(drop);
   assert.equal(drop.from, 1000);
@@ -123,7 +123,7 @@ test("T-183: ignores a 30% drop (strict greater-than)", () => {
   const drop = detectCompactDrop(
     { ts: 1000, inputTokens: 1000 },
     { ts: 2000, inputTokens: 700 },
-    0.30,
+    0.3,
   );
   assert.equal(drop, null);
 });
@@ -132,24 +132,18 @@ test("T-183: ignores a small drop (e.g. 10%)", () => {
   const drop = detectCompactDrop(
     { ts: 1000, inputTokens: 1000 },
     { ts: 2000, inputTokens: 900 },
-    0.30,
+    0.3,
   );
   assert.equal(drop, null);
 });
 
 test("T-183: returns null when there is no previous sample", () => {
-  const drop = detectCompactDrop(
-    null,
-    { ts: 2000, inputTokens: 600 },
-  );
+  const drop = detectCompactDrop(null, { ts: 2000, inputTokens: 600 });
   assert.equal(drop, null);
 });
 
 test("T-183: returns null when previous inputTokens is 0 (avoids div/0)", () => {
-  const drop = detectCompactDrop(
-    { ts: 1000, inputTokens: 0 },
-    { ts: 2000, inputTokens: 0 },
-  );
+  const drop = detectCompactDrop({ ts: 1000, inputTokens: 0 }, { ts: 2000, inputTokens: 0 });
   assert.equal(drop, null);
 });
 
@@ -157,7 +151,7 @@ test("T-183: detects a 50% drop", () => {
   const drop = detectCompactDrop(
     { ts: 1000, inputTokens: 2000 },
     { ts: 2000, inputTokens: 1000 },
-    0.30,
+    0.3,
   );
   assert.ok(drop);
   assert.equal(drop.from, 2000);
@@ -183,8 +177,8 @@ test("T-180: bar width is 200 px (DEFAULT_BAR_WIDTH)", () => {
 
 test("T-181: 3 colour bands via bandColor() with the exact thresholds", () => {
   assert.match(cm, /function bandColor\(ratio: number\)/);
-  assert.match(cm, /if \(ratio > 0\.80\) return "red";/);
-  assert.match(cm, /if \(ratio >= 0\.50\) return "yellow";/);
+  assert.match(cm, /if \(ratio > 0\.8(?:0)?\) return "red";/);
+  assert.match(cm, /if \(ratio >= 0\.5(?:0)?\) return "yellow";/);
   assert.match(cm, /return "green";/);
 });
 
@@ -195,16 +189,19 @@ test("T-182: sample interval is 2_000 ms (DEFAULT_SAMPLE_INTERVAL_MS)", () => {
 });
 
 test("T-183: COMPACT_DROP_THRESHOLD is 0.30 and detectCompactDrop exists", () => {
-  assert.match(cm, /COMPACT_DROP_THRESHOLD\s*=\s*0\.30/);
+  assert.match(cm, /COMPACT_DROP_THRESHOLD\s*=\s*0\.3(?:0)?/);
   assert.match(cm, /export function detectCompactDrop\(/);
 });
 
 test("T-184: 压缩推荐 button is rendered when ratio >= 0.80", () => {
-  assert.match(cm, /RECOMMEND_BUTTON_THRESHOLD\s*=\s*0\.80/);
+  assert.match(cm, /RECOMMEND_BUTTON_THRESHOLD\s*=\s*0\.8(?:0)?/);
   // The button label appears in the source.
   assert.match(cm, /压缩推荐/);
-  // And the condition gates the render.
-  assert.match(cm, /showButton\s*=\s*ratio\s*>=\s*RECOMMEND_BUTTON_THRESHOLD/);
+  // And the condition gates the render. The source also guards on
+  // `known` (the context window must be reported before a ratio means
+  // anything), so the pin accepts a compound condition — what it must
+  // not do is demand that the ratio test be the FIRST term.
+  assert.match(cm, /showButton\s*=\s*[^;]*ratio\s*>=\s*RECOMMEND_BUTTON_THRESHOLD/);
 });
 
 test("T-184: 压缩推荐 button wires to onRunCompact", () => {
@@ -224,22 +221,38 @@ test("T-180: ContextMeter uses React + ink (Box, Text, useInput)", () => {
 
 const tmp = join(root, "tmp-r180-tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const tscArgs = [
-  "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--strict", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--strict",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
 {
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "ContextMeter.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "ContextMeter.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

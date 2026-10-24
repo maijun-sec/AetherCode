@@ -37,10 +37,7 @@ export const BACKEND_MISSING: ReadonlyMap<string, string> = new Map<string, stri
     "agent/setDefault",
     "no 'set the active agent' RPC; updateAgent writes agent DEFINITIONS, listAgents lists them",
   ],
-  [
-    "effort/set",
-    "no effort concept on the daemon at all; no registered name contains 'effort'",
-  ],
+  ["effort/set", "no effort concept on the daemon at all; no registered name contains 'effort'"],
   ["rewind", "no rewind handler; transcript rollback is unimplemented daemon-side"],
   [
     "session/tokens",

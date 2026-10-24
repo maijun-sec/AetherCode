@@ -314,7 +314,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         <Text color={t.brand} bold>
           ⌬ Model
         </Text>
-        <Text dimColor>  ·  {list.length} models available</Text>
+        <Text dimColor> · {list.length} models available</Text>
       </Text>
       <Text> </Text>
       <Box flexDirection="row">
@@ -328,7 +328,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         return (
           <Box key={g.provider} flexDirection="column" marginTop={1}>
             <Text>
-              <Text color={color} bold>▼ {g.provider}</Text>
+              <Text color={color} bold>
+                ▼ {g.provider}
+              </Text>
             </Text>
             {g.items.map((m) => {
               // The flat list is in the same order as the grouped
@@ -340,17 +342,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               const tier = m.capabilities.tier ?? deriveTier(m.name);
               return (
                 <Box key={m.name} flexDirection="row">
-                  <Text color={isHi ? "cyan" : undefined}>
-                    {isHi ? "▶" : " "}{" "}
-                  </Text>
+                  <Text color={isHi ? "cyan" : undefined}>{isHi ? "▶" : " "} </Text>
                   <Text color={isHi ? "white" : undefined} bold={isHi}>
                     {m.name.padEnd(20)}
                   </Text>
-                  <Text dimColor>  ({tier})</Text>
+                  <Text dimColor> ({tier})</Text>
                   {isCurrent ? (
-                    <Text color={t.ok} bold>  [current]</Text>
+                    <Text color={t.ok} bold>
+                      {" "}
+                      [current]
+                    </Text>
                   ) : isLast ? (
-                    <Text dimColor>  [last used]</Text>
+                    <Text dimColor> [last used]</Text>
                   ) : null}
                 </Box>
               );
@@ -364,13 +367,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <Text>
                     <Text dimColor>ctx </Text>
                     <Text>{formatContext(hiModel.contextWindow)}</Text>
-                    <Text dimColor>  ·  out </Text>
+                    <Text dimColor> · out </Text>
                     <Text>{formatMaxOutput(hiModel.maxOutput)}</Text>
-                    <Text dimColor>  ·  $/M in </Text>
+                    <Text dimColor> · $/M in </Text>
                     <Text>{formatPrice(hiModel.priceIn)}</Text>
-                    <Text dimColor>  out </Text>
+                    <Text dimColor> out </Text>
                     <Text>{formatPrice(hiModel.priceOut)}</Text>
-                    <Text dimColor>  cached </Text>
+                    <Text dimColor> cached </Text>
                     <Text>{formatPrice(hiModel.priceCached)}</Text>
                   </Text>
                   <CapabilityBadges caps={hiModel.capabilities} />
@@ -382,9 +385,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       })}
 
       <Text> </Text>
-      <Text dimColor>
-        ↑/↓ navigate · Enter select · Esc cancel
-      </Text>
+      <Text dimColor>↑/↓ navigate · Enter select · Esc cancel</Text>
     </Box>
   );
 };

@@ -21,7 +21,9 @@ function exportToMarkdown(turns, model, sessionId) {
   const lines = [];
   lines.push(`# AetherCode session ${sessionId.slice(0, 8)}`);
   lines.push("");
-  lines.push(`Model: \`${model}\`  ·  Turns: ${turns.length}  ·  Generated: ${new Date().toISOString()}`);
+  lines.push(
+    `Model: \`${model}\`  ·  Turns: ${turns.length}  ·  Generated: ${new Date().toISOString()}`,
+  );
   lines.push("");
   lines.push("---");
   lines.push("");
@@ -52,10 +54,43 @@ function exportToJson(turns) {
 }
 
 const sampleTurns = [
-  { id: 1, role: "user", text: "list files", ts: 1_700_000_000_000, collapsed: false, previewChars: 200 },
-  { id: 2, role: "assistant", text: "I'll use glob.", ts: 1_700_000_001_000, collapsed: false, previewChars: 240 },
-  { id: 3, role: "tool", text: "glob", toolName: "glob", toolArgs: '{"pattern":"*.java"}', toolResult: "A.java\nB.java", toolStatus: "ok", ts: 1_700_000_002_000, collapsed: false, previewChars: 80 },
-  { id: 4, role: "plan", text: "Plan", planItems: ["list files", "read first one"], ts: 1_700_000_003_000, collapsed: false, previewChars: 240 },
+  {
+    id: 1,
+    role: "user",
+    text: "list files",
+    ts: 1_700_000_000_000,
+    collapsed: false,
+    previewChars: 200,
+  },
+  {
+    id: 2,
+    role: "assistant",
+    text: "I'll use glob.",
+    ts: 1_700_000_001_000,
+    collapsed: false,
+    previewChars: 240,
+  },
+  {
+    id: 3,
+    role: "tool",
+    text: "glob",
+    toolName: "glob",
+    toolArgs: '{"pattern":"*.java"}',
+    toolResult: "A.java\nB.java",
+    toolStatus: "ok",
+    ts: 1_700_000_002_000,
+    collapsed: false,
+    previewChars: 80,
+  },
+  {
+    id: 4,
+    role: "plan",
+    text: "Plan",
+    planItems: ["list files", "read first one"],
+    ts: 1_700_000_003_000,
+    collapsed: false,
+    previewChars: 240,
+  },
 ];
 
 test("R61: markdown export contains session header + model + turn count", () => {
@@ -139,21 +174,40 @@ test("R61: tui.tsx wires __EXPORT_MD__/__EXPORT_JSON__ to the export helpers", (
 // ----- 4. Build smoke test -------------------------------------------
 
 test("R61: TypeScript compile of exportScrollback.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r61-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "exportScrollback.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "exportScrollback.ts") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

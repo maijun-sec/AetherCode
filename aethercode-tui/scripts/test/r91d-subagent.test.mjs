@@ -31,22 +31,40 @@ const tmp = join(root, "tmp-test-r91d");
 if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
 
 // Compile state.ts to JS.
-const tscBinAbs = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tscBinAbs = join(
+  root,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc",
+);
 const tscArgs = [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const tsc = spawnSync('"' + tscBinAbs + '"', [...tscArgs, '"' + join(root, "src", "state.ts") + '"'], {
-  encoding: "utf-8",
-  shell: true,
-});
+const tsc = spawnSync(
+  '"' + tscBinAbs + '"',
+  [...tscArgs, '"' + join(root, "src", "state.ts") + '"'],
+  {
+    encoding: "utf-8",
+    shell: true,
+  },
+);
 if (tsc.status !== 0) {
-  console.error("tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr);
+  console.error(
+    "tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr,
+  );
   process.exit(1);
 }
 if (!existsSync(join(tmp, "state.js"))) {
@@ -186,19 +204,51 @@ test("reducer: full lifecycle keeps count consistent", () => {
   let s = INITIAL;
   assert.equal(s.runningSubagents, 0);
 
-  s = reducer(s, { type: "subagentEvent", jobId: "sag-1", role: "r", status: "RUNNING",   elapsedMs: 0,    atMs: 1, summary: "" });
+  s = reducer(s, {
+    type: "subagentEvent",
+    jobId: "sag-1",
+    role: "r",
+    status: "RUNNING",
+    elapsedMs: 0,
+    atMs: 1,
+    summary: "",
+  });
   assert.equal(s.runningSubagents, 1);
 
-  s = reducer(s, { type: "subagentEvent", jobId: "sag-2", role: "r", status: "RUNNING",   elapsedMs: 0,    atMs: 2, summary: "" });
+  s = reducer(s, {
+    type: "subagentEvent",
+    jobId: "sag-2",
+    role: "r",
+    status: "RUNNING",
+    elapsedMs: 0,
+    atMs: 2,
+    summary: "",
+  });
   assert.equal(s.runningSubagents, 2);
 
-  s = reducer(s, { type: "subagentEvent", jobId: "sag-1", role: "r", status: "COMPLETED", elapsedMs: 800,  atMs: 3, summary: "" });
+  s = reducer(s, {
+    type: "subagentEvent",
+    jobId: "sag-1",
+    role: "r",
+    status: "COMPLETED",
+    elapsedMs: 800,
+    atMs: 3,
+    summary: "",
+  });
   assert.equal(s.runningSubagents, 1);
   // Most recent event wins (sag-2 still running but the
   // status bar shows the latest activity).
   assert.match(s.subagentStatus, /^\[sag-1\]/);
 
-  s = reducer(s, { type: "subagentEvent", jobId: "sag-2", role: "r", status: "FAILED",    elapsedMs: 1500, atMs: 4, summary: "boom" });
+  s = reducer(s, {
+    type: "subagentEvent",
+    jobId: "sag-2",
+    role: "r",
+    status: "FAILED",
+    elapsedMs: 1500,
+    atMs: 4,
+    summary: "boom",
+  });
   assert.equal(s.runningSubagents, 0);
   assert.equal(s.subagentStatus, "[sag-2] failed");
 });
@@ -217,12 +267,20 @@ test("reducer: foreign session event is dropped (no state change)", () => {
   const sessA = { ...INITIAL, sessionId: "sess-A" };
   const r = reducer(sessA, {
     type: "subagentEvent",
-    jobId: "sag-other", role: "explore", status: "RUNNING",
-    elapsedMs: 0, atMs: 1000, summary: "",
+    jobId: "sag-other",
+    role: "explore",
+    status: "RUNNING",
+    elapsedMs: 0,
+    atMs: 1000,
+    summary: "",
     sessionId: "sess-B",
   });
   // No state change at all — same reference, same fields.
-  assert.equal(r, sessA, "reducer should return the same state when the event is from another session");
+  assert.equal(
+    r,
+    sessA,
+    "reducer should return the same state when the event is from another session",
+  );
   assert.equal(r.runningSubagents, 0);
   assert.equal(r.subagentStatus, "");
 });
@@ -231,8 +289,12 @@ test("reducer: matching session event updates normally", () => {
   const sessA = { ...INITIAL, sessionId: "sess-A" };
   const r = reducer(sessA, {
     type: "subagentEvent",
-    jobId: "sag-1", role: "explore", status: "RUNNING",
-    elapsedMs: 0, atMs: 1000, summary: "",
+    jobId: "sag-1",
+    role: "explore",
+    status: "RUNNING",
+    elapsedMs: 0,
+    atMs: 1000,
+    summary: "",
     sessionId: "sess-A",
   });
   assert.equal(r.runningSubagents, 1);
@@ -247,8 +309,12 @@ test("reducer: empty event sessionId is accepted (legacy / pre-init)", () => {
   const preInit = { ...INITIAL, sessionId: "—" };
   const r = reducer(preInit, {
     type: "subagentEvent",
-    jobId: "sag-legacy", role: "explore", status: "RUNNING",
-    elapsedMs: 0, atMs: 1, summary: "",
+    jobId: "sag-legacy",
+    role: "explore",
+    status: "RUNNING",
+    elapsedMs: 0,
+    atMs: 1,
+    summary: "",
   });
   assert.equal(r.runningSubagents, 1);
   assert.equal(r.subagentStatus, "[sag-legacy] running");

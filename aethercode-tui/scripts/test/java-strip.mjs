@@ -40,13 +40,18 @@ export function javaCode(src) {
         const d = src[i];
         out += d;
         i++;
-        if (d === "\\" && i < n) { out += src[i]; i++; }
-        else if (d === q) break;
+        if (d === "\\" && i < n) {
+          out += src[i];
+          i++;
+        } else if (d === q) break;
       }
       continue;
     }
     if (c === "/" && src[i + 1] === "/") {
-      while (i < n && src[i] !== "\n") { out += " "; i++; }
+      while (i < n && src[i] !== "\n") {
+        out += " ";
+        i++;
+      }
       continue;
     }
     if (c === "/" && src[i + 1] === "*") {
@@ -87,15 +92,17 @@ export function javaMethod(code, signature, occurrence = 1) {
     if (at < 0) {
       throw new Error(
         `javaMethod: signature #${occurrence} not found: ${signature}` +
-        (k > 0 ? ` (found ${k})` : ""),
+          (k > 0 ? ` (found ${k})` : ""),
       );
     }
   }
   let depth = 0;
   let started = false;
   for (let i = code.indexOf("{", at); i < code.length; i++) {
-    if (code[i] === "{") { depth++; started = true; }
-    else if (code[i] === "}") {
+    if (code[i] === "{") {
+      depth++;
+      started = true;
+    } else if (code[i] === "}") {
       depth--;
       if (started && depth === 0) return code.slice(code.indexOf("{", at), i + 1);
     }

@@ -77,8 +77,11 @@ test("R103: /help output mentions /skip and /tool-actions", () => {
   assert.match(catalog, /name: "tool-actions"/, "tool-actions missing from the catalog");
   assert.match(groups, /"tool-actions"/, "tool-actions missing from the /help group table");
   // argument placeholder must survive into the rendered help
-  assert.match(catalog, /name: "skip"[^}]*args: "<N\|off>"/,
-    "skip must carry the <N|off> argument hint so /help shows it");
+  assert.match(
+    catalog,
+    /name: "skip"[^}]*args: "<N\|off>"/,
+    "skip must carry the <N|off> argument hint so /help shows it",
+  );
 });
 
 test("R103: CommandPalette.tsx describeCommand covers skip + tool-actions", () => {

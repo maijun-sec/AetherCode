@@ -24,9 +24,11 @@ export type { WorkflowRow } from "./workflowRows.js";
 import type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
 export type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
 
-export type Role = "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
+export type Role =
+  "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
 export type ToolStatus = "running" | "ok" | "error";
-export type AppStatus = "connecting" | "ready" | "thinking" | "streaming" | "running-tool" | "exiting";
+export type AppStatus =
+  "connecting" | "ready" | "thinking" | "streaming" | "running-tool" | "exiting";
 /**
  * the four states the daemon connection can be in. Mirrors
  * the ConnectionState in jsonrpc.ts. The status bar renders a
@@ -128,9 +130,9 @@ export type PanelId =
   | "grants"
   | "notifications"
   | "mcp"
-  | "context"   // R371 — /context, the row R362 shipped as a placeholder
+  | "context" // R371 — /context, the row R362 shipped as a placeholder
   | "workflows" // R373 — /workflow, the row R365 found line-mode-only
-  | "update";   // R374 — /update and /update-deps, one panel + a verb flag
+  | "update"; // R374 — /update and /update-deps, one panel + a verb flag
 
 /** Loading / error / notice triple shared by every panel. Drives
  *  the shell's pending row and its red error row so a failed RPC is
@@ -172,7 +174,13 @@ export interface MemorySlice {
 export type MemoryCompactProgress =
   | { state: "idle" }
   | { state: "running" }
-  | { state: "ok"; beforeTokens: number; afterTokens: number; changesCompressed: number; ms: number }
+  | {
+      state: "ok";
+      beforeTokens: number;
+      afterTokens: number;
+      changesCompressed: number;
+      ms: number;
+    }
   | { state: "skipped"; reason: string }
   | { state: "error"; message: string };
 
@@ -240,7 +248,7 @@ export interface State {
   turns: Turn[];
   input: string;
   history: string[];
-  historyCursor: number;       // index into history, -1 = current draft
+  historyCursor: number; // index into history, -1 = current draft
   submitting: boolean;
   /**
    * R362 — prompts the user typed while a run was in flight.
@@ -498,7 +506,12 @@ export interface State {
    * active toasts (transient notifications). Each toast has
    * a 2-second TTL. Old toasts are removed by a 200ms tick.
    * The ToastStack component renders the top N toasts. */
-  toasts: Array<{ id: number; kind: "info" | "ok" | "warn" | "err" | "rpc"; text: string; createdAt: number }>;
+  toasts: Array<{
+    id: number;
+    kind: "info" | "ok" | "warn" | "err" | "rpc";
+    text: string;
+    createdAt: number;
+  }>;
   /**
    * active theme name. Components read this and pull the
    * matching palette from themes.ts. Switch with /theme NAME.
@@ -946,13 +959,16 @@ export interface State {
    * SubagentSpawnCard with the same collapsed/expanded
    * affordance and "View subagent →" link.
    */
-  subagentSpawnCards: Record<string, {
-    subagentId: string;
-    role: string;
-    description: string;
-    status: string;
-    ts: number;
-  }>;
+  subagentSpawnCards: Record<
+    string,
+    {
+      subagentId: string;
+      role: string;
+      description: string;
+      status: string;
+      ts: number;
+    }
+  >;
   // R700 — SDD product integration. Mirrors the daemon's
   // SddPhaseState into the store so SddMode.tsx can render
   // the 8-phase chip strip + the current phase status.
@@ -973,10 +989,18 @@ export interface State {
  * the SddMode banner + the `/sdd-status` summary line.
  */
 export interface SddPhaseEntry {
-  id: 'constitution' | 'specify' | 'clarify' | 'plan' | 'analyze' | 'tasks' | 'implement' | 'converge';
+  id:
+    | "constitution"
+    | "specify"
+    | "clarify"
+    | "plan"
+    | "analyze"
+    | "tasks"
+    | "implement"
+    | "converge";
   title: string;
   phaseNumber: number;
-  state: 'idle' | 'running' | 'pending_confirm' | 'done' | 'skipped' | 'failed';
+  state: "idle" | "running" | "pending_confirm" | "done" | "skipped" | "failed";
   startedAt: string | null;
   endedAt: string | null;
   path: string | null;
@@ -987,7 +1011,7 @@ export interface SddRunState {
   slug: string;
   intent: string;
   cwd: string;
-  status: 'running' | 'idle' | 'done' | 'aborted' | 'failed';
+  status: "running" | "idle" | "done" | "aborted" | "failed";
   currentPhase: number | null;
   phases: SddPhaseEntry[];
   startedAt: string;
@@ -1068,7 +1092,15 @@ export interface PermissionAsk {
 }
 
 export type Action =
-  | { type: "init"; sessionId: string; model: string; permissionMode: string; jarPath: string; contextWindow?: number; provider?: string }
+  | {
+      type: "init";
+      sessionId: string;
+      model: string;
+      permissionMode: string;
+      jarPath: string;
+      contextWindow?: number;
+      provider?: string;
+    }
   | { type: "setInput"; text: string }
   | { type: "setHistory"; history: string[] }
   | { type: "historyUp" }
@@ -1096,7 +1128,11 @@ export type Action =
   | { type: "streamText"; text: string }
   | { type: "streamToolStart"; name: string; args?: string }
   | { type: "streamToolEnd"; name: string; isError: boolean; result?: string }
-  | { type: "streamEnd"; stopReason: string; usage?: { input?: number; output?: number; costUsd?: number } }
+  | {
+      type: "streamEnd";
+      stopReason: string;
+      usage?: { input?: number; output?: number; costUsd?: number };
+    }
   | { type: "sideNote"; kind: string; message: string }
   | { type: "plan"; items: string[] }
   | { type: "log"; message: string }
@@ -1111,15 +1147,23 @@ export type Action =
   // remains as a legacy "user pressed Ctrl-C, exit cleanly"
   // action — it sets connected=false but does NOT enter the
   // reconnect loop.
-  | { type: "setConnectionState"; state: ConnectionState; attempt: number; lastError: string | null }
-  | { type: "toggleTurn"; id: number }              // prior round
-  | { type: "setCollapseAll"; collapsed: boolean }   // prior round
-  | { type: "permissionAsk"; ask: PermissionAsk }     // prior round
-  | { type: "permissionClear" }                       // prior round
-  | { type: "toggleToolExpand"; id: number }          // R34: 'd' to expand a tool card
-  | { type: "toggleSidebar" }                         // R37: Ctrl+B shows/hides the side panel
-  | { type: "toggleRightPanel" }                     // T-6-15: Ctrl+D shows/hides the right panel (details + todos)
-  | { type: "setRecentTasks"; tasks: Array<{ id: string; name: string; status: string; ts: number }> } // R37
+  | {
+      type: "setConnectionState";
+      state: ConnectionState;
+      attempt: number;
+      lastError: string | null;
+    }
+  | { type: "toggleTurn"; id: number } // prior round
+  | { type: "setCollapseAll"; collapsed: boolean } // prior round
+  | { type: "permissionAsk"; ask: PermissionAsk } // prior round
+  | { type: "permissionClear" } // prior round
+  | { type: "toggleToolExpand"; id: number } // R34: 'd' to expand a tool card
+  | { type: "toggleSidebar" } // R37: Ctrl+B shows/hides the side panel
+  | { type: "toggleRightPanel" } // T-6-15: Ctrl+D shows/hides the right panel (details + todos)
+  | {
+      type: "setRecentTasks";
+      tasks: Array<{ id: string; name: string; status: string; ts: number }>;
+    } // R37
   | { type: "showSearch"; show: boolean; query?: string } // R40: Ctrl-F opens/closes the search bar
   | { type: "setSearchQuery"; query: string; matches: number[] } // R40: update the query + match list
   | { type: "pushToast"; kind: "info" | "ok" | "warn" | "err" | "rpc"; text: string } // R41
@@ -1136,7 +1180,10 @@ export type Action =
   | { type: "setThemePickerOpen"; open: boolean } // T-422
   | { type: "setThemesPickedName"; name: string | null } // T-422
   | { type: "setAgentPickerOpen"; open: boolean } // T-420
-  | { type: "setAgents"; agents: Array<{ name: string; description?: string; isDefault?: boolean }> } // T-420
+  | {
+      type: "setAgents";
+      agents: Array<{ name: string; description?: string; isDefault?: boolean }>;
+    } // T-420
   | { type: "setDefaultAgent"; name: string | null } // T-420
   | { type: "setEffortPickerOpen"; open: boolean } // T-421
   | { type: "setEfforts"; efforts: Array<{ label: string; id?: string; description?: string }> } // T-421
@@ -1159,7 +1206,18 @@ export type Action =
   | { type: "setShowThinking"; show: boolean } // R86: toggle dim "thinking" sub-section
   | { type: "setDecisionCardExpanded"; expanded: boolean } // R86: collapse the inline permission card
   | { type: "setPermissionMode"; mode: string } // R87: update the active permission mode (ACCEPT_TASK / DEFAULT / ...)
-  | { type: "subagentEvent"; jobId: string; role: string; status: string; elapsedMs: number; atMs: number; summary: string; sessionId?: string; resultText?: string; partialResult?: string } // prior round: background subagent lifecycle. prior round: sessionId for per-session filter. prior round: resultText for COMPLETED jobs. prior round: partialResult for in-flight streaming preview.
+  | {
+      type: "subagentEvent";
+      jobId: string;
+      role: string;
+      status: string;
+      elapsedMs: number;
+      atMs: number;
+      summary: string;
+      sessionId?: string;
+      resultText?: string;
+      partialResult?: string;
+    } // prior round: background subagent lifecycle. prior round: sessionId for per-session filter. prior round: resultText for COMPLETED jobs. prior round: partialResult for in-flight streaming preview.
   | { type: "openSubagentPanel" } // prior round: Ctrl+S opens the SubagentPanel
   | { type: "closeSubagentPanel" } // prior round: Esc / Ctrl+S again closes
   | { type: "setSubagentPanelFocus"; jobId: string | undefined } // prior round: arrow keys move the cursor
@@ -1171,32 +1229,49 @@ export type Action =
   | { type: "setLastSkipLow"; snap: { sessionId: string; remaining: number; atMs: number } | null } // R108: NOTIFY_SKIP_LOW snapshot
   | { type: "clearLastSkipLow" } // R112: 5s auto-clear
   | { type: "setPermissionModeSuggestion"; suggestion: { mode: string; reasons: string[] } | null } // R109: cached permission-mode suggestion from getState / getPermissionModeSuggestion
-
-  | { type: "setTodos"; todos: Array<{ id: string; title: string; status: "pending" | "in_progress" | "completed" | "cancelled"; owner?: string | null; startedAt?: number | null; completedAt?: number | null; detail?: string | null }> } // R214: `todo_update` notification snapshot
+  | {
+      type: "setTodos";
+      todos: Array<{
+        id: string;
+        title: string;
+        status: "pending" | "in_progress" | "completed" | "cancelled";
+        owner?: string | null;
+        startedAt?: number | null;
+        completedAt?: number | null;
+        detail?: string | null;
+      }>;
+    } // R214: `todo_update` notification snapshot
   | { type: "viewSubagent"; jobId: string } // R214: switch the active transcript to a subagent (triggers loadSession in the host)
   | { type: "viewPrimary" } // R214: switch back to the primary agent (Ctrl+1)
   | { type: "viewHistoryPop" } // R214: pop one entry from viewHistory (the "back" affordance)
-  | { type: "addSubagentSpawnCard"; eventId: string; subagentId: string; role: string; description: string; status: string; ts: number } // R214: inline card in the chat transcript
+  | {
+      type: "addSubagentSpawnCard";
+      eventId: string;
+      subagentId: string;
+      role: string;
+      description: string;
+      status: string;
+      ts: number;
+    } // R214: inline card in the chat transcript
   | { type: "removeSubagentSpawnCard"; eventId: string } // R214: dismiss the spawn card (e.g. the user cleared the chat)
 
   /* --- R362: Ink panel host ------------------------------------ */
   | { type: "openPanel"; id: PanelId; cwdOnly?: boolean; updateVerb?: UpdateVerb } // R362: mount a panel; R370: `cwdOnly` filters the session list to the active cwd; R374: `updateVerb` picks which update operation the panel is about
-  | { type: "closePanel" }                                    // R362: unmount + restore the prompt draft
-  | { type: "setPanelStatus"; status: PanelStatus }            // R362: pending / error / notice
-  | { type: "setMemoryTab"; tab: MemoryScopeId }               // R362: switch tab (App re-fetches the scope)
-  | { type: "setMemorySlice"; scope: MemoryScopeId; slice: MemorySlice }  // R362: `memory/list` result
-  | { type: "setMemoryCompact"; progress: MemoryCompactProgress }        // R362: `memory/compact` result
-  | { type: "setThreads"; threads: ThreadRow[] }              // R362: `listSessions` result
-  | { type: "setGrants"; grants: GrantRow[] }                 // R362: `permission/list` result
+  | { type: "closePanel" } // R362: unmount + restore the prompt draft
+  | { type: "setPanelStatus"; status: PanelStatus } // R362: pending / error / notice
+  | { type: "setMemoryTab"; tab: MemoryScopeId } // R362: switch tab (App re-fetches the scope)
+  | { type: "setMemorySlice"; scope: MemoryScopeId; slice: MemorySlice } // R362: `memory/list` result
+  | { type: "setMemoryCompact"; progress: MemoryCompactProgress } // R362: `memory/compact` result
+  | { type: "setThreads"; threads: ThreadRow[] } // R362: `listSessions` result
+  | { type: "setGrants"; grants: GrantRow[] } // R362: `permission/list` result
   | { type: "setWorkflows"; workflows: WorkflowRow[]; dir: string | null; skipped: string[] } // R373: `listWorkflows` result
-  | { type: "setUpdateFacts"; facts: UpdateFacts | null }     // R374: the update probe's answer
-  | { type: "setMcpServers"; servers: McpServerRow[] }        // R362: MCP listing
-  | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
-  | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
-  | { type: "adoptSession"; sessionId: string; turns?: Turn[] }     // R370: the daemon swapped its active session
-  | { type: "setContextInfo"; info: State["contextInfo"] }            // R371: `getContextInfo` answered
-  | { type: "setCompactStatus"; autoCompactDisabled: boolean; lastEventTs: number | null } // R371: `compact/status` answered
-  ;
+  | { type: "setUpdateFacts"; facts: UpdateFacts | null } // R374: the update probe's answer
+  | { type: "setMcpServers"; servers: McpServerRow[] } // R362: MCP listing
+  | { type: "setEffortCurrent"; effort: string | null } // R362: local effort mirror
+  | { type: "setNotificationToggle"; key: string; enabled: boolean } // R362: warning toggle
+  | { type: "adoptSession"; sessionId: string; turns?: Turn[] } // R370: the daemon swapped its active session
+  | { type: "setContextInfo"; info: State["contextInfo"] } // R371: `getContextInfo` answered
+  | { type: "setCompactStatus"; autoCompactDisabled: boolean; lastEventTs: number | null }; // R371: `compact/status` answered
 
 let turnIdSeq = 1;
 export const nextTurnId = () => turnIdSeq++;
@@ -1386,7 +1461,9 @@ export const INITIAL: State = {
  *                                "the run finished" — better to show
  *                                a green check than a red X for a
  *                                reason we don't recognise) */
-export function classifyStopReason(reason: string | null | undefined): "ok" | "loop" | "max_turns" | "error" | "empty" | null {
+export function classifyStopReason(
+  reason: string | null | undefined,
+): "ok" | "loop" | "max_turns" | "error" | "empty" | null {
   if (reason == null) return null;
   const r = reason.toLowerCase();
   // Loop detector — only the engine's own "loop_detected" or
@@ -1395,7 +1472,8 @@ export function classifyStopReason(reason: string | null | undefined): "ok" | "l
   if (r === "loop_detected" || r.startsWith("loop_")) return "loop";
   // Per-query turn cap. NOT "max_tokens" (that's the model-side
   // output cap, which is a normal completion).
-  if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations") return "max_turns";
+  if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations")
+    return "max_turns";
   if (r === "empty_input" || r === "empty") return "empty";
   if (r === "error" || r.startsWith("error_") || r.endsWith("_error")) return "error";
   return "ok";
@@ -1421,14 +1499,46 @@ export function categorizeTool(name: string | undefined | null): ToolCategory {
   if (!name) return "other";
   const n = name.toLowerCase();
   // Read: any tool that surfaces existing data.
-  if (n === "file_read" || n === "read" || n.startsWith("read_") || n === "cat" || n === "show" || n === "view") return "read";
-  if (n === "glob" || n === "grep" || n === "search" || n.startsWith("search_") || n === "find") return "search";
+  if (
+    n === "file_read" ||
+    n === "read" ||
+    n.startsWith("read_") ||
+    n === "cat" ||
+    n === "show" ||
+    n === "view"
+  )
+    return "read";
+  if (n === "glob" || n === "grep" || n === "search" || n.startsWith("search_") || n === "find")
+    return "search";
   // Write: any tool that creates or modifies files.
-  if (n === "file_write" || n === "file_edit" || n === "file_create" || n.startsWith("write_") || n.startsWith("edit_")) return "write";
+  if (
+    n === "file_write" ||
+    n === "file_edit" ||
+    n === "file_create" ||
+    n.startsWith("write_") ||
+    n.startsWith("edit_")
+  )
+    return "write";
   // Run: shell / process / test execution.
-  if (n === "bash" || n === "shell" || n === "exec" || n === "run_command" || n.startsWith("bash_") || n === "test" || n === "build") return "run";
+  if (
+    n === "bash" ||
+    n === "shell" ||
+    n === "exec" ||
+    n === "run_command" ||
+    n.startsWith("bash_") ||
+    n === "test" ||
+    n === "build"
+  )
+    return "run";
   // Agent: anything that spawns a sub-agent or long-running task.
-  if (n === "agent" || n === "task" || n === "delegate" || n.startsWith("agent_") || n.startsWith("task_")) return "agent";
+  if (
+    n === "agent" ||
+    n === "task" ||
+    n === "delegate" ||
+    n.startsWith("agent_") ||
+    n.startsWith("task_")
+  )
+    return "agent";
   return "other";
 }
 
@@ -1446,11 +1556,16 @@ export function categorizeTool(name: string | undefined | null): ToolCategory {
 export function formatSubagentStatus(jobId: string, status: string, elapsedMs: number): string {
   const id = jobId || "?";
   switch (status) {
-    case "RUNNING":   return `[${id}] running`;
-    case "COMPLETED": return `[${id}] done ${formatDuration(elapsedMs)}`;
-    case "FAILED":    return `[${id}] failed`;
-    case "CANCELLED": return `[${id}] cancelled`;
-    default:          return `[${id}] ${status.toLowerCase()}`;
+    case "RUNNING":
+      return `[${id}] running`;
+    case "COMPLETED":
+      return `[${id}] done ${formatDuration(elapsedMs)}`;
+    case "FAILED":
+      return `[${id}] failed`;
+    case "CANCELLED":
+      return `[${id}] cancelled`;
+    default:
+      return `[${id}] ${status.toLowerCase()}`;
   }
 }
 
@@ -1496,16 +1611,20 @@ export function subagentJobIdsInOrder(jobs: Record<string, SubagentJobView>): st
  *  column so we can afford a few more characters. */
 export function formatSubagentPanelRow(j: SubagentJobView, now: number): string {
   const id = j.jobId || "?";
-  const elapsed = j.status === "RUNNING" && j.endedAtMs == null
-    ? Math.max(0, now - j.startedAtMs)
-    : j.elapsedMs;
+  const elapsed =
+    j.status === "RUNNING" && j.endedAtMs == null ? Math.max(0, now - j.startedAtMs) : j.elapsedMs;
   const dur = formatDuration(elapsed);
   switch (j.status) {
-    case "RUNNING":   return `[${id}] ${j.role || "general-purpose"} · running ${dur}`;
-    case "COMPLETED": return `[${id}] ${j.role || "general-purpose"} · done ${dur}`;
-    case "FAILED":    return `[${id}] ${j.role || "general-purpose"} · failed ${dur}`;
-    case "CANCELLED": return `[${id}] ${j.role || "general-purpose"} · cancelled`;
-    default:          return `[${id}] ${j.status}`;
+    case "RUNNING":
+      return `[${id}] ${j.role || "general-purpose"} · running ${dur}`;
+    case "COMPLETED":
+      return `[${id}] ${j.role || "general-purpose"} · done ${dur}`;
+    case "FAILED":
+      return `[${id}] ${j.role || "general-purpose"} · failed ${dur}`;
+    case "CANCELLED":
+      return `[${id}] ${j.role || "general-purpose"} · cancelled`;
+    default:
+      return `[${id}] ${j.status}`;
   }
 }
 
@@ -1531,15 +1650,24 @@ export function formatDuration(ms: number): string {
 
 function defaultCollapsed(role: Role): boolean {
   switch (role) {
-    case "tool":       return true;   // tool call cards start collapsed
-    case "assistant":  return false;  // final assistant reply stays open
-    case "thinking":   return true;   // R86: dim sub-section, expand on demand
-    case "plan":       return false;  // plans are short, keep visible
-    case "user":       return false;  // user prompts visible
-    case "system":     return false;  // system notes are short
-    case "error":      return false;  // errors should be visible
-    case "permission": return true;   // R86: collapsed inline card by default
-    default:           return false;
+    case "tool":
+      return true; // tool call cards start collapsed
+    case "assistant":
+      return false; // final assistant reply stays open
+    case "thinking":
+      return true; // R86: dim sub-section, expand on demand
+    case "plan":
+      return false; // plans are short, keep visible
+    case "user":
+      return false; // user prompts visible
+    case "system":
+      return false; // system notes are short
+    case "error":
+      return false; // errors should be visible
+    case "permission":
+      return true; // R86: collapsed inline card by default
+    default:
+      return false;
   }
 }
 
@@ -1566,21 +1694,23 @@ export function reducer(state: State, action: Action): State {
       if (state.history.length === 0) return state;
       return {
         ...state,
-        historyCursor: state.historyCursor < 0
-          ? state.history.length - 1
-          : Math.max(0, state.historyCursor - 1),
-        input: state.historyCursor < 0
-          ? state.history[state.history.length - 1] ?? ""
-          : state.history[Math.max(0, state.historyCursor - 1)] ?? "",
+        historyCursor:
+          state.historyCursor < 0 ? state.history.length - 1 : Math.max(0, state.historyCursor - 1),
+        input:
+          state.historyCursor < 0
+            ? (state.history[state.history.length - 1] ?? "")
+            : (state.history[Math.max(0, state.historyCursor - 1)] ?? ""),
       };
     case "historyDown":
       if (state.historyCursor < 0) return state;
       return {
         ...state,
-        historyCursor: state.historyCursor + 1 >= state.history.length ? -1 : state.historyCursor + 1,
-        input: state.historyCursor + 1 >= state.history.length
-          ? ""
-          : state.history[state.historyCursor + 1] ?? "",
+        historyCursor:
+          state.historyCursor + 1 >= state.history.length ? -1 : state.historyCursor + 1,
+        input:
+          state.historyCursor + 1 >= state.history.length
+            ? ""
+            : (state.history[state.historyCursor + 1] ?? ""),
       };
     case "enqueuePrompt": {
       // R362. A prompt typed while a run is in flight goes here instead of
@@ -1740,7 +1870,7 @@ export function reducer(state: State, action: Action): State {
       while (cursor < combined.length) {
         // Find the next tag. Search from the current cursor.
         let bestIdx = -1;
-        let bestTag: typeof TAGS[number] | null = null;
+        let bestTag: (typeof TAGS)[number] | null = null;
         for (const tag of TAGS) {
           const idx = combined.indexOf(tag, cursor);
           if (idx >= 0 && (bestIdx < 0 || idx < bestIdx)) {
@@ -1776,7 +1906,7 @@ export function reducer(state: State, action: Action): State {
       // new one. The streaming mode is internal ("reply" /
       // "thinking"); the rendered role is "assistant" / "thinking".
       let turns = state.turns;
-      const roleOf = (m: "reply" | "thinking"): Role => m === "reply" ? "assistant" : "thinking";
+      const roleOf = (m: "reply" | "thinking"): Role => (m === "reply" ? "assistant" : "thinking");
       for (const seg of segments) {
         if (seg.text.length === 0) continue;
         const segRole = roleOf(seg.mode);
@@ -1785,17 +1915,19 @@ export function reducer(state: State, action: Action): State {
           turns = turns.slice(0, -1).concat([{ ...last, text: last.text + seg.text }]);
         } else {
           // Open a new turn for this mode.
-          turns = turns.concat([{
-            id: nextTurnId(),
-            role: segRole,
-            text: seg.text,
-            ts: Date.now(),
-            // thinking turns start collapsed so the dim
-            // sub-section doesn't push the actual answer off
-            // screen. The user can expand with the toggle.
-            collapsed: seg.mode === "thinking",
-            previewChars: seg.mode === "thinking" ? 80 : 240,
-          }]);
+          turns = turns.concat([
+            {
+              id: nextTurnId(),
+              role: segRole,
+              text: seg.text,
+              ts: Date.now(),
+              // thinking turns start collapsed so the dim
+              // sub-section doesn't push the actual answer off
+              // screen. The user can expand with the toggle.
+              collapsed: seg.mode === "thinking",
+              previewChars: seg.mode === "thinking" ? 80 : 240,
+            },
+          ]);
         }
       }
       return { ...state, turns, streamingMode: mode, tagLookahead: tail };
@@ -1872,7 +2004,8 @@ export function reducer(state: State, action: Action): State {
         let merged = false;
         for (let i = turns.length - 1; i >= 0; i--) {
           if (turns[i].role === role) {
-            turns = turns.slice(0, i)
+            turns = turns
+              .slice(0, i)
               .concat([{ ...turns[i], text: turns[i].text + leftover }])
               .concat(turns.slice(i + 1));
             leftover = ""; // consumed
@@ -1882,14 +2015,16 @@ export function reducer(state: State, action: Action): State {
         }
         if (!merged) {
           // No matching turn found — open a new one.
-          turns = turns.concat([{
-            id: nextTurnId(),
-            role,
-            text: leftover,
-            ts: Date.now(),
-            collapsed: role === "thinking",
-            previewChars: role === "thinking" ? 80 : 240,
-          }]);
+          turns = turns.concat([
+            {
+              id: nextTurnId(),
+              role,
+              text: leftover,
+              ts: Date.now(),
+              collapsed: role === "thinking",
+              previewChars: role === "thinking" ? 80 : 240,
+            },
+          ]);
           leftover = "";
         }
       }
@@ -1972,7 +2107,7 @@ export function reducer(state: State, action: Action): State {
       };
     case "toggleTurn": {
       const turns = state.turns.map((t) =>
-        t.id === action.id ? { ...t, collapsed: !t.collapsed } : t
+        t.id === action.id ? { ...t, collapsed: !t.collapsed } : t,
       );
       return { ...state, turns };
     }
@@ -1988,9 +2123,7 @@ export function reducer(state: State, action: Action): State {
       // it survives across re-renders and across the
       // collapse-all toggle.
       const turns = state.turns.map((t) =>
-        t.id === action.id && t.role === "tool"
-          ? { ...t, toolExpanded: !t.toolExpanded }
-          : t
+        t.id === action.id && t.role === "tool" ? { ...t, toolExpanded: !t.toolExpanded } : t,
       );
       return { ...state, turns };
     }
@@ -2087,21 +2220,22 @@ export function reducer(state: State, action: Action): State {
       const nextJob: SubagentJobView = {
         jobId: action.jobId,
         role: action.role || prev?.role || "",
-        status: (action.status === "RUNNING"
-                  || action.status === "COMPLETED"
-                  || action.status === "FAILED"
-                  || action.status === "CANCELLED"
-                  ? action.status
-                  : "RUNNING"),
-        startedAtMs: prev?.startedAtMs
-                       ?? (action.status === "RUNNING"
-                              ? Math.max(0, action.atMs - action.elapsedMs)
-                              : action.atMs),
-        endedAtMs: (action.status === "COMPLETED"
-                     || action.status === "FAILED"
-                     || action.status === "CANCELLED")
-                     ? action.atMs
-                     : prev?.endedAtMs,
+        status:
+          action.status === "RUNNING" ||
+          action.status === "COMPLETED" ||
+          action.status === "FAILED" ||
+          action.status === "CANCELLED"
+            ? action.status
+            : "RUNNING",
+        startedAtMs:
+          prev?.startedAtMs ??
+          (action.status === "RUNNING" ? Math.max(0, action.atMs - action.elapsedMs) : action.atMs),
+        endedAtMs:
+          action.status === "COMPLETED" ||
+          action.status === "FAILED" ||
+          action.status === "CANCELLED"
+            ? action.atMs
+            : prev?.endedAtMs,
         elapsedMs: action.elapsedMs,
         summary: action.summary,
         resultText: action.resultText ?? prev?.resultText,
@@ -2110,9 +2244,8 @@ export function reducer(state: State, action: Action): State {
         // a live preview of in-flight work. On
         // terminal transitions we clear the slot
         // (the final result / error takes over).
-        partialResult: action.status === "RUNNING"
-          ? (action.partialResult ?? prev?.partialResult)
-          : undefined,
+        partialResult:
+          action.status === "RUNNING" ? (action.partialResult ?? prev?.partialResult) : undefined,
         // T-444: model + error fields (deepagents-code
         // parity). The model is sticky across the
         // job's lifetime — once the daemon publishes
@@ -2121,11 +2254,11 @@ export function reducer(state: State, action: Action): State {
         // `prev?.model` fallback. The error slot is
         // only set on FAILED events and is preserved
         // on subsequent terminal events.
-        model: (action as { model?: string }).model
-          ?? prev?.model,
-        error: action.status === "FAILED"
-          ? ((action as { error?: string }).error ?? prev?.error)
-          : prev?.error,
+        model: (action as { model?: string }).model ?? prev?.model,
+        error:
+          action.status === "FAILED"
+            ? ((action as { error?: string }).error ?? prev?.error)
+            : prev?.error,
       };
       let nextJobs = state.subagentJobs;
       if (!nextJobs[action.jobId]) {
@@ -2152,7 +2285,15 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         subagentStatus: formatSubagentStatus(action.jobId, action.status, action.elapsedMs),
-        runningSubagents: state.runningSubagents + (action.status === "RUNNING" ? 1 : action.status === "COMPLETED" || action.status === "FAILED" || action.status === "CANCELLED" ? -1 : 0),
+        runningSubagents:
+          state.runningSubagents +
+          (action.status === "RUNNING"
+            ? 1
+            : action.status === "COMPLETED" ||
+                action.status === "FAILED" ||
+                action.status === "CANCELLED"
+              ? -1
+              : 0),
         subagentJobs: nextJobs,
       };
     }
@@ -2200,8 +2341,8 @@ export function reducer(state: State, action: Action): State {
         ...state,
         skipStats: {
           consumed: Math.max(0, action.consumed),
-          armed:    Math.max(0, action.armed),
-          prompts:  Math.max(0, action.prompts),
+          armed: Math.max(0, action.armed),
+          prompts: Math.max(0, action.prompts),
         },
       };
     case "subagentPanelFocusNext":
@@ -2210,9 +2351,10 @@ export function reducer(state: State, action: Action): State {
       if (ids.length === 0) return state;
       const cur = state.subagentPanelFocus;
       const idx = cur ? ids.indexOf(cur) : -1;
-      const next = action.type === "subagentPanelFocusNext"
-        ? Math.min(ids.length - 1, idx + 1)
-        : Math.max(0, idx - 1);
+      const next =
+        action.type === "subagentPanelFocusNext"
+          ? Math.min(ids.length - 1, idx + 1)
+          : Math.max(0, idx - 1);
       return { ...state, subagentPanelFocus: ids[next] };
     }
     case "showSearch":
@@ -2559,12 +2701,10 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         viewingSubagentId: null,
-        viewHistory: state.viewingSubagentId == null
-          ? state.viewHistory
-          : [
-              ...state.viewHistory,
-              { kind: "subagent" as const, jobId: state.viewingSubagentId },
-            ],
+        viewHistory:
+          state.viewingSubagentId == null
+            ? state.viewHistory
+            : [...state.viewHistory, { kind: "subagent" as const, jobId: state.viewingSubagentId }],
       };
     }
     case "viewHistoryPop": {
@@ -2645,13 +2785,19 @@ export function reducer(state: State, action: Action): State {
         // submit gate still do).
         connected: action.state === "connected",
         lastDisconnectAt:
-          (action.state === "reconnecting" || action.state === "disconnected")
+          action.state === "reconnecting" || action.state === "disconnected"
             ? Date.now()
-            : (action.state === "connected" ? null : state.lastDisconnectAt),
+            : action.state === "connected"
+              ? null
+              : state.lastDisconnectAt,
         lastStderrTail:
-          (action.state === "reconnecting" || action.state === "disconnected")
-            ? (action.lastError ? action.lastError.slice(-512) : null)
-            : (action.state === "connected" ? null : state.lastStderrTail),
+          action.state === "reconnecting" || action.state === "disconnected"
+            ? action.lastError
+              ? action.lastError.slice(-512)
+              : null
+            : action.state === "connected"
+              ? null
+              : state.lastStderrTail,
       };
     // R700 — SDD state actions. tui.tsx dispatches these
     // after `sdd.start` / `sdd.advance` / `sdd.abort` /

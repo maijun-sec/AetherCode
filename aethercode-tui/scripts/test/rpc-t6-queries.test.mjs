@@ -16,11 +16,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,12 +24,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
-const tscBin = join(
-  root,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
@@ -110,23 +101,30 @@ function tscCompileFile(label, files) {
   if (existsSync(tmpTsc)) {
     spawnSync(
       process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32"
-        ? ["/c", "rmdir", "/s", "/q", tmpTsc]
-        : ["-rf", tmpTsc],
-      { shell: process.platform === "win32" }
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmpTsc] : ["-rf", tmpTsc],
+      { shell: process.platform === "win32" },
     );
   }
   mkdirSync(tmpTsc, { recursive: true });
   const args = [
-    "--outDir", tmpTsc,
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--strict", "true",
-    "--jsx", "react",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmpTsc,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--jsx",
+    "react",
+    "--rootDir",
+    join(root, "src"),
   ];
   for (const f of files) {
     args.push(join(root, "src", f));

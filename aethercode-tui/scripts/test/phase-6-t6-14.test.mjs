@@ -20,9 +20,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
 const scrollbackPath = join(root, "src", "components", "Scrollback.tsx");
-const summaryPath   = join(root, "src", "components", "chat", "SummaryFooter.tsx");
-const toolCardPath  = join(root, "src", "components", "ToolCard.tsx");
-const planListPath  = join(root, "src", "components", "PlanList.tsx");
+const summaryPath = join(root, "src", "components", "chat", "SummaryFooter.tsx");
+const toolCardPath = join(root, "src", "components", "ToolCard.tsx");
+const planListPath = join(root, "src", "components", "PlanList.tsx");
 
 // ----- 1. File exists + imports SummaryFooter --------------------------
 
@@ -35,7 +35,7 @@ test("T-6-14: Scrollback.tsx imports SummaryFooter from ./chat/SummaryFooter.js"
   // The splitAssistantMessage import.
   assert.match(src, /splitAssistantMessage/);
   // The Summary type import (for explicit reference).
-  assert.match(src, /SummaryFooter,\s*\n\s*splitAssistantMessage,\s*\n\s*type Summary/);
+  assert.match(src, /SummaryFooter,[\s\S]{0,200}?splitAssistantMessage,[\s\S]{0,200}?type Summary/);
 });
 
 // ----- 2. Scrollback: assistant turn renders SummaryFooter below body --
@@ -100,25 +100,48 @@ test("T-6-14: existing renderStopBanner is unchanged (no regression)", () => {
 // ----- 6. tsc: Scrollback.tsx + new components compile cleanly --------
 
 test("T-6-14: TypeScript compile of Scrollback.tsx + new components is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const args = [
-    "--outDir", join(root, "tmp-t6-14-tsc"), "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    join(root, "tmp-t6-14-tsc"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const tmp = join(root, "tmp-t6-14-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const r = spawnSync(`"${tscBin}"`, [
-    ...args,
-    '"' + scrollbackPath + '"',
-    '"' + summaryPath + '"',
-    '"' + toolCardPath + '"',
-    '"' + planListPath + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...args,
+      '"' + scrollbackPath + '"',
+      '"' + summaryPath + '"',
+      '"' + toolCardPath + '"',
+      '"' + planListPath + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

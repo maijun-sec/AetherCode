@@ -19,7 +19,6 @@ const line = join(root, "src", "line.ts");
 const lineInput = join(root, "src", "lineInput.ts");
 const bak = join(root, "tmp-r363-cancel.bak");
 
-
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
 // and the failures would belong to neither round. See
@@ -35,8 +34,10 @@ const original = {
 const snapshot = writeSnapshot(Object.entries(original), SNAPSHOT);
 
 function runGate() {
-  const r = spawnSync(process.execPath, ["--test", join(here, "r363-cancel.test.mjs")],
-    { encoding: "utf-8", cwd: root });
+  const r = spawnSync(process.execPath, ["--test", join(here, "r363-cancel.test.mjs")], {
+    encoding: "utf-8",
+    cwd: root,
+  });
   const out = (r.stdout ?? "") + (r.stderr ?? "");
   const m = out.match(/^ℹ fail (\d+)$/m);
   return { fail: m ? Number(m[1]) : -1, out };
@@ -51,12 +52,13 @@ const CASES = [
     true,
   ],
   [
-    "revert to the pre-R363 request<unknown>(\"query\")",
+    'revert to the pre-R363 request<unknown>("query")',
     target,
-    (s) => s.replace(
-      /const resp = \(await client\.request<\{[\s\S]*?\}>\("query", \{ prompt: text \}\)\) \?\? \{\};/,
-      'const resp = (await client.request<unknown>("query", { prompt: text })) as never;',
-    ),
+    (s) =>
+      s.replace(
+        /const resp\s*=\s*\(await client\.request<\{[\s\S]*?\}>\("query", \{ prompt: text \}\)\) \?\? \{\};/,
+        'const resp = (await client.request<unknown>("query", { prompt: text })) as never;',
+      ),
     true,
   ],
   [
@@ -73,7 +75,9 @@ const CASES = [
       // implementation), so the anchor follows the rename. The
       // PROPERTY under test — the Esc block must sit above the
       // decision-card branches — is unchanged.
-      const m = s.match(/\n    if \(key\.escape\) \{\n      if \(state\.showSearch\)[\s\S]*?\n      if \(state\.submitting\) \{ void stopActiveRun\(\); return; \}\n    \}/);
+      const m = s.match(
+        /\n    if \(key\.escape\) \{[\s\S]*?void stopActiveRun\(\);[\s\S]*?\n    \}/,
+      );
       if (!m) throw new Error("cancel block not found — re-anchor this mutation");
       const cut = s.replace(m[0], "");
       // `key.ctrl && input === "l"` sits below the whole permission /
@@ -93,28 +97,41 @@ const CASES = [
   [
     "make requestCancelRun non-idempotent (remove the latch)",
     state,
-    (s) => s.replace("if (state.cancelRequested) return state;\n      return { ...state, cancelRequested: true", "return { ...state, cancelRequested: true"),
+    (s) =>
+      s.replace(
+        "if (state.cancelRequested) return state;\n      return { ...state, cancelRequested: true",
+        "return { ...state, cancelRequested: true",
+      ),
     true,
   ],
   [
     "stop clearing cancelRequested on submit (Esc dead next turn)",
     state,
-    (s) => s.replace(/\n        activeRunId: null,\n        cancelRequested: false,\n/, "\n        activeRunId: null,\n"),
+    (s) =>
+      s.replace(
+        /\n        activeRunId: null,\n        cancelRequested: false,\n/,
+        "\n        activeRunId: null,\n",
+      ),
     true,
   ],
   [
     "stop clearing the run id + latch on streamEnd",
     state,
-    (s) => s.replace(/\n        activeRunId: null,\n        cancelRequested: false,\n        \/\/ drop the lookahead/, "\n        // drop the lookahead"),
+    (s) =>
+      s.replace(
+        /\n        activeRunId: null,\n        cancelRequested: false,\n        \/\/ drop the lookahead/,
+        "\n        // drop the lookahead",
+      ),
     true,
   ],
   [
     "fire onEscape for CSI sequences too (arrow keys cancel the run)",
     lineInput,
-    (s) => s.replace(
-      /if \(code === 0x1B\) \{\n        i\+\+;\n        if \(text\[i\] === "\["\) \{\n          i\+\+;\n          while \(i < text\.length && text\.charCodeAt\(i\) < 0x40\) i\+\+;\n          if \(i < text\.length\) i\+\+;\n          continue;\n        \}/,
-      'if (code === 0x1B) {\n        i++;',
-    ),
+    (s) =>
+      s.replace(
+        /if \(code === 0x1[bB]\) \{[\s\S]*?if \(text\[i\] === "\["\) \{[\s\S]*?continue;\s*\n\s*\}/,
+        "if (code === 0x1b) {\n        i++;",
+      ),
     true,
   ],
   [
@@ -126,7 +143,11 @@ const CASES = [
   [
     "unwire onEscape in line mode (parity claim becomes false)",
     line,
-    (s) => s.replace(/onEscape: \(\) => \{\n        if \(inFlight > 0\) void stopActiveRun\(\);\n      \},/, "onEscape: undefined,"),
+    (s) =>
+      s.replace(
+        /onEscape: \(\) => \{\n        if \(inFlight > 0\) void stopActiveRun\(\);\n      \},/,
+        "onEscape: undefined,",
+      ),
     true,
   ],
 ];
@@ -145,7 +166,9 @@ for (const [name, file, mutate, expectCatch] of CASES) {
     continue;
   }
   if (after === before) {
-    console.log(`  ??  ${name}\n      mutation was a NO-OP (pattern did not match) — the gate is not testing anything`);
+    console.log(
+      `  ??  ${name}\n      mutation was a NO-OP (pattern did not match) — the gate is not testing anything`,
+    );
     survived++;
     continue;
   }
@@ -168,6 +191,8 @@ for (const [f, content] of Object.entries(original)) {
 }
 if (existsSync(bak)) writeFileSync(bak, "", "utf-8");
 
-console.log(`\n${survived === 0 ? "ALL MUTATIONS CAUGHT" : `${survived} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${survived === 0 ? "ALL MUTATIONS CAUGHT" : `${survived} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 snapshot.clear();
 process.exit(survived === 0 ? 0 : 1);

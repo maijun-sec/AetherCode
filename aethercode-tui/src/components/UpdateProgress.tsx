@@ -61,12 +61,20 @@ export interface UpdateProgressProps {
 
 const DEFAULT_TAIL_LIMIT = 30;
 
-function statusLine(state: UpdateProgressState, latest: string, statusText?: string): { glyph: string; text: string; color: string } {
+function statusLine(
+  state: UpdateProgressState,
+  latest: string,
+  statusText?: string,
+): { glyph: string; text: string; color: string } {
   switch (state) {
     case "running":
       return { glyph: "⠋", text: statusText ?? `Installing v${latest}…`, color: "cyan" };
     case "success":
-      return { glyph: "✓", text: statusText ?? `Update complete. Quit and relaunch aethercode to use v${latest}.`, color: "green" };
+      return {
+        glyph: "✓",
+        text: statusText ?? `Update complete. Quit and relaunch aethercode to use v${latest}.`,
+        color: "green",
+      };
     case "failure":
       return { glyph: "✗", text: statusText ?? "Update failed.", color: "red" };
     case "warning":
@@ -147,15 +155,11 @@ export const UpdateProgress: React.FC<UpdateProgressProps> = ({
   const hasCopy = !!(copyText && copyText.length > 0) || detailsVisible;
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
       </Box>
       <Box>
         <Text color={status.color}>{status.glyph} </Text>
@@ -163,19 +167,22 @@ export const UpdateProgress: React.FC<UpdateProgressProps> = ({
       </Box>
       {detailsVisible ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>  Running command: {command}</Text>
+          <Text dimColor> Running command: {command}</Text>
           {visibleTail.length === 0 ? (
-            <Text dimColor>    (no output yet)</Text>
+            <Text dimColor> (no output yet)</Text>
           ) : (
             visibleTail.map((line, i) => (
-              <Text key={i} dimColor>    {line}</Text>
+              <Text key={i} dimColor>
+                {" "}
+                {line}
+              </Text>
             ))
           )}
-          <Text dimColor>  Log: {logPath}</Text>
+          <Text dimColor> Log: {logPath}</Text>
         </Box>
       ) : null}
       <Text> </Text>
-      <Text dimColor>  {helpText(state, detailsVisible, hasCopy)}</Text>
+      <Text dimColor> {helpText(state, detailsVisible, hasCopy)}</Text>
     </Box>
   );
 };
@@ -183,11 +190,7 @@ export const UpdateProgress: React.FC<UpdateProgressProps> = ({
 /** Pure helper: build the tail (capped) for the picker.
  *  Mirrors `UpdateProgressScreen.appendLine` in
  *  deepagents-code. */
-export function appendLineTail(
-  tail: ReadonlyArray<string>,
-  line: string,
-  limit: number,
-): string[] {
+export function appendLineTail(tail: ReadonlyArray<string>, line: string, limit: number): string[] {
   const cap = limit > 0 ? limit : DEFAULT_TAIL_LIMIT;
   const out = [...tail, line];
   if (out.length <= cap) return out;

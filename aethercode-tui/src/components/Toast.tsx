@@ -37,18 +37,18 @@ export interface Toast {
 
 const KIND_ICON: Record<Toast["kind"], string> = {
   info: icon.note,
-  ok:   icon.ok,
+  ok: icon.ok,
   warn: icon.warn,
-  err:  icon.err,
-  rpc:  icon.dot,
+  err: icon.err,
+  rpc: icon.dot,
 };
 
 const KIND_COLOR: Record<Toast["kind"], string> = {
   info: t.accent,
-  ok:   t.ok,
+  ok: t.ok,
   warn: t.warn,
-  err:  t.err,
-  rpc:  t.dim,
+  err: t.err,
+  rpc: t.dim,
 };
 
 const TOAST_TTL_MS = 2000;

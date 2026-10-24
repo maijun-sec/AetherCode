@@ -93,21 +93,21 @@ export interface TaskPanelProps {
 }
 
 const STATUS_ICON: Record<TaskPanelChild["status"], string> = {
-  QUEUED:    "○",
-  RUNNING:   "▶",
-  PAUSED:    "‖",
+  QUEUED: "○",
+  RUNNING: "▶",
+  PAUSED: "‖",
   COMPLETED: "✓",
-  FAILED:    "✗",
-  KILLED:    "⊘",
+  FAILED: "✗",
+  KILLED: "⊘",
 };
 
 const STATUS_COLOR: Record<TaskPanelChild["status"], string> = {
-  QUEUED:    t.dim,
-  RUNNING:   t.warn,
-  PAUSED:    t.warn,
+  QUEUED: t.dim,
+  RUNNING: t.warn,
+  PAUSED: t.warn,
   COMPLETED: t.ok,
-  FAILED:    t.err,
-  KILLED:    t.dim,
+  FAILED: t.err,
+  KILLED: t.dim,
 };
 
 const STATUS_ORDER: Record<TaskPanelChild["status"], number> = {
@@ -126,10 +126,19 @@ const STATUS_ORDER: Record<TaskPanelChild["status"], number> = {
  */
 export function TaskPanel(props: TaskPanelProps) {
   const {
-    children, focusId,
-    onAttach, onKill, onResume, onRetry,
-    onFocusPrev, onFocusNext, onClose,
-    width, now, loading, error,
+    children,
+    focusId,
+    onAttach,
+    onKill,
+    onResume,
+    onRetry,
+    onFocusPrev,
+    onFocusNext,
+    onClose,
+    width,
+    now,
+    loading,
+    error,
   } = props;
 
   // Stable display order: RUNNING first, then QUEUED, then
@@ -138,12 +147,13 @@ export function TaskPanel(props: TaskPanelProps) {
   // order. We sort in-place in render so the list is
   // always predictable when the user navigates with ↑/↓.
   const sorted = useMemo(
-    () => [...children].sort((a, b) => {
-      const sa = STATUS_ORDER[a.status] ?? 99;
-      const sb = STATUS_ORDER[b.status] ?? 99;
-      if (sa !== sb) return sa - sb;
-      return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-    }),
+    () =>
+      [...children].sort((a, b) => {
+        const sa = STATUS_ORDER[a.status] ?? 99;
+        const sb = STATUS_ORDER[b.status] ?? 99;
+        if (sa !== sb) return sa - sb;
+        return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+      }),
     [children],
   );
 
@@ -189,21 +199,22 @@ export function TaskPanel(props: TaskPanelProps) {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="single"
-      borderColor={t.dim}
-      paddingX={1}
-    >
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor={t.dim} paddingX={1}>
       <Box>
-        <Text bold color={t.brand}>◰ Tasks</Text>
-        <Text dimColor>{`  (${sorted.length} — ↑/↓ select, a attach, k kill, r resume, x retry, Esc close)`}</Text>
+        <Text bold color={t.brand}>
+          ◰ Tasks
+        </Text>
+        <Text
+          dimColor
+        >{`  (${sorted.length} — ↑/↓ select, a attach, k kill, r resume, x retry, Esc close)`}</Text>
       </Box>
-      {loading ? <Text dimColor>  (loading…)</Text> : null}
+      {loading ? <Text dimColor> (loading…)</Text> : null}
       {error ? <Text color={t.err}>{`  error: ${error}`}</Text> : null}
       {!loading && !error && sorted.length === 0 ? (
-        <Text dimColor>  (no background tasks yet — start one from the CLI: aethercode task spawn …)</Text>
+        <Text dimColor>
+          {" "}
+          (no background tasks yet — start one from the CLI: aethercode task spawn …)
+        </Text>
       ) : null}
       {sorted.map((c) => {
         const focused = c.id === effectiveFocus;
@@ -218,24 +229,21 @@ export function TaskPanel(props: TaskPanelProps) {
                 {focused ? "▶" : " "} {icon}
               </Text>
               <Text {...(focused ? { inverse: true } : {})}>{row}</Text>
-              {focused && c.status === "RUNNING" ? (
-                <Text dimColor>  [a attach]</Text>
-              ) : null}
-              {focused && c.status === "PAUSED" ? (
-                <Text dimColor>  [r resume]</Text>
-              ) : null}
-              {focused && c.status !== "KILLED" ? (
-                <Text dimColor>  [k kill]</Text>
-              ) : null}
-              {focused && (c.status === "FAILED" || c.status === "KILLED" || c.status === "COMPLETED") ? (
-                <Text dimColor>  [x retry]</Text>
+              {focused && c.status === "RUNNING" ? <Text dimColor> [a attach]</Text> : null}
+              {focused && c.status === "PAUSED" ? <Text dimColor> [r resume]</Text> : null}
+              {focused && c.status !== "KILLED" ? <Text dimColor> [k kill]</Text> : null}
+              {focused &&
+              (c.status === "FAILED" || c.status === "KILLED" || c.status === "COMPLETED") ? (
+                <Text dimColor> [x retry]</Text>
               ) : null}
             </Box>
             {focused && c.preview ? (
               <Text dimColor>{`   ↳ ${truncate(c.preview, Math.max(20, width - 8))}`}</Text>
             ) : null}
             {focused && c.error ? (
-              <Text color={t.err}>{`   ↳ error: ${truncate(c.error, Math.max(20, width - 12))}`}</Text>
+              <Text
+                color={t.err}
+              >{`   ↳ error: ${truncate(c.error, Math.max(20, width - 12))}`}</Text>
             ) : null}
           </Box>
         );
@@ -251,12 +259,13 @@ function moveFocus(
   setLocal: (id: string | null) => void,
   cb?: () => void,
 ) {
-  if (cb) { cb(); return; }
+  if (cb) {
+    cb();
+    return;
+  }
   if (sorted.length === 0) return;
   const idx = sorted.findIndex((c) => c.id === currentId);
-  const next = idx < 0
-    ? 0
-    : Math.max(0, Math.min(sorted.length - 1, idx + delta));
+  const next = idx < 0 ? 0 : Math.max(0, Math.min(sorted.length - 1, idx + delta));
   setLocal(sorted[next].id);
 }
 

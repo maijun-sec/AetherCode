@@ -90,16 +90,32 @@ mkdirSync(tmp, { recursive: true });
 // One invocation for four modules. `SessionControl.tsx` needs the JSX
 // flag; the rest are plain TS.
 {
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
-    `"${join(root, "src", "runControl.ts")}"`,
-    `"${join(root, "src", "state.ts")}"`,
-    `"${join(root, "src", "commands.ts")}"`,
-    `"${join(root, "src", "components", "session", "SessionControl.tsx")}"`,
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      join(tmp, "out"),
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      `"${join(root, "src", "runControl.ts")}"`,
+      `"${join(root, "src", "state.ts")}"`,
+      `"${join(root, "src", "commands.ts")}"`,
+      `"${join(root, "src", "components", "session", "SessionControl.tsx")}"`,
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
@@ -125,16 +141,65 @@ const capsCode = codeOf(readSrc("src/rpcCapabilities.ts"), "rpcCapabilities.ts")
 // --- the java side ----------------------------------------------------------
 
 const javaRoot = join(root, "..", "aethercode");
-const methodsPath = join(javaRoot, "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java");
-const httpPath = join(javaRoot, "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java");
-const dispatcherPath = join(javaRoot, "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "methods", "EngineContinuationDispatcher.java");
-const taskMethodsPath = join(javaRoot, "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol", "methods", "TaskMethods.java");
-const runnerPath = join(javaRoot, "aethercode-cli", "src", "main", "java",
-  "org", "aethercode", "cli", "DaemonRunner.java");
+const methodsPath = join(
+  javaRoot,
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "methods",
+  "AetherCodeMethods.java",
+);
+const httpPath = join(
+  javaRoot,
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "http",
+  "HttpJsonRpcServer.java",
+);
+const dispatcherPath = join(
+  javaRoot,
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "methods",
+  "EngineContinuationDispatcher.java",
+);
+const taskMethodsPath = join(
+  javaRoot,
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+  "methods",
+  "TaskMethods.java",
+);
+const runnerPath = join(
+  javaRoot,
+  "aethercode-cli",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "cli",
+  "DaemonRunner.java",
+);
 
 const JAVA_SOURCES = [methodsPath, httpPath, dispatcherPath, taskMethodsPath, runnerPath];
 const hasJava = JAVA_SOURCES.every((p) => existsSync(p));
@@ -173,8 +238,11 @@ test("A1: the daemon registers BOTH run-control methods", () => {
   if (!hasJava) return; // skip rather than a false green
   const j = javaCode(readFileSync(methodsPath, "utf-8"));
   for (const m of ["cancel", "setContinuationStopped"]) {
-    assert.match(j, new RegExp(`dispatcher\\.register\\(\\s*"${m}"`),
-      `${m} is not registered on the daemon the TUI spawns — every call is -32601`);
+    assert.match(
+      j,
+      new RegExp(`dispatcher\\.register\\(\\s*"${m}"`),
+      `${m} is not registered on the daemon the TUI spawns — every call is -32601`,
+    );
   }
 });
 
@@ -186,8 +254,11 @@ test("A2: BOTH transports route the run-control methods", () => {
   if (!hasJava) return;
   const j = javaCode(readFileSync(httpPath, "utf-8"));
   for (const m of ["cancel", "setContinuationStopped"]) {
-    assert.match(j, new RegExp(`case\\s+"${m}"\\s*->`),
-      `${m} is not routed by HttpJsonRpcServer's switch — the desktop gets -32601`);
+    assert.match(
+      j,
+      new RegExp(`case\\s+"${m}"\\s*->`),
+      `${m} is not routed by HttpJsonRpcServer's switch — the desktop gets -32601`,
+    );
   }
 });
 
@@ -196,18 +267,26 @@ test("A3: the daemon is the ONLY thing that can answer — task/* is not wired",
   // belongs to a service this daemon does not run.
   if (!hasJava) return;
   const runner = javaCode(readFileSync(runnerPath, "utf-8"));
-  assert.doesNotMatch(runner, /TaskMethods/,
+  assert.doesNotMatch(
+    runner,
+    /TaskMethods/,
     "DaemonRunner now wires TaskMethods — re-check whether task/* is really " +
-    "unreachable before trusting this test's premise");
+      "unreachable before trusting this test's premise",
+  );
   const task = javaCode(readFileSync(taskMethodsPath, "utf-8"));
-  assert.doesNotMatch(task, /"task\/pause"/,
+  assert.doesNotMatch(
+    task,
+    /"task\/pause"/,
     "TaskMethods now has a task/pause — the old table's claim that it does not " +
-    "exist has changed, so this gate's premise needs re-deriving");
+      "exist has changed, so this gate's premise needs re-deriving",
+  );
   // It is a SUPERVISOR proxy, which is why production code never
   // constructs it.
-  assert.match(task, /SupervisorClient/,
-    "TaskMethods is no longer a supervisor proxy — re-derive why the TUI " +
-    "cannot reach it");
+  assert.match(
+    task,
+    /SupervisorClient/,
+    "TaskMethods is no longer a supervisor proxy — re-derive why the TUI " + "cannot reach it",
+  );
 });
 
 test("A4: setContinuationStopped defaults the session and the flag the way the TUI assumes", () => {
@@ -224,13 +303,22 @@ test("A4: setContinuationStopped defaults the session and the flag the way the T
   const j = javaCode(readFileSync(methodsPath, "utf-8"));
   const body = bodyAfter(j, "public Object setContinuationStopped(Object params)", "\n    }");
   assert.ok(body, "setContinuationStopped handler not found (re-anchor this test)");
-  assert.match(body, /sessionId\.isBlank\(\)/,
-    "a blank sessionId must fall back to the engine's current session");
-  assert.match(body, /engine\.appState\(\)\.sessionId\(\)/,
-    "the fallback must be the engine's CURRENT session");
-  assert.match(body, /:\s*true;/,
+  assert.match(
+    body,
+    /sessionId\.isBlank\(\)/,
+    "a blank sessionId must fall back to the engine's current session",
+  );
+  assert.match(
+    body,
+    /engine\.appState\(\)\.sessionId\(\)/,
+    "the fallback must be the engine's CURRENT session",
+  );
+  assert.match(
+    body,
+    /:\s*true;/,
     "a missing `stopped` must default to true — the TUI's continue verb " +
-    "depends on sending `stopped:false` explicitly");
+      "depends on sending `stopped:false` explicitly",
+  );
 });
 
 test("A5: pausing stops the countdown immediately; resuming only lifts the flag", () => {
@@ -239,14 +327,19 @@ test("A5: pausing stops the countdown immediately; resuming only lifts the flag"
   // — i.e. the button would look broken for two seconds every time.
   if (!hasJava) return;
   const j = javaCode(readFileSync(dispatcherPath, "utf-8"));
-  const body = bodyAfter(j, "public void setContinuationStopped(String sessionId, boolean stopped)", "\n    }");
+  const body = bodyAfter(
+    j,
+    "public void setContinuationStopped(String sessionId, boolean stopped)",
+    "\n    }",
+  );
   assert.ok(body, "the dispatcher's setContinuationStopped not found (re-anchor this test)");
-  assert.match(body, /if \(stopped\) \{[\s\S]*?stoppedBySession\.put\(/,
-    "pause must SET the flag");
-  assert.match(body, /cancelPendingContinuationCountdown\(/,
-    "pause must cancel the pending countdown, or it takes effect only after the window");
-  assert.match(body, /\} else \{[\s\S]*?stoppedBySession\.remove\(/,
-    "resume must REMOVE the flag");
+  assert.match(body, /if \(stopped\) \{[\s\S]*?stoppedBySession\.put\(/, "pause must SET the flag");
+  assert.match(
+    body,
+    /cancelPendingContinuationCountdown\(/,
+    "pause must cancel the pending countdown, or it takes effect only after the window",
+  );
+  assert.match(body, /\} else \{[\s\S]*?stoppedBySession\.remove\(/, "resume must REMOVE the flag");
 });
 
 test("A6: a fresh user prompt clears the daemon's own flag", () => {
@@ -255,9 +348,12 @@ test("A6: a fresh user prompt clears the daemon's own flag", () => {
   // it does, in the query handler.
   if (!hasJava) return;
   const j = javaCode(readFileSync(methodsPath, "utf-8"));
-  assert.match(j, /setContinuationStopped\(_targetSid, false\)/,
+  assert.match(
+    j,
+    /setContinuationStopped\(_targetSid, false\)/,
     "the query handler no longer clears the auto-continue flag — the TUI's " +
-    "mirror would drift from the daemon's state");
+      "mirror would drift from the daemon's state",
+  );
 });
 
 // --- B. the shared vocabulary ------------------------------------------------
@@ -287,9 +383,11 @@ test("B2: stop sends the run id; pause and continue send the flag and NOTHING el
   // would happily set the flag for a session named "—".
   for (const action of ["pause", "continue"]) {
     const p = runControl.runParams(action);
-    assert.ok(!("sessionId" in p),
+    assert.ok(
+      !("sessionId" in p),
       `${action} must not send a sessionId — the daemon would take the "—" ` +
-      "placeholder literally");
+        "placeholder literally",
+    );
   }
 });
 
@@ -299,34 +397,40 @@ test("B3: every outcome says what HAPPENED, and a failure names the reason", () 
   // "stopping", not "stopped".
   const stop = runControl.runOutcome("stop", true, { runId: "run-7" });
   assert.match(stop, /stopping/i);
-  assert.doesNotMatch(stop, /\bstopped\b/i,
-    "the success copy must not claim the stop already happened");
+  assert.doesNotMatch(
+    stop,
+    /\bstopped\b/i,
+    "the success copy must not claim the stop already happened",
+  );
 
   assert.match(runControl.runOutcome("pause", true), /paused/i);
   assert.match(runControl.runOutcome("continue", true), /resumed/i);
 
   for (const action of ["stop", "pause", "continue"]) {
     const failed = runControl.runOutcome(action, false, { error: "boom" });
-    assert.match(failed, /boom/,
-      `${action}'s failure copy must name the reason the user cannot act on`);
+    assert.match(
+      failed,
+      /boom/,
+      `${action}'s failure copy must name the reason the user cannot act on`,
+    );
     assert.ok(failed.length > 10, `${action}'s failure copy is too terse: ${failed}`);
   }
 });
 
 test("B4: an idempotent action says so instead of firing a pointless request", () => {
-  assert.ok(runControl.runAlreadyInState("pause"),
-    "pause must be able to say 'already paused'");
-  assert.ok(runControl.runAlreadyInState("continue"),
-    "continue must be able to say 'not paused'");
-  assert.equal(runControl.runAlreadyInState("stop"), null,
-    "stop is always worth doing — 'nothing is running' is a useful answer");
+  assert.ok(runControl.runAlreadyInState("pause"), "pause must be able to say 'already paused'");
+  assert.ok(runControl.runAlreadyInState("continue"), "continue must be able to say 'not paused'");
+  assert.equal(
+    runControl.runAlreadyInState("stop"),
+    null,
+    "stop is always worth doing — 'nothing is running' is a useful answer",
+  );
 });
 
 test("B5: 'there is nothing to stop' is a sentence, not a failure", () => {
   const s = runControl.runNothingInFlight();
   assert.ok(s.length > 20, `too terse to be a user-facing sentence: ${s}`);
-  assert.doesNotMatch(s, /failed/i,
-    "nothing broke — there was simply no run to stop");
+  assert.doesNotMatch(s, /failed/i, "nothing broke — there was simply no run to stop");
 });
 
 test("B6: a paused session maps to the paused state", () => {
@@ -342,20 +446,28 @@ test("B6: a paused session maps to the paused state", () => {
 test("C1: the Ink renderer has exactly ONE stop and ONE pause implementation", () => {
   const stops = tuiCode.match(/async function stopActiveRun/g) || [];
   const pauses = tuiCode.match(/async function pauseAutoContinue/g) || [];
-  assert.equal(stops.length, 1,
+  assert.equal(
+    stops.length,
+    1,
     `expected one stopActiveRun in tui.tsx, found ${stops.length} — two ` +
-    "implementations of one verb is how they drift apart");
-  assert.equal(pauses.length, 1,
-    `expected one pauseAutoContinue in tui.tsx, found ${pauses.length}`);
+      "implementations of one verb is how they drift apart",
+  );
+  assert.equal(
+    pauses.length,
+    1,
+    `expected one pauseAutoContinue in tui.tsx, found ${pauses.length}`,
+  );
 });
 
 test("C2: the line renderer has exactly ONE stop and ONE pause implementation", () => {
   const stops = lineCode.match(/async function stopActiveRun/g) || [];
   const pauses = lineCode.match(/async function pauseAutoContinue/g) || [];
-  assert.equal(stops.length, 1,
-    `expected one stopActiveRun in line.ts, found ${stops.length}`);
-  assert.equal(pauses.length, 1,
-    `expected one pauseAutoContinue in line.ts, found ${pauses.length}`);
+  assert.equal(stops.length, 1, `expected one stopActiveRun in line.ts, found ${stops.length}`);
+  assert.equal(
+    pauses.length,
+    1,
+    `expected one pauseAutoContinue in line.ts, found ${pauses.length}`,
+  );
 });
 
 test("C3: the status bar's three buttons call the shared implementations", () => {
@@ -364,14 +476,26 @@ test("C3: the status bar's three buttons call the shared implementations", () =>
   // right here, with the rejection swallowed.
   const sb = jsxBlock(tuiCode, "StatusBar");
   assert.ok(sb, "the StatusBar mount not found in tui.tsx (re-anchor this test)");
-  assert.match(sb, /onContinue=\{\(\)\s*=>\s*\{[\s\S]*?pauseAutoContinue\(false\)/,
-    "the Continue button must resume the session's automatic continuation");
-  assert.match(sb, /onPause=\{\(\)\s*=>\s*\{[\s\S]*?pauseAutoContinue\(true\)/,
-    "the Pause button must pause the session's automatic continuation");
-  assert.match(sb, /onStop=\{\(\)\s*=>\s*\{[\s\S]*?stopActiveRun\(\)/,
-    "the Stop button must use the same stop implementation as Esc");
-  assert.doesNotMatch(sb, /task\//,
-    "the status bar still names a task/* method — this daemon does not register it");
+  assert.match(
+    sb,
+    /onContinue=\{\(\)\s*=>\s*\{[\s\S]*?pauseAutoContinue\(false\)/,
+    "the Continue button must resume the session's automatic continuation",
+  );
+  assert.match(
+    sb,
+    /onPause=\{\(\)\s*=>\s*\{[\s\S]*?pauseAutoContinue\(true\)/,
+    "the Pause button must pause the session's automatic continuation",
+  );
+  assert.match(
+    sb,
+    /onStop=\{\(\)\s*=>\s*\{[\s\S]*?stopActiveRun\(\)/,
+    "the Stop button must use the same stop implementation as Esc",
+  );
+  assert.doesNotMatch(
+    sb,
+    /task\//,
+    "the status bar still names a task/* method — this daemon does not register it",
+  );
 });
 
 test("C4: the slash commands reach the same implementations", () => {
@@ -395,21 +519,35 @@ test("C5: the commands are NOT refused — the capability filter lets them throu
   for (const input of ["/stop", "/pause", "/continue", "/resume", "/kill"]) {
     const res = commandsMod.handleSlash(input);
     assert.ok(res?.rpcMethod, `${input} no longer dispatches — it was refused again`);
-    assert.ok(!res?.local || !/not available|cannot|unable/i.test(res.local),
-      `${input} was refused in words: ${res?.local}`);
+    assert.ok(
+      !res?.local || !/not available|cannot|unable/i.test(res.local),
+      `${input} was refused in words: ${res?.local}`,
+    );
   }
 });
 
 test("C6: the three surfaces share the vocabulary module", () => {
-  for (const [name, code] of [["tui.tsx", tuiCode], ["line.ts", lineCode]]) {
-    assert.match(code, /from "\.\/runControl\.js"/,
-      `${name} must read the run-control vocabulary from src/runControl.ts`);
+  for (const [name, code] of [
+    ["tui.tsx", tuiCode],
+    ["line.ts", lineCode],
+  ]) {
+    assert.match(
+      code,
+      /from "\.\/runControl\.js"/,
+      `${name} must read the run-control vocabulary from src/runControl.ts`,
+    );
   }
-  assert.match(statusBarCode, /from "\.\.\/runControl\.js"/,
-    "StatusBar.tsx must read the session-state mapping from src/runControl.ts");
-  assert.doesNotMatch(statusBarCode, /function mapSessionState/,
+  assert.match(
+    statusBarCode,
+    /from "\.\.\/runControl\.js"/,
+    "StatusBar.tsx must read the session-state mapping from src/runControl.ts",
+  );
+  assert.doesNotMatch(
+    statusBarCode,
+    /function mapSessionState/,
     "StatusBar.tsx grew a second copy of the session-state mapping — one " +
-    "definition, or the two will disagree");
+      "definition, or the two will disagree",
+  );
 });
 
 test("C7: nothing in the TUI names a method the daemon cannot serve", () => {
@@ -426,9 +564,12 @@ test("C7: nothing in the TUI names a method the daemon cannot serve", () => {
       offenders.push(`${m[1]}  <- ${rel}`);
     }
   }
-  assert.deepEqual(offenders, [],
+  assert.deepEqual(
+    offenders,
+    [],
     "the TUI names task/* methods, which this daemon does not register:\n  " +
-    offenders.join("\n  "));
+      offenders.join("\n  "),
+  );
 });
 
 // --- D. the Continue button is reachable -------------------------------------
@@ -440,9 +581,10 @@ test("D1: a paused session makes Continue a VALID action", () => {
   // exist. The chain has to hold end to end.
   const state = runControl.runControlState("running", true);
   const valid = sessionControl.validActions(state);
-  assert.ok(valid.has("continue"),
-    `a paused session must offer Continue — validActions(${state}) = ` +
-    `${[...valid].join(",")}`);
+  assert.ok(
+    valid.has("continue"),
+    `a paused session must offer Continue — validActions(${state}) = ` + `${[...valid].join(",")}`,
+  );
 });
 
 test("D2: a running session offers Pause and Stop but not Continue", () => {
@@ -451,31 +593,34 @@ test("D2: a running session offers Pause and Stop but not Continue", () => {
   const valid = sessionControl.validActions(runControl.runControlState("running", false));
   assert.ok(valid.has("pause"), "a running session must offer Pause");
   assert.ok(valid.has("stop"), "a running session must offer Stop");
-  assert.ok(!valid.has("continue"),
-    "Continue must be unavailable while the session is not paused");
+  assert.ok(!valid.has("continue"), "Continue must be unavailable while the session is not paused");
 });
 
 // --- the mirror the TUI keeps -----------------------------------------------
 
 test("E1: the TUI mirrors the daemon's auto-continue flag", () => {
   const { INITIAL, reducer } = stateMod;
-  assert.equal(INITIAL.continuationPaused, false,
-    "a fresh session is not paused");
+  assert.equal(INITIAL.continuationPaused, false, "a fresh session is not paused");
   const paused = reducer(INITIAL, { type: "setContinuationPaused", paused: true });
   assert.equal(paused.continuationPaused, true);
   // Idempotent: the same value must not churn the state object.
-  assert.equal(reducer(paused, { type: "setContinuationPaused", paused: true }), paused,
-    "setting the same value must return the identical state object");
+  assert.equal(
+    reducer(paused, { type: "setContinuationPaused", paused: true }),
+    paused,
+    "setting the same value must return the identical state object",
+  );
 });
 
 test("E2: a new prompt clears the mirror, because the daemon clears its flag", () => {
   const { INITIAL, reducer } = stateMod;
   const paused = reducer(INITIAL, { type: "setContinuationPaused", paused: true });
-  const submitted = reducer({ ...paused, input: "next", submitting: false },
-    { type: "submit" });
-  assert.equal(submitted.continuationPaused, false,
+  const submitted = reducer({ ...paused, input: "next", submitting: false }, { type: "submit" });
+  assert.equal(
+    submitted.continuationPaused,
+    false,
     "the daemon clears the flag on the next prompt (A6) — a mirror that " +
-    "survives it would make the status bar lie");
+      "survives it would make the status bar lie",
+  );
 
   // A SECOND, independent derivation of the same property: the
   // reducer's `submit` case must NAME the field it resets. One
@@ -485,8 +630,11 @@ test("E2: a new prompt clears the mirror, because the daemon clears its flag", (
   const stateCode = codeOf(readSrc("src/state.ts"), "state.ts");
   const submitCase = stateCode.slice(stateCode.indexOf('case "submit":'));
   assert.ok(submitCase.length > 0, "the submit case not found (re-anchor this test)");
-  assert.match(submitCase, /continuationPaused:\s*false/,
-    "the submit case must reset the mirror explicitly");
+  assert.match(
+    submitCase,
+    /continuationPaused:\s*false/,
+    "the submit case must reset the mirror explicitly",
+  );
 });
 
 test("E3: switching sessions resets the mirror — the flag belongs to a session", () => {
@@ -497,9 +645,12 @@ test("E3: switching sessions resets the mirror — the flag belongs to a session
     sessionId: "session-b",
     turns: [],
   });
-  assert.equal(adopted.continuationPaused, false,
+  assert.equal(
+    adopted.continuationPaused,
+    false,
     "the auto-continue flag is per-session; carrying the mirror across a " +
-    "session switch makes the status bar lie about the new session");
+      "session switch makes the status bar lie about the new session",
+  );
 });
 
 // --- failures are visible ---------------------------------------------------
@@ -508,11 +659,17 @@ test("F1: a failed stop is reported, not swallowed", () => {
   const body = bodyAfter(tuiCode, "async function stopActiveRun");
   assert.ok(body, "stopActiveRun not found (re-anchor this test)");
   assert.match(body, /catch\s*\(/, "a failed stop must be caught");
-  assert.match(body, /kind:\s*"err"/,
+  assert.match(
+    body,
+    /kind:\s*"err"/,
     "a failed stop must be shown as an error — the old wiring had no " +
-    "catch at all, so the -32601 vanished");
-  assert.match(body, /runOutcome\(\s*"stop"\s*,\s*false/,
-    "the failure copy must come from the shared vocabulary");
+      "catch at all, so the -32601 vanished",
+  );
+  assert.match(
+    body,
+    /runOutcome\(\s*"stop"\s*,\s*false/,
+    "the failure copy must come from the shared vocabulary",
+  );
 });
 
 test("F2: a failed pause is reported, not swallowed", () => {
@@ -520,16 +677,22 @@ test("F2: a failed pause is reported, not swallowed", () => {
   assert.ok(body, "pauseAutoContinue not found (re-anchor this test)");
   assert.match(body, /catch\s*\(/, "a failed pause must be caught");
   assert.match(body, /kind:\s*"err"/, "a failed pause must be shown as an error");
-  assert.match(body, /runOutcome\(\s*action\s*,\s*false/,
-    "the failure copy must come from the shared vocabulary");
+  assert.match(
+    body,
+    /runOutcome\(\s*action\s*,\s*false/,
+    "the failure copy must come from the shared vocabulary",
+  );
 });
 
 test("F3: the line renderer reports failures too", () => {
   const body = bodyAfter(lineCode, "async function pauseAutoContinue");
   assert.ok(body, "line mode's pauseAutoContinue not found (re-anchor this test)");
   assert.match(body, /catch\s*\(/, "line mode must catch a failed pause");
-  assert.match(body, /runOutcome\(\s*action\s*,\s*false/,
-    "the failure copy must come from the shared vocabulary");
+  assert.match(
+    body,
+    /runOutcome\(\s*action\s*,\s*false/,
+    "the failure copy must come from the shared vocabulary",
+  );
 });
 
 // --- the inventory ----------------------------------------------------------
@@ -539,28 +702,41 @@ test("G1: the refusal table names exactly the gaps that remain", () => {
   // "is every method the TUI sends registered?", and an entry for a
   // method the TUI no longer sends trips neither question. So the
   // inventory is pinned here.
-  const names = [...capsCode.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)]
-    .map((m) => m[1]);
-  assert.ok(names.length >= 4,
+  const names = [...capsCode.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)].map(
+    (m) => m[1],
+  );
+  assert.ok(
+    names.length >= 4,
     `only ${names.length} entries parsed from rpcCapabilities.ts — the ` +
-    "extraction probably stopped matching");
-  assert.deepEqual(names.sort(),
+      "extraction probably stopped matching",
+  );
+  assert.deepEqual(
+    names.sort(),
     ["agent/setDefault", "effort/set", "rewind", "session/tokens"],
     "the refusal table must name exactly the methods the TUI still wants " +
-    "and cannot have. R375 removed the three task/* entries because the TUI " +
-    "stopped naming those methods at all.");
+      "and cannot have. R375 removed the three task/* entries because the TUI " +
+      "stopped naming those methods at all.",
+  );
 });
 
 test("G2: the refusal table still refuses what it names", () => {
   // The table is only honest if the filter really consults it. (The
   // r369 gate owns the per-command behaviour; this pins the seam.)
-  assert.match(commandsCode, /unsupportedReason\(result\?\.rpcMethod\)/,
-    "handleSlash must consult the shared table");
+  assert.match(
+    commandsCode,
+    /unsupportedReason\(result\?\.rpcMethod\)/,
+    "handleSlash must consult the shared table",
+  );
   for (const m of ["rewind", "session/tokens"]) {
     const res = commandsMod.handleSlash(m === "rewind" ? "/rewind 3" : "/tokens");
-    assert.ok(res?.local && res.local.includes(m),
-      `${m} must still be refused in words, got: ${res?.local}`);
-    assert.equal(res?.rpcMethod, undefined,
-      `${m} must not dispatch — the daemon does not register it`);
+    assert.ok(
+      res?.local && res.local.includes(m),
+      `${m} must still be refused in words, got: ${res?.local}`,
+    );
+    assert.equal(
+      res?.rpcMethod,
+      undefined,
+      `${m} must not dispatch — the daemon does not register it`,
+    );
   }
 });

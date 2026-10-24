@@ -78,7 +78,9 @@ export function SddReview({
 
 function renderPlain(lines: string[]): React.ReactNode {
   return lines.map((l, i) => (
-    <Text key={i}>{padLineNumber(i + 1, lines.length)}  {l}</Text>
+    <Text key={i}>
+      {padLineNumber(i + 1, lines.length)} {l}
+    </Text>
   ));
 }
 
@@ -92,11 +94,7 @@ function renderPlain(lines: string[]): React.ReactNode {
  *   - changed pair:   "-" then "+" (paired by line number when
  *                     the lengths match)
  */
-function renderDiff(
-  previous: string[],
-  current: string[],
-  maxLines: number,
-): React.ReactNode {
+function renderDiff(previous: string[], current: string[], maxLines: number): React.ReactNode {
   // Simple LCS-free diff: walk line-by-line. This is O(N+M) and
   // produces more "+"/"-" pairs than git's algorithm but it's
   // deterministic + easy to verify by eye. SDD artefacts are
@@ -110,21 +108,33 @@ function renderDiff(
     const b = current[i];
     if (a === undefined && b !== undefined) {
       out.push(
-        <Text key={`+${i}`} color="green">{padLineNumber(i + 1, max)} + {b}</Text>
+        <Text key={`+${i}`} color="green">
+          {padLineNumber(i + 1, max)} + {b}
+        </Text>,
       );
     } else if (a !== undefined && b === undefined) {
       out.push(
-        <Text key={`-${i}`} color="red">{padLineNumber(i + 1, max)} - {a}</Text>
+        <Text key={`-${i}`} color="red">
+          {padLineNumber(i + 1, max)} - {a}
+        </Text>,
       );
     } else if (a === b) {
-      out.push(<Text key={`=${i}`}>{padLineNumber(i + 1, max)}   {a}</Text>);
+      out.push(
+        <Text key={`=${i}`}>
+          {padLineNumber(i + 1, max)} {a}
+        </Text>,
+      );
     } else {
       // changed pair
       out.push(
-        <Text key={`-${i}`} color="red">{padLineNumber(i + 1, max)} - {a}</Text>
+        <Text key={`-${i}`} color="red">
+          {padLineNumber(i + 1, max)} - {a}
+        </Text>,
       );
       out.push(
-        <Text key={`+${i}`} color="green">{padLineNumber(i + 1, max)} + {b}</Text>
+        <Text key={`+${i}`} color="green">
+          {padLineNumber(i + 1, max)} + {b}
+        </Text>,
       );
       shown++; // a - and + both consume one show budget
     }

@@ -35,9 +35,7 @@ export interface PendingUpdate {
 /** Dismissal: the actionId picked, or `null` for cancel.
  *  `__changelog__` is the sentinel for the changelog row. */
 export type UpdateAvailableResult =
-  | { kind: "action"; actionId: string }
-  | { kind: "changelog" }
-  | { kind: "cancel" };
+  { kind: "action"; actionId: string } | { kind: "changelog" } | { kind: "cancel" };
 
 export const CHANGELOG_SENTINEL = "__changelog__";
 
@@ -110,17 +108,13 @@ export const UpdateAvailable: React.FC<UpdateAvailableProps> = ({
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="green"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="green" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="green" bold>◆ {title ?? entry.title}</Text>
+        <Text color="green" bold>
+          ◆ {title ?? entry.title}
+        </Text>
       </Box>
-      {entry.body ? <Text dimColor>  {entry.body}</Text> : null}
+      {entry.body ? <Text dimColor> {entry.body}</Text> : null}
       <Text> </Text>
       {options.map((o, i) => {
         const isHighlighted = i === highlight;
@@ -130,7 +124,7 @@ export const UpdateAvailable: React.FC<UpdateAvailableProps> = ({
             <Box key="changelog" flexDirection="row">
               <Text color={isHighlighted ? "cyan" : undefined}>{prefix}</Text>
               <Text dimColor>{o.label}</Text>
-              {changelogUrl ? <Text dimColor>  ({changelogUrl})</Text> : null}
+              {changelogUrl ? <Text dimColor> ({changelogUrl})</Text> : null}
             </Box>
           );
         }
@@ -146,7 +140,7 @@ export const UpdateAvailable: React.FC<UpdateAvailableProps> = ({
         );
       })}
       <Text> </Text>
-      <Text dimColor>  ↑/↓ (j/k): navigate  Tab/Shift+Tab  Enter: select  Esc: close</Text>
+      <Text dimColor> ↑/↓ (j/k): navigate Tab/Shift+Tab Enter: select Esc: close</Text>
     </Box>
   );
 };
@@ -176,5 +170,4 @@ export function dismissUpdateCancel(): UpdateAvailableResult {
  * notes. The live update panel uses the same URL, from
  * `src/updateInfo.ts`.
  */
-export const DEFAULT_CHANGELOG_URL =
-  "https://github.com/maijun-sec/AetherCode/releases";
+export const DEFAULT_CHANGELOG_URL = "https://github.com/maijun-sec/AetherCode/releases";

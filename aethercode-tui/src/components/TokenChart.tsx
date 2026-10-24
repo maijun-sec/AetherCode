@@ -150,7 +150,11 @@ export const TokenChart: React.FC<Props> = ({
     const idx = Math.min(BARS.length - 1, Math.max(0, Math.floor((v / max) * (BARS.length - 1))));
     const isLast = i === buckets.length - 1;
     const c = isLast && cap > 0 ? tailColor : color;
-    chars.push(<Text key={i} color={c}>{BARS[idx]}</Text>);
+    chars.push(
+      <Text key={i} color={c}>
+        {BARS[idx]}
+      </Text>,
+    );
   }
   // T-440: optional cap marker. We compute the bar
   // position of the cap within the chart's max so the
@@ -160,13 +164,12 @@ export const TokenChart: React.FC<Props> = ({
   // numeric value.
   const renderCapMarker = cap > 0 && (showCapMarker ?? providerLimits != null) && cap <= max;
   if (renderCapMarker) {
-    const capBarIdx = Math.min(
-      width - 1,
-      Math.max(0, Math.floor((cap / max) * (width - 1))),
-    );
+    const capBarIdx = Math.min(width - 1, Math.max(0, Math.floor((cap / max) * (width - 1))));
     if (capBarIdx < width - 1) {
       chars.push(
-        <Text key="cap" color="red">▕</Text>,
+        <Text key="cap" color="red">
+          ▕
+        </Text>,
       );
     }
   }

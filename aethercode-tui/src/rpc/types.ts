@@ -53,14 +53,7 @@ export interface RpcNotification<P = unknown> {
 export interface RpcObject {
   [k: string]: RpcValue;
 }
-export type RpcValue =
-  | string
-  | number
-  | boolean
-  | null
-  | RpcValue[]
-  | RpcObject
-  | undefined;
+export type RpcValue = string | number | boolean | null | RpcValue[] | RpcObject | undefined;
 
 /** Thrown by `JsonRpcClient.request` when the supervisor
  *  returns a JSON-RPC error envelope or the socket dies. */
@@ -91,11 +84,7 @@ export class RpcDisconnected extends Error {
 /** The four high-level states the socket connection can be
  *  in. Surfaced to the renderer (status bar, reconnect
  *  modal) so the user knows whether to retry or wait. */
-export type ConnectionState =
-  | "connecting"
-  | "connected"
-  | "reconnecting"
-  | "disconnected";
+export type ConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
 /** A single `task/event` (or `transcript_event`, `rpc_event`,
  *  `todo_update`, etc.) streamed from the supervisor. The
@@ -170,7 +159,7 @@ export interface JsonRpcClientConfig {
   /** Hook for state changes. Called on every transition. */
   onConnectionState?: (
     state: ConnectionState,
-    info?: { attempt: number; lastError: string | null; at: number }
+    info?: { attempt: number; lastError: string | null; at: number },
   ) => void;
   /** Hook for incoming notifications (events from the
    *  supervisor that aren't replies to in-flight requests). */

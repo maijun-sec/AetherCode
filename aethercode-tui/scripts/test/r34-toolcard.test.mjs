@@ -25,16 +25,30 @@ const tmp = join(root, "tmp-r34-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 {
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "state.ts")}"`], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
@@ -128,7 +142,11 @@ test("R34: formatDuration handles invalid input", () => {
 
 test("R34: streamToolStart sets toolStartedAt + toolCategory", () => {
   const before = INITIAL.turns.length;
-  const s = reducer(INITIAL, { type: "streamToolStart", name: "file_read", args: '{"path":"x.txt"}' });
+  const s = reducer(INITIAL, {
+    type: "streamToolStart",
+    name: "file_read",
+    args: '{"path":"x.txt"}',
+  });
   assert.equal(s.turns.length, before + 1);
   const t = s.turns[s.turns.length - 1];
   assert.equal(t.toolName, "file_read");
@@ -153,7 +171,12 @@ test("R34: streamToolEnd sets toolEndedAt", async () => {
 
 test("R34: streamToolEnd marks tool as error on isError=true", () => {
   let s = reducer(INITIAL, { type: "streamToolStart", name: "bash", args: "{}" });
-  s = reducer(s, { type: "streamToolEnd", name: "bash", isError: true, result: "permission denied" });
+  s = reducer(s, {
+    type: "streamToolEnd",
+    name: "bash",
+    isError: true,
+    result: "permission denied",
+  });
   const t = s.turns[s.turns.length - 1];
   assert.equal(t.toolStatus, "error");
   assert.equal(t.toolResult, "permission denied");
@@ -202,12 +225,24 @@ test("R34: state.ts exports categorizeTool + formatDuration", () => {
   const src = readFileSync(join(root, "src", "state.ts"), "utf-8");
   assert.match(src, /export function categorizeTool/);
   assert.match(src, /export function formatDuration/);
-  assert.match(src, /type ToolCategory = "read" \| "write" \| "search" \| "run" \| "agent" \| "other"/);
+  assert.match(
+    src,
+    /type ToolCategory = "read" \| "write" \| "search" \| "run" \| "agent" \| "other"/,
+  );
 });
 
 test("R34: theme.ts has tool-category icons + colors", () => {
   const theme = readFileSync(join(root, "src", "theme.ts"), "utf-8");
-  for (const k of ["catRead", "catWrite", "catSearch", "catRun", "catAgent", "catOther", "detail", "timer"]) {
+  for (const k of [
+    "catRead",
+    "catWrite",
+    "catSearch",
+    "catRun",
+    "catAgent",
+    "catOther",
+    "detail",
+    "timer",
+  ]) {
     assert.match(theme, new RegExp(`\\b${k}:`), `theme.ts missing icon.${k}`);
   }
   for (const k of ["catRead", "catWrite", "catSearch", "catRun", "catAgent", "catOther"]) {

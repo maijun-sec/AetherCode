@@ -32,20 +32,26 @@ if (!existsSync("dist")) mkdirSync("dist", { recursive: true });
 const stubDir = "dist/.stubs";
 if (!existsSync(stubDir)) mkdirSync(stubDir, { recursive: true });
 writeFileSync(`${stubDir}/react-devtools-core.js`, "export default {};\n");
-writeFileSync(`${stubDir}/package.json`, `{
+writeFileSync(
+  `${stubDir}/package.json`,
+  `{
   "name": "react-devtools-core",
   "main": "./react-devtools-core.js"
-}\n`);
+}\n`,
+);
 // Some dependencies do `require("assert")` which ESM doesn't
 // expose by default. We point the alias at `node:assert` via
 // a synchronous module — esbuild's __require polyfill will
 // then handle the call. We use a self-contained .cjs file.
 writeFileSync(`${stubDir}/assert.cjs`, `module.exports = require("node:assert");\n`);
 writeFileSync(`${stubDir}/assert.js`, `import real from "node:assert"; export default real;\n`);
-writeFileSync(`${stubDir}/assert-package.json`, `{
+writeFileSync(
+  `${stubDir}/assert-package.json`,
+  `{
   "name": "assert",
   "main": "./assert.cjs"
-}\n`);
+}\n`,
+);
 
 await build({
   entryPoints: ["src/ac-tui.ts"],
@@ -67,10 +73,21 @@ await build({
   // require, and we copy the packages to each ship target
   // below. On non-Windows or when koffi is missing, the
   // `enableVirtualTerminal` call catches and proceeds.
-  external: ["koffi", "@koromix/koffi-win32-x64", "@koromix/koffi-win32-ia32", "@koromix/koffi-win32-arm64", "@koromix/koffi-linux-arm", "@koromix/koffi-linux-arm64", "@koromix/koffi-linux-ia32", "@koromix/koffi-linux-x64", "@koromix/koffi-darwin-arm64", "@koromix/koffi-darwin-x64"],
+  external: [
+    "koffi",
+    "@koromix/koffi-win32-x64",
+    "@koromix/koffi-win32-ia32",
+    "@koromix/koffi-win32-arm64",
+    "@koromix/koffi-linux-arm",
+    "@koromix/koffi-linux-arm64",
+    "@koromix/koffi-linux-ia32",
+    "@koromix/koffi-linux-x64",
+    "@koromix/koffi-darwin-arm64",
+    "@koromix/koffi-darwin-x64",
+  ],
   alias: {
     "react-devtools-core": "./dist/.stubs/react-devtools-core.js",
-    "assert": "./dist/.stubs/assert.cjs",
+    assert: "./dist/.stubs/assert.cjs",
   },
   banner: {
     js: [
@@ -90,15 +107,22 @@ await build({
 
 // Also write a small package.json into dist/ so the bundle
 // can be `npm install`ed as a single file artifact.
-writeFileSync("dist/package.json", JSON.stringify({
-  name: "aethercode-tui",
-  version: "0.2.1",
-  description: "AetherCode TUI (bundled)",
-  type: "module",
-  bin: { "ac-tui": "./ac-tui.js" },
-  main: "./ac-tui.js",
-  license: "MIT",
-}, null, 2));
+writeFileSync(
+  "dist/package.json",
+  JSON.stringify(
+    {
+      name: "aethercode-tui",
+      version: "0.2.1",
+      description: "AetherCode TUI (bundled)",
+      type: "module",
+      bin: { "ac-tui": "./ac-tui.js" },
+      main: "./ac-tui.js",
+      license: "MIT",
+    },
+    null,
+    2,
+  ),
+);
 
 const localDist = resolve(projectRoot, "dist/ac-tui.js");
 const localSize = statSync(localDist).size;
@@ -169,11 +193,24 @@ if (!isNpm) {
     if (existsSync(koromixDir)) {
       // Copy only the platform we're running on; skip the rest
       // (they'd bloat the zip by ~3 MB each for no benefit).
-      const platPkg = process.platform === "win32"
-        ? (process.arch === "ia32" ? "koffi-win32-ia32" : process.arch === "arm64" ? "koffi-win32-arm64" : "koffi-win32-x64")
-        : process.platform === "darwin"
-        ? (process.arch === "arm64" ? "koffi-darwin-arm64" : "koffi-darwin-x64")
-        : (process.arch === "arm" ? "koffi-linux-arm" : process.arch === "arm64" ? "koffi-linux-arm64" : process.arch === "ia32" ? "koffi-linux-ia32" : "koffi-linux-x64");
+      const platPkg =
+        process.platform === "win32"
+          ? process.arch === "ia32"
+            ? "koffi-win32-ia32"
+            : process.arch === "arm64"
+              ? "koffi-win32-arm64"
+              : "koffi-win32-x64"
+          : process.platform === "darwin"
+            ? process.arch === "arm64"
+              ? "koffi-darwin-arm64"
+              : "koffi-darwin-x64"
+            : process.arch === "arm"
+              ? "koffi-linux-arm"
+              : process.arch === "arm64"
+                ? "koffi-linux-arm64"
+                : process.arch === "ia32"
+                  ? "koffi-linux-ia32"
+                  : "koffi-linux-x64";
       copyPkg(join(koromixDir, platPkg), join(dstNm, "@koromix", platPkg), []);
     }
   };

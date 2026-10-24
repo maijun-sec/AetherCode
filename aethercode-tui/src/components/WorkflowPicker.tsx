@@ -123,18 +123,14 @@ export const WorkflowPicker: React.FC<WorkflowPickerProps> = ({
   const visible = workflows.slice(start, end);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  ↑/↓ (j/k): navigate  Enter: run  Esc: cancel</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor> ↑/↓ (j/k): navigate Enter: run Esc: cancel</Text>
       </Box>
-      {dir ? <Text dimColor>  {dir}</Text> : null}
+      {dir ? <Text dimColor> {dir}</Text> : null}
       <Text> </Text>
       {workflows.length === 0 ? (
         <EmptyState state={workflowEmptyState(workflows, skipped, dir)} />
@@ -145,21 +141,19 @@ export const WorkflowPicker: React.FC<WorkflowPickerProps> = ({
           return (
             <Box key={w.id} flexDirection="column">
               <Box flexDirection="row">
-                <Text color={isHighlighted ? "cyan" : undefined}>
-                  {isHighlighted ? "▶" : " "}{" "}
-                </Text>
+                <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
                 <Text bold={isHighlighted}>{w.name}</Text>
-                <Text dimColor>  ·  {w.stepCount} steps</Text>
+                <Text dimColor> · {w.stepCount} steps</Text>
                 {/* The file name is what the run actually addresses.
                     Showing it only when it differs from the display
                     name keeps the common case quiet and explains the
                     uncommon one. */}
-                {w.id !== w.name ? <Text dimColor>  ({w.id})</Text> : null}
+                {w.id !== w.name ? <Text dimColor> ({w.id})</Text> : null}
               </Box>
-              {w.description ? <Text dimColor>     {truncate(w.description, 72)}</Text> : null}
+              {w.description ? <Text dimColor> {truncate(w.description, 72)}</Text> : null}
               {w.inputs.length > 0 ? (
                 <Text dimColor>
-                  {"     "}needs: {w.inputs.join(", ")}  ·  runs with no values
+                  {"     "}needs: {w.inputs.join(", ")} · runs with no values
                 </Text>
               ) : null}
             </Box>
@@ -167,7 +161,10 @@ export const WorkflowPicker: React.FC<WorkflowPickerProps> = ({
         })
       )}
       {workflows.length > maxVisible ? (
-        <Text dimColor>  {start + 1}–{end} of {workflows.length}</Text>
+        <Text dimColor>
+          {" "}
+          {start + 1}–{end} of {workflows.length}
+        </Text>
       ) : null}
     </Box>
   );

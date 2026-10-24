@@ -23,11 +23,7 @@
  * and drive the backoff via fake timers.
  */
 
-import {
-  attachReconnectHooks,
-  JsonRpcClient,
-  type JsonRpcClientDeps,
-} from "./client.js";
+import { attachReconnectHooks, JsonRpcClient, type JsonRpcClientDeps } from "./client.js";
 import type { ConnectionState, JsonRpcClientConfig } from "./types.js";
 
 const DEFAULT_BASE_BACKOFF_MS = 1_000;
@@ -42,12 +38,18 @@ export class ReconnectManager {
   private stopped = false;
   private currentClient: JsonRpcClient | null = null;
   private readonly cfg: Required<
-    Pick<JsonRpcClientConfig, "autoReconnect" | "maxReconnectAttempts" | "baseBackoffMs" | "maxBackoffMs">
+    Pick<
+      JsonRpcClientConfig,
+      "autoReconnect" | "maxReconnectAttempts" | "baseBackoffMs" | "maxBackoffMs"
+    >
   >;
 
   constructor(
-    private readonly config: Pick<JsonRpcClientConfig, "autoReconnect" | "maxReconnectAttempts" | "baseBackoffMs" | "maxBackoffMs"> = {},
-    private readonly deps: ReconnectManagerDeps = {}
+    private readonly config: Pick<
+      JsonRpcClientConfig,
+      "autoReconnect" | "maxReconnectAttempts" | "baseBackoffMs" | "maxBackoffMs"
+    > = {},
+    private readonly deps: ReconnectManagerDeps = {},
   ) {
     this.cfg = {
       autoReconnect: this.config.autoReconnect ?? true,
@@ -70,7 +72,7 @@ export class ReconnectManager {
         baseBackoffMs: this.cfg.baseBackoffMs,
         maxBackoffMs: this.cfg.maxBackoffMs,
       },
-      this.deps
+      this.deps,
     );
     this.bindTo(client);
     this.currentClient = client;
@@ -169,7 +171,9 @@ export class ReconnectManager {
             lastError: `respawn threw: ${(e as Error).message}`,
             at: Date.now(),
           });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }, delay);
   }
@@ -185,7 +189,7 @@ export class ReconnectManager {
  *  `socketFactory` and inspect the backoff. */
 export function createClientAndReconnect(
   config: JsonRpcClientConfig = {},
-  deps: ReconnectManagerDeps = {}
+  deps: ReconnectManagerDeps = {},
 ): { client: JsonRpcClient; manager: ReconnectManager } {
   const manager = new ReconnectManager(config, deps);
   const client = manager.buildClient(config);

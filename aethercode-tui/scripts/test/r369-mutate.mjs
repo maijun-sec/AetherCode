@@ -32,7 +32,6 @@ const PATHS = {
   line: join(root, "src", "line.ts"),
 };
 
-
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
 // and the failures would belong to neither round. See
@@ -42,7 +41,10 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(PATHS).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", PATHS.gate], { encoding: "utf-8", cwd: root });
@@ -53,37 +55,91 @@ function runGate() {
 
 const CASES = [
   // --- 1. the filter stops running ---
-  ["the original bug: /stop answers -32601 again",
-    [["commands", (s) => s.replace(
-      "const why = unsupportedReason(result?.rpcMethod);",
-      "const why = undefined as string | undefined;")]]],
+  [
+    "the original bug: /stop answers -32601 again",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            "const why = unsupportedReason(result?.rpcMethod);",
+            "const why = undefined as string | undefined;",
+          ),
+      ],
+    ],
+  ],
 
-  ["the filter runs but leaks the raw JSON-RPC error",
-    [["caps", (s) => s.replace(
-      "return `${method} is not available on this daemon — ${why}.`;",
-      "return `${method} failed: -32601 method not found (${why})`;")]]],
+  [
+    "the filter runs but leaks the raw JSON-RPC error",
+    [
+      [
+        "caps",
+        (s) =>
+          s.replace(
+            "return `${method} is not available on this daemon — ${why}.`;",
+            "return `${method} failed: -32601 method not found (${why})`;",
+          ),
+      ],
+    ],
+  ],
 
-  ["the filter leaks a sentinel token instead of a sentence",
-    [["caps", (s) => s.replace(
-      "return `${method} is not available on this daemon — ${why}.`;",
-      "return `__UNSUPPORTED__:${method}`;")]]],
+  [
+    "the filter leaks a sentinel token instead of a sentence",
+    [
+      [
+        "caps",
+        (s) =>
+          s.replace(
+            "return `${method} is not available on this daemon — ${why}.`;",
+            "return `__UNSUPPORTED__:${method}`;",
+          ),
+      ],
+    ],
+  ],
 
   // --- 2. the filter over-reaches ---
-  ["the filter swallows a command that DOES work (/model -> setModel)",
-    [["commands", (s) => s.replace(
-      "const why = unsupportedReason(result?.rpcMethod);",
-      "const why = result?.rpcMethod ? \"everything is unavailable\" : undefined;")]]],
+  [
+    "the filter swallows a command that DOES work (/model -> setModel)",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            "const why = unsupportedReason(result?.rpcMethod);",
+            'const why = result?.rpcMethod ? "everything is unavailable" : undefined;',
+          ),
+      ],
+    ],
+  ],
 
-  ["the filter swallows every sentinel (kills /todos, /memory)",
-    [["commands", (s) => s.replace(
-      "const why = unsupportedReason(result?.rpcMethod);",
-      "const why = result ? \"nothing works\" : undefined;")]]],
+  [
+    "the filter swallows every sentinel (kills /todos, /memory)",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            "const why = unsupportedReason(result?.rpcMethod);",
+            'const why = result ? "nothing works" : undefined;',
+          ),
+      ],
+    ],
+  ],
 
   // --- 3. the filter is per-site instead of at the seam ---
-  ["the filter is deleted from handleSlash and hand-rolled per case",
-    [["commands", (s) => s.replace(
-      /export function handleSlash\(input: string\): SlashResult \| null \{[\s\S]*?\n\}/,
-      "export function handleSlash(input: string): SlashResult | null {\n  return routeSlash(input);\n}")]]],
+  [
+    "the filter is deleted from handleSlash and hand-rolled per case",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            /export function handleSlash\(input: string\): SlashResult \| null \{[\s\S]*?\n\}/,
+            "export function handleSlash(input: string): SlashResult | null {\n  return routeSlash(input);\n}",
+          ),
+      ],
+    ],
+  ],
 
   // R375 removed the three `task/*` entries (the TUI stopped naming
   // those methods at all), so this case is re-aimed at a reason that
@@ -91,21 +147,48 @@ const CASES = [
   // shown to the user verbatim, so it must stand alone — a pointer at
   // another entry ("same as X") is internal shorthand the reader
   // cannot resolve.
-  ["a reason is internal shorthand again ('same as rewind')",
-    [["caps", (s) => s.replace(
-      '"no rewind handler; transcript rollback is unimplemented daemon-side"',
-      '"same as rewind"')]]],
+  [
+    "a reason is internal shorthand again ('same as rewind')",
+    [
+      [
+        "caps",
+        (s) =>
+          s.replace(
+            '"no rewind handler; transcript rollback is unimplemented daemon-side"',
+            '"same as rewind"',
+          ),
+      ],
+    ],
+  ],
 
   // --- line mode's direct probes ---
-  ["line mode stops consulting the table before probing agent/setDefault",
-    [["line", (s) => s.replace(
-      'const agentWhy = unsupportedReason("agent/setDefault");',
-      'const agentWhy = undefined as string | undefined;')]]],
+  [
+    "line mode stops consulting the table before probing agent/setDefault",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            'const agentWhy = unsupportedReason("agent/setDefault");',
+            "const agentWhy = undefined as string | undefined;",
+          ),
+      ],
+    ],
+  ],
 
-  ["line mode stops consulting the table before probing effort/set",
-    [["line", (s) => s.replace(
-      'const effortWhy = unsupportedReason("effort/set");',
-      'const effortWhy = undefined as string | undefined;')]]],
+  [
+    "line mode stops consulting the table before probing effort/set",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            'const effortWhy = unsupportedReason("effort/set");',
+            "const effortWhy = undefined as string | undefined;",
+          ),
+      ],
+    ],
+  ],
 
   // --- the table itself ---
   // My first attempt here was "lower the floor from 7 to 0". It
@@ -114,11 +197,15 @@ const CASES = [
   // failure the floor exists for is the EXTRACTION silently matching
   // nothing — reformat the table and `n` becomes 0 while the table
   // itself is perfectly fine.
-  ["the capability-table floor stops extracting (regex drift)",
-    [["gate", (s) => s.replace('[a-z][\\w/]*",/gm', '[zzz][\\w/]*",/gm')]]],
+  [
+    "the capability-table floor stops extracting (regex drift)",
+    [["gate", (s) => s.replace('[a-z][\\w/]*",/gm', '[zzz][\\w/]*",/gm')]],
+  ],
 
-  ["the per-reason regex stops extracting (terse-reason check goes blind)",
-    [["gate", (s) => s.replace('"([a-z][\\w/]*)",', '"([zzz][\\w/]*)",')]]],
+  [
+    "the per-reason regex stops extracting (terse-reason check goes blind)",
+    [["gate", (s) => s.replace('"([a-z][\\w/]*)",', '"([zzz][\\w/]*)",')]],
+  ],
 ];
 
 console.log(`r369 mutation battery — ${CASES.length} cases\n`);
@@ -131,13 +218,19 @@ for (const [name, edits] of CASES) {
     const before = original[key];
     const after = mutate(before);
     if (after === before) {
-      console.log(`  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`);
+      console.log(
+        `  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`,
+      );
       noop = true;
       break;
     }
     applied.push([key, before, after]);
   }
-  if (noop) { holes++; restore(applied); continue; }
+  if (noop) {
+    holes++;
+    restore(applied);
+    continue;
+  }
 
   for (const [key, , after] of applied) writeFileSync(PATHS[key], after, "utf-8");
   const { fail, out } = runGate();
@@ -173,6 +266,8 @@ for (const [k, p] of Object.entries(PATHS)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

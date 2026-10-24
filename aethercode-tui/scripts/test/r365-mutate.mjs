@@ -26,27 +26,56 @@ const original = readFileSync(P, "utf-8");
 const snapshot = writeSnapshot([[P, original]], SNAPSHOT);
 
 function runGate() {
-  const r = spawnSync(process.execPath, ["--test", join(here, "r365-panel-truth.test.mjs")],
-    { encoding: "utf-8", cwd: root });
+  const r = spawnSync(process.execPath, ["--test", join(here, "r365-panel-truth.test.mjs")], {
+    encoding: "utf-8",
+    cwd: root,
+  });
   const out = (r.stdout ?? "") + (r.stderr ?? "");
   const m = out.match(/^ℹ fail (\d+)$/m);
   return { fail: m ? Number(m[1]) : -1, out };
 }
 
 const CASES = [
-  ["re-assert the R362 lie: memory-panel unavailable on Ink",
-    (s) => s.replace(/(id: 'memory-panel',[\s\S]*?)ink: 'mounted'/, "$1ink: 'unavailable'")],
-  ["re-assert the R362 lie: thread-selector unavailable on line",
-    (s) => s.replace(/(id: 'thread-selector',[\s\S]*?)line: 'rendered'/, "$1line: 'unavailable'")],
-  ["re-assert the R362 lie: todo-board unavailable on both",
-    (s) => s.replace(/(id: 'todo-board',[\s\S]*?)ink: 'mounted',\n\s*line: 'rendered'/,
-      "$1ink: 'unavailable',\n    line: 'unavailable'")],
-  ["re-assert the R362 lie: grants-manager unavailable (R362's gapNote)",
-    (s) => s.replace(/(id: 'grants-manager',[\s\S]*?)ink: 'mounted',\n\s*line: 'rendered'/,
-      "$1ink: 'unavailable',\n    line: 'unavailable'")],
-  ["re-assert the R362 lie: mcp-viewer unavailable",
-    (s) => s.replace(/(id: 'mcp-viewer',[\s\S]*?)ink: 'mounted',\n\s*line: 'rendered'/,
-      "$1ink: 'unavailable',\n    line: 'unavailable'")],
+  [
+    "re-assert the R362 lie: memory-panel unavailable on Ink",
+    (s) =>
+      s.replace(
+        /(id: ["']memory-panel["'],[\s\S]*?)ink: (["'])mounted\2/,
+        "$1ink: $2unavailable$2",
+      ),
+  ],
+  [
+    "re-assert the R362 lie: thread-selector unavailable on line",
+    (s) =>
+      s.replace(
+        /(id: ["']thread-selector["'],[\s\S]*?)line: (["'])rendered\2/,
+        "$1line: $2unavailable$2",
+      ),
+  ],
+  [
+    "re-assert the R362 lie: todo-board unavailable on both",
+    (s) =>
+      s.replace(
+        /(id: ["']todo-board["'],[\s\S]*?)ink: (["'])mounted\2,\n\s*line: (["'])rendered\3/,
+        "$1ink: $2unavailable$2,\n    line: $3unavailable$3",
+      ),
+  ],
+  [
+    "re-assert the R362 lie: grants-manager unavailable (R362's gapNote)",
+    (s) =>
+      s.replace(
+        /(id: ["']grants-manager["'],[\s\S]*?)ink: (["'])mounted\2,\n\s*line: (["'])rendered\3/,
+        "$1ink: $2unavailable$2,\n    line: $3unavailable$3",
+      ),
+  ],
+  [
+    "re-assert the R362 lie: mcp-viewer unavailable",
+    (s) =>
+      s.replace(
+        /(id: ["']mcp-viewer["'],[\s\S]*?)ink: (["'])mounted\2,\n\s*line: (["'])rendered\3/,
+        "$1ink: $2unavailable$2,\n    line: $3unavailable$3",
+      ),
+  ],
   // R374: this case is DELETED, and it was deleted for a reason worth
   // writing down.
   //
@@ -80,12 +109,22 @@ const CASES = [
   //
   // "claim a blocker on a fully-mounted row" below is the surviving
   // half of this pair, and it still has a live target.
-  ["claim a blocker on a fully-mounted row",
-    (s) => s.replace(/(id: 'cwd-switcher',[\s\S]*?)ink: 'mounted',\n    line: 'rendered',/,
-      "$1ink: 'mounted',\n    line: 'rendered',\n    blocker: 'backend-missing',")],
-  ["lie about effort-pick to prove the derivation is not hard-coded",
-    (s) => s.replace(/(id: 'effort-picker',[\s\S]*?)ink: 'mounted',\n\s*line: 'rendered'/,
-      "$1ink: 'unavailable',\n    line: 'rendered'")],
+  [
+    "claim a blocker on a fully-mounted row",
+    (s) =>
+      s.replace(
+        /(id: ["']cwd-switcher["'],[\s\S]*?)ink: ["']mounted["'],\s*line: ["']rendered["'],/,
+        '$1ink: "mounted",\n    line: "rendered",\n    blocker: "backend-missing",',
+      ),
+  ],
+  [
+    "lie about effort-pick to prove the derivation is not hard-coded",
+    (s) =>
+      s.replace(
+        /(id: ["']effort-picker["'],[\s\S]*?)ink: ["']mounted["'],\s*line: ["']rendered["']/,
+        '$1ink: "unavailable",\n    line: "rendered"',
+      ),
+  ],
 ];
 
 console.log(`r365 mutation battery — ${CASES.length} cases\n`);
@@ -94,7 +133,9 @@ let holes = 0;
 for (const [name, mutate] of CASES) {
   const after = mutate(original);
   if (after === original) {
-    console.log(`  ??  ${name}\n      NO-OP — the pattern did not match, so the gate is not testing anything`);
+    console.log(
+      `  ??  ${name}\n      NO-OP — the pattern did not match, so the gate is not testing anything`,
+    );
     holes++;
     continue;
   }
@@ -107,6 +148,8 @@ for (const [name, mutate] of CASES) {
 }
 
 writeFileSync(P, original, "utf-8");
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

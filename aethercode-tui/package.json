@@ -15,7 +15,9 @@
     "build:standalone:macos": "bun build --compile --target=bun-darwin-arm64 --outfile dist/ac-tui-standalone src/tui.tsx",
     "dev": "tsc -p tsconfig.json --watch",
     "start": "node dist/ac-tui.js",
-    "test": "node --test scripts/test/*.test.mjs"
+    "test": "node --test scripts/test/*.test.mjs",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"scripts/**/*.{ts,tsx,mjs,js}\" \"*.json\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.{ts,tsx,mjs,js}\" \"*.json\""
   },
   "engines": {
     "node": ">=18.0.0"
@@ -52,6 +54,7 @@
     "@types/node": "^22.7.0",
     "@types/react": "^18.3.0",
     "esbuild": "^0.24.0",
+    "prettier": "^3.9.10",
     "react-devtools-core": "^7.0.1",
     "typescript": "^5.6.0"
   }

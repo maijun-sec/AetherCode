@@ -38,21 +38,21 @@ export interface SddModeProps {
 }
 
 const CHIP: Record<string, string> = {
-  idle:             "⏳",
-  running:          "▶ ",
-  pending_confirm:  "⏸ ",
-  done:             "✓ ",
-  skipped:          "↷ ",
-  failed:           "✗ ",
+  idle: "⏳",
+  running: "▶ ",
+  pending_confirm: "⏸ ",
+  done: "✓ ",
+  skipped: "↷ ",
+  failed: "✗ ",
 };
 
 const COLOR_BY_STATE: Record<string, string | undefined> = {
-  done:           "green",
-  skipped:        "yellow",
-  pending_confirm:"cyan",
-  failed:         "red",
-  running:        "magenta",
-  idle:           "gray",
+  done: "green",
+  skipped: "yellow",
+  pending_confirm: "cyan",
+  failed: "red",
+  running: "magenta",
+  idle: "gray",
 };
 
 /**
@@ -65,14 +65,16 @@ export function SddMode({ run, cwd }: SddModeProps): React.ReactElement | null {
   const current = run.currentPhase ?? run.phases.length;
   const currentEntry: SddPhaseEntry | undefined = run.phases.find((p) => p.phaseNumber === current);
   const title = currentEntry?.title ?? "?";
-  const detail = currentEntry?.state === "pending_confirm"
-    ? "pending your review"
-    : (currentEntry?.state ?? "running");
+  const detail =
+    currentEntry?.state === "pending_confirm"
+      ? "pending your review"
+      : (currentEntry?.state ?? "running");
   const artefactPath = currentEntry?.path ?? "(not yet written)";
   return (
     <Box flexDirection="column" borderStyle="single" paddingX={1}>
       <Text>
-        📐 SDD · slug:<Text color="green">{run.slug}</Text> · {current}/{run.phases.length} · {title} · {detail}
+        📐 SDD · slug:<Text color="green">{run.slug}</Text> · {current}/{run.phases.length} ·{" "}
+        {title} · {detail}
       </Text>
       <Text>{renderChipStrip(run.phases, current)}</Text>
       <Text>
@@ -82,7 +84,7 @@ export function SddMode({ run, cwd }: SddModeProps): React.ReactElement | null {
         cwd: {cwd} · status: {run.status}
       </Text>
       <Text dimColor>
-        /sdd-approve  /sdd-modify &lt;feedback&gt;  /sdd-skip  /sdd-status  /sdd-abort
+        /sdd-approve /sdd-modify &lt;feedback&gt; /sdd-skip /sdd-status /sdd-abort
       </Text>
     </Box>
   );
@@ -102,7 +104,10 @@ function renderChipStrip(phases: SddPhaseEntry[], current: number): React.ReactN
       <Text key={p.phaseNumber}>
         {sep}
         {active ? "[" : " "}
-        <Text color={color as Parameters<typeof Text>[0]["color"]}>{sym}{p.phaseNumber}</Text>
+        <Text color={color as Parameters<typeof Text>[0]["color"]}>
+          {sym}
+          {p.phaseNumber}
+        </Text>
         {active ? "]" : " "}
       </Text>
     );
@@ -123,7 +128,7 @@ export function SddArtefactLink(absPath: string): string {
   // `file://` URL is portable across runtimes.
   const normalised = absPath.replace(/\\/g, "/");
   if (/^[a-zA-Z]:\//.test(normalised)) {
-    return `file:///${normalised}`;   // Windows: file:///C:/...
+    return `file:///${normalised}`; // Windows: file:///C:/...
   }
   return `file://${normalised}`;
 }

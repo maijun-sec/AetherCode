@@ -107,10 +107,7 @@ export function runMethod(action: RunAction): string {
  * side would not catch that — it would happily set the flag for a
  * session named "—".
  */
-export function runParams(
-  action: RunAction,
-  ctx: { runId?: string | null } = {},
-): RpcValue {
+export function runParams(action: RunAction, ctx: { runId?: string | null } = {}): RpcValue {
   if (action === "stop") {
     return { runId: ctx.runId ?? "" };
   }
@@ -177,12 +174,7 @@ export function runNothingInFlight(): string {
  * here so this module stays free of React and Ink (and can be
  * compiled and run by a gate on its own).
  */
-export type RunControlState =
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type RunControlState = "running" | "paused" | "completed" | "failed" | "cancelled";
 
 /**
  * Map the TUI's stringly-typed status to the session-control state.

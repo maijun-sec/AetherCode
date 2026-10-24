@@ -19,19 +19,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Build a tiny shim so we can import the helpers --------
 
 const tmp = join(root, "tmp-t7-03-tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
     process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-    { shell: process.platform === "win32" });
+    { shell: process.platform === "win32" },
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "chat", "_t7_03_shim.ts");
@@ -45,20 +44,39 @@ const shim = `export {
 } from "./TranscriptEnricher.js";\n`;
 writeFileSync(shimPath, shim, "utf-8");
 
-const r = spawnSync(`"${tscBin}"`, [
-  "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--strict", "true",
-  "--rootDir", join(root, "src"),
-  join(root, "src", "components", "chat", "TranscriptEnricher.ts"),
-], { encoding: "utf-8", shell: true });
+const r = spawnSync(
+  `"${tscBin}"`,
+  [
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    join(root, "src", "components", "chat", "TranscriptEnricher.ts"),
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
 }
 
-const mod = await import(pathToFileURL(join(tmp, "components", "chat", "TranscriptEnricher.js")).href);
+const mod = await import(
+  pathToFileURL(join(tmp, "components", "chat", "TranscriptEnricher.js")).href
+);
 const {
   extractSummary,
   hasSummaryBlock,
@@ -116,7 +134,7 @@ test("T-7-03: enrichmentRequired detects missing summaries + ignores non-assista
     { role: "assistant", text: "Did more." }, // missing summary
   ];
   assert.equal(enrichmentRequired(messages, 1), false); // has summary
-  assert.equal(enrichmentRequired(messages, 3), true);  // missing
+  assert.equal(enrichmentRequired(messages, 3), true); // missing
   // Last index out of range.
   assert.equal(enrichmentRequired(messages, -1), false);
   assert.equal(enrichmentRequired(messages, 99), false);

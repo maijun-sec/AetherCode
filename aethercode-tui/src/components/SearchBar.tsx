@@ -31,13 +31,10 @@ export function searchTurns(turns: Turn[], query: string | null | undefined): nu
   const out: number[] = [];
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
-    const hay = [
-      t.text,
-      t.toolName,
-      t.toolArgs,
-      t.toolResult,
-      ...(t.planItems ?? []),
-    ].filter(Boolean).join(" ").toLowerCase();
+    const hay = [t.text, t.toolName, t.toolArgs, t.toolResult, ...(t.planItems ?? [])]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
     if (hay.includes(q)) out.push(i);
   }
   return out;
@@ -77,7 +74,9 @@ export const SearchBar: React.FC<SearchBarProps> = ({ turns, onClose, onCommit, 
       justifyContent="space-between"
     >
       <Text>
-        <Text color={t.accent} bold>{icon.search} </Text>
+        <Text color={t.accent} bold>
+          {icon.search}{" "}
+        </Text>
         <TextInput
           value={query}
           onChange={setQuery}
@@ -86,9 +85,11 @@ export const SearchBar: React.FC<SearchBarProps> = ({ turns, onClose, onCommit, 
         />
       </Text>
       <Text dimColor>
-        {query ? (
-          matches.length === 0 ? "no matches  " : `${matches.length} match${matches.length === 1 ? "" : "es"}  `
-        ) : "type to search  "}
+        {query
+          ? matches.length === 0
+            ? "no matches  "
+            : `${matches.length} match${matches.length === 1 ? "" : "es"}  `
+          : "type to search  "}
         Esc: close
       </Text>
     </Box>

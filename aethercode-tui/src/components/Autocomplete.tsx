@@ -183,9 +183,8 @@ export class FuzzyFileController implements CompletionController {
     const start = lineStart(text, cursorIndex);
     this.rangeStart = start;
     this.rangeEnd = cursorIndex;
-    const prefix = (cursorIndex > start + 1)
-      ? text.substring(start + 1, cursorIndex).toLowerCase()
-      : "";
+    const prefix =
+      cursorIndex > start + 1 ? text.substring(start + 1, cursorIndex).toLowerCase() : "";
     const files = this.supplier();
     const matches: Suggestion[] = [];
     if (!prefix) {
@@ -316,13 +315,13 @@ export const CompletionDropdown: React.FC<DropdownProps> = ({ suggestions, width
         const marker = isSelected ? "▶" : " ";
         const labelColor = isSelected ? "black" : "cyan";
         const bg = isSelected ? "cyan" : undefined;
-        const label = s.label.length > width - 4
-          ? s.label.slice(0, width - 5) + "…"
-          : s.label;
+        const label = s.label.length > width - 4 ? s.label.slice(0, width - 5) + "…" : s.label;
         return (
           <Text key={i} backgroundColor={bg} color={labelColor}>
             {marker} {label}
-            {s.description ? <Text dimColor>  {s.description.slice(0, width - label.length - 6)}</Text> : null}
+            {s.description ? (
+              <Text dimColor> {s.description.slice(0, width - label.length - 6)}</Text>
+            ) : null}
           </Text>
         );
       })}

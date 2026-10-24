@@ -253,6 +253,24 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - **R743** (one stopReason taxonomy): four layers had
   hand-rolled classifiers; `StreamEvent` now owns `bareKind()` /
   `isDeterministicHardStop()` and all four delegate.
+- **R376** (the format contract): the TUI gets its own
+  `.prettierrc.json` (printWidth 100, double quotes, `semi`,
+  `trailingComma: all`, `arrowParens: always`, `endOfLine: lf`,
+  2-space) — measured against the TUI's own line-width distribution
+  (p90 = 68 before, 67 after; >100-column lines 374 → 75), not
+  against prettier's defaults. `format` / `format:check` scripts in
+  `aethercode-tui/package.json`; root `format:tui` /
+  `format:check:tui` aliases. The enforcement is a GATE
+  (`scripts/test/r376-format.test.mjs`, 3 assertions) inside
+  `npm test`, so "format before commit" is enforceable rather than
+  remembered. Cost: 213 files reformatted, which broke 13 gate
+  source-pins and turned **45 mutation needles into no-ops** across
+  all 12 batteries — a no-op needle reports "MUTATION SURVIVED", so
+  a formatter reflow can silently blind a gate with every dashboard
+  green. All pins/needles are now whitespace-, quote- and
+  number-spelling-tolerant. Final: 1345/1302/43, 0 new failures vs
+  the R375 baseline (45), 12/12 batteries green AFTER the format.
+  Doc: `docs/R376-tui-format.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1529,3 +1547,49 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   重跑、确认它自愈;以及"树已经脏了 → 跑电池 → 确认它先自愈而不是把脏内容
   当基线"。两件事都做过,才算这个护栏存在。
   **推论:别用 `| Select-Object -First N` 截断电池的输出** —— 那会杀掉它。
+
+## Watch out for (R376 additions)
+
+- **提交前必须 format —— 现在它是门禁,不是习惯。**
+  TUI 的格式契约:`aethercode-tui/.prettierrc.json`(printWidth 100、双引号、
+  `semi`、`trailingComma: all`、`arrowParens: always`、`endOfLine: lf`、2 空格)。
+  命令 `pnpm format:tui`(根)或 `npm run format`(`aethercode-tui/` 内)。
+  强制点在 `scripts/test/r376-format.test.mjs`(`npm test` 的一部分):
+  逐文件 `prettier.check`,失败时**列出文件名**而不是只报一个计数。
+  **推论:一条要靠人记得的规则,等于没有规则。** 判据是"忘了会不会被抓住",
+  不是"记得的人有多认真"。
+- **prettier 的 API 不会自己读配置文件。** `prettier.check(src, { filepath })`
+  用的是 **prettier 的默认值**(80 列、无尾逗号),不是 `.prettierrc.json` ——
+  那是 CLI 做的事。门禁第一次跑就因此把 215 个文件全判成不干净。
+  正确写法:`prettier.resolveConfig(file)` 再把结果并进 options。
+  **推论:门禁用库的时候,配置解析是调用方的责任,不是库的责任。**
+- **一次 `prettier --write` 就能让门禁静默失明。**
+  格式化 213 个文件后:13 条源码钉失配(全量 45 → 58 失败),
+  **45 个变异针脚变成 no-op**(12 个电池全中)。
+  no-op 是最危险的一种 —— 电池报告的是 "MUTATION SURVIVED"(用例通过了),
+  而它其实**什么都没测**。**"没匹配到"和"通过了"在输出里长得一模一样。**
+  **推论:no-op 探测器是必需的,不是可选的。** 脚本要显式区分
+  SKIPPED / NO-OP / GREEN 三种状态。
+- **源码钉和变异针脚必须钉语义,不能钉排版。**
+  判据:**这条钉能不能在一次 `prettier --write` 之后还成立。**
+  做法:空白可选(`\s*` / `[\s\S]*?`)、引号是字符类(`["']`)、
+  数字写法不挑(`0\.8(?:0)?`)。R376 改完后 12 个电池在**格式化之后**依然
+  12/12 全绿 —— 这才是"针脚与排版无关"的证据,而不是"这次碰巧还能用"。
+- **`??` 在正则里是"惰性可选",不是"两个问号"。**
+  `/x \?\? "y"/` 匹配的是**空串**。R374 的 `daemonVersion` 针脚因此从未命中,
+  电池报 ok 而变异从未发生。要写 `\?\?`。
+- **改写门禁断言时,只替换条件表达式,不要替换整条 `assert.ok(...)`。**
+  整条替换只匹配到条件那一段时,剩下的 `"<消息>",\n);` 会留在原地 →
+  **语法错误**。把 `... .test(runBlock)` 换成 `true`,断言结构不动。
+- **一条针脚必须能说出"我指的是哪一个"。**
+  `panelIntents.ts` 里每行注册表长得都差不多;`ink: 'mounted',\n line:
+  'rendered',` 这种针脚会**跨行命中** —— `[\s\S]*?` 虽然惰性,照样会跳过
+  本行结尾去后面找下一个匹配。锚到行自己的身份上:
+  `/(component: "components\/UpdatePanel\.tsx",[\s\S]*?ink: )"mounted",/`。
+- **格式化脚本和门禁的范围必须由同一定义给出。**
+  门禁从 `package.json` 读 `format` / `format:check`,断言两边覆盖同一组
+  目录。范围被改动而门禁没跟上时门禁会红 —— **一个枚举器**。
+- **根级 `format` 脚本目前仍是一次全仓扫描,不是提交前的动作。**
+  其余四个包(desktop / memory / compact / themes)还没 prettier-clean,
+  跑一次就是 400+ 文件的无关 diff。等它们清理干净,根级脚本再收窄。
+  文档:`docs/R376-tui-format.md`。

@@ -15,16 +15,30 @@ const tmp = join(root, "tmp-r43-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 {
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "state.ts")}"`], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
@@ -62,7 +76,7 @@ test("R43: tui.tsx has __LAYOUT__ handler + conditional Header/StatusBar", () =>
   // R43: header is hidden in "focus" and "minimal" layouts.
   assert.match(tui, /state\.layout !== "focus" && state\.layout !== "minimal" \? \(/);
   // R43: statusbar is only shown in "full" layout.
-  assert.match(tui, /state\.layout === "full" \? <StatusBar/);
+  assert.match(tui, /state\.layout === "full" \?[\s(]*<StatusBar/);
 });
 
 test("R43: commands.ts has /layout slash command", () => {
@@ -76,19 +90,33 @@ test("R43: commands.ts has /layout slash command", () => {
 test("R43: TypeScript compile of new code is clean", () => {
   const tmp2 = join(root, "tmp-r43-tsc2");
   if (existsSync(tmp2)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp2] : ["-rf", tmp2]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp2] : ["-rf", tmp2],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp2, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp2,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "tui.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, '"' + join(root, "src", "tui.tsx") + '"'], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

@@ -73,10 +73,7 @@ test("R220: shortenUrl strips http(s):// prefix", () => {
   // We look for the protocol-strip regex in the
   // function body. The escaped form in the .ts source
   // is `^https?:\/\/`.
-  assert.ok(
-    md.includes("^https?:\\/\\/"),
-    "shortenUrl must include a protocol-strip regex",
-  );
+  assert.ok(md.includes("^https?:\\/\\/"), "shortenUrl must include a protocol-strip regex");
 });
 
 test("R220: shortenUrl keeps first 2 path segments + ellipsis", () => {
@@ -101,7 +98,10 @@ test("R220: renderInline scans for LINK first, then INLINE for non-link chunks",
   // The function isn't that long.
   const slice = md.slice(fnIdx, fnIdx + 2000);
   assert.ok(slice.includes("LINK"), "renderInline must reference LINK regex");
-  assert.ok(slice.includes("renderInlineChunk"), "renderInline must recurse into renderInlineChunk");
+  assert.ok(
+    slice.includes("renderInlineChunk"),
+    "renderInline must recurse into renderInlineChunk",
+  );
 });
 
 test("R220: link `text` is rendered in t.accent + underline", () => {
@@ -110,7 +110,7 @@ test("R220: link `text` is rendered in t.accent + underline", () => {
   // The text <Text> for a link must have both `color={t.accent}`
   // and `underline`.
   assert.ok(
-    slice.includes('color={t.accent}') && slice.includes("underline>"),
+    slice.includes("color={t.accent}") && slice.includes("underline>"),
     "link text must be t.accent + underline",
   );
 });
@@ -146,10 +146,7 @@ test("R220: renderInlineChunk exists and handles all R31+R36 inline elements", (
   );
   // And bold/italic/strikethrough/underline keys.
   for (const kind of ["bold", "italic", "underline", "strikethrough"]) {
-    assert.ok(
-      slice.includes(kind),
-      `renderInlineChunk must still handle ${kind}`,
-    );
+    assert.ok(slice.includes(kind), `renderInlineChunk must still handle ${kind}`);
   }
 });
 
@@ -158,9 +155,14 @@ test("R220: renderInlineChunk exists and handles all R31+R36 inline elements", (
 test("R220: package.json does NOT add a link-preview / markdown library", () => {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   for (const forbidden of [
-    "react-markdown", "remark-gfm", "remark",
-    "marked", "markdown-it", "micromark",
-    "linkify", "autolinker",
+    "react-markdown",
+    "remark-gfm",
+    "remark",
+    "marked",
+    "markdown-it",
+    "micromark",
+    "linkify",
+    "autolinker",
   ]) {
     assert.equal(
       deps[forbidden],
@@ -173,24 +175,47 @@ test("R220: package.json does NOT add a link-preview / markdown library", () => 
 // ----- 5. tsc smoke test ----------------------------------------------
 
 test("R220: TypeScript compile of Markdown.tsx + theme.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r220-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Markdown.tsx") + '"',
-    '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
-    '"' + join(root, "src", "theme.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "Markdown.tsx") + '"',
+      '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
+      '"' + join(root, "src", "theme.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

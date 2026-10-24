@@ -42,8 +42,10 @@ test("T-6-12: ModelSelector.tsx exists and exports the picker + pure helpers + M
 const tmp = join(root, "tmp-t6-12-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "models", "_t6_12_helpers.ts");
@@ -61,13 +63,28 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
 {
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
@@ -76,7 +93,8 @@ const tscArgs = [
 const helpers = await import(
   "file:///" + join(tmp, "out", "components", "models", "_t6_12_helpers.js").replace(/\\/g, "/")
 );
-const { MODELS, groupModelsByProvider, formatPrice, formatContext, formatMaxOutput, deriveTier } = helpers;
+const { MODELS, groupModelsByProvider, formatPrice, formatContext, formatMaxOutput, deriveTier } =
+  helpers;
 
 test("T-6-12: MODELS catalog spans multiple providers; formatters are sane", () => {
   // At least 2 providers in the shipped catalog.
@@ -160,10 +178,11 @@ test("T-6-12: ModelSelector.tsx groups by provider + keyboard + badges", () => {
 // ----- 5. tsc: ModelSelector.tsx compiles cleanly ---------------------
 
 test("T-6-12: TypeScript compile of ModelSelector.tsx is clean", () => {
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "models", "ModelSelector.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "models", "ModelSelector.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

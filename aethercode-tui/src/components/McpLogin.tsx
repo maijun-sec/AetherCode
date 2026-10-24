@@ -26,12 +26,7 @@ export type LoginOutcome = "success" | "cancelled" | "failed";
 
 /** OAuth interaction step. The host uses this to know which
  *  callback to fire next. */
-export type LoginStep =
-  | "starting"
-  | "awaiting-authorize"
-  | "device-code"
-  | "success"
-  | "error";
+export type LoginStep = "starting" | "awaiting-authorize" | "device-code" | "success" | "error";
 
 /** Public props. The host owns the OAuth dance and feeds the
  *  component view-state via these props. */
@@ -88,21 +83,19 @@ export const McpLogin: React.FC<McpLoginProps> = ({
   };
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title ?? `MCP login: ${serverName}`}</Text>
+        <Text color="cyan" bold>
+          ◆ {title ?? `MCP login: ${serverName}`}
+        </Text>
       </Box>
       <Text> </Text>
       {step === "starting" ? (
         <Box>
-          <Text color="cyan"><Spinner type="dots" /></Text>
-          <Text>  Starting OAuth login for {serverName}…</Text>
+          <Text color="cyan">
+            <Spinner type="dots" />
+          </Text>
+          <Text> Starting OAuth login for {serverName}…</Text>
         </Box>
       ) : null}
       {step === "awaiting-authorize" ? (
@@ -112,12 +105,12 @@ export const McpLogin: React.FC<McpLoginProps> = ({
               <Text>
                 <Text dimColor>URL: </Text>
                 <Text color="cyan">{authorizeUrl}</Text>
-                <Text dimColor>  ({authorizeOpened ? "opened in browser" : "copy this URL"})</Text>
+                <Text dimColor> ({authorizeOpened ? "opened in browser" : "copy this URL"})</Text>
               </Text>
             </Box>
           ) : null}
           <Text> </Text>
-          <Text dimColor>  Paste the callback URL after authorizing:</Text>
+          <Text dimColor> Paste the callback URL after authorizing:</Text>
           <Box>
             <Text color="yellow">{">"}</Text>
             <Text> </Text>
@@ -138,28 +131,28 @@ export const McpLogin: React.FC<McpLoginProps> = ({
           </Text>
           <Text>
             <Text dimColor>Enter code: </Text>
-            <Text bold color="green">{deviceCode.userCode}</Text>
-            <Text dimColor>  (expires in {deviceCode.expiresIn}s)</Text>
+            <Text bold color="green">
+              {deviceCode.userCode}
+            </Text>
+            <Text dimColor> (expires in {deviceCode.expiresIn}s)</Text>
           </Text>
         </Box>
       ) : null}
       {step === "success" ? (
         <Box>
           <Text color="green">✓</Text>
-          <Text>  {message ?? "Login successful"}</Text>
+          <Text> {message ?? "Login successful"}</Text>
         </Box>
       ) : null}
       {step === "error" ? (
         <Box>
           <Text color="red">✗</Text>
-          <Text>  {message ?? "Login failed"}</Text>
+          <Text> {message ?? "Login failed"}</Text>
         </Box>
       ) : null}
-      {message && step !== "success" && step !== "error" ? (
-        <Text dimColor>  {message}</Text>
-      ) : null}
+      {message && step !== "success" && step !== "error" ? <Text dimColor> {message}</Text> : null}
       <Text> </Text>
-      <Text dimColor>  {awaitingCallback ? "Enter: submit callback" : ""}  Esc: cancel</Text>
+      <Text dimColor> {awaitingCallback ? "Enter: submit callback" : ""} Esc: cancel</Text>
     </Box>
   );
 };

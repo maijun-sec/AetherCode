@@ -119,9 +119,7 @@ export function shouldShowWildcard(category: string): boolean {
  *  label. For "shell.command.npm" → "npm"; for
  *  "shell.command.git push --force" → "git push --force".
  *  Returns null if there's no sub-category. */
-export function deriveWildcardSubCategory(
-  category: string,
-): string | null {
+export function deriveWildcardSubCategory(category: string): string | null {
   if (!shouldShowWildcard(category)) return null;
   const sub = category.replace(/^shell\.command\.?/i, "").trim();
   if (sub.length === 0) return null;
@@ -314,7 +312,7 @@ export const ConsentModal: React.FC<ConsentModalProps> = ({
         <Text color={riskColor} bold>
           {icon.warn} CONFIRM REQUIRED
         </Text>
-        <Text dimColor>  ·  [{riskLabel} risk]</Text>
+        <Text dimColor> · [{riskLabel} risk]</Text>
       </Text>
       <Text> </Text>
       <Text>
@@ -322,7 +320,7 @@ export const ConsentModal: React.FC<ConsentModalProps> = ({
         <Text bold color={t.brand}>
           {tool}
         </Text>
-        <Text dimColor>  ({callSummary})</Text>
+        <Text dimColor> ({callSummary})</Text>
       </Text>
       <Text>
         <Text>Category: </Text>
@@ -347,9 +345,7 @@ export const ConsentModal: React.FC<ConsentModalProps> = ({
         const decisionColor = opt.decision === "allow" ? t.ok : t.err;
         return (
           <Box key={opt.index} flexDirection="row">
-            <Text color={isHi ? "cyan" : undefined}>
-              {isHi ? "▶" : " "}{" "}
-            </Text>
+            <Text color={isHi ? "cyan" : undefined}>{isHi ? "▶" : " "} </Text>
             <Text color={isHi ? "cyan" : undefined} bold={isHi}>
               {String(opt.index).padStart(2, " ")}.{" "}
             </Text>
@@ -357,21 +353,15 @@ export const ConsentModal: React.FC<ConsentModalProps> = ({
             <Text color={decisionColor} bold={isHi}>
               {opt.decision === "allow" ? "  ✓" : "  ✗"}
             </Text>
-            {opt.wildcardSubCategory ? (
-              <Text dimColor>  (wildcard)</Text>
-            ) : null}
+            {opt.wildcardSubCategory ? <Text dimColor> (wildcard)</Text> : null}
           </Box>
         );
       })}
 
-      {!hasWildcard ? (
-        <Text dimColor>  (options 9-10 hidden — not a shell command)</Text>
-      ) : null}
+      {!hasWildcard ? <Text dimColor> (options 9-10 hidden — not a shell command)</Text> : null}
 
       <Text> </Text>
-      <Text dimColor>
-        ↑/↓ navigate · Enter confirm · 1-0 quick · Esc cancel
-      </Text>
+      <Text dimColor>↑/↓ navigate · Enter confirm · 1-0 quick · Esc cancel</Text>
     </Box>
   );
 };

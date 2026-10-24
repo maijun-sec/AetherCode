@@ -25,8 +25,10 @@ const root = join(here, "..", "..");
 const tmp = join(root, "tmp-r169b-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 // Build the shim with forward-slash absolute paths so Windows +
@@ -43,12 +45,27 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+  encoding: "utf-8",
+  shell: true,
+});
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
@@ -56,7 +73,8 @@ if (r.status !== 0) {
 const helpers = await import(
   "file:///" + join(tmp, "out", "components", "_r169_helpers.js").replace(/\\/g, "/")
 );
-const { formatAgentLabel, formatEffortLabel, makeStatValidator, formatThemeLabel, filterThemes } = helpers;
+const { formatAgentLabel, formatEffortLabel, makeStatValidator, formatThemeLabel, filterThemes } =
+  helpers;
 
 // ----- 1. formatAgentLabel ----------------------------------------
 
@@ -189,9 +207,7 @@ test("R169-b: filterThemes — substring match on name", () => {
 });
 
 test("R169-b: filterThemes — case-insensitive", () => {
-  const themes = [
-    { name: "Light", isDark: false, origin: "builtin", colors: {} },
-  ];
+  const themes = [{ name: "Light", isDark: false, origin: "builtin", colors: {} }];
   assert.equal(filterThemes(themes, "light").length, 1);
   assert.equal(filterThemes(themes, "LIGHT").length, 1);
 });
@@ -206,13 +222,15 @@ test("R169-b: filterThemes — origin match", () => {
 });
 
 test("R169-b: filterThemes — no match returns empty", () => {
-  const themes = [
-    { name: "light", isDark: false, origin: "builtin", colors: {} },
-  ];
+  const themes = [{ name: "light", isDark: false, origin: "builtin", colors: {} }];
   assert.equal(filterThemes(themes, "no-match").length, 0);
 });
 
 // ----- Cleanup -----------------------------------------------
 // Remove the temporary shim file so it doesn't ship in the src tree.
 import { unlinkSync } from "node:fs";
-try { unlinkSync(shimPath); } catch { /* ignore */ }
+try {
+  unlinkSync(shimPath);
+} catch {
+  /* ignore */
+}

@@ -29,13 +29,22 @@ const child = spawn("java", ["-jar", jar, "--http-port", String(PORT)], {
   stdio: ["ignore", "pipe", "pipe"],
   env: { ...process.env, JAVA_TOOL_OPTIONS: "" },
 });
-child.stderr.on("data", () => { /* daemon logs to stderr */ });
-child.on("error", (e) => { console.log(`spawn error: ${e.message}`); process.exit(1); });
+child.stderr.on("data", () => {
+  /* daemon logs to stderr */
+});
+child.on("error", (e) => {
+  console.log(`spawn error: ${e.message}`);
+  process.exit(1);
+});
 
 let failed = false;
 function check(name, ok, detail = "") {
-  if (ok) { console.log(`✓ ${name}`); }
-  else { console.log(`✗ ${name}  ${detail}`); failed = true; }
+  if (ok) {
+    console.log(`✓ ${name}`);
+  } else {
+    console.log(`✗ ${name}  ${detail}`);
+    failed = true;
+  }
 }
 
 function wsJsonRpc(ws, method, params) {
@@ -49,11 +58,16 @@ function wsJsonRpc(ws, method, params) {
           if (msg.error) reject(new Error(msg.error.message || "rpc error"));
           else resolve(msg.result);
         }
-      } catch (e) { reject(e); }
+      } catch (e) {
+        reject(e);
+      }
     };
     ws.on("message", onMsg);
     ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} }));
-    setTimeout(() => { ws.off("message", onMsg); reject(new Error("timeout")); }, 8000);
+    setTimeout(() => {
+      ws.off("message", onMsg);
+      reject(new Error("timeout"));
+    }, 8000);
   });
 }
 
@@ -64,7 +78,9 @@ async function waitForReady(deadlineMs = 30_000) {
     try {
       const r = await fetch(`${base}/healthz`);
       if (r.ok) return;
-    } catch { /* server still starting */ }
+    } catch {
+      /* server still starting */
+    }
     await sleep(300);
   }
   throw new Error("daemon did not become ready in time");
@@ -87,7 +103,10 @@ async function waitForReady(deadlineMs = 30_000) {
     }
 
     const info = await (await fetch(`${base}/api/info`)).json();
-    check("GET /api/info includes metrics", info.metrics && typeof info.metrics.turnsStarted === "number");
+    check(
+      "GET /api/info includes metrics",
+      info.metrics && typeof info.metrics.turnsStarted === "number",
+    );
     check("GET /api/info includes traces", info.traces && Array.isArray(info.traces.traces));
 
     const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
@@ -99,12 +118,22 @@ async function waitForReady(deadlineMs = 30_000) {
 
     // Welcome message (broadcast notification).
     let welcomeText = "";
-    ws.once("message", (data) => { welcomeText = data.toString(); });
+    ws.once("message", (data) => {
+      welcomeText = data.toString();
+    });
     await sleep(300);
-    check("WS sends welcome notification on connect", welcomeText.includes("\"type\":\"welcome\""), welcomeText);
+    check(
+      "WS sends welcome notification on connect",
+      welcomeText.includes('"type":"welcome"'),
+      welcomeText,
+    );
 
     const pong = await wsJsonRpc(ws, "ping");
-    check("WS ping round-trip returns sessionId", typeof pong?.sessionId === "string", JSON.stringify(pong));
+    check(
+      "WS ping round-trip returns sessionId",
+      typeof pong?.sessionId === "string",
+      JSON.stringify(pong),
+    );
 
     const state = await wsJsonRpc(ws, "getState");
     check("WS getState returns model", typeof state?.model === "string");
@@ -121,7 +150,9 @@ async function waitForReady(deadlineMs = 30_000) {
     console.log(`✗ exception: ${e.message}`);
     failed = true;
   } finally {
-    try { child.kill(); } catch {}
+    try {
+      child.kill();
+    } catch {}
     await sleep(500);
     process.exit(failed ? 1 : 0);
   }

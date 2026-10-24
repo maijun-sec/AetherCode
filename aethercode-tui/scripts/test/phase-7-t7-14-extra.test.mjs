@@ -34,8 +34,10 @@ const root = join(here, "..", "..");
 const tmp = join(root, "tmp-t7-14-extra-tsc");
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const shimPath = join(root, "src", "components", "consent", "_t7_14_extra_helpers.ts");
@@ -46,20 +48,36 @@ const shim = [
 writeFileSync(shimPath, shim, "utf-8");
 
 const tscArgs = [
-  "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-  "--moduleResolution", "bundler", "--jsx", "react",
-  "--esModuleInterop", "true", "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  join(tmp, "out"),
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--jsx",
+  "react",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
 {
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
   }
 }
 const helpers = await import(
-  "file:///" + join(tmp, "out", "components", "consent", "_t7_14_extra_helpers.js").replace(/\\/g, "/")
+  "file:///" +
+    join(tmp, "out", "components", "consent", "_t7_14_extra_helpers.js").replace(/\\/g, "/")
 );
 const { buildOptions, shouldShowWildcard, deriveWildcardSubCategory } = helpers;
 
@@ -122,7 +140,10 @@ test("T-7-14: the 8 standard options each have a unique hotkey (1..8)", () => {
   const seen = new Set();
   for (const o of opts) {
     assert.ok(o.hotkey && o.hotkey.length === 1, `option ${o.index} hotkey missing: ${o.hotkey}`);
-    assert.ok(!seen.has(o.hotkey), `duplicate hotkey '${o.hotkey}' on options ${o.index} and an earlier option`);
+    assert.ok(
+      !seen.has(o.hotkey),
+      `duplicate hotkey '${o.hotkey}' on options ${o.index} and an earlier option`,
+    );
     seen.add(o.hotkey);
   }
   // The 8 standard options are 1..8. (The wildcard

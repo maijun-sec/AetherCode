@@ -75,11 +75,7 @@ export function normalizeWorkflowRow(raw: unknown, i: number): WorkflowRow {
     id,
     description: String(r.description ?? r.summary ?? ""),
     stepCount:
-      steps.length > 0
-        ? steps.length
-        : Number.isFinite(declared) && declared > 0
-          ? declared
-          : 0,
+      steps.length > 0 ? steps.length : Number.isFinite(declared) && declared > 0 ? declared : 0,
     inputs: Array.isArray(r.inputs) ? r.inputs.map((x) => String(x)) : [],
   };
 }
@@ -164,10 +160,7 @@ export function workflowEmptyCopy(
   }
   return {
     tone: "info",
-    lines: [
-      "no workflows defined",
-      "the daemon has not said which directory it scans yet",
-    ],
+    lines: ["no workflows defined", "the daemon has not said which directory it scans yet"],
   };
 }
 

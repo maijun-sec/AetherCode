@@ -84,19 +84,13 @@ test("R218: INLINE_KEYWORDS includes cross-lang control flow", () => {
   // control-flow keywords. Not every keyword from every
   // lang (would over-classify identifiers).
   for (const kw of ["if", "else", "for", "while", "return", "try", "catch"]) {
-    assert.ok(
-      hl.includes(`"${kw}"`),
-      `INLINE_KEYWORDS must include "${kw}"`,
-    );
+    assert.ok(hl.includes(`"${kw}"`), `INLINE_KEYWORDS must include "${kw}"`);
   }
 });
 
 test("R218: INLINE_KEYWORDS includes cross-lang declarations", () => {
   for (const kw of ["function", "class", "const", "let", "var", "def", "new"]) {
-    assert.ok(
-      hl.includes(`"${kw}"`),
-      `INLINE_KEYWORDS must include "${kw}"`,
-    );
+    assert.ok(hl.includes(`"${kw}"`), `INLINE_KEYWORDS must include "${kw}"`);
   }
 });
 
@@ -144,7 +138,10 @@ test("R218: operators sorted by length DESC (longest first)", () => {
 // ----- 3. renderer integration ----------------------------------------
 
 test("R218: Markdown.tsx imports highlightInlineCode", () => {
-  assert.match(md, /import\s*\{[^}]*highlightInlineCode[^}]*\}\s*from\s*["']\.\/markdown\/highlight\.js["']/);
+  assert.match(
+    md,
+    /import\s*\{[^}]*highlightInlineCode[^}]*\}\s*from\s*["']\.\/markdown\/highlight\.js["']/,
+  );
 });
 
 test("R218: inline code branch calls highlightInlineCode", () => {
@@ -155,17 +152,17 @@ test("R218: inline code branch calls highlightInlineCode", () => {
   assert.ok(inlineIdx > 0, "could not locate inline code branch");
   // Slice forward and look for highlightInlineCode call.
   const slice = md.slice(inlineIdx, inlineIdx + 2500);
-  assert.ok(slice.includes("highlightInlineCode("), "inline code branch must call highlightInlineCode(");
+  assert.ok(
+    slice.includes("highlightInlineCode("),
+    "inline code branch must call highlightInlineCode(",
+  );
 });
 
 test("R218: inline code pill uses <Text backgroundColor={t.codeBg}> (not <Box>)", () => {
   // Ink's <Box> does NOT support backgroundColor — only
   // <Text> does. R218 wraps the pill in <Text> for that
   // reason.
-  const slice = md.slice(
-    md.indexOf("m[10] != null"),
-    md.indexOf("m[10] != null") + 2500,
-  );
+  const slice = md.slice(md.indexOf("m[10] != null"), md.indexOf("m[10] != null") + 2500);
   // Look for the wrapping element.
   assert.match(slice, /<Text[^>]*backgroundColor=\{t\.codeBg\}/);
   // And ensure no <Box> has backgroundColor (which would
@@ -180,10 +177,7 @@ test("R218: inline code pill wraps tokens in backgroundColor t.codeBg", () => {
   // Each inner <Text> (per token + the leading + trailing
   // space) must also carry backgroundColor={t.codeBg} so
   // the entire pill shares one continuous bg segment.
-  const slice = md.slice(
-    md.indexOf("m[10] != null"),
-    md.indexOf("m[10] != null") + 2500,
-  );
+  const slice = md.slice(md.indexOf("m[10] != null"), md.indexOf("m[10] != null") + 2500);
   // We expect at least 2 mentions of backgroundColor
   // (outer Text + one inner).
   const matches = slice.match(/backgroundColor=\{t\.codeBg\}/g) || [];
@@ -198,9 +192,17 @@ test("R218: inline code pill wraps tokens in backgroundColor t.codeBg", () => {
 test("R218: package.json does NOT add a new highlighter / tokenizer dependency", () => {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   for (const forbidden of [
-    "cli-highlight", "highlight.js", "shiki", "prismjs",
-    "lowlight", "micromark", "starry-night", "pygments",
-    "highlight", "codejar", "codeflask",
+    "cli-highlight",
+    "highlight.js",
+    "shiki",
+    "prismjs",
+    "lowlight",
+    "micromark",
+    "starry-night",
+    "pygments",
+    "highlight",
+    "codejar",
+    "codeflask",
   ]) {
     assert.equal(
       deps[forbidden],
@@ -213,24 +215,47 @@ test("R218: package.json does NOT add a new highlighter / tokenizer dependency",
 // ----- 5. tsc smoke test ----------------------------------------------
 
 test("R218: TypeScript compile of highlight.ts + Markdown.tsx + theme.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r218-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Markdown.tsx") + '"',
-    '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
-    '"' + join(root, "src", "theme.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "Markdown.tsx") + '"',
+      '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
+      '"' + join(root, "src", "theme.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -271,7 +296,7 @@ test("R218 (runtime): `npm install` → 2 plain identifiers", () => {
   }
 });
 
-test("R218 (runtime): `\"hello\"` → single string token", () => {
+test('R218 (runtime): `"hello"` → single string token', () => {
   const compiled = join(root, "tmp-r218-tsc", "components", "markdown", "highlight.js");
   if (!existsSync(compiled)) return;
   const require = createRequire(import.meta.url);

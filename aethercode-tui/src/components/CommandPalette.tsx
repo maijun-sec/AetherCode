@@ -59,7 +59,10 @@ export function rankCommands(query: string, limit = 8): PaletteEntry[] {
       // Find the indices that matched.
       let qi = 0;
       for (let i = 0; i < lower.length && qi < q.length; i++) {
-        if (lower[i] === q[qi]) { highlights.push(i); qi++; }
+        if (lower[i] === q[qi]) {
+          highlights.push(i);
+          qi++;
+        }
       }
     }
     if (score > 0) out.push({ name, score, highlights });
@@ -101,8 +104,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       paddingY={1}
     >
       <Box>
-        <Text color={t.accent} bold>{icon.search} command palette</Text>
-        <Text dimColor>  Esc: close  Enter: select</Text>
+        <Text color={t.accent} bold>
+          {icon.search} command palette
+        </Text>
+        <Text dimColor> Esc: close Enter: select</Text>
       </Box>
       <Text> </Text>
       <Text>
@@ -110,7 +115,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
         <Text> </Text>
         <TextInput
           value={query}
-          onChange={(v) => { setQuery(v); setHighlight(0); }}
+          onChange={(v) => {
+            setQuery(v);
+            setHighlight(0);
+          }}
           onSubmit={() => {
             const m = matches[highlight] ?? matches[0];
             if (m) onSelect("/" + m.name);
@@ -121,7 +129,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       </Text>
       <Text> </Text>
       {matches.length === 0 ? (
-        <Text dimColor>  no matches</Text>
+        <Text dimColor> no matches</Text>
       ) : (
         matches.map((m, i) => (
           <Box key={m.name} flexDirection="row">
@@ -129,7 +137,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
             <Text>
               /<Text bold={i === highlight}>{renderHighlighted(m.name, m.highlights)}</Text>
             </Text>
-            <Text dimColor>  </Text>
+            <Text dimColor> </Text>
             <Text color={i === highlight ? t.accent : t.dim}>{describeCommand(m.name)}</Text>
           </Box>
         ))
@@ -141,34 +149,62 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
 function renderHighlighted(name: string, indices: number[]): React.ReactNode {
   const set = new Set(indices);
   return name.split("").map((c, i) =>
-    set.has(i)
-      ? <Text key={i} color="yellowBright">{c}</Text>
-      : <Text key={i}>{c}</Text>
+    set.has(i) ? (
+      <Text key={i} color="yellowBright">
+        {c}
+      </Text>
+    ) : (
+      <Text key={i}>{c}</Text>
+    ),
   );
 }
 
 function describeCommand(name: string): string {
   switch (name) {
-    case "help": case "?":      return "show help";
-    case "clear":               return "clear scrollback";
-    case "exit": case "quit": case "q": return "exit TUI";
-    case "tools":               return "list available tools";
-    case "state":               return "show engine state";
-    case "ping":                return "liveness check";
-    case "model":               return "switch model";
-    case "mode":                return "switch permission mode";
-    case "sessions":            return "list saved sessions";
-    case "tasks":               return "list recent tool invocations";
-    case "projects":            return "list known projects";
-    case "cwd":                 return "switch project";
-    case "stats":               return "session stats";
-    case "history":             return "show input history";
-    case "lastplan":            return "show last plan";
-    case "theme":               return "switch color theme";
-    case "layout":              return "switch layout preset";
-    case "budget":              return "set cost budget";
-    case "skip":                return "R99: arm/clear skip-confirmation (N rounds)";
-    case "tool-actions":        return "R100: per-tool permission action (safe / ask / deny)";
-    default:                    return "";
+    case "help":
+    case "?":
+      return "show help";
+    case "clear":
+      return "clear scrollback";
+    case "exit":
+    case "quit":
+    case "q":
+      return "exit TUI";
+    case "tools":
+      return "list available tools";
+    case "state":
+      return "show engine state";
+    case "ping":
+      return "liveness check";
+    case "model":
+      return "switch model";
+    case "mode":
+      return "switch permission mode";
+    case "sessions":
+      return "list saved sessions";
+    case "tasks":
+      return "list recent tool invocations";
+    case "projects":
+      return "list known projects";
+    case "cwd":
+      return "switch project";
+    case "stats":
+      return "session stats";
+    case "history":
+      return "show input history";
+    case "lastplan":
+      return "show last plan";
+    case "theme":
+      return "switch color theme";
+    case "layout":
+      return "switch layout preset";
+    case "budget":
+      return "set cost budget";
+    case "skip":
+      return "R99: arm/clear skip-confirmation (N rounds)";
+    case "tool-actions":
+      return "R100: per-tool permission action (safe / ask / deny)";
+    default:
+      return "";
   }
 }

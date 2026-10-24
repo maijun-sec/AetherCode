@@ -29,9 +29,24 @@ function longestCommonPrefix(strs) {
 }
 
 const SLASH = [
-  "help", "?", "clear", "exit", "quit", "q",
-  "tools", "state", "ping", "model", "mode",
-  "sessions", "tasks", "projects", "cwd", "stats", "history", "lastplan",
+  "help",
+  "?",
+  "clear",
+  "exit",
+  "quit",
+  "q",
+  "tools",
+  "state",
+  "ping",
+  "model",
+  "mode",
+  "sessions",
+  "tasks",
+  "projects",
+  "cwd",
+  "stats",
+  "history",
+  "lastplan",
 ];
 
 function completeSlash(partial) {
@@ -145,21 +160,39 @@ test("R38: completeSlash is only triggered for slash input", () => {
 // ----- 3. Build smoke test -------------------------------------------
 
 test("R38: TypeScript compile of commands.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r38-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "commands.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(`"${tscBin}"`, [...tscArgs, '"' + join(root, "src", "commands.ts") + '"'], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

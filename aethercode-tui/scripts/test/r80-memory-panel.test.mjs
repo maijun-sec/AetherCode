@@ -26,8 +26,7 @@ const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ?
 // ----- 1. Source-level contract --------------------------------------
 
 test("T-080: MemoryPanel.tsx exists at the design-specified path", () => {
-  assert.ok(existsSync(panelPath),
-    `MemoryPanel.tsx must exist at ${panelPath}`);
+  assert.ok(existsSync(panelPath), `MemoryPanel.tsx must exist at ${panelPath}`);
 });
 
 test("T-080: MemoryPanel exports MemoryPanel function and core types", () => {
@@ -70,10 +69,14 @@ test("T-082: MemoryPanel has a read-only list view of entries", () => {
   assert.match(src, /<Box/);
   assert.match(src, /<Text/);
   // No TextInput on individual rows (the list itself is read-only).
-  const linesWithRowTextInput = src.split("\n").filter((l) =>
-    /<TextInput/.test(l) && !/tab/.test(l) && !/focus/.test(l));
-  assert.equal(linesWithRowTextInput.length, 0,
-    "MemoryPanel rows should be read-only (no <TextInput> on a row)");
+  const linesWithRowTextInput = src
+    .split("\n")
+    .filter((l) => /<TextInput/.test(l) && !/tab/.test(l) && !/focus/.test(l));
+  assert.equal(
+    linesWithRowTextInput.length,
+    0,
+    "MemoryPanel rows should be read-only (no <TextInput> on a row)",
+  );
 });
 
 test("T-083: MemoryPanel has an edit dialog action (Enter / 'e' on a row)", () => {
@@ -81,7 +84,10 @@ test("T-083: MemoryPanel has an edit dialog action (Enter / 'e' on a row)", () =
   // Double-click is implemented as Enter (TUI doesn't have real
   // double-click events; the "double-click" in the design
   // means "press Enter on the focused row").
-  assert.match(src, /onEditFact\?:\s*\(scope:\s*MemoryScope,\s*entry:\s*MemoryPanelEntry\)\s*=>\s*void/);
+  assert.match(
+    src,
+    /onEditFact\?:\s*\(scope:\s*MemoryScope,\s*entry:\s*MemoryPanelEntry\)\s*=>\s*void/,
+  );
   assert.match(src, /key\.return/);
   // The 'e' shortcut is documented as a secondary trigger.
   assert.match(src, /input === "e"/);
@@ -147,8 +153,11 @@ test("T-085: /help documents the new /memory commands", () => {
   assert.match(groups, /"memory-edit"/);
   assert.match(groups, /"memory-compact"/);
   // and the user-facing copy must no longer carry the round tag
-  assert.doesNotMatch(cmds, /description: "[^"]*T-08\d/,
-    "user-facing descriptions must not leak T-0xx round tags");
+  assert.doesNotMatch(
+    cmds,
+    /description: "[^"]*T-08\d/,
+    "user-facing descriptions must not leak T-0xx round tags",
+  );
 });
 
 test("T-085: SLASH_COMMANDS includes the new /memory commands for tab-completion", () => {
@@ -165,22 +174,38 @@ test("T-085: SLASH_COMMANDS includes the new /memory commands for tab-completion
 test("T-080: MemoryPanel.tsx compiles without TS errors", () => {
   const tmp = join(root, "tmp-r80-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--jsx", "react", "--rootDir", join(root, "src"),
-    "--noEmit", "true",
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--jsx",
+    "react",
+    "--rootDir",
+    join(root, "src"),
+    "--noEmit",
+    "true",
   ];
   const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${panelPath}"`], {
-    encoding: "utf-8", shell: true,
+    encoding: "utf-8",
+    shell: true,
   });
   const output = (r.stdout || "") + (r.stderr || "");
   const hasFileError = /MemoryPanel\.tsx.*error/i.test(output);
-  assert.equal(hasFileError, false,
-    `MemoryPanel.tsx should compile cleanly; got: ${output}`);
+  assert.equal(hasFileError, false, `MemoryPanel.tsx should compile cleanly; got: ${output}`);
 });
 
 // ----- 3. Docstring contract -----------------------------------------

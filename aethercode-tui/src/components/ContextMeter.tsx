@@ -67,10 +67,10 @@ export const DEFAULT_BAR_WIDTH = 200;
 
 /** Drop threshold for a "compact event" (T-183). > 30 % in 1
  *  sample is treated as evidence of a compact pass having run. */
-export const COMPACT_DROP_THRESHOLD = 0.30;
+export const COMPACT_DROP_THRESHOLD = 0.3;
 
 /** The 80 % mark at which the Compaction Recommended button shows (T-184). */
-export const RECOMMEND_BUTTON_THRESHOLD = 0.80;
+export const RECOMMEND_BUTTON_THRESHOLD = 0.8;
 
 /** Maximum number of samples kept in the rolling window. */
 export const MAX_SAMPLES = 64;
@@ -99,14 +99,17 @@ export interface ContextMeterProps {
 /** Map a fill ratio to a colour band. The thresholds match
  *  `design.md §2.8` exactly: < 50 % green, 50-80 % amber, > 80 % red. */
 export function bandColor(ratio: number): "green" | "yellow" | "red" {
-  if (ratio > 0.80) return "red";
-  if (ratio >= 0.50) return "yellow";
+  if (ratio > 0.8) return "red";
+  if (ratio >= 0.5) return "yellow";
   return "green";
 }
 
 /** Fill a bar of `width` characters to `pct` (0..1). Uses
  *  Unicode block characters for a smooth gradient. */
-export function fillBar(pct: number, width: number): { filled: number; partial: boolean; empty: number } {
+export function fillBar(
+  pct: number,
+  width: number,
+): { filled: number; partial: boolean; empty: number } {
   if (width <= 0) return { filled: 0, partial: false, empty: 0 };
   const clamped = Math.max(0, Math.min(1, pct));
   const exact = clamped * width;
@@ -179,7 +182,11 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
           // Fire the event AFTER state update so the meter can
           // reflect the new (post-drop) value in the same paint.
           queueMicrotask(() => {
-            try { callbacksRef.current.onCompactEvent?.(drop); } catch { /* ignore */ }
+            try {
+              callbacksRef.current.onCompactEvent?.(drop);
+            } catch {
+              /* ignore */
+            }
           });
         }
         const merged = prev.concat(next);
@@ -209,7 +216,11 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
     }
     if (!buttonFocused) return;
     if (key.return || input === " ") {
-      try { callbacksRef.current.onRunCompact?.(); } catch { /* ignore */ }
+      try {
+        callbacksRef.current.onRunCompact?.();
+      } catch {
+        /* ignore */
+      }
     }
   });
 
@@ -224,8 +235,7 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
   const pct = Math.round(ratio * 100);
   const showButton = known && ratio >= RECOMMEND_BUTTON_THRESHOLD;
   const hint =
-    lastCompactEventRef.current != null
-    && clock() - lastCompactEventRef.current < 5_000
+    lastCompactEventRef.current != null && clock() - lastCompactEventRef.current < 5_000
       ? "↓ compacted"
       : null;
 
@@ -234,26 +244,30 @@ export const ContextMeter: React.FC<ContextMeterProps> = ({
       <Text dimColor>ctx </Text>
       <Text>
         <Text color={color}>{"["}</Text>
-        <Text color={color}>{FILLED.repeat(filled)}{partial ? PARTIAL : ""}</Text>
+        <Text color={color}>
+          {FILLED.repeat(filled)}
+          {partial ? PARTIAL : ""}
+        </Text>
         <Text dimColor>{EMPTY.repeat(empty)}</Text>
         <Text color={color}>{"]"}</Text>
       </Text>
       {showLabel ? (
         known ? (
           <Text>
-            <Text dimColor>  </Text>
+            <Text dimColor> </Text>
             <Text color={color}>{pct}%</Text>
-            <Text dimColor> ({inputTokens}/{info.maxTokens})</Text>
+            <Text dimColor>
+              {" "}
+              ({inputTokens}/{info.maxTokens})
+            </Text>
           </Text>
         ) : (
           // No measurement yet. Say so rather than print 0%.
-          <Text dimColor>  — (no usage reported yet)</Text>
+          <Text dimColor> — (no usage reported yet)</Text>
         )
       ) : null}
-      {hint ? <Text color="green">  {hint}</Text> : null}
-      {info.autoCompactDisabled ? (
-        <Text color="red">  ⚠ auto-compact off</Text>
-      ) : null}
+      {hint ? <Text color="green"> {hint}</Text> : null}
+      {info.autoCompactDisabled ? <Text color="red"> ⚠ auto-compact off</Text> : null}
       {showButton ? (
         <Box marginLeft={1}>
           <Text

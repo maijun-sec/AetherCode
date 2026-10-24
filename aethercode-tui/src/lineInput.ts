@@ -90,22 +90,22 @@ export interface LineInputCallbacks {
  *  East Asian Width property used by terminals. */
 function isWide(cp: number): boolean {
   return (
-    (cp >= 0x1100 && cp <= 0x115F) ||
-    (cp >= 0x2329 && cp <= 0x232A) ||
-    (cp >= 0x2E80 && cp <= 0x303E) ||
-    (cp >= 0x3041 && cp <= 0x33FF) ||
-    (cp >= 0x3400 && cp <= 0x4DBF) ||
-    (cp >= 0x4E00 && cp <= 0x9FFF) ||
-    (cp >= 0xA000 && cp <= 0xA4CF) ||
-    (cp >= 0xAC00 && cp <= 0xD7A3) ||
-    (cp >= 0xF900 && cp <= 0xFAFF) ||
-    (cp >= 0xFE30 && cp <= 0xFE4F) ||
-    (cp >= 0xFF00 && cp <= 0xFF60) ||
-    (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-    (cp >= 0x1F300 && cp <= 0x1F64F) ||
-    (cp >= 0x1F900 && cp <= 0x1F9FF) ||
-    (cp >= 0x20000 && cp <= 0x2FFFD) ||
-    (cp >= 0x30000 && cp <= 0x3FFFD)
+    (cp >= 0x1100 && cp <= 0x115f) ||
+    (cp >= 0x2329 && cp <= 0x232a) ||
+    (cp >= 0x2e80 && cp <= 0x303e) ||
+    (cp >= 0x3041 && cp <= 0x33ff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) ||
+    (cp >= 0x4e00 && cp <= 0x9fff) ||
+    (cp >= 0xa000 && cp <= 0xa4cf) ||
+    (cp >= 0xac00 && cp <= 0xd7a3) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||
+    (cp >= 0xff00 && cp <= 0xff60) ||
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x1f300 && cp <= 0x1f64f) ||
+    (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+    (cp >= 0x20000 && cp <= 0x2fffd) ||
+    (cp >= 0x30000 && cp <= 0x3fffd)
   );
 }
 
@@ -120,7 +120,7 @@ function cellWidth(s: string): number {
   for (let i = 0; i < s.length; i++) {
     const cp = s.codePointAt(i)!;
     w += isWide(cp) ? 2 : 1;
-    if (cp > 0xFFFF) i++; // surrogate pair advances by 2
+    if (cp > 0xffff) i++; // surrogate pair advances by 2
   }
   return w;
 }
@@ -131,9 +131,9 @@ function cellWidth(s: string): number {
 function prevCharBoundary(s: string, pos: number): number {
   if (pos <= 1) return 0;
   const c1 = s.charCodeAt(pos - 1);
-  if (c1 >= 0xDC00 && c1 <= 0xDFFF && pos >= 2) {
+  if (c1 >= 0xdc00 && c1 <= 0xdfff && pos >= 2) {
     const c2 = s.charCodeAt(pos - 2);
-    if (c2 >= 0xD800 && c2 <= 0xDBFF) return pos - 2;
+    if (c2 >= 0xd800 && c2 <= 0xdbff) return pos - 2;
   }
   return pos - 1;
 }
@@ -204,11 +204,10 @@ export class LineInput {
     const logPath = "D:\\tmp\\ac-tui-console.log";
     const log = (msg: string): void => {
       try {
-        require("node:fs").appendFileSync(
-          logPath,
-          `[${new Date().toISOString()}] ${msg}\n`,
-        );
-      } catch { /* logging itself can't fail closed */ }
+        require("node:fs").appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+      } catch {
+        /* logging itself can't fail closed */
+      }
     };
 
     if (process.platform !== "win32") {
@@ -256,7 +255,7 @@ export class LineInput {
       // which is idempotent in effect but exercises the syscall.
       //
       // -11 = STD_OUTPUT_HANDLE per WinBase.h.
-      const hOut = GetStdHandle(0xFFFFFFF5 /* (uint32)-11 */);
+      const hOut = GetStdHandle(0xfffffff5 /* (uint32)-11 */);
       if (!hOut) {
         log(`STDOUT GetStdHandle returned NULL`);
       } else if (GetConsoleMode(hOut, modePtr)) {
@@ -272,10 +271,14 @@ export class LineInput {
         // then set to TARGET) ensures conhost sees a real transition.
         SetConsoleMode(hOut, before & ~0x0004);
         const ok = SetConsoleMode(hOut, TARGET);
-        log(`STDOUT: before=0x${before.toString(16)} forced=0x${TARGET.toString(16)} setConsoleMode=${ok}`);
+        log(
+          `STDOUT: before=0x${before.toString(16)} forced=0x${TARGET.toString(16)} setConsoleMode=${ok}`,
+        );
         if (GetConsoleMode(hOut, modePtr)) {
           const verify = modePtr.readUInt32LE(0);
-          log(`STDOUT: verify=0x${verify.toString(16)} (${(verify & 0x0007) === TARGET ? "OK" : "MISMATCH"})`);
+          log(
+            `STDOUT: verify=0x${verify.toString(16)} (${(verify & 0x0007) === TARGET ? "OK" : "MISMATCH"})`,
+          );
         }
       }
 
@@ -316,7 +319,7 @@ export class LineInput {
       //     just without the duplicate conhost write-back to the screen.
       //
       // -10 = STD_INPUT_HANDLE per WinBase.h.
-      const hIn = GetStdHandle(0xFFFFFFF6 /* (uint32)-10 */);
+      const hIn = GetStdHandle(0xfffffff6 /* (uint32)-10 */);
       if (!hIn) {
         log(`STDIN GetStdHandle returned NULL`);
       } else if (GetConsoleMode(hIn, modePtr)) {
@@ -329,12 +332,16 @@ export class LineInput {
         const after = before & ~COOKED_MASK;
         if (after !== before) {
           const ok = SetConsoleMode(hIn, after);
-          log(`STDIN:  before=0x${before.toString(16)} after=0x${after.toString(16)} setConsoleMode=${ok}`);
+          log(
+            `STDIN:  before=0x${before.toString(16)} after=0x${after.toString(16)} setConsoleMode=${ok}`,
+          );
           // Verify the write actually took effect (some conhost
           // builds silently swallow the call).
           if (GetConsoleMode(hIn, modePtr)) {
             const verify = modePtr.readUInt32LE(0);
-            log(`STDIN:  verify=0x${verify.toString(16)} (${verify === after ? "OK" : "MISMATCH"})`);
+            log(
+              `STDIN:  verify=0x${verify.toString(16)} (${verify === after ? "OK" : "MISMATCH"})`,
+            );
           }
         } else {
           log(`STDIN:  already 0x${before.toString(16)}, no change`);
@@ -390,7 +397,9 @@ export class LineInput {
     if (this.isTty) {
       try {
         (process.stdin as unknown as { setRawMode: (b: boolean) => void }).setRawMode(true);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       process.stdin.resume();
     }
     this.listener = (chunk: Buffer) => this.handleData(chunk);
@@ -411,7 +420,9 @@ export class LineInput {
     if (this.isTty) {
       try {
         (process.stdin as unknown as { setRawMode: (b: boolean) => void }).setRawMode(false);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     this.started = false;
   }
@@ -507,7 +518,7 @@ export class LineInput {
       const code = text.charCodeAt(i);
 
       // CR / LF → Enter.
-      if (code === 0x0D || code === 0x0A) {
+      if (code === 0x0d || code === 0x0a) {
         this.stop();
         process.stdout.write("\r\n");
         const submitted = this.buffer;
@@ -534,7 +545,11 @@ export class LineInput {
         process.stdout.write("^C\r\n");
         this.buffer = "";
         this.cursor = 0;
-        try { this.cbs.onClose(); } catch { /* swallow */ }
+        try {
+          this.cbs.onClose();
+        } catch {
+          /* swallow */
+        }
         return;
       }
 
@@ -544,7 +559,11 @@ export class LineInput {
         if (this.buffer.length === 0) {
           this.stop();
           process.stdout.write("\r\n");
-          try { this.cbs.onClose(); } catch { /* swallow */ }
+          try {
+            this.cbs.onClose();
+          } catch {
+            /* swallow */
+          }
         }
         i++;
         continue;
@@ -553,7 +572,7 @@ export class LineInput {
       // Backspace / DEL. Real terminals send 0x08 (BS) or 0x7F (DEL);
       // cmd.exe usually sends 0x08 for Backspace and 0x7F for Delete.
       // We treat both as backspace for line editing.
-      if (code === 0x08 || code === 0x7F) {
+      if (code === 0x08 || code === 0x7f) {
         if (this.cursor > 0) {
           const prev = prevCharBoundary(this.buffer, this.cursor);
           this.buffer = this.buffer.slice(0, prev) + this.buffer.slice(this.cursor);
@@ -568,7 +587,7 @@ export class LineInput {
       // treat it as the interrupt key (R363). Arrow keys send
       // ESC [ A/B/C/D — we consume the whole sequence and act on
       // none of them.
-      if (code === 0x1B) {
+      if (code === 0x1b) {
         i++;
         if (text[i] === "[") {
           i++;
@@ -580,7 +599,9 @@ export class LineInput {
         // it — the picker uses Esc to close itself, and it owns the
         // keyboard while it is open.
         if (this.cbs.onEscape) {
-          try { this.cbs.onEscape(); } catch (e) {
+          try {
+            this.cbs.onEscape();
+          } catch (e) {
             process.stderr.write(`lineInput.onEscape threw: ${(e as Error).message}\n`);
           }
         }
@@ -590,7 +611,7 @@ export class LineInput {
       // Printable + multi-byte. Insert at cursor.
       if (code >= 0x20 || code === 0x09) {
         const cp = text.codePointAt(i)!;
-        const charLen = cp > 0xFFFF ? 2 : 1;
+        const charLen = cp > 0xffff ? 2 : 1;
         const ch = text.substr(i, charLen);
         this.buffer = this.buffer.slice(0, this.cursor) + ch + this.buffer.slice(this.cursor);
         this.cursor += charLen;
@@ -660,8 +681,6 @@ export class LineInput {
     const cursorCells = promptCells + cellWidth(this.buffer.slice(0, this.cursor));
     const targetRow = Math.floor(cursorCells / termWidth);
     const targetCol = cursorCells % termWidth;
-    process.stdout.write(
-      `\x1b[${this.inputTopRow + targetRow};${targetCol + 1}H`,
-    );
+    process.stdout.write(`\x1b[${this.inputTopRow + targetRow};${targetCol + 1}H`);
   }
 }

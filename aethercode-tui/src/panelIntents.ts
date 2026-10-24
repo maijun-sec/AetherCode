@@ -79,17 +79,17 @@
  */
 
 /** How a renderer surfaces a given intent. */
-export type InkStatus = 'mounted' | 'inline-note' | 'unavailable';
-export type LineStatus = 'rendered' | 'inline-note' | 'unavailable';
+export type InkStatus = "mounted" | "inline-note" | "unavailable";
+export type LineStatus = "rendered" | "inline-note" | "unavailable";
 
 /** WHY a surface is unavailable. See the vocabulary block above. */
 export type PanelBlocker =
   /** The backend works; the UI was simply never written. */
-  | 'not-wired'
+  | "not-wired"
   /** No RPC exists on the daemon; a UI would be a dead button. */
-  | 'backend-missing'
+  | "backend-missing"
   /** The slash command itself does not exist yet. */
-  | 'no-command';
+  | "no-command";
 
 export interface PanelIntent {
   /** Canonical kebab id. Used by tests and by /help grouping. */
@@ -105,7 +105,7 @@ export interface PanelIntent {
   /** One-line description for `/help`. User-facing copy, no round refs. */
   title: string;
   /** Grouping for the reorganised /help (P0.3). */
-  group: 'session' | 'context' | 'config' | 'mcp' | 'workflow' | 'system';
+  group: "session" | "context" | "config" | "mcp" | "workflow" | "system";
   /** Component that implements it on Ink, when there is one. */
   component?: string;
   ink: InkStatus;
@@ -138,23 +138,23 @@ export interface PanelIntent {
 export const PANEL_INTENTS: PanelIntent[] = [
   // --- context -----------------------------------------------------
   {
-    id: 'memory-panel',
-    sentinels: ['__MEMORY_PANEL__', '__MEMORY_EDIT__'],
-    command: '/memory',
-    title: 'Browse / edit the 3-layer memory (user / project / session)',
-    group: 'context',
-    component: 'components/MemoryPanel.tsx',
+    id: "memory-panel",
+    sentinels: ["__MEMORY_PANEL__", "__MEMORY_EDIT__"],
+    command: "/memory",
+    title: "Browse / edit the 3-layer memory (user / project / session)",
+    group: "context",
+    component: "components/MemoryPanel.tsx",
     // R365: both were 'unavailable' and both were false.
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
   },
   {
-    id: 'context-meter',
-    sentinels: ['__CONTEXT_METER__'],
-    command: '/context',
-    title: 'What is filling the context window, itemised',
-    group: 'context',
-    component: 'components/ContextMeter.tsx',
+    id: "context-meter",
+    sentinels: ["__CONTEXT_METER__"],
+    command: "/context",
+    title: "What is filling the context window, itemised",
+    group: "context",
+    component: "components/ContextMeter.tsx",
     // R371: this row was `unavailable`/`unavailable` with
     // `blocker: 'no-command'` and `advertised: false`, because
     // `handleSlash` had no `case "context"` and answered "unknown
@@ -174,27 +174,27 @@ export const PANEL_INTENTS: PanelIntent[] = [
     //   3. Nothing ever emitted `__CONTEXT_METER__`.
     //
     // All three are now closed. The panel is real on both renderers.
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
   },
 
   // --- session -----------------------------------------------------
   {
-    id: 'thread-selector',
-    sentinels: ['__THREAD_SELECTOR__'],
-    command: '/threads',
-    title: 'Switch to another session thread',
-    group: 'session',
-    component: 'components/ThreadSelector.tsx',
-    ink: 'mounted',   // R365: was 'unavailable'; PANEL_BY_INTENT has it as "threads".
-    line: 'rendered', // R365: was 'unavailable'; line.ts has a __THREAD_SELECTOR__ arm.
+    id: "thread-selector",
+    sentinels: ["__THREAD_SELECTOR__"],
+    command: "/threads",
+    title: "Switch to another session thread",
+    group: "session",
+    component: "components/ThreadSelector.tsx",
+    ink: "mounted", // R365: was 'unavailable'; PANEL_BY_INTENT has it as "threads".
+    line: "rendered", // R365: was 'unavailable'; line.ts has a __THREAD_SELECTOR__ arm.
   },
   {
-    id: 'session-picker',
-    sentinels: ['__SESSION_PICKER__'],
-    command: '/sessions',
+    id: "session-picker",
+    sentinels: ["__SESSION_PICKER__"],
+    command: "/sessions",
     title: "This project's sessions — pick one to keep working",
-    group: 'session',
+    group: "session",
     // Deliberately the SAME component as `thread-selector`. The two
     // commands differ by exactly one thing — whether the row list
     // is filtered to the active cwd (`State.panelCwdOnly`) — and a
@@ -202,9 +202,9 @@ export const PANEL_INTENTS: PanelIntent[] = [
     // component instance and a third copy of the loadSession call
     // to keep in sync. R370 pins that they resolve to the same
     // PanelId.
-    component: 'components/ThreadSelector.tsx',
-    ink: 'mounted',
-    line: 'rendered',
+    component: "components/ThreadSelector.tsx",
+    ink: "mounted",
+    line: "rendered",
     // R370: `/sessions` used to return `{rpcMethod:"listSessions"}`,
     // which printed the RAW WIRE PAYLOAD — id / lastUsedAt /
     // sizeBytes / trashedAt / messageCount / preview, unformatted,
@@ -214,47 +214,47 @@ export const PANEL_INTENTS: PanelIntent[] = [
     // the current cwd.
   },
   {
-    id: 'todo-board',
-    sentinels: ['__TODO_BOARD__'],
-    command: '/todos',
-    title: 'Live TODO list with j/k navigation',
-    group: 'session',
-    component: 'components/todo/TodoBoard.tsx',
-    ink: 'mounted',   // R365: was 'unavailable'.
-    line: 'rendered', // R365: was 'unavailable'.
+    id: "todo-board",
+    sentinels: ["__TODO_BOARD__"],
+    command: "/todos",
+    title: "Live TODO list with j/k navigation",
+    group: "session",
+    component: "components/todo/TodoBoard.tsx",
+    ink: "mounted", // R365: was 'unavailable'.
+    line: "rendered", // R365: was 'unavailable'.
   },
 
   // --- config ------------------------------------------------------
   {
-    id: 'agent-selector',
-    sentinels: ['__AGENT_PICK__'],
-    command: '/agent-pick',
-    title: 'Pick the active agent (type to filter)',
-    group: 'config',
-    component: 'components/AgentSelector.tsx',
+    id: "agent-selector",
+    sentinels: ["__AGENT_PICK__"],
+    command: "/agent-pick",
+    title: "Pick the active agent (type to filter)",
+    group: "config",
+    component: "components/AgentSelector.tsx",
     // The R362 note claimed "NOTHING dispatches it". False: the
     // sentinel path resolves through intentForSentinel ->
     // PANEL_BY_INTENT["agent-selector"] -> openPanel("agents").
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
   },
   {
-    id: 'effort-picker',
-    sentinels: ['__EFFORT_PICK__'],
-    command: '/effort-pick',
-    title: 'Set reasoning effort (low / medium / high / xhigh)',
-    group: 'config',
-    component: 'components/EffortPicker.tsx',
-    ink: 'mounted',
-    line: 'rendered',
+    id: "effort-picker",
+    sentinels: ["__EFFORT_PICK__"],
+    command: "/effort-pick",
+    title: "Set reasoning effort (low / medium / high / xhigh)",
+    group: "config",
+    component: "components/EffortPicker.tsx",
+    ink: "mounted",
+    line: "rendered",
   },
   {
-    id: 'cwd-switcher',
-    sentinels: ['__CWD_PICK__'],
-    command: '/cwd-pick',
-    title: 'Switch the daemon working directory',
-    group: 'config',
-    component: 'components/CwdSwitcher.tsx',
+    id: "cwd-switcher",
+    sentinels: ["__CWD_PICK__"],
+    command: "/cwd-pick",
+    title: "Switch the daemon working directory",
+    group: "config",
+    component: "components/CwdSwitcher.tsx",
     // Corrected in R364. This used to read
     //   ink: 'unavailable', line: 'unavailable'
     // with the note "CwdSwitcher.tsx (176 lines) exists, unmounted" -
@@ -272,18 +272,18 @@ export const PANEL_INTENTS: PanelIntent[] = [
     // method. Every `/cwd-pick` died on -32601. The JSON-RPC name is
     // `switchProject` (registered in AetherCodeMethods.registerAll,
     // routed in HttpJsonRpcServer). See docs/R364-cwd-rpc-name.md.
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
   },
   {
-    id: 'grants-manager',
-    sentinels: ['__GRANTS_MANAGER__'],
-    command: '/consents',
-    title: 'Review and revoke stored tool grants',
-    group: 'config',
-    component: 'components/permissions/GrantsManager.tsx',
-    ink: 'mounted',   // R365: was 'unavailable'; PANEL_BY_INTENT id is "grants".
-    line: 'rendered', // R365: was 'unavailable'.
+    id: "grants-manager",
+    sentinels: ["__GRANTS_MANAGER__"],
+    command: "/consents",
+    title: "Review and revoke stored tool grants",
+    group: "config",
+    component: "components/permissions/GrantsManager.tsx",
+    ink: "mounted", // R365: was 'unavailable'; PANEL_BY_INTENT id is "grants".
+    line: "rendered", // R365: was 'unavailable'.
     // R367: "mounted" is a REACHABILITY claim, not a WORKING claim, and
     // those were two separate failures here. The panel rendered for
     // months; the RPC it called was -32601 the whole time (the daemon
@@ -295,39 +295,39 @@ export const PANEL_INTENTS: PanelIntent[] = [
     // r366-rpc-names.test.mjs. Reachable is not the same as honest.
   },
   {
-    id: 'notification-center',
-    sentinels: ['__NOTIFICATION_CENTER__'],
-    command: '/notifications',
-    title: 'Pending notices and warning toggles',
-    group: 'config',
-    component: 'components/NotificationCenter.tsx',
-    ink: 'mounted',
-    line: 'rendered',
+    id: "notification-center",
+    sentinels: ["__NOTIFICATION_CENTER__"],
+    command: "/notifications",
+    title: "Pending notices and warning toggles",
+    group: "config",
+    component: "components/NotificationCenter.tsx",
+    ink: "mounted",
+    line: "rendered",
   },
 
   // --- mcp ---------------------------------------------------------
   {
-    id: 'mcp-viewer',
-    sentinels: ['__MCP_VIEWER__', '__MCP_LOGIN__', '__MCP_RECONNECT__'],
-    command: '/mcp',
-    title: 'MCP servers and their tools',
-    group: 'mcp',
-    component: 'components/McpViewer.tsx',
+    id: "mcp-viewer",
+    sentinels: ["__MCP_VIEWER__", "__MCP_LOGIN__", "__MCP_RECONNECT__"],
+    command: "/mcp",
+    title: "MCP servers and their tools",
+    group: "mcp",
+    component: "components/McpViewer.tsx",
     // One component serves all three commands; the login and reconnect
     // variants pass an action hint. All three sentinels resolve to the
     // same PANEL_BY_INTENT id, so all three are reachable on Ink.
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
   },
 
   // --- workflow ----------------------------------------------------
   {
-    id: 'workflow-picker',
-    sentinels: ['__WORKFLOW_PICKER__'],
-    command: '/workflow',
-    title: 'Run a workflow by name, or pick one from the list',
-    group: 'workflow',
-    component: 'components/WorkflowPicker.tsx',
+    id: "workflow-picker",
+    sentinels: ["__WORKFLOW_PICKER__"],
+    command: "/workflow",
+    title: "Run a workflow by name, or pick one from the list",
+    group: "workflow",
+    component: "components/WorkflowPicker.tsx",
     // R373: this row was `ink: 'unavailable'` with
     // `blocker: 'not-wired'` for three rounds, and the blocker was
     // TRUE each time — line mode really did have a frame and Ink
@@ -347,18 +347,18 @@ export const PANEL_INTENTS: PanelIntent[] = [
     // is not necessarily that file's name. It also publishes
     // `skipped`, so "the directory is empty" and "you cannot read
     // what is in it" stop being the same answer.
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
   },
 
   // --- system ------------------------------------------------------
   {
-    id: 'update-available',
-    sentinels: ['__UPDATE_AVAILABLE__', '__UPDATE_DEPS__', '__UPDATE_INSTALL__'],
-    command: '/update',
-    title: 'Check the version, and how to update it',
-    group: 'system',
-    component: 'components/UpdatePanel.tsx',
+    id: "update-available",
+    sentinels: ["__UPDATE_AVAILABLE__", "__UPDATE_DEPS__", "__UPDATE_INSTALL__"],
+    command: "/update",
+    title: "Check the version, and how to update it",
+    group: "system",
+    component: "components/UpdatePanel.tsx",
     // R374: this row was `ink: 'unavailable'` with
     // `blocker: 'not-wired'` for three rounds, and the blocker was
     // WRONG. `not-wired` means "the backend works, nobody wrote the
@@ -389,21 +389,21 @@ export const PANEL_INTENTS: PanelIntent[] = [
     // Two different questions, two different answers: "is there a UI
     // surface?" (the ink/line columns — yes) and "does the underlying
     // capability exist?" (the gapNote — no). They do not contradict.
-    ink: 'mounted',
-    line: 'rendered',
+    ink: "mounted",
+    line: "rendered",
     gapNote:
-      'R374: the daemon has NO update RPC at all — no `update/check`, ' +
-      'no `update/refreshDeps`, no `update/install`, and no updater ' +
-      'module in the reactor. R365 had classified this row ' +
-      '`blocker: \'not-wired\'`, which was WRONG: `not-wired` means ' +
+      "R374: the daemon has NO update RPC at all — no `update/check`, " +
+      "no `update/refreshDeps`, no `update/install`, and no updater " +
+      "module in the reactor. R365 had classified this row " +
+      "`blocker: 'not-wired'`, which was WRONG: `not-wired` means " +
       '"the backend works, nobody wrote the UI", and its rule is ' +
       '"write the UI". The backend does not work, so the honest ' +
       'blocker was `backend-missing`, whose rule is "do NOT write the ' +
       'UI; it would be a dead button". R374 therefore did not mount ' +
-      '`UpdateAvailable` / `UpdateConfirm` / `UpdateProgress` — each ' +
-      'needs a fact this daemon cannot produce. The panel reports the ' +
-      'versions, says what did NOT happen, and points at the package ' +
-      'manager.',
+      "`UpdateAvailable` / `UpdateConfirm` / `UpdateProgress` — each " +
+      "needs a fact this daemon cannot produce. The panel reports the " +
+      "versions, says what did NOT happen, and points at the package " +
+      "manager.",
   },
 ];
 
@@ -411,8 +411,9 @@ export const PANEL_INTENTS: PanelIntent[] = [
 export const ALL_DECLARED_SENTINELS: string[] = PANEL_INTENTS.flatMap((p) => p.sentinels);
 
 /** Rows that may appear in `/help`. Defaults to advertised !== false. */
-export const ADVERTISED_INTENTS: PanelIntent[] =
-  PANEL_INTENTS.filter((p) => p.advertised !== false);
+export const ADVERTISED_INTENTS: PanelIntent[] = PANEL_INTENTS.filter(
+  (p) => p.advertised !== false,
+);
 
 /** Fast lookup: sentinel -> its declaring intent. */
 export function intentForSentinel(sentinel: string): PanelIntent | undefined {
@@ -421,7 +422,7 @@ export function intentForSentinel(sentinel: string): PanelIntent | undefined {
 
 /** Intent reachable from a primary command, e.g. `/memory`. */
 export function intentForCommand(command: string): PanelIntent | undefined {
-  const norm = command.startsWith('/') ? command : `/${command}`;
+  const norm = command.startsWith("/") ? command : `/${command}`;
   return PANEL_INTENTS.find((p) => p.command === norm);
 }
 
@@ -432,11 +433,11 @@ export function intentForCommand(command: string): PanelIntent | undefined {
  * `"memory panel (not available in line mode)"` instead of
  * `"__MEMORY_PANEL__:project"`.
  */
-export function describeSentinel(sentinel: string, surface: 'ink' | 'line'): string {
+export function describeSentinel(sentinel: string, surface: "ink" | "line"): string {
   const intent = intentForSentinel(sentinel);
   if (!intent) return sentinel;
-  const label = intent.title.replace(/\s*\(.*?\)\s*$/, '');
-  return `${label} - ${surface === 'line' ? 'not available in line mode' : 'not available'}`;
+  const label = intent.title.replace(/\s*\(.*?\)\s*$/, "");
+  return `${label} - ${surface === "line" ? "not available in line mode" : "not available"}`;
 }
 
 /**

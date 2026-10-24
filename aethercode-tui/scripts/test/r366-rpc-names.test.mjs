@@ -72,12 +72,29 @@ import { javaCode } from "./java-strip.mjs";
 async function loadCapabilities() {
   const tmp = join(tmpdir(), `r366-caps-${process.pid}`);
   mkdirSync(tmp, { recursive: true });
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", join(tmp, "out"), "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--rootDir", join(root, "src"),
-    `"${join(root, "src", "rpcCapabilities.ts")}"`,
-  ], { encoding: "utf-8", shell: true });
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      join(tmp, "out"),
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--rootDir",
+      join(root, "src"),
+      `"${join(root, "src", "rpcCapabilities.ts")}"`,
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
@@ -91,12 +108,27 @@ const root = join(here, "..", "..");
 
 /** TUI files that can issue an RPC. */
 const TUI_SOURCES = [
-  "src/tui.tsx", "src/line.ts", "src/commands.ts", "src/ac-tui.ts",
-  "src/memory-rpc.ts", "src/panelIntents.ts", "src/state.ts",
+  "src/tui.tsx",
+  "src/line.ts",
+  "src/commands.ts",
+  "src/ac-tui.ts",
+  "src/memory-rpc.ts",
+  "src/panelIntents.ts",
+  "src/state.ts",
 ];
 
-const protocolDir = join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java",
-  "org", "aethercode", "protocol");
+const protocolDir = join(
+  root,
+  "..",
+  "aethercode",
+  "aethercode-protocol",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "protocol",
+);
 const methodsPath = join(protocolDir, "methods", "AetherCodeMethods.java");
 const memoryPath = join(protocolDir, "methods", "MemoryMethods.java");
 const permissionPath = join(protocolDir, "methods", "PermissionMethods.java");
@@ -105,14 +137,45 @@ const httpPath = join(protocolDir, "http", "HttpJsonRpcServer.java");
 // R367: the seam. The TUI spawns `aethercode.jar --daemon`, which is
 // DaemonRunner — NOT SupervisorProcess. A method class nobody wires in
 // here is dead no matter how complete its implementation is.
-const daemonRunnerPath = join(root, "..", "aethercode", "aethercode-cli", "src", "main", "java",
-  "org", "aethercode", "cli", "DaemonRunner.java");
+const daemonRunnerPath = join(
+  root,
+  "..",
+  "aethercode",
+  "aethercode-cli",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "cli",
+  "DaemonRunner.java",
+);
 // R367: grants/list is NOT answered by AetherCodeMethods — GrantMethods
 // delegates to GrantHandlers, which wraps the row list in an envelope.
-const grantHandlersPath = join(root, "..", "aethercode", "aethercode-tasks", "src", "main", "java",
-  "org", "aethercode", "tasks", "rpc", "GrantHandlers.java");
+const grantHandlersPath = join(
+  root,
+  "..",
+  "aethercode",
+  "aethercode-tasks",
+  "src",
+  "main",
+  "java",
+  "org",
+  "aethercode",
+  "tasks",
+  "rpc",
+  "GrantHandlers.java",
+);
 
-const REQUIRED_PROTOCOL_SOURCES = [methodsPath, memoryPath, permissionPath, grantPath, httpPath, daemonRunnerPath, grantHandlersPath];
+const REQUIRED_PROTOCOL_SOURCES = [
+  methodsPath,
+  memoryPath,
+  permissionPath,
+  grantPath,
+  httpPath,
+  daemonRunnerPath,
+  grantHandlersPath,
+];
 const hasProtocol = REQUIRED_PROTOCOL_SOURCES.every((p) => existsSync(p));
 
 // --- what the daemon registers ---------------------------------------------
@@ -187,7 +250,10 @@ for (const cls of EXTRA_METHOD_CLASSES) {
 
   for (const m of cls.src.matchAll(/METHOD_[A-Z_]+\s*=\s*"([^"]+)"/g)) {
     if (isWired) wiredDispatcher.set(m[1], m[1]);
-    else declaredButUnwired.push(`${cls.type} declares ${m[1]} but DaemonRunner never calls ${varName ?? "?"}.registerAll(...)`);
+    else
+      declaredButUnwired.push(
+        `${cls.type} declares ${m[1]} but DaemonRunner never calls ${varName ?? "?"}.registerAll(...)`,
+      );
   }
 }
 
@@ -240,9 +306,11 @@ const BACKEND_MISSING = await loadCapabilities();
 
 test("the protocol sources are locatable (skip rather than false-green)", () => {
   const missing = REQUIRED_PROTOCOL_SOURCES.filter((p) => !existsSync(p));
-  assert.ok(hasProtocol,
+  assert.ok(
+    hasProtocol,
     `could not find: ${missing.join(", ")} — the daemon contract cannot be verified. ` +
-    "This test must not silently pass when it cannot check anything.");
+      "This test must not silently pass when it cannot check anything.",
+  );
 });
 
 test("extraction is non-trivial in BOTH directions", () => {
@@ -250,16 +318,24 @@ test("extraction is non-trivial in BOTH directions", () => {
   // every assertion below vacuously true. Three floors now, because
   // the wired-model added a second parse that can fail silently:
   const sent = sentMethods();
-  assert.ok(sent.size >= 40,
-    `only ${sent.size} method names extracted from the TUI — the patterns probably stopped matching`);
-  assert.ok(dispatcher.size >= 100,
-    `only ${dispatcher.size} registrations parsed — the register() pattern probably drifted`);
+  assert.ok(
+    sent.size >= 40,
+    `only ${sent.size} method names extracted from the TUI — the patterns probably stopped matching`,
+  );
+  assert.ok(
+    dispatcher.size >= 100,
+    `only ${dispatcher.size} registrations parsed — the register() pattern probably drifted`,
+  );
   const perms = (permissionSrc.match(/METHOD_[A-Z_]+\s*=\s*"permission\/[a-z]+"/g) || []).length;
-  assert.ok(perms === 5,
-    `expected 5 permission/* METHOD_ constants, parsed ${perms} — re-anchor this test`);
+  assert.ok(
+    perms === 5,
+    `expected 5 permission/* METHOD_ constants, parsed ${perms} — re-anchor this test`,
+  );
   const grants = (grantSrc.match(/METHOD_[A-Z_]+\s*=\s*"grants\/[a-zA-Z]+"/g) || []).length;
-  assert.ok(grants === 4,
-    `expected 4 grants/* METHOD_ constants, parsed ${grants} — re-anchor this test`);
+  assert.ok(
+    grants === 4,
+    `expected 4 grants/* METHOD_ constants, parsed ${grants} — re-anchor this test`,
+  );
 });
 
 test("REGRESSION R367: every extra method class is actually wired into DaemonRunner", () => {
@@ -273,10 +349,13 @@ test("REGRESSION R367: every extra method class is actually wired into DaemonRun
   // A gate that only asks "is the name in the class" is green for
   // exactly that state. This one asks the question the user
   // experiences: is it in the daemon the TUI spawns?
-  assert.deepEqual(declaredButUnwired, [],
+  assert.deepEqual(
+    declaredButUnwired,
+    [],
     "these methods are DECLARED but DaemonRunner never registers them — every " +
-    "call from the TUI is -32601. Add the `registerAll(...)` call (R367) or " +
-    "take them out of KNOWN_METHODS and back onto BACKEND_MISSING.");
+      "call from the TUI is -32601. Add the `registerAll(...)` call (R367) or " +
+      "take them out of KNOWN_METHODS and back onto BACKEND_MISSING.",
+  );
 });
 
 test("REGRESSION R367: the permission/grant surfaces the TUI uses are live", () => {
@@ -284,8 +363,10 @@ test("REGRESSION R367: the permission/grant surfaces the TUI uses are live", () 
   // deliberate act with a red test attached, rather than a silent
   // break discovered by a user clicking a dead button.
   for (const name of ["permission/list", "permission/revoke", "grants/revoke"]) {
-    assert.ok(KNOWN_METHODS.has(name),
-      `${name} must be reachable from the TUI's daemon — it is no longer on the backend-missing list`);
+    assert.ok(
+      KNOWN_METHODS.has(name),
+      `${name} must be reachable from the TUI's daemon — it is no longer on the backend-missing list`,
+    );
   }
 });
 
@@ -300,24 +381,28 @@ test("javaCode handles the apostrophe trap that DaemonRunner actually contains",
   // the two the real file does not yet have, so the guard does not
   // depend on a future edit to DaemonRunner keeping a comment around.
   const SAMPLE = [
-    '        // the stdio daemon\'s dispatcher picks it up',
-    '        // "quoted" and \'apostrophe\' inside a line comment',
+    "        // the stdio daemon's dispatcher picks it up",
+    "        // \"quoted\" and 'apostrophe' inside a line comment",
     '        String url = "http://example.com/* not a comment */";',
-    '        char q = \'"\';',
-    '        /* block with " and \' inside */',
-    '        http.setPermissionMethods(realCode);',
+    "        char q = '\"';",
+    "        /* block with \" and ' inside */",
+    "        http.setPermissionMethods(realCode);",
   ].join("\n");
   const out = javaCode(SAMPLE);
 
   assert.equal(out.length, SAMPLE.length, "offsets must be preserved");
-  assert.ok(out.includes("http.setPermissionMethods(realCode);"),
+  assert.ok(
+    out.includes("http.setPermissionMethods(realCode);"),
     "real code after the comments was swallowed — the scanner entered literal " +
-    "state on an apostrophe inside a comment and never left it");
-  assert.ok(out.includes('"http://example.com/* not a comment */";'),
-    "a `//` or `/*` inside a string literal was treated as a comment opener");
+      "state on an apostrophe inside a comment and never left it",
+  );
+  assert.ok(
+    out.includes('"http://example.com/* not a comment */";'),
+    "a `//` or `/*` inside a string literal was treated as a comment opener",
+  );
   assert.ok(!out.includes("daemon's"), "the line comment was not blanked");
   assert.ok(!out.includes("block with"), "the block comment was not blanked");
-  assert.ok(out.includes('char q = \'"\';'), "a char literal was mangled");
+  assert.ok(out.includes("char q = '\"';"), "a char literal was mangled");
 });
 
 test("the extra-method-class list is itself complete", () => {
@@ -327,13 +412,18 @@ test("the extra-method-class list is itself complete", () => {
   // because `declaredButUnwired` is built BY iterating the list. Both
   // mutation cases for this round proved exactly that.
   const declared = EXTRA_METHOD_CLASSES.map((c) => c.type);
-  assert.deepEqual(declared.slice().sort(), ["GrantMethods", "PermissionMethods"],
+  assert.deepEqual(
+    declared.slice().sort(),
+    ["GrantMethods", "PermissionMethods"],
     "every method class with its own registerAll must be listed here — a new " +
-    "one that is not listed is a class the wiring check does not cover");
+      "one that is not listed is a class the wiring check does not cover",
+  );
   for (const cls of EXTRA_METHOD_CLASSES) {
     assert.ok(cls.wiredVar, `${cls.type} has no wiredVar — re-anchor this test`);
-    assert.ok(cls.src.includes("public void registerAll("),
-      `${cls.type} no longer has a registerAll(JsonRpcDispatcher) hook — re-anchor this test`);
+    assert.ok(
+      cls.src.includes("public void registerAll("),
+      `${cls.type} no longer has a registerAll(JsonRpcDispatcher) hook — re-anchor this test`,
+    );
   }
 });
 
@@ -348,28 +438,41 @@ test("REGRESSION R367: BOTH transports route permission/* and grants/*", () => {
   // The desktop is the one that pays here, and it is not covered by
   // any test in this repo. This is the cheapest honest guard we have.
   const NAMES = [
-    "permission/check", "permission/prompt", "permission/list",
-    "permission/revoke", "permission/clear",
-    "grants/list", "grants/revoke", "grants/clear", "grants/setPreset",
+    "permission/check",
+    "permission/prompt",
+    "permission/list",
+    "permission/revoke",
+    "permission/clear",
+    "grants/list",
+    "grants/revoke",
+    "grants/clear",
+    "grants/setPreset",
   ];
   const missingHttp = NAMES.filter((n) => !httpCases.has(n));
-  assert.deepEqual(missingHttp, [],
+  assert.deepEqual(
+    missingHttp,
+    [],
     "these are registered on the stdio dispatcher but NOT routed by " +
-    "HttpJsonRpcServer's switch — the desktop gets -32601 for them: " +
-    missingHttp.join(", "));
+      "HttpJsonRpcServer's switch — the desktop gets -32601 for them: " +
+      missingHttp.join(", "),
+  );
 
   // And the setters DaemonRunner calls must actually exist. A case arm
   // that routes to a field nobody assigns is the same dead code as no
   // case arm at all.
   for (const setter of ["setPermissionMethods", "setGrantMethods"]) {
-    assert.ok(httpSrc.includes(setter),
-      `HttpJsonRpcServer has no ${setter} — the R367 route helpers have nothing to read`);
+    assert.ok(
+      httpSrc.includes(setter),
+      `HttpJsonRpcServer has no ${setter} — the R367 route helpers have nothing to read`,
+    );
   }
   const runner = javaCode(daemonRunnerSrc);
   for (const setter of ["http.setPermissionMethods", "http.setGrantMethods"]) {
-    assert.ok(runner.includes(setter),
+    assert.ok(
+      runner.includes(setter),
       `DaemonRunner never calls ${setter} — the HTTP switch would answer ` +
-      "\"not configured\" for every permission/* and grants/* call");
+        '"not configured" for every permission/* and grants/* call',
+    );
   }
 });
 
@@ -381,11 +484,14 @@ test("every method the TUI sends is registered by the daemon it talks to", () =>
     if (BACKEND_MISSING.has(name)) continue;
     unknown.push(`${name}  <- ${[...files].join(", ")}`);
   }
-  assert.deepEqual(unknown, [],
+  assert.deepEqual(
+    unknown,
+    [],
     "the TUI sends method names this daemon does not have (-32601).\n" +
-    "  If one genuinely does not exist, add it to BACKEND_MISSING with a reason;\n" +
-    "  otherwise fix the call site. Check the registration point, not the call\n" +
-    "  site: AetherCodeMethods.registerAll + HttpJsonRpcServer's switch.");
+      "  If one genuinely does not exist, add it to BACKEND_MISSING with a reason;\n" +
+      "  otherwise fix the call site. Check the registration point, not the call\n" +
+      "  site: AetherCodeMethods.registerAll + HttpJsonRpcServer's switch.",
+  );
 });
 
 test("the allowlist has not gone stale", () => {
@@ -395,9 +501,12 @@ test("the allowlist has not gone stale", () => {
   for (const [name, why] of BACKEND_MISSING) {
     if (KNOWN_METHODS.has(name)) nowReal.push(`${name} (${why})`);
   }
-  assert.deepEqual(nowReal, [],
+  assert.deepEqual(
+    nowReal,
+    [],
     "these are on the backend-missing list but ARE now registered — remove them " +
-    "from BACKEND_MISSING and fix the call sites");
+      "from BACKEND_MISSING and fix the call sites",
+  );
 });
 
 test("every allowlist entry carries a reason", () => {
@@ -428,17 +537,26 @@ test("REGRESSION: /model uses setModel with the `model` param key", () => {
   // `stringOrThrow(p, "model")`; the dead `model/*` DTOs used `name`.
   // A name-only fix would still have thrown -32602.
   const commands = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8"), "commands.ts");
-  assert.doesNotMatch(commands, /rpcMethod:\s*"model\/set"/,
-    "model/set has DTOs but no handler — every /model <name> died on -32601");
-  assert.match(commands, /rpcMethod:\s*"setModel",\s*rpcParams:\s*\{\s*model:/,
-    "setModel reads `model`, not `name`");
+  assert.doesNotMatch(
+    commands,
+    /rpcMethod:\s*"model\/set"/,
+    "model/set has DTOs but no handler — every /model <name> died on -32601",
+  );
+  assert.match(
+    commands,
+    /rpcMethod:\s*"setModel",\s*rpcParams:\s*\{\s*model:/,
+    "setModel reads `model`, not `name`",
+  );
 });
 
 test("REGRESSION: workflow calls use the flat daemon names", () => {
   const commands = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8"), "commands.ts");
   const line = codeOf(readFileSync(join(root, "src", "line.ts"), "utf-8"), "line.ts");
-  assert.doesNotMatch(commands, /rpcMethod:\s*"workflow\/run"/,
-    "workflow/run lives on SupervisorRpcServer, a CLI the TUI never starts");
+  assert.doesNotMatch(
+    commands,
+    /rpcMethod:\s*"workflow\/run"/,
+    "workflow/run lives on SupervisorRpcServer, a CLI the TUI never starts",
+  );
   assert.match(commands, /rpcMethod:\s*"runWorkflow"/);
   assert.doesNotMatch(line, /probe\(ctx,\s*"workflow\/list"/);
   assert.match(line, /probe\(ctx,\s*"listWorkflows"/);
@@ -455,9 +573,11 @@ test("REGRESSION: asRows can unwrap every envelope the daemon returns", () => {
   const body = line.slice(start, line.indexOf("\n}", start));
 
   for (const [rpc, key] of ENVELOPES) {
-    assert.ok(body.includes(`"${key}"`),
+    assert.ok(
+      body.includes(`"${key}"`),
       `asRows does not know the envelope key "${key}" (${rpc} returns it), ` +
-      "so every panel reading that RPC renders an empty list with no error");
+        "so every panel reading that RPC renders an empty list with no error",
+    );
   }
 });
 
@@ -474,18 +594,24 @@ test("every envelope key above is one the daemon ACTUALLY returns", () => {
       assert.ok(start > -1, "GrantHandlers.list not found — re-anchor this test");
       const next = grantHandlersSrc.indexOf("public Map<String, Object> revoke(", start);
       const body = grantHandlersSrc.slice(start, next < 0 ? undefined : next);
-      assert.ok(body.includes(`"${key}"`),
-        `GrantHandlers.list no longer returns a "${key}" array — update asRows and this test`);
-      assert.ok(!/return\s+list\s*;/.test(body),
+      assert.ok(
+        body.includes(`"${key}"`),
+        `GrantHandlers.list no longer returns a "${key}" array — update asRows and this test`,
+      );
+      assert.ok(
+        !/return\s+list\s*;/.test(body),
         "GrantHandlers.list used to answer a bare List; if it does again, " +
-        "asRows still works via Array.isArray but this envelope pin is now wrong");
+          "asRows still works via Array.isArray but this envelope pin is now wrong",
+      );
       continue;
     }
     const start = methodsSrc.indexOf(`public Object ${javaMethod}(`);
     assert.ok(start > -1, `${javaMethod} not found in AetherCodeMethods — re-anchor this test`);
     const next = methodsSrc.indexOf("\n    public Object ", start + 10);
     const body = methodsSrc.slice(start, next < 0 ? undefined : next);
-    assert.ok(new RegExp(`put\\(\\s*"${key}"|"${key}"`).test(body),
-      `${javaMethod} no longer returns a "${key}" array — update asRows and this test`);
+    assert.ok(
+      new RegExp(`put\\(\\s*"${key}"|"${key}"`).test(body),
+      `${javaMethod} no longer returns a "${key}" array — update asRows and this test`,
+    );
   }
 });

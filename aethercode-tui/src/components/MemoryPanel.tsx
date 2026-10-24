@@ -67,7 +67,13 @@ export interface MemoryPanelState {
 export type CompactProgress =
   | { state: "idle" }
   | { state: "running"; startedAt: number }
-  | { state: "ok"; beforeTokens: number; afterTokens: number; changesCompressed: number; ms: number }
+  | {
+      state: "ok";
+      beforeTokens: number;
+      afterTokens: number;
+      changesCompressed: number;
+      ms: number;
+    }
   | { state: "skipped"; reason: string }
   | { state: "error"; message: string };
 
@@ -165,10 +171,17 @@ function rowText(e: MemoryPanelEntry, width: number): string {
  */
 export function MemoryPanel(props: MemoryPanelProps) {
   const {
-    global, project, sessionId, session,
-    activeTab, onTabChange,
-    now, width,
-    onEditFact, onCompact, compactProgress,
+    global,
+    project,
+    sessionId,
+    session,
+    activeTab,
+    onTabChange,
+    now,
+    width,
+    onEditFact,
+    onCompact,
+    compactProgress,
     onClose,
   } = props;
 
@@ -233,7 +246,12 @@ export function MemoryPanel(props: MemoryPanelProps) {
      * project memory. The button is still rendered
      * everywhere so the affordance is discoverable, but
      * the keyboard shortcut is gated. */
-    if (input === "c" && effectiveTab === "project" && compactProgress.state === "idle" && onCompact) {
+    if (
+      input === "c" &&
+      effectiveTab === "project" &&
+      compactProgress.state === "idle" &&
+      onCompact
+    ) {
       onCompact();
       return;
     }
@@ -259,16 +277,12 @@ export function MemoryPanel(props: MemoryPanelProps) {
   const effectiveFocus = focusId ?? current.entries[0]?.id ?? null;
 
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="single"
-      borderColor={t.dim}
-      paddingX={1}
-    >
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor={t.dim} paddingX={1}>
       {/* Title + tab bar (T-081) */}
       <Box>
-        <Text bold color={t.brand}>{"◰ "}Memory</Text>
+        <Text bold color={t.brand}>
+          {"◰ "}Memory
+        </Text>
         <Text dimColor>{`  (${current.entries.length} entries, `}</Text>
         <Text dimColor>{formatTokens(current.totalTokens)}</Text>
         <Text dimColor>{` tokens, `}</Text>
@@ -279,9 +293,12 @@ export function MemoryPanel(props: MemoryPanelProps) {
         {TAB_ORDER.map((scope, idx) => {
           const active = scope === effectiveTab;
           const label = `${idx + 1}.${TAB_LABELS[scope]}`;
-          const count = scope === "global" ? global.entries.length
-                      : scope === "project" ? project.entries.length
-                      : session.entries.length;
+          const count =
+            scope === "global"
+              ? global.entries.length
+              : scope === "project"
+                ? project.entries.length
+                : session.entries.length;
           return (
             <Box key={scope} marginRight={1}>
               <Text
@@ -298,17 +315,15 @@ export function MemoryPanel(props: MemoryPanelProps) {
       </Box>
 
       {/* Body (T-082) — read-only list view. */}
-      {current.loading ? (
-        <Text dimColor>{`  (loading ${effectiveTab} memory…)`}</Text>
-      ) : null}
-      {current.error ? (
-        <Text color={t.err}>{`  error: ${current.error}`}</Text>
-      ) : null}
+      {current.loading ? <Text dimColor>{`  (loading ${effectiveTab} memory…)`}</Text> : null}
+      {current.error ? <Text color={t.err}>{`  error: ${current.error}`}</Text> : null}
       {!current.loading && !current.error && current.entries.length === 0 ? (
         <Text dimColor>{`  (no ${effectiveTab} memory yet — ${
-          effectiveTab === "global" ? "edit ~/.aethercode/memory.md"
-          : effectiveTab === "project" ? "edit .aethercode/memory.md in cwd"
-          : `the session ${sessionId} has no facts yet`
+          effectiveTab === "global"
+            ? "edit ~/.aethercode/memory.md"
+            : effectiveTab === "project"
+              ? "edit .aethercode/memory.md in cwd"
+              : `the session ${sessionId} has no facts yet`
         })`}</Text>
       ) : null}
       {current.entries.map((e) => {
@@ -322,9 +337,7 @@ export function MemoryPanel(props: MemoryPanelProps) {
               <Text inverse={focused} color={focused ? "black" : kindColor}>
                 {focused ? "▶" : " "} {kindIcon} {e.kind.padEnd(10, " ")}
               </Text>
-              <Text {...(focused ? { inverse: true } : {})}>
-                {rowText(e, lineWidth)}
-              </Text>
+              <Text {...(focused ? { inverse: true } : {})}>{rowText(e, lineWidth)}</Text>
             </Box>
             {focused ? (
               <Text dimColor>{`   ↳ ${e.source} · ${formatRelative(e.ts, now)} · id:${e.id}`}</Text>
@@ -335,11 +348,7 @@ export function MemoryPanel(props: MemoryPanelProps) {
 
       {/* Footer with "Compact now" button (T-084). */}
       <Box marginTop={1}>
-        <CompactFooter
-          scope={effectiveTab}
-          progress={compactProgress}
-          onCompact={onCompact}
-        />
+        <CompactFooter scope={effectiveTab} progress={compactProgress} onCompact={onCompact} />
       </Box>
     </Box>
   );
@@ -359,24 +368,28 @@ interface CompactFooterProps {
 function CompactFooter({ scope, progress, onCompact }: CompactFooterProps) {
   const canCompact = scope === "project";
   const running = progress.state === "running";
-  const label = running ? "Compacting…"
-              : progress.state === "ok" ? `Done: ${progress.beforeTokens}→${progress.afterTokens} tokens (${progress.changesCompressed} changes, ${progress.ms}ms)`
-              : progress.state === "skipped" ? `Skipped: ${progress.reason}`
-              : progress.state === "error" ? `Error: ${progress.message}`
-              : "Compact now";
+  const label = running
+    ? "Compacting…"
+    : progress.state === "ok"
+      ? `Done: ${progress.beforeTokens}→${progress.afterTokens} tokens (${progress.changesCompressed} changes, ${progress.ms}ms)`
+      : progress.state === "skipped"
+        ? `Skipped: ${progress.reason}`
+        : progress.state === "error"
+          ? `Error: ${progress.message}`
+          : "Compact now";
 
-  const color = running ? t.warn
-                : progress.state === "ok" ? t.ok
-                : progress.state === "error" ? t.err
-                : progress.state === "skipped" ? t.dim
-                : t.accent;
+  const color = running
+    ? t.warn
+    : progress.state === "ok"
+      ? t.ok
+      : progress.state === "error"
+        ? t.err
+        : progress.state === "skipped"
+          ? t.dim
+          : t.accent;
 
   if (!canCompact) {
-    return (
-      <Text dimColor>
-        {`Compact is a project-memory action; switch to the Project tab.`}
-      </Text>
-    );
+    return <Text dimColor>{`Compact is a project-memory action; switch to the Project tab.`}</Text>;
   }
   return (
     <Box>
@@ -400,9 +413,7 @@ function moveFocus(
     return;
   }
   const idx = entries.findIndex((e) => e.id === currentId);
-  const next = idx < 0
-    ? 0
-    : Math.max(0, Math.min(entries.length - 1, idx + delta));
+  const next = idx < 0 ? 0 : Math.max(0, Math.min(entries.length - 1, idx + delta));
   const target = entries[next];
   setFocus(target ? target.id : null);
 }

@@ -49,17 +49,42 @@ if (!loaded) {
   // Use tsc to compile to a tmp dir, then import the .js.
   const tmp = join(root, "tmp-r96");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--strict", "true", "--noUncheckedIndexedAccess",
-    "true", "--rootDir", join(root, "src"),
-    join(root, "src", "memory-rpc.ts"),
-  ], { encoding: "utf-8", shell: true });
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "memory-rpc.ts"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     throw new Error("tsc compile failed for memory-rpc.ts:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -100,7 +125,16 @@ test("T-096: RemoteMemoryRpc.get proxies memory/get with the daemon's payload", 
     "memory/get": (p) => ({
       source: "cache",
       entries: [
-        { kind: "fact", id: "f1", ts: 1, scope: "project", source: "user", tags: [], key: "k", value: "v" },
+        {
+          kind: "fact",
+          id: "f1",
+          ts: 1,
+          scope: "project",
+          source: "user",
+          tags: [],
+          key: "k",
+          value: "v",
+        },
       ],
       totalTokens: 42,
       truncated: false,
@@ -144,7 +178,11 @@ test("T-096: RemoteMemoryRpc.appendSessionFact forwards sessionId/key/value/tags
   });
   const client = new RemoteMemoryRpc(fake);
   const out = await client.appendSessionFact({
-    sessionId: "s1", key: "user.name", value: "Alice", source: "user", tags: ["profile"],
+    sessionId: "s1",
+    key: "user.name",
+    value: "Alice",
+    source: "user",
+    tags: ["profile"],
   });
   assert.equal(out.id, "f-1");
 });
@@ -152,8 +190,13 @@ test("T-096: RemoteMemoryRpc.appendSessionFact forwards sessionId/key/value/tags
 test("T-096: RemoteMemoryRpc.compact passes force flag through", async () => {
   const fake = makeFakeRpcClient({
     "memory/compact": (p) => ({
-      ok: true, beforeTokens: 1000, afterTokens: 400, changesCompressed: 7,
-      ms: 250, skipped: false, resumed: true,
+      ok: true,
+      beforeTokens: 1000,
+      afterTokens: 400,
+      changesCompressed: 7,
+      ms: 250,
+      skipped: false,
+      resumed: true,
     }),
   });
   const client = new RemoteMemoryRpc(fake);
@@ -183,8 +226,24 @@ test("T-096: RemoteMemoryRpc.list returns {entries, totalTokens}", async () => {
   const fake = makeFakeRpcClient({
     "memory/list": () => ({
       entries: [
-        { kind: "change", id: "c1", ts: 1, scope: "project", source: "user", tags: [], description: "x" },
-        { kind: "change", id: "c2", ts: 2, scope: "project", source: "user", tags: [], description: "y" },
+        {
+          kind: "change",
+          id: "c1",
+          ts: 1,
+          scope: "project",
+          source: "user",
+          tags: [],
+          description: "x",
+        },
+        {
+          kind: "change",
+          id: "c2",
+          ts: 2,
+          scope: "project",
+          source: "user",
+          tags: [],
+          description: "y",
+        },
       ],
       totalTokens: 12,
     }),
@@ -197,7 +256,9 @@ test("T-096: RemoteMemoryRpc.list returns {entries, totalTokens}", async () => {
 
 test("T-096: RemoteMemoryRpc propagates the daemon's RpcCallError unchanged", async () => {
   const fake = makeFakeRpcClient({
-    "memory/get": () => { throw new RpcCallError(-32602, "bad scope"); },
+    "memory/get": () => {
+      throw new RpcCallError(-32602, "bad scope");
+    },
   });
   const client = new RemoteMemoryRpc(fake);
   await assert.rejects(client.get({ scope: "bogus" }), (e) => {
@@ -213,16 +274,30 @@ test("T-096: RemoteMemoryRpc propagates the daemon's RpcCallError unchanged", as
 function makeLocalInvokeStub(overrides = {}) {
   return {
     async get(p) {
-      return overrides.get ? overrides.get(p) : { source: "file", entries: [], totalTokens: 0, truncated: false };
+      return overrides.get
+        ? overrides.get(p)
+        : { source: "file", entries: [], totalTokens: 0, truncated: false };
     },
     async appendProjectChange(p) {
-      return overrides.appendProjectChange ? overrides.appendProjectChange(p) : { ok: true, id: "x", ts: 0, compressed: false };
+      return overrides.appendProjectChange
+        ? overrides.appendProjectChange(p)
+        : { ok: true, id: "x", ts: 0, compressed: false };
     },
     async appendSessionFact(p) {
       return overrides.appendSessionFact ? overrides.appendSessionFact(p) : { ok: true, id: "x" };
     },
     async compact(p) {
-      return overrides.compact ? overrides.compact(p) : { ok: true, beforeTokens: 0, afterTokens: 0, changesCompressed: 0, ms: 0, skipped: true, resumed: false };
+      return overrides.compact
+        ? overrides.compact(p)
+        : {
+            ok: true,
+            beforeTokens: 0,
+            afterTokens: 0,
+            changesCompressed: 0,
+            ms: 0,
+            skipped: true,
+            resumed: false,
+          };
     },
     async switchProject(p) {
       return overrides.switchProject ? overrides.switchProject(p) : { ok: true, projectId: "p" };
@@ -235,12 +310,49 @@ function makeLocalInvokeStub(overrides = {}) {
 
 test("T-096: LocalMemoryRpc surfaces every method", async () => {
   const inv = makeLocalInvokeStub({
-    get: () => ({ source: "sqlite", entries: [{ kind: "fact", id: "1", ts: 1, scope: "global", source: "user", tags: [], key: "k", value: "v" }], totalTokens: 5, truncated: false }),
+    get: () => ({
+      source: "sqlite",
+      entries: [
+        {
+          kind: "fact",
+          id: "1",
+          ts: 1,
+          scope: "global",
+          source: "user",
+          tags: [],
+          key: "k",
+          value: "v",
+        },
+      ],
+      totalTokens: 5,
+      truncated: false,
+    }),
     appendProjectChange: () => ({ ok: true, id: "c1", ts: 9, compressed: true }),
     appendSessionFact: () => ({ ok: true, id: "f1" }),
-    compact: () => ({ ok: true, beforeTokens: 100, afterTokens: 30, changesCompressed: 4, ms: 5, skipped: false, resumed: false }),
+    compact: () => ({
+      ok: true,
+      beforeTokens: 100,
+      afterTokens: 30,
+      changesCompressed: 4,
+      ms: 5,
+      skipped: false,
+      resumed: false,
+    }),
     switchProject: () => ({ ok: true, projectId: "p-new" }),
-    list: () => ({ entries: [{ kind: "change", id: "c1", ts: 1, scope: "project", source: "user", tags: [], description: "x" }], totalTokens: 7 }),
+    list: () => ({
+      entries: [
+        {
+          kind: "change",
+          id: "c1",
+          ts: 1,
+          scope: "project",
+          source: "user",
+          tags: [],
+          description: "x",
+        },
+      ],
+      totalTokens: 7,
+    }),
   });
   const client = new LocalMemoryRpc(inv);
   assert.equal((await client.get({ scope: "global" })).source, "sqlite");
@@ -256,7 +368,17 @@ test("T-096: buildLocalInvoke adapts an envelope-shaped shim", async () => {
     get: (p) => ({ result: { source: "cache", entries: [], totalTokens: 0, truncated: false } }),
     appendProjectChange: (p) => ({ result: { ok: true, id: "x", ts: 1, compressed: false } }),
     appendSessionFact: (p) => ({ result: { ok: true, id: "x" } }),
-    compact: (p) => ({ result: { ok: true, beforeTokens: 1, afterTokens: 0, changesCompressed: 1, ms: 1, skipped: false, resumed: false } }),
+    compact: (p) => ({
+      result: {
+        ok: true,
+        beforeTokens: 1,
+        afterTokens: 0,
+        changesCompressed: 1,
+        ms: 1,
+        skipped: false,
+        resumed: false,
+      },
+    }),
     switchProject: (p) => ({ result: { ok: true, projectId: "p" } }),
     list: (p) => ({ result: { entries: [], totalTokens: 0 } }),
   };
@@ -270,7 +392,17 @@ test("T-096: buildLocalInvoke converts an envelope error into MemoryRpcError", a
     get: () => ({ error: { code: -32602, message: "bad scope", data: { x: 1 } } }),
     appendProjectChange: () => ({ result: { ok: true, id: "x", ts: 0, compressed: false } }),
     appendSessionFact: () => ({ result: { ok: true, id: "x" } }),
-    compact: () => ({ result: { ok: true, beforeTokens: 0, afterTokens: 0, changesCompressed: 0, ms: 0, skipped: true, resumed: false } }),
+    compact: () => ({
+      result: {
+        ok: true,
+        beforeTokens: 0,
+        afterTokens: 0,
+        changesCompressed: 0,
+        ms: 0,
+        skipped: true,
+        resumed: false,
+      },
+    }),
     switchProject: () => ({ result: { ok: true, projectId: "p" } }),
     list: () => ({ result: { entries: [], totalTokens: 0 } }),
   };
@@ -360,7 +492,10 @@ function makeInProcessStore() {
   const makeId = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
   const projectChanges = () => {
     let arr = projectChangesByProject.get(currentProjectId);
-    if (!arr) { arr = []; projectChangesByProject.set(currentProjectId, arr); }
+    if (!arr) {
+      arr = [];
+      projectChangesByProject.set(currentProjectId, arr);
+    }
     return arr;
   };
 
@@ -370,24 +505,44 @@ function makeInProcessStore() {
     async get(p) {
       if (p.scope === "global") {
         const entries = globalFacts.map((f) => ({
-          kind: "fact", id: f.id, ts: 0, scope: "global", source: "user", tags: [],
-          key: f.key, value: f.value,
+          kind: "fact",
+          id: f.id,
+          ts: 0,
+          scope: "global",
+          source: "user",
+          tags: [],
+          key: f.key,
+          value: f.value,
         }));
         return { source: "memory", entries, totalTokens: entries.length, truncated: false };
       }
       if (p.scope === "project") {
         const changes = projectChanges();
         const entries = changes.map((c) => ({
-          kind: "change", id: c.id, ts: c.ts, scope: "project", source: "user", tags: [],
-          description: c.description, compressed: c.compressed,
+          kind: "change",
+          id: c.id,
+          ts: c.ts,
+          scope: "project",
+          source: "user",
+          tags: [],
+          description: c.description,
+          compressed: c.compressed,
         }));
         return { source: "memory", entries, totalTokens: entries.length, truncated: false };
       }
       const sid = p.sessionId ?? "s-default";
-      const entries = sessionFacts.filter((f) => f.sessionId === sid).map((f) => ({
-        kind: "fact", id: f.id, ts: 0, scope: "session", source: "user", tags: [],
-        key: f.key, value: f.value,
-      }));
+      const entries = sessionFacts
+        .filter((f) => f.sessionId === sid)
+        .map((f) => ({
+          kind: "fact",
+          id: f.id,
+          ts: 0,
+          scope: "session",
+          source: "user",
+          tags: [],
+          key: f.key,
+          value: f.value,
+        }));
       return { source: "memory", entries, totalTokens: entries.length, truncated: false };
     },
 
@@ -420,7 +575,15 @@ function makeInProcessStore() {
           resumed: false,
         };
       }
-      return { ok: true, beforeTokens: 0, afterTokens: 0, changesCompressed: 0, ms: 0, skipped: true, resumed: false };
+      return {
+        ok: true,
+        beforeTokens: 0,
+        afterTokens: 0,
+        changesCompressed: 0,
+        ms: 0,
+        skipped: true,
+        resumed: false,
+      };
     },
 
     async switchProject(p) {
@@ -465,7 +628,11 @@ test("T-097: end-to-end memory flow — get → append → list → compact → 
   // Step 3: append a session fact. Mirrors the TUI's edit
   // dialog hitting save.
   const f1 = await client.appendSessionFact({
-    sessionId: "s-1", key: "user.name", value: "Alice", source: "user", tags: ["profile"],
+    sessionId: "s-1",
+    key: "user.name",
+    value: "Alice",
+    source: "user",
+    tags: ["profile"],
   });
   assert.equal(f1.ok, true);
   assert.ok(f1.id.startsWith("f-"));

@@ -107,10 +107,8 @@ test("R169: commands.ts exposes agent-pick / effort-pick / cwd-pick", () => {
     src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
   );
   for (const cmd of ["agent-pick", "effort-pick", "cwd-pick"]) {
-    assert.ok(catalog.includes(`name: "${cmd}"`),
-      `${cmd} missing from the /help catalog`);
-    assert.ok(groups.includes(`"${cmd}"`),
-      `${cmd} missing from the /help group table`);
+    assert.ok(catalog.includes(`name: "${cmd}"`), `${cmd} missing from the /help catalog`);
+    assert.ok(groups.includes(`"${cmd}"`), `${cmd} missing from the /help group table`);
   }
   // The cases themselves.
   assert.match(src, /case "agent-pick":/);
@@ -159,17 +157,36 @@ test("R169: state.ts adds agentPickerOpen / effortPickerOpen / cwdSwitcherOpen",
 // ----- 5. Compile smoke -----------------------------------------
 
 test("R169: TypeScript compile of the new components is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r169-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
   const files = [
     "components/AgentSelector.tsx",
@@ -179,9 +196,14 @@ test("R169: TypeScript compile of the new components is clean", () => {
     "commands.ts",
     "state.ts",
   ];
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, ...files.map((f) => '"' + join(root, "src", f) + '"')], {
-    encoding: "utf-8", shell: true,
-  });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, ...files.map((f) => '"' + join(root, "src", f) + '"')],
+    {
+      encoding: "utf-8",
+      shell: true,
+    },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

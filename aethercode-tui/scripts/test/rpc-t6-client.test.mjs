@@ -27,10 +27,7 @@ const root = join(here, "..", "..");
 
 // ----- 1. Load the TS source via a transpile-on-demand shim. ---
 
-const candidates = [
-  "dist/rpc/client.js",
-  "rpc/client.js",
-];
+const candidates = ["dist/rpc/client.js", "rpc/client.js"];
 let loaded = null;
 for (const c of candidates) {
   const p = join(root, c);
@@ -42,19 +39,42 @@ for (const c of candidates) {
 if (!loaded) {
   const tmp = join(root, "tmp-t6-client");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--strict", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "rpc", "types.ts"),
-    join(root, "src", "rpc", "client.ts"),
-    join(root, "src", "rpc", "MockRpcServer.ts"),
-  ], { encoding: "utf-8", shell: true });
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "rpc", "types.ts"),
+      join(root, "src", "rpc", "client.ts"),
+      join(root, "src", "rpc", "MockRpcServer.ts"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     throw new Error("tsc compile failed for client.ts:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -62,11 +82,13 @@ if (!loaded) {
 }
 
 const { JsonRpcClient, RpcCallError, RpcDisconnected, defaultSocketPath } = loaded;
-const MockModule = await import(pathToFileURL(
-  existsSync(join(root, "dist", "rpc", "MockRpcServer.js"))
-    ? join(root, "dist", "rpc", "MockRpcServer.js")
-    : join(root, "tmp-t6-client", "rpc", "MockRpcServer.js")
-).href);
+const MockModule = await import(
+  pathToFileURL(
+    existsSync(join(root, "dist", "rpc", "MockRpcServer.js"))
+      ? join(root, "dist", "rpc", "MockRpcServer.js")
+      : join(root, "tmp-t6-client", "rpc", "MockRpcServer.js"),
+  ).href
+);
 const { MockRpcServer, ok, err } = MockModule;
 
 // ----- 2. Tests. -------------------------------------------------
@@ -97,16 +119,21 @@ test("T-6-01: request/response round-trip via the mock socket", async () => {
 
 test("T-6-01: JSON-RPC error envelope -> RpcCallError with code + data", async () => {
   const mock = new MockRpcServer();
-  mock.handle("explode", () => { throw new Error("boom"); });
+  mock.handle("explode", () => {
+    throw new Error("boom");
+  });
   const client = mock.buildClient();
   await assert.rejects(
     () => client.request("explode"),
     (err) => {
-      assert.ok(err instanceof RpcCallError, "expected RpcCallError, got " + err?.constructor?.name);
+      assert.ok(
+        err instanceof RpcCallError,
+        "expected RpcCallError, got " + err?.constructor?.name,
+      );
       assert.equal(err.code, -32603);
       assert.match(err.message, /boom/);
       return true;
-    }
+    },
   );
 });
 
@@ -129,7 +156,7 @@ test("T-6-01: explicit error code (e.g. -32601) flows through", async () => {
       assert.ok(err instanceof RpcCallError);
       assert.equal(err.code, -32004);
       return true;
-    }
+    },
   );
 });
 
@@ -176,7 +203,7 @@ test("T-6-01: per-request timeout rejects with RpcCallError", async () => {
       assert.ok(err instanceof RpcCallError);
       assert.match(err.message, /timeout/);
       return true;
-    }
+    },
   );
   // Should have rejected within ~100ms.
   const elapsed = Date.now() - start;
@@ -214,9 +241,12 @@ test("T-6-01: disconnect() drains pending requests with RpcDisconnected", async 
   await assert.rejects(
     () => p,
     (err) => {
-      assert.ok(err instanceof RpcDisconnected, "expected RpcDisconnected, got " + err?.constructor?.name);
+      assert.ok(
+        err instanceof RpcDisconnected,
+        "expected RpcDisconnected, got " + err?.constructor?.name,
+      );
       return true;
-    }
+    },
   );
   // And the state is "disconnected".
   assert.equal(client.currentConnectionState(), "disconnected");
@@ -231,6 +261,6 @@ test("T-6-01: unknown method on the mock returns -32601 envelope", async () => {
       assert.ok(err instanceof RpcCallError);
       assert.equal(err.code, -32601);
       return true;
-    }
+    },
   );
 });

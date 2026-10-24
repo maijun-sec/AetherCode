@@ -26,25 +26,40 @@ const tmp = join(root, "tmp-test-r94e");
 if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
 
 // Compile prompt-formatter.ts to JS so we can import it.
-const tscBinAbs = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tscBinAbs = join(
+  root,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc",
+);
 const tscArgs = [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const tsc = spawnSync('"' + tscBinAbs + '"', [
-  ...tscArgs,
-  '"' + join(root, "src", "prompt-formatter.ts") + '"',
-], {
-  encoding: "utf-8",
-  shell: true,
-});
+const tsc = spawnSync(
+  '"' + tscBinAbs + '"',
+  [...tscArgs, '"' + join(root, "src", "prompt-formatter.ts") + '"'],
+  {
+    encoding: "utf-8",
+    shell: true,
+  },
+);
 if (tsc.status !== 0) {
-  console.error("tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr);
+  console.error(
+    "tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr,
+  );
   process.exit(1);
 }
 if (!existsSync(join(tmp, "prompt-formatter.js"))) {
@@ -65,7 +80,12 @@ test("R94-E: formatSystemPrompt renders one row per section with name + source +
     sections: [
       { name: "identity", length: 3029, source: "default", firstLine: "You are AetherCode" },
       { name: "rules", length: 472, source: "rules:project+global", firstLine: "# Project rules" },
-      { name: "workflow", length: 9717, source: "default", firstLine: "plan -> explore -> implement -> verify" },
+      {
+        name: "workflow",
+        length: 9717,
+        source: "default",
+        firstLine: "plan -> explore -> implement -> verify",
+      },
     ],
   });
   // Header line.
@@ -121,9 +141,7 @@ test("R94-E: formatSystemPrompt truncates firstLine to ~80 chars", () => {
     text: "x",
     totalChars: 10,
     sectionCount: 1,
-    sections: [
-      { name: "rules", length: 200, source: "rules:project", firstLine: longFirstLine },
-    ],
+    sections: [{ name: "rules", length: 200, source: "rules:project", firstLine: longFirstLine }],
   });
   // The first-line column should show a truncated 80-char line
   // (77 chars + "..."). The full 200-char string must NOT appear.
@@ -138,7 +156,12 @@ test("R94-E: formatSystemPrompt collapses whitespace in firstLine", () => {
     totalChars: 10,
     sectionCount: 1,
     sections: [
-      { name: "rules", length: 50, source: "rules:project", firstLine: "line 1\n\nline 2\t\tline 3" },
+      {
+        name: "rules",
+        length: 50,
+        source: "rules:project",
+        firstLine: "line 1\n\nline 2\t\tline 3",
+      },
     ],
   });
   // The \n and \t must be collapsed to a single space.
@@ -187,7 +210,10 @@ test("R94-E: tui.tsx imports + uses formatSystemPrompt for getSystemPrompt", () 
   const tui = readFileSync(join(root, "src", "tui.tsx"), "utf-8");
   // Import. R95-G added a second name to this import line
   // (formatSystemPromptSection); the regex must allow 1..2 names.
-  assert.match(tui, /import\s*\{\s*formatSystemPrompt(?:,\s*formatSystemPromptSection)?\s*\}\s*from\s*"\.\/prompt-formatter\.js"/);
+  assert.match(
+    tui,
+    /import\s*\{\s*formatSystemPrompt(?:,\s*formatSystemPromptSection)?\s*\}\s*from\s*"\.\/prompt-formatter\.js"/,
+  );
   // Dispatcher path.
   assert.match(tui, /slash\.rpcMethod === "getSystemPrompt"/);
   assert.match(tui, /formatSystemPrompt\(/);
@@ -209,17 +235,33 @@ test("R94-E: tsc compile of commands.ts + tui.tsx + prompt-formatter.ts is clean
   const tmp2 = join(root, "tmp-r94e-tsc");
   if (existsSync(tmp2)) rmSync(tmp2, { recursive: true, force: true });
   const tscArgs2 = [
-    "--outDir", tmp2, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp2,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync('"' + tscBinAbs + '"', [
-    ...tscArgs2,
-    '"' + join(root, "src", "commands.ts") + '"',
-    '"' + join(root, "src", "tui.tsx") + '"',
-    '"' + join(root, "src", "prompt-formatter.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    '"' + tscBinAbs + '"',
+    [
+      ...tscArgs2,
+      '"' + join(root, "src", "commands.ts") + '"',
+      '"' + join(root, "src", "tui.tsx") + '"',
+      '"' + join(root, "src", "prompt-formatter.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -263,7 +305,8 @@ test("R95-G: formatSystemPromptSection renders full text (no truncation) on succ
 });
 
 test("R95-G: formatSystemPromptSection preserves indentation and newlines verbatim", () => {
-  const indented = "Line 1\n  Line 2 with 2-space indent\n    Line 3 with 4-space indent\n\nAfter blank line";
+  const indented =
+    "Line 1\n  Line 2 with 2-space indent\n    Line 3 with 4-space indent\n\nAfter blank line";
   const out = formatSystemPromptSection({
     ok: true,
     name: "rules",
@@ -344,7 +387,20 @@ test("R95-G: commands.ts routes /prompt <name> to getSystemPromptSection", () =>
 
 test("R95-G: AetherCodeMethods.java registers getSystemPromptSection + HttpJsonRpcServer has the switch arm", () => {
   const methods = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "methods",
+      "AetherCodeMethods.java",
+    ),
     "utf-8",
   );
   assert.match(methods, /dispatcher\.register\("getSystemPromptSection"/);
@@ -359,7 +415,20 @@ test("R95-G: AetherCodeMethods.java registers getSystemPromptSection + HttpJsonR
   assert.match(methods, /r\.put\("available",\s*available\)/);
 
   const http = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "http",
+      "HttpJsonRpcServer.java",
+    ),
     "utf-8",
   );
   // R92 lesson: the HTTP+WS daemon dispatches via this switch.
@@ -370,7 +439,10 @@ test("R95-G: AetherCodeMethods.java registers getSystemPromptSection + HttpJsonR
 test("R95-G: tui.tsx imports + uses formatSystemPromptSection", () => {
   const tui = readFileSync(join(root, "src", "tui.tsx"), "utf-8");
   // The dual import — must keep the R94-E formatter too.
-  assert.match(tui, /import\s*\{\s*formatSystemPrompt,\s*formatSystemPromptSection\s*\}\s*from\s*"\.\/prompt-formatter\.js"/);
+  assert.match(
+    tui,
+    /import\s*\{\s*formatSystemPrompt,\s*formatSystemPromptSection\s*\}\s*from\s*"\.\/prompt-formatter\.js"/,
+  );
   // The dispatcher path.
   assert.match(tui, /slash\.rpcMethod === "getSystemPromptSection"/);
   assert.match(tui, /formatSystemPromptSection\(/);
@@ -398,7 +470,16 @@ test("R95-G: tui.tsx imports + uses formatSystemPromptSection", () => {
 //      toaster is a separate UI component we don't import in
 //      this pure-module test.
 
-const { colorForSource, formatPaths, PATHS_DISPLAY_MAX, COLOR_DEFAULT, COLOR_RULES, COLOR_BUILDER, COLOR_NEUTRAL, COLOR_RESET } = mod2;
+const {
+  colorForSource,
+  formatPaths,
+  PATHS_DISPLAY_MAX,
+  COLOR_DEFAULT,
+  COLOR_RULES,
+  COLOR_BUILDER,
+  COLOR_NEUTRAL,
+  COLOR_RESET,
+} = mod2;
 
 test("R95-A: colorForSource classifies source labels", () => {
   // The three main classes.
@@ -471,7 +552,7 @@ test("R95-A: formatSystemPrompt omits paths column when no section has paths", (
     sectionCount: 3,
     sections: [
       { name: "identity", length: 3029, source: "default", firstLine: "You are AetherCode" },
-      { name: "rules",    length: 472,  source: "rules:project+global", firstLine: "# Project rules" },
+      { name: "rules", length: 472, source: "rules:project+global", firstLine: "# Project rules" },
       { name: "workflow", length: 9717, source: "default", firstLine: "plan -> explore" },
     ],
   });
@@ -490,8 +571,13 @@ test("R95-A: formatSystemPrompt adds a paths column when any section has paths",
     sectionCount: 3,
     sections: [
       { name: "identity", length: 3029, source: "default", firstLine: "You are AetherCode" },
-      { name: "rules",    length: 472,  source: "rules:project+global", firstLine: "# Project rules",
-        paths: ["/proj/.aethercode/rules/style.md", "/proj/.aethercode/rules/api.md"] },
+      {
+        name: "rules",
+        length: 472,
+        source: "rules:project+global",
+        firstLine: "# Project rules",
+        paths: ["/proj/.aethercode/rules/style.md", "/proj/.aethercode/rules/api.md"],
+      },
       { name: "workflow", length: 9717, source: "default", firstLine: "plan -> explore" },
     ],
   });
@@ -514,7 +600,7 @@ test("R95-A: formatSystemPrompt color-codes the source labels", () => {
     sectionCount: 3,
     sections: [
       { name: "identity", length: 30, source: "default", firstLine: "id" },
-      { name: "rules",    length: 30, source: "rules:project", firstLine: "rl" },
+      { name: "rules", length: 30, source: "rules:project", firstLine: "rl" },
       { name: "workflow", length: 30, source: "builder", firstLine: "wf" },
     ],
   });
@@ -522,8 +608,8 @@ test("R95-A: formatSystemPrompt color-codes the source labels", () => {
   // followed by a reset. The exact bytes may include
   // more ANSI codes for the row padding; we just check
   // that each color appears at least once.
-  assert.ok(out.includes(COLOR_DEFAULT + "default"),  "default not color-coded");
-  assert.ok(out.includes(COLOR_RULES   + "rules:project"), "rules not color-coded");
+  assert.ok(out.includes(COLOR_DEFAULT + "default"), "default not color-coded");
+  assert.ok(out.includes(COLOR_RULES + "rules:project"), "rules not color-coded");
   assert.ok(out.includes(COLOR_BUILDER + "builder"), "builder not color-coded");
   // Every color is closed by a reset before the row
   // moves on to the length column. We check that the
@@ -542,22 +628,20 @@ test("R95-A: formatSystemPrompt keeps the header text intact when colors are emi
     text: "x",
     totalChars: 1,
     sectionCount: 1,
-    sections: [
-      { name: "rules", length: 1, source: "rules:project+global", firstLine: "x" },
-    ],
+    sections: [{ name: "rules", length: 1, source: "rules:project+global", firstLine: "x" }],
   });
   const lines = out.split("\n");
   // Find the header row (contains "section  source").
-  const headerIdx = lines.findIndex(l => /^\s+section\s+source/.test(l));
+  const headerIdx = lines.findIndex((l) => /^\s+section\s+source/.test(l));
   // Find the data row (contains "rules").
-  const dataIdx = lines.findIndex(l => l.includes("rules"));
+  const dataIdx = lines.findIndex((l) => l.includes("rules"));
   assert.ok(headerIdx >= 0, "header row not found");
   assert.ok(dataIdx > headerIdx, "data row not found after header");
   // Both rows start with the same 2-space indent +
   // "section" / "rules" word. We compare the leading
   // characters up to the first column break.
   const headerPrefix = lines[headerIdx].slice(0, 2);
-  const dataPrefix   = lines[dataIdx].slice(0, 2);
+  const dataPrefix = lines[dataIdx].slice(0, 2);
   assert.equal(dataPrefix, headerPrefix, "header and data rows must share the same column indents");
 });
 
@@ -567,16 +651,44 @@ test("R95-A: AetherCodeMethods.java attaches paths to the rules section", () => 
   // a future refactor that drops the field fails the
   // test.
   const methods = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "methods",
+      "AetherCodeMethods.java",
+    ),
     "utf-8",
   );
   assert.match(methods, /if \("rules"\.equals\(s\.name\(\)\)\)/);
-  assert.match(methods, /m\.put\("paths",\s*org\.aethercode\.prompts\.RulesLoader\.lastLoadedFileNames\(\)\)/);
+  assert.match(
+    methods,
+    /m\.put\("paths",\s*org\.aethercode\.prompts\.RulesLoader\.lastLoadedFileNames\(\)\)/,
+  );
 });
 
 test("R95-A: RulesLoader.java exposes lastLoadedFileNames and updates the accumulator", () => {
   const loader = readFileSync(
-    join(root, "..", "aethercode", "aethercode-prompts", "src", "main", "java", "org", "aethercode", "prompts", "RulesLoader.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-prompts",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "prompts",
+      "RulesLoader.java",
+    ),
     "utf-8",
   );
   assert.match(loader, /public static List<String> lastLoadedFileNames\(\)/);
@@ -639,7 +751,20 @@ test("R95-F: commands.ts has /phase and /budget slash commands", () => {
 
 test("R95-F: AetherCodeMethods.java registers the three new phase RPCs + HttpJsonRpcServer switch", () => {
   const methods = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "methods",
+      "AetherCodeMethods.java",
+    ),
     "utf-8",
   );
   assert.match(methods, /dispatcher\.register\("getPhaseBudget"/);
@@ -650,7 +775,20 @@ test("R95-F: AetherCodeMethods.java registers the three new phase RPCs + HttpJso
   assert.match(methods, /public Object setPhaseBudget\(Object params\)/);
 
   const http = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "http",
+      "HttpJsonRpcServer.java",
+    ),
     "utf-8",
   );
   // R92 lesson: HTTP+WS daemon dispatches via this
@@ -668,16 +806,34 @@ test("R95-F: AetherCodeEngine.java exposes the PhaseTracker", () => {
   // RPCs above can reach it via
   // engine.phaseTracker().
   const engine = readFileSync(
-    join(root, "..", "aethercode", "aethercode-sdk", "src", "main", "java", "org", "aethercode", "sdk", "AetherCodeEngine.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-sdk",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "sdk",
+      "AetherCodeEngine.java",
+    ),
     "utf-8",
   );
   assert.match(engine, /private final org\.aethercode\.hooks\.builtin\.PhaseTracker phaseTracker/);
   assert.match(engine, /public org\.aethercode\.hooks\.builtin\.PhaseTracker phaseTracker\(\)/);
   // The Builder exposes the setter.
-  assert.match(engine, /public Builder phaseTracker\(org\.aethercode\.hooks\.builtin\.PhaseTracker t\)/);
+  assert.match(
+    engine,
+    /public Builder phaseTracker\(org\.aethercode\.hooks\.builtin\.PhaseTracker t\)/,
+  );
   // And auto-registers the PhaseBudgetHook when the
   // tracker is non-null.
-  assert.match(engine, /registerBuiltinHookIfAbsent\(this\.hookRegistry,\s*new org\.aethercode\.hooks\.builtin\.PhaseBudgetHook/);
+  assert.match(
+    engine,
+    /registerBuiltinHookIfAbsent\(this\.hookRegistry,\s*new org\.aethercode\.hooks\.builtin\.PhaseBudgetHook/,
+  );
 });
 
 // ----- R95-E: multi-session daemon (TUI side) --------------------
@@ -707,7 +863,20 @@ test("R95-E: commands.ts has /session* slash commands", () => {
 
 test("R95-E: AetherCodeMethods.java registers the 5 session RPCs + HttpJsonRpcServer switch", () => {
   const methods = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "methods", "AetherCodeMethods.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "methods",
+      "AetherCodeMethods.java",
+    ),
     "utf-8",
   );
   assert.match(methods, /dispatcher\.register\("listEngines"/);
@@ -727,7 +896,20 @@ test("R95-E: AetherCodeMethods.java registers the 5 session RPCs + HttpJsonRpcSe
   assert.match(methods, /r\.put\("count", m\.size\(\)\)/);
 
   const http = readFileSync(
-    join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java", "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-protocol",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "protocol",
+      "http",
+      "HttpJsonRpcServer.java",
+    ),
     "utf-8",
   );
   // R92 lesson: HTTP+WS daemon dispatches via this
@@ -744,7 +926,19 @@ test("R95-E: AetherCodeEngine.java exposes the SessionManager", () => {
   // The engine must own the SessionManager so the
   // RPCs above can reach it via engine.sessionManager().
   const engine = readFileSync(
-    join(root, "..", "aethercode", "aethercode-sdk", "src", "main", "java", "org", "aethercode", "sdk", "AetherCodeEngine.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-sdk",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "sdk",
+      "AetherCodeEngine.java",
+    ),
     "utf-8",
   );
   assert.match(engine, /private final org\.aethercode\.sdk\.SessionManager sessionManager/);
@@ -755,7 +949,19 @@ test("R95-E: AetherCodeEngine.java exposes the SessionManager", () => {
 
 test("R95-E: SessionManager.java is in aethercode-sdk and has the key shape", () => {
   const mgr = readFileSync(
-    join(root, "..", "aethercode", "aethercode-sdk", "src", "main", "java", "org", "aethercode", "sdk", "SessionManager.java"),
+    join(
+      root,
+      "..",
+      "aethercode",
+      "aethercode-sdk",
+      "src",
+      "main",
+      "java",
+      "org",
+      "aethercode",
+      "sdk",
+      "SessionManager.java",
+    ),
     "utf-8",
   );
   // Public surface.

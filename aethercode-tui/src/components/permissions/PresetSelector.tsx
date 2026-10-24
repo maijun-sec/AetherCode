@@ -160,39 +160,28 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
           const isActive = p.id === active;
           return (
             <Box key={p.id} flexDirection="column">
-              <Text
-                color={isHi ? "cyan" : undefined}
-                bold={isHi || isActive}
-              >
+              <Text color={isHi ? "cyan" : undefined} bold={isHi || isActive}>
                 {isHi ? "▶ " : "  "}
                 {isActive ? "● " : "○ "}
                 <Text color={PRESET_COLOR[p.id]} bold>
                   {p.name}
                 </Text>
-                {isActive ? (
-                  <Text dimColor>  (current)</Text>
-                ) : null}
+                {isActive ? <Text dimColor> (current)</Text> : null}
               </Text>
-              <Text dimColor>{"    "}{p.summary}</Text>
+              <Text dimColor>
+                {"    "}
+                {p.summary}
+              </Text>
             </Box>
           );
         })}
-        {onApply ? (
-          <Text dimColor>
-            Enter to apply · 1/2/3 quick
-          </Text>
-        ) : null}
+        {onApply ? <Text dimColor>Enter to apply · 1/2/3 quick</Text> : null}
       </Box>
     );
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={t.dim}
-      paddingX={1}
-    >
+    <Box flexDirection="column" borderStyle="round" borderColor={t.dim} paddingX={1}>
       <Text bold>Permission Presets</Text>
       <Text dimColor>Pick a starting point; you can change grants individually after.</Text>
       <Text> </Text>
@@ -212,17 +201,20 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
               width={28}
             >
               <Box>
-                <Text color={color} bold>{p.name}</Text>
-                {isActive ? (
-                  <Text dimColor>  (current)</Text>
-                ) : null}
+                <Text color={color} bold>
+                  {p.name}
+                </Text>
+                {isActive ? <Text dimColor> (current)</Text> : null}
               </Box>
               <Text> </Text>
               <Text>{p.description}</Text>
               <Text> </Text>
               <Text dimColor>covers:</Text>
               {p.toolCategories.map((c) => (
-                <Text key={c} dimColor>  · {c}</Text>
+                <Text key={c} dimColor>
+                  {" "}
+                  · {c}
+                </Text>
               ))}
               <Text> </Text>
               {onApply ? (
@@ -241,9 +233,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
         })}
       </Box>
       <Text> </Text>
-      <Text dimColor>
-        ←/→ navigate · Enter apply · 1/2/3 quick-select
-      </Text>
+      <Text dimColor>←/→ navigate · Enter apply · 1/2/3 quick-select</Text>
     </Box>
   );
 };

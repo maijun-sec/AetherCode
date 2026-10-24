@@ -33,32 +33,48 @@ const root = join(here, "..", "..");
 
 const tmp = join(root, "tmp-t7-08-tsc");
 if (existsSync(tmp)) {
-  spawnSync(process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+  spawnSync(
+    process.platform === "win32" ? "cmd" : "rm",
+    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+  );
 }
 mkdirSync(tmp, { recursive: true });
 const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-const r = spawnSync(`"${tscBin}"`, [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--strict", "true",
-  "--noUncheckedIndexedAccess", "true",
-  "--rootDir", join(root, "src"),
-  join(root, "src", "rpc", "types.ts"),
-  join(root, "src", "rpc", "client.ts"),
-  join(root, "src", "rpc", "MockRpcServer.ts"),
-], { encoding: "utf-8", shell: true });
+const r = spawnSync(
+  `"${tscBin}"`,
+  [
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--noUncheckedIndexedAccess",
+    "true",
+    "--rootDir",
+    join(root, "src"),
+    join(root, "src", "rpc", "types.ts"),
+    join(root, "src", "rpc", "client.ts"),
+    join(root, "src", "rpc", "MockRpcServer.ts"),
+  ],
+  { encoding: "utf-8", shell: true },
+);
 if (r.status !== 0) {
   console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   process.exit(1);
 }
 
 const mock = (await import(pathToFileURL(join(tmp, "rpc", "MockRpcServer.js")).href)).MockRpcServer;
-const JsonRpcClient = (await import(pathToFileURL(join(tmp, "rpc", "client.js")).href)).JsonRpcClient;
+const JsonRpcClient = (await import(pathToFileURL(join(tmp, "rpc", "client.js")).href))
+  .JsonRpcClient;
 
 // ----- 2. The 10-hour stress profile ----------------------------
 
@@ -95,8 +111,10 @@ test("T-7-08: 10-hour simulated session drives 1000 events without loss", () => 
   const s = server.state.sessions.get(server.state.currentSessionId);
   assert.equal(s.tokensIn, 200 * TOTAL_EVENTS);
   assert.equal(s.tokensOut, 100 * TOTAL_EVENTS);
-  assert.ok(Math.abs(s.totalCostUsd - 0.001 * TOTAL_EVENTS) < 1e-9,
-    `expected cost ≈ ${0.001 * TOTAL_EVENTS}, got ${s.totalCostUsd}`);
+  assert.ok(
+    Math.abs(s.totalCostUsd - 0.001 * TOTAL_EVENTS) < 1e-9,
+    `expected cost ≈ ${0.001 * TOTAL_EVENTS}, got ${s.totalCostUsd}`,
+  );
 });
 
 test("T-7-08: re-attach after the long run replays events > lastSeq", () => {
@@ -134,7 +152,10 @@ test("T-7-08: pause / resume / kill mid-stream survives the long run", () => {
   // 4 state_change events (spawn + pause + resume + kill).
   const sc = server.state.events.filter((e) => e.type === "state_change");
   assert.equal(sc.length, 4);
-  assert.deepEqual(sc.map((e) => e.payload.to), ["running", "paused", "running", "cancelled"]);
+  assert.deepEqual(
+    sc.map((e) => e.payload.to),
+    ["running", "paused", "running", "cancelled"],
+  );
   // 300 tool_call events.
   const tc = server.state.events.filter((e) => e.type === "tool_call");
   assert.equal(tc.length, 300);

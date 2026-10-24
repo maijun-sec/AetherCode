@@ -121,14 +121,19 @@ export function toolResultText(content: unknown): string {
 /** Map a wire role onto the renderer's role vocabulary. */
 function roleOf(wire: string): Role {
   switch (wire) {
-    case "user": return "user";
-    case "assistant": return "assistant";
-    case "system": return "system";
+    case "user":
+      return "user";
+    case "assistant":
+      return "assistant";
+    case "system":
+      return "system";
     // A whole message with the TOOL_RESULT role carries tool results
     // in its content blocks; the role of the message itself is not
     // what gets rendered.
-    case "tool_result": return "tool";
-    default: return "system";
+    case "tool_result":
+      return "tool";
+    default:
+      return "system";
   }
 }
 
@@ -171,9 +176,8 @@ export function replayTranscript(
     if (!rawMsg || typeof rawMsg !== "object") continue;
     const msg = rawMsg as Record<string, unknown>;
     const role = roleOf(String(msg.role ?? "system"));
-    const ts = typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp)
-      ? msg.timestamp
-      : 0;
+    const ts =
+      typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp) ? msg.timestamp : 0;
     const blocks = Array.isArray(msg.content) ? msg.content : [];
 
     for (const rawBlock of blocks) {

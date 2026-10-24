@@ -17,20 +17,18 @@ interface Props {
 
 export const PlanList: React.FC<Props> = ({ items, title }) => {
   return (
-    <Box
-      borderStyle="single"
-      borderColor={t.accent}
-      flexDirection="column"
-      paddingX={1}
-    >
+    <Box borderStyle="single" borderColor={t.accent} flexDirection="column" paddingX={1}>
       <Text>
         <Text color={t.accent}>{icon.plan} </Text>
         <Text bold>{title ?? "Plan"}</Text>
-        <Text dimColor>  ({items.length} item{items.length === 1 ? "" : "s"})</Text>
+        <Text dimColor>
+          {" "}
+          ({items.length} item{items.length === 1 ? "" : "s"})
+        </Text>
       </Text>
       {items.map((it, i) => (
         <Text key={i}>
-          <Text color={t.accent}>  {String(i + 1).padStart(2, " ")}. </Text>
+          <Text color={t.accent}> {String(i + 1).padStart(2, " ")}. </Text>
           {it}
         </Text>
       ))}

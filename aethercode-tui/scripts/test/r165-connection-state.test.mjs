@@ -25,7 +25,10 @@ const root = join(here, "..", "..");
 
 test("R165: JsonRpcClient exports ConnectionState type with four members", () => {
   const src = readFileSync(join(root, "src", "jsonrpc.ts"), "utf-8");
-  assert.match(src, /export type ConnectionState = "connecting" \| "connected" \| "reconnecting" \| "disconnected"/);
+  assert.match(
+    src,
+    /export type ConnectionState = "connecting" \| "connected" \| "reconnecting" \| "disconnected"/,
+  );
 });
 
 test("R165: JsonRpcClient has autoReconnect + setAutoReconnect API", () => {
@@ -57,7 +60,10 @@ test("R165: JsonRpcClient has currentConnectionState + currentReconnectAttempt g
 
 test("R165: state.ts defines ConnectionState type (TUI-side mirror)", () => {
   const src = readFileSync(join(root, "src", "state.ts"), "utf-8");
-  assert.match(src, /export type ConnectionState = "connecting" \| "connected" \| "reconnecting" \| "disconnected"/);
+  assert.match(
+    src,
+    /export type ConnectionState = "connecting" \| "connected" \| "reconnecting" \| "disconnected"/,
+  );
 });
 
 test("R165: state.ts adds connectionState / reconnectAttempt / maxReconnectAttempts / lastDisconnectAt / lastStderrTail to State", () => {
@@ -97,10 +103,10 @@ test("R165: tui.tsx runTui enables autoReconnect + onConnectionState", () => {
   assert.match(src, /maxReconnectAttempts: 10,/);
   // The onConnectionState emits on process so App's
   // useEffect can dispatch into the reducer.
-  assert.match(src, /emit\("aethercode:connectionState"/);
+  assert.match(src, /emit\(\s*"aethercode:connectionState"/);
 });
 
-test("R165: tui.tsx App wires process.on(\"aethercode:connectionState\") into dispatch", () => {
+test('R165: tui.tsx App wires process.on("aethercode:connectionState") into dispatch', () => {
   const src = readFileSync(join(root, "src", "tui.tsx"), "utf-8");
   assert.match(src, /process as any\)\.on\("aethercode:connectionState"/);
   assert.match(src, /type: "setConnectionState"/);

@@ -21,10 +21,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
-const tscBin = join(
-  root, "node_modules", ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc"
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Pure-helper tests ------------------------------------
@@ -117,14 +114,17 @@ test("T-6-05: todoSummaryLine returns a 'done · pending' style string", () => {
     return parts.join(" · ");
   }
   assert.equal(todoSummaryLine(null), "—");
-  assert.equal(todoSummaryLine({ total: 0, pending: 0, inProgress: 0, completed: 0, cancelled: 0 }), "—");
+  assert.equal(
+    todoSummaryLine({ total: 0, pending: 0, inProgress: 0, completed: 0, cancelled: 0 }),
+    "—",
+  );
   assert.equal(
     todoSummaryLine({ total: 3, pending: 1, inProgress: 1, completed: 1, cancelled: 0 }),
-    "1 done · 1 in progress · 1 pending"
+    "1 done · 1 in progress · 1 pending",
   );
   assert.equal(
     todoSummaryLine({ total: 2, pending: 0, inProgress: 0, completed: 1, cancelled: 1 }),
-    "1 done · 1 cancelled"
+    "1 done · 1 cancelled",
   );
 });
 
@@ -136,7 +136,11 @@ test("T-6-05: SessionDetailsPanel.tsx exists and renders all the spec'd fields",
   const src = read("src/components/session/SessionDetailsPanel.tsx");
   // Spec §3.1 fields.
   for (const label of ["id", "title", "cwd", "model", "state", "started", "active"]) {
-    assert.match(src, new RegExp(`label="${label}"`), `expected label "${label}" in SessionDetailsPanel`);
+    assert.match(
+      src,
+      new RegExp(`label="${label}"`),
+      `expected label "${label}" in SessionDetailsPanel`,
+    );
   }
   // Token section.
   assert.match(src, /tokensIn/);
@@ -151,8 +155,13 @@ test("T-6-05: stale badge is rendered when isStale() returns true", () => {
   // The `stale` row appears conditionally. The exact
   // JSX is multi-line; just check that a `stale` JSX
   // block is gated on the `stale` boolean.
-  assert.match(src, /\{stale \?\s*<Row\s+label="stale"/);
-  assert.match(src, /stale \?\s*<Text color=\{t\.warn\}>·\s*stale/);
+  //
+  // The optional `(` matters: prettier wraps a multi-line
+  // ternary branch in parentheses, so `{stale ? <Row` and
+  // `{stale ? (\n  <Row` are the SAME code. A pin that only
+  // accepts the first one is a pin that breaks on a format.
+  assert.match(src, /\{stale \?\s*\(?\s*<Row\s+label="stale"/);
+  assert.match(src, /stale \?\s*\(?\s*<Text color=\{t\.warn\}>·\s*stale/);
 });
 
 test("T-6-05: STALE_THRESHOLD_MS is exported as a constant", () => {
@@ -170,18 +179,39 @@ test("T-6-05: copy-id action is wired through onCopyId", () => {
 test("T-6-05: tsc --strict compile of SessionDetailsPanel.tsx is clean", () => {
   const tmp = join(root, "tmp-t6-sdp-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
       process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-      { shell: process.platform === "win32" });
+      { shell: process.platform === "win32" },
+    );
   }
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true", "--noUncheckedIndexedAccess", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "components", "session", "SessionDetailsPanel.tsx"),
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--jsx",
+      "react",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--noUncheckedIndexedAccess",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "components", "session", "SessionDetailsPanel.tsx"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error(r.stdout);
     console.error(r.stderr);

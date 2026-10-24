@@ -32,17 +32,17 @@ function parseCli(argv: string[]): { values: Record<string, unknown>; positional
   return parseArgs({
     args: argv,
     options: {
-      jar:        { type: "string" },
-      cwd:        { type: "string" },
-      java:       { type: "string", default: "java" },
-      xmx:        { type: "string", default: "-Xmx1g" },
-      model:      { type: "string" },
+      jar: { type: "string" },
+      cwd: { type: "string" },
+      java: { type: "string", default: "java" },
+      xmx: { type: "string", default: "-Xmx1g" },
+      model: { type: "string" },
       "no-color": { type: "boolean", default: false },
-      line:       { type: "boolean", default: false },     // prior round: force line mode
-      tui:        { type: "boolean", default: false },     // prior round: force full-screen TUI (Ink)
-      print:      { type: "string" },
-      version:    { type: "boolean", default: false },
-      help:       { type: "boolean", default: false },
+      line: { type: "boolean", default: false }, // prior round: force line mode
+      tui: { type: "boolean", default: false }, // prior round: force full-screen TUI (Ink)
+      print: { type: "string" },
+      version: { type: "boolean", default: false },
+      help: { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -110,15 +110,18 @@ export function findJar(explicit?: string): string {
   // path for the unbundled `node dist/ac-tui.js` case. The bundled
   // release ships the jar next to the exe so this hits immediately.
   const exeDir = (() => {
-    try { return dirname(realpathSync(process.execPath)); }
-    catch { return null; }
+    try {
+      return dirname(realpathSync(process.execPath));
+    } catch {
+      return null;
+    }
   })();
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates: (string | null)[] = [
-    exeDir,                                    // prior round: bun-compiled exe's directory
-    resolve(exeDir ?? here, ".."),             // parent of exe dir (e.g. release/..)
-    here,                                      // node dist/ac-tui.js case
-    resolve(here, ".."),                       // parent of script
+    exeDir, // prior round: bun-compiled exe's directory
+    resolve(exeDir ?? here, ".."), // parent of exe dir (e.g. release/..)
+    here, // node dist/ac-tui.js case
+    resolve(here, ".."), // parent of script
     resolve(here, "../.."),
     resolve(here, "../dist"),
     resolve(here, "../dist/ac-tui"),
@@ -128,22 +131,34 @@ export function findJar(explicit?: string): string {
     if (!dir) continue;
     if (!existsSync(dir)) continue;
     let entries: string[];
-    try { entries = readdirSync(dir); } catch { continue; }
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
     const jars = entries
       .filter((n) => /^aethercode-.*\.jar$/.test(n) && !n.endsWith(".jar.original"))
       .map((n) => join(dir, n))
-      .filter((p) => { try { return statSync(p).isFile(); } catch { return false; } })
+      .filter((p) => {
+        try {
+          return statSync(p).isFile();
+        } catch {
+          return false;
+        }
+      })
       .sort();
     if (jars.length > 0) return realpathSync(jars[jars.length - 1]);
   }
-  throw new Error(
-    "could not find aethercode-*.jar. Set AETHERCODE_JAR or pass --jar <path>.",
-  );
+  throw new Error("could not find aethercode-*.jar. Set AETHERCODE_JAR or pass --jar <path>.");
 }
 
 async function runHeadless(
-  jar: string, cwd: string, javaBin: string, jvmArgs: string[],
-  prompt: string, model?: string,
+  jar: string,
+  cwd: string,
+  javaBin: string,
+  jvmArgs: string[],
+  prompt: string,
+  model?: string,
 ): Promise<number> {
   return new Promise<number>((resolveP) => {
     let buffer = "";
@@ -169,14 +184,12 @@ async function runHeadless(
           const reason = String(p.reason ?? "");
           const risk = String(p.riskLevel ?? "medium").toUpperCase();
           const requestId = String(p.requestId ?? "");
-          const color = risk === "CRITICAL" ? C.red
-                      : risk === "HIGH"     ? C.yellowBright
-                                            : C.yellow;
+          const color = risk === "CRITICAL" ? C.red : risk === "HIGH" ? C.yellowBright : C.yellow;
           process.stderr.write(
             `\n⚠ PERMISSION REQUIRED [${risk}] — tool: ${tool}\n` +
-            `  input: ${JSON.stringify(input)}\n` +
-            `  reason: ${reason}\n` +
-            `  [A]llow  [Y]always  [D]eny  [N]never\n`,
+              `  input: ${JSON.stringify(input)}\n` +
+              `  reason: ${reason}\n` +
+              `  [A]llow  [Y]always  [D]eny  [N]never\n`,
           );
           if (!process.stdin.isTTY) {
             // piped / CI: refuse to run unverified writes. The
@@ -184,15 +197,18 @@ async function runHeadless(
             // log line and deny so the model gets a useful error.
             process.stderr.write(
               `  (stdin is not a TTY; defaulting to deny. Re-run with\n` +
-              `   --permission-mode=ACCEPT_TASK or BYPASS_PERMISSIONS,\n` +
-              `   or pipe from a TTY-aware driver.)\n`,
+                `   --permission-mode=ACCEPT_TASK or BYPASS_PERMISSIONS,\n` +
+                `   or pipe from a TTY-aware driver.)\n`,
             );
-            void client.request("permissionResponse", {
-              requestId, decision: "deny",
-              reason: "headless --print mode: stdin not a TTY, defaulting to deny",
-            }).catch((e: Error) => {
-              process.stderr.write(`  permission reply failed: ${e.message}\n`);
-            });
+            void client
+              .request("permissionResponse", {
+                requestId,
+                decision: "deny",
+                reason: "headless --print mode: stdin not a TTY, defaulting to deny",
+              })
+              .catch((e: Error) => {
+                process.stderr.write(`  permission reply failed: ${e.message}\n`);
+              });
             return;
           }
           void (async () => {
@@ -237,8 +253,11 @@ async function runHeadless(
     (async () => {
       try {
         if (model) {
-          try { await client.request("setModel", { model }); }
-          catch (e) { process.stderr.write(`warning: setModel failed: ${(e as Error).message}\n`); }
+          try {
+            await client.request("setModel", { model });
+          } catch (e) {
+            process.stderr.write(`warning: setModel failed: ${(e as Error).message}\n`);
+          }
         }
         await client.request("query", { prompt });
         // Don't await — the response is just {runId, accepted}.
@@ -268,67 +287,108 @@ async function readOneCharHeadless(): Promise<string> {
       process.stdin.removeListener("data", onData);
       process.stdin.removeListener("keypress", onKeypress as never);
       try {
-        if (typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void }).setRawMode === "function") {
-          (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(false);
+        if (
+          typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void })
+            .setRawMode === "function"
+        ) {
+          (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(
+            false,
+          );
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       const c = String(chunk).charAt(0).toLowerCase();
       resolve(
-        c === "a" ? "allow" :
-        c === "y" ? "always_allow" :
-        c === "d" ? "deny" :
-        c === "n" ? "always_deny" :
-                    "deny",
+        c === "a"
+          ? "allow"
+          : c === "y"
+            ? "always_allow"
+            : c === "d"
+              ? "deny"
+              : c === "n"
+                ? "always_deny"
+                : "deny",
       );
     };
     const onKeypress = (_s: string, k: { name?: string }) => {
       process.stdin.removeListener("data", onData);
       process.stdin.removeListener("keypress", onKeypress as never);
       try {
-        if (typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void }).setRawMode === "function") {
-          (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(false);
+        if (
+          typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void })
+            .setRawMode === "function"
+        ) {
+          (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(
+            false,
+          );
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       const n = k.name ?? "";
-      resolve(n === "a" ? "allow"
-            : n === "y" ? "always_allow"
-            : n === "d" ? "deny"
-                        : "always_deny");
+      resolve(
+        n === "a" ? "allow" : n === "y" ? "always_allow" : n === "d" ? "deny" : "always_deny",
+      );
     };
     process.stdin.on("data", onData);
     process.stdin.on("keypress", onKeypress as never);
     try {
-      if (typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void }).setRawMode === "function") {
-        (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(true);
+      if (
+        typeof (process.stdin as NodeJS.ReadStream & { setRawMode?: (m: boolean) => void })
+          .setRawMode === "function"
+      ) {
+        (process.stdin as NodeJS.ReadStream & { setRawMode: (m: boolean) => void }).setRawMode(
+          true,
+        );
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   });
 }
 
 /** Minimal ANSI colour helpers used by --print prompts. */
 const C = {
-  red:         "\x1b[31m",
-  yellow:      "\x1b[33m",
-  yellowBright:"\x1b[93m",
-  dim:         "\x1b[2m",
-  reset:       "\x1b[0m",
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  yellowBright: "\x1b[93m",
+  dim: "\x1b[2m",
+  reset: "\x1b[0m",
 } as const;
 
 async function main(): Promise<number> {
   const { values, positionals } = parseCli(process.argv.slice(2));
   const v = values as Record<string, unknown>;
-  if (v.help) { printHelp(); return 0; }
-  if (v.version) { process.stdout.write(`ac-tui v${VERSION}\n`); return 0; }
+  if (v.help) {
+    printHelp();
+    return 0;
+  }
+  if (v.version) {
+    process.stdout.write(`ac-tui v${VERSION}\n`);
+    return 0;
+  }
 
   const javaBin = String(v.java ?? "java");
   const jvmArgs = [String(v.xmx ?? "-Xmx1g")];
   const cwd = String(v.cwd ?? process.cwd());
   let jar: string;
-  try { jar = findJar(v.jar as string | undefined); }
-  catch (e) { process.stderr.write(`error: ${(e as Error).message}\n`); return 2; }
+  try {
+    jar = findJar(v.jar as string | undefined);
+  } catch (e) {
+    process.stderr.write(`error: ${(e as Error).message}\n`);
+    return 2;
+  }
 
   if (typeof v.print === "string" && v.print.length > 0) {
-    return await runHeadless(jar, cwd, javaBin, jvmArgs, v.print as string, v.model as string | undefined);
+    return await runHeadless(
+      jar,
+      cwd,
+      javaBin,
+      jvmArgs,
+      v.print as string,
+      v.model as string | undefined,
+    );
   }
 
   // decide between Ink TUI and line-mode renderer.
@@ -351,8 +411,8 @@ async function main(): Promise<number> {
   // crash on the first keystroke; we fall back to line mode
   // and emit a one-line warning so the user understands why.
   const wantLine = Boolean(v.line);
-  const wantTui  = Boolean(v.tui);
-  const haveTty  = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const wantTui = Boolean(v.tui);
+  const haveTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const inkSupportsRaw = (() => {
     if (!process.stdin.isTTY) return false;
     if (typeof process.stdin.setRawMode !== "function") return false;
@@ -371,19 +431,19 @@ async function main(): Promise<number> {
   // even when the user passed --tui, because forcing Ink
   // produces a frozen UI (useInput throws, TUI renders but
   // can't accept keystrokes).
-  const useLine  = wantLine || !haveTty || !inkSupportsRaw;
+  const useLine = wantLine || !haveTty || !inkSupportsRaw;
   if (wantTui && !inkSupportsRaw && process.stderr.isTTY) {
     process.stderr.write(
       "note: --tui was requested but Ink raw mode is not supported in this terminal.\n" +
-      "      falling back to line mode (--line). The full-screen UI requires a\n" +
-      "      ConPTY-capable host (Windows Terminal, PowerShell 7 + Windows Terminal,\n" +
-      "      or any modern SSH / tmux host with raw-mode support).\n"
+        "      falling back to line mode (--line). The full-screen UI requires a\n" +
+        "      ConPTY-capable host (Windows Terminal, PowerShell 7 + Windows Terminal,\n" +
+        "      or any modern SSH / tmux host with raw-mode support).\n",
     );
   } else if (!useLine && !inkSupportsRaw && process.stderr.isTTY) {
     process.stderr.write(
       "note: Ink raw mode is not supported in this terminal — falling back to line mode.\n" +
-      "      pass --tui to force the full-screen UI (may fail on this host),\n" +
-      "      or run inside Windows Terminal / a ConPTY-capable host for the Ink TUI.\n"
+        "      pass --tui to force the full-screen UI (may fail on this host),\n" +
+        "      or run inside Windows Terminal / a ConPTY-capable host for the Ink TUI.\n",
     );
   }
 

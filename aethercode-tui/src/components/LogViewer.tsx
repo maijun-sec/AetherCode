@@ -71,35 +71,35 @@ interface Props {
 const LEVEL_ICON: Record<LogEntry["level"], string> = {
   info: icon.note,
   warn: icon.warn,
-  err:  icon.err,
+  err: icon.err,
 };
 
 const LEVEL_COLOR: Record<LogEntry["level"], string> = {
   info: t.dim,
   warn: t.warn,
-  err:  t.err,
+  err: t.err,
 };
 
 const SCOPE_ICON: Record<GrantEntry["scope"], string> = {
   session: "●",
   project: "◆",
-  user:    "★",
+  user: "★",
 };
 
 const SCOPE_COLOR: Record<GrantEntry["scope"], string> = {
   session: "cyan",
   project: "yellow",
-  user:    "magenta",
+  user: "magenta",
 };
 
 const DECISION_ICON: Record<GrantEntry["decision"], string> = {
   allow: "✓",
-  deny:  "✗",
+  deny: "✗",
 };
 
 const DECISION_COLOR: Record<GrantEntry["decision"], string> = {
   allow: "green",
-  deny:  "red",
+  deny: "red",
 };
 
 export const LogViewer: React.FC<Props> = ({
@@ -146,36 +146,38 @@ export const LogViewer: React.FC<Props> = ({
         paddingY={1}
       >
         <Box>
-          <Text color={t.accent} bold>{icon.note} grants log</Text>
-          <Text dimColor>  ·  {grants.length} grants  ·  </Text>
+          <Text color={t.accent} bold>
+            {icon.note} grants log
+          </Text>
+          <Text dimColor> · {grants.length} grants · </Text>
           <Text dimColor>[log]</Text>
-          <Text color="cyan">  ▶grants  </Text>
+          <Text color="cyan"> ▶grants </Text>
           <Text dimColor>· Esc: close</Text>
         </Box>
         <Text> </Text>
         {shown.length === 0 ? (
-          <Text dimColor>  (no grants yet)</Text>
+          <Text dimColor> (no grants yet)</Text>
         ) : (
           shown.map((g, i) => {
             const expired = g.expiresAt != null && g.expiresAt < Date.now();
             return (
               <Box key={i} flexDirection="row">
-                <Text dimColor>  {new Date(g.ts).toLocaleTimeString()} </Text>
+                <Text dimColor> {new Date(g.ts).toLocaleTimeString()} </Text>
                 <Text color={SCOPE_COLOR[g.scope]}>{SCOPE_ICON[g.scope]} </Text>
                 <Text color={DECISION_COLOR[g.decision]}>{DECISION_ICON[g.decision]} </Text>
-                <Text color={t.asst}>{g.category}/{g.tool}</Text>
-                <Text dimColor>  scope={g.scope}</Text>
-                {expired ? <Text color="red">  ⚠ expired</Text> : null}
-                {g.reason ? <Text dimColor>  · {g.reason.slice(0, 40)}</Text> : null}
+                <Text color={t.asst}>
+                  {g.category}/{g.tool}
+                </Text>
+                <Text dimColor> scope={g.scope}</Text>
+                {expired ? <Text color="red"> ⚠ expired</Text> : null}
+                {g.reason ? <Text dimColor> · {g.reason.slice(0, 40)}</Text> : null}
               </Box>
             );
           })
         )}
-        {hidden > 0 ? (
-          <Text dimColor>  … {hidden} earlier grants hidden</Text>
-        ) : null}
+        {hidden > 0 ? <Text dimColor> … {hidden} earlier grants hidden</Text> : null}
         <Text> </Text>
-        <Text dimColor>  [/] switch tab · Esc to close.</Text>
+        <Text dimColor> [/] switch tab · Esc to close.</Text>
       </Box>
     );
   }
@@ -191,27 +193,27 @@ export const LogViewer: React.FC<Props> = ({
       paddingY={1}
     >
       <Box>
-        <Text color="cyan" bold>{icon.note} ▶log  </Text>
+        <Text color="cyan" bold>
+          {icon.note} ▶log{" "}
+        </Text>
         <Text dimColor>[grants]</Text>
-        <Text dimColor>  ·  daemon log  ·  {entries.length} entries  ·  Esc: close</Text>
+        <Text dimColor> · daemon log · {entries.length} entries · Esc: close</Text>
       </Box>
       <Text> </Text>
       {shown.length === 0 ? (
-        <Text dimColor>  (no log entries yet)</Text>
+        <Text dimColor> (no log entries yet)</Text>
       ) : (
         shown.map((e, i) => (
           <Box key={i} flexDirection="row">
-            <Text dimColor>  {new Date(e.ts).toLocaleTimeString()} </Text>
+            <Text dimColor> {new Date(e.ts).toLocaleTimeString()} </Text>
             <Text color={LEVEL_COLOR[e.level]}>{LEVEL_ICON[e.level]} </Text>
             <Text color={LEVEL_COLOR[e.level]}>{e.message}</Text>
           </Box>
         ))
       )}
-      {hidden > 0 ? (
-        <Text dimColor>  … {hidden} earlier entries hidden</Text>
-      ) : null}
+      {hidden > 0 ? <Text dimColor> … {hidden} earlier entries hidden</Text> : null}
       <Text> </Text>
-      <Text dimColor>  {hasGrants ? "[/] switch tab · " : ""}Press Esc to close.</Text>
+      <Text dimColor> {hasGrants ? "[/] switch tab · " : ""}Press Esc to close.</Text>
     </Box>
   );
 };

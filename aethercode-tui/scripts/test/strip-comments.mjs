@@ -30,12 +30,43 @@
 // cases where that goes wrong.
 
 const REGEX_PRECEDERS = new Set([
-  "(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";", "+", "-", "*", "%",
-  "<", ">", "~", "^", "\n",
+  "(",
+  ",",
+  "=",
+  ":",
+  "[",
+  "!",
+  "&",
+  "|",
+  "?",
+  "{",
+  "}",
+  ";",
+  "+",
+  "-",
+  "*",
+  "%",
+  "<",
+  ">",
+  "~",
+  "^",
+  "\n",
 ]);
 const REGEX_KEYWORDS = new Set([
-  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw",
-  "case", "do", "else", "yield", "await",
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
 ]);
 
 /**
@@ -84,8 +115,14 @@ export function stripComments(src) {
       const quote = c;
       let j = i + 1;
       while (j < n) {
-        if (src[j] === "\\") { j += 2; continue; }
-        if (src[j] === quote) { j++; break; }
+        if (src[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (src[j] === quote) {
+          j++;
+          break;
+        }
         // An unterminated string would mean we lost track of state;
         // bail at the newline rather than swallowing the file.
         if (src[j] === "\n" && quote !== "`") break;
@@ -104,10 +141,24 @@ export function stripComments(src) {
       let j = i + 1;
       let depth = 0;
       while (j < n) {
-        if (src[j] === "\\") { j += 2; continue; }
-        if (src[j] === "$" && src[j + 1] === "{") { depth++; j += 2; continue; }
-        if (src[j] === "}" && depth > 0) { depth--; j++; continue; }
-        if (src[j] === "`" && depth === 0) { j++; break; }
+        if (src[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (src[j] === "$" && src[j + 1] === "{") {
+          depth++;
+          j += 2;
+          continue;
+        }
+        if (src[j] === "}" && depth > 0) {
+          depth--;
+          j++;
+          continue;
+        }
+        if (src[j] === "`" && depth === 0) {
+          j++;
+          break;
+        }
         j++;
       }
       const text = src.slice(i, j);
@@ -124,18 +175,23 @@ export function stripComments(src) {
     if (c === "/") {
       const before = prevSignificant;
       const looksLikeRegex =
-        before === "" ||
-        REGEX_PRECEDERS.has(before) ||
-        REGEX_KEYWORDS.has(prevWord);
+        before === "" || REGEX_PRECEDERS.has(before) || REGEX_KEYWORDS.has(prevWord);
       if (looksLikeRegex) {
         let j = i + 1;
         let inClass = false;
         let closed = false;
         while (j < n && src[j] !== "\n") {
-          if (src[j] === "\\") { j += 2; continue; }
+          if (src[j] === "\\") {
+            j += 2;
+            continue;
+          }
           if (src[j] === "[") inClass = true;
           else if (src[j] === "]") inClass = false;
-          else if (src[j] === "/" && !inClass) { j++; closed = true; break; }
+          else if (src[j] === "/" && !inClass) {
+            j++;
+            closed = true;
+            break;
+          }
           j++;
         }
         if (closed) {
@@ -215,9 +271,9 @@ export function assertNotOverStripped(original, stripped, label) {
   if (ratio > 0.85) {
     throw new Error(
       `stripComments blanked ${(ratio * 100).toFixed(1)}% of ${label} ` +
-      `(${original.length} chars in). That means the scanner desynced — every ` +
-      `assertion over the result would be reading whitespace. Look for an ` +
-      `unbalanced quote or a regex literal it mis-classified.`,
+        `(${original.length} chars in). That means the scanner desynced — every ` +
+        `assertion over the result would be reading whitespace. Look for an ` +
+        `unbalanced quote or a regex literal it mis-classified.`,
     );
   }
   return ratio;

@@ -68,20 +68,25 @@ test("R217: python tokenizer has 33+ keyword set", () => {
   // PY_KEYWORDS is a top-level const above the function
   // body, so we search the whole file rather than the
   // function body.
-  for (const kw of ["def", "class", "import", "with", "yield", "return", "if", "else", "try", "except"]) {
-    assert.ok(
-      hl.includes(`"${kw}"`),
-      `PY_KEYWORDS must include "${kw}"`,
-    );
+  for (const kw of [
+    "def",
+    "class",
+    "import",
+    "with",
+    "yield",
+    "return",
+    "if",
+    "else",
+    "try",
+    "except",
+  ]) {
+    assert.ok(hl.includes(`"${kw}"`), `PY_KEYWORDS must include "${kw}"`);
   }
 });
 
 test("R217: python tokenizer includes True / False / None as builtin", () => {
   for (const c of ["True", "False", "None", "self"]) {
-    assert.ok(
-      hl.includes(`"${c}"`),
-      `PY_BUILTINS must include "${c}"`,
-    );
+    assert.ok(hl.includes(`"${c}"`), `PY_BUILTINS must include "${c}"`);
   }
 });
 
@@ -122,15 +127,31 @@ test("R217: java tokenizer has 50+ keyword set (control flow + modifiers)", () =
   // JAVA_KEYWORDS is a top-level const above the function
   // body, so we search the whole file.
   for (const kw of [
-    "public", "private", "protected", "static", "final", "abstract",
-    "class", "interface", "extends", "implements",
-    "void", "return", "if", "else", "while", "for", "try", "catch",
-    "throw", "throws", "new", "import", "package",
+    "public",
+    "private",
+    "protected",
+    "static",
+    "final",
+    "abstract",
+    "class",
+    "interface",
+    "extends",
+    "implements",
+    "void",
+    "return",
+    "if",
+    "else",
+    "while",
+    "for",
+    "try",
+    "catch",
+    "throw",
+    "throws",
+    "new",
+    "import",
+    "package",
   ]) {
-    assert.ok(
-      hl.includes(`"${kw}"`),
-      `JAVA_KEYWORDS must include "${kw}"`,
-    );
+    assert.ok(hl.includes(`"${kw}"`), `JAVA_KEYWORDS must include "${kw}"`);
   }
 });
 
@@ -141,10 +162,7 @@ test("R217: java tokenizer has @Annotation pattern", () => {
 
 test("R217: java tokenizer has String / List / Map as builtin", () => {
   for (const t of ["String", "List", "Map", "Object", "Integer", "Exception"]) {
-    assert.ok(
-      hl.includes(`"${t}"`),
-      `JAVA_BUILTINS must include "${t}"`,
-    );
+    assert.ok(hl.includes(`"${t}"`), `JAVA_BUILTINS must include "${t}"`);
   }
 });
 
@@ -176,10 +194,7 @@ test("R217: yaml tokenizer has true/false/null as keyword", () => {
   assert.ok(body, "could not find highlightYaml body");
   // YAML literals include multiple spellings.
   for (const lit of ["true", "false", "null", "yes", "no"]) {
-    assert.ok(
-      body.includes(lit),
-      `YAML literal must include "${lit}"`,
-    );
+    assert.ok(body.includes(lit), `YAML literal must include "${lit}"`);
   }
 });
 
@@ -230,8 +245,14 @@ test("R217: unknown lang still falls back to single plain token", () => {
 test("R217: package.json does NOT add a syntax highlighter", () => {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   for (const forbidden of [
-    "cli-highlight", "highlight.js", "shiki", "prismjs",
-    "lowlight", "micromark", "starry-night", "pygments",
+    "cli-highlight",
+    "highlight.js",
+    "shiki",
+    "prismjs",
+    "lowlight",
+    "micromark",
+    "starry-night",
+    "pygments",
   ]) {
     assert.equal(
       deps[forbidden],
@@ -253,24 +274,47 @@ test("R217: Markdown.tsx still calls highlightCode(body, lang) — no source cha
 // ----- 7. tsc smoke test ----------------------------------------------
 
 test("R217: TypeScript compile of highlight.ts + Markdown.tsx + theme.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r217-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Markdown.tsx") + '"',
-    '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
-    '"' + join(root, "src", "theme.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "Markdown.tsx") + '"',
+      '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
+      '"' + join(root, "src", "theme.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -340,7 +384,7 @@ test("R217 (runtime): dispatcher routes toml to yaml tokenizer", () => {
   // keys on `:`, so TOML won't be perfectly tokenized —
   // but the dispatcher must at least route it (not fall
   // back to plain). We assert multiple tokens.
-  const tokens = highlightCode("name = \"alice\"\nage = 30", "toml");
+  const tokens = highlightCode('name = "alice"\nage = 30', "toml");
   assert.ok(tokens.length > 1, "toml should be routed to yaml tokenizer, not fall back to plain");
 });
 

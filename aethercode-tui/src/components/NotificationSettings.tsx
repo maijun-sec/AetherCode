@@ -114,16 +114,12 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  ↑/↓ (j/k): navigate  Enter/Space: toggle  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor> ↑/↓ (j/k): navigate Enter/Space: toggle Esc: close</Text>
       </Box>
       <Text> </Text>
       {toggleList.map((t, i) => {
@@ -131,16 +127,14 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
         const isHighlighted = i === selected;
         return (
           <Box key={t.warningKey} flexDirection="row">
-            <Text color={isHighlighted ? "cyan" : undefined}>
-              {isHighlighted ? "▶" : " "}{" "}
-            </Text>
+            <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
             <Text>{enabled ? "[x]" : "[ ]"}</Text>
-            <Text>  {t.label}</Text>
+            <Text> {t.label}</Text>
           </Box>
         );
       })}
       <Text> </Text>
-      <Text dimColor>  Press Enter or Space to flip the highlighted toggle.</Text>
+      <Text dimColor> Press Enter or Space to flip the highlighted toggle.</Text>
     </Box>
   );
 };
@@ -154,14 +148,19 @@ export function flipToggle(state: Record<string, boolean>, key: string): Record<
 
 /** Pure helper: produce an "all enabled" initial state from
  *  the registry. */
-export function defaultToggleState(toggles: ReadonlyArray<Toggle> = WARNING_TOGGLES): Record<string, boolean> {
+export function defaultToggleState(
+  toggles: ReadonlyArray<Toggle> = WARNING_TOGGLES,
+): Record<string, boolean> {
   const m: Record<string, boolean> = {};
   for (const t of toggles) m[t.warningKey] = true;
   return m;
 }
 
 /** Pure helper: count the number of enabled toggles. */
-export function countEnabled(state: Record<string, boolean>, toggles: ReadonlyArray<Toggle> = WARNING_TOGGLES): number {
+export function countEnabled(
+  state: Record<string, boolean>,
+  toggles: ReadonlyArray<Toggle> = WARNING_TOGGLES,
+): number {
   let n = 0;
   for (const t of toggles) if (state[t.warningKey] ?? true) n++;
   return n;

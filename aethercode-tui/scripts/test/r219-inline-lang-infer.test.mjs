@@ -50,7 +50,7 @@ test("R219: inferInlineLang returns empty string on empty input", () => {
   const tail = hl.slice(idx);
   assert.ok(
     /if\s*\(!src\)\s*return\s*["']["']/.test(tail),
-    "inferInlineLang must have a `if (!src) return \"\"` guard",
+    'inferInlineLang must have a `if (!src) return ""` guard',
   );
 });
 
@@ -62,10 +62,14 @@ test("R219: Java rule — public/private/protected + type", () => {
   // pattern pieces are present in the source.
   const idx = hl.indexOf("function inferInlineLang");
   const tail = hl.slice(idx);
-  assert.ok(tail.includes("public|private|protected"),
-    "Java rule must include access modifier alternation");
-  assert.ok(tail.includes("void|int|long|String"),
-    "Java rule must include type keyword alternation");
+  assert.ok(
+    tail.includes("public|private|protected"),
+    "Java rule must include access modifier alternation",
+  );
+  assert.ok(
+    tail.includes("void|int|long|String"),
+    "Java rule must include type keyword alternation",
+  );
 });
 
 test("R219: Java rule — `class Foo {` (brace, not colon)", () => {
@@ -74,7 +78,7 @@ test("R219: Java rule — `class Foo {` (brace, not colon)", () => {
   const idx = hl.indexOf("function inferInlineLang");
   const tail = hl.slice(idx);
   assert.ok(
-    tail.includes('class\\s+[A-Z]\\w*\\s*\\{'),
+    tail.includes("class\\s+[A-Z]\\w*\\s*\\{"),
     "Java rule must include `class Foo {` (brace) signature",
   );
 });
@@ -214,7 +218,10 @@ test("R219: highlightInlineCode calls inferInlineLang + dispatches to highlightC
   }
   const body = hl.slice(open, i);
   assert.ok(body.includes("inferInlineLang"), "highlightInlineCode must call inferInlineLang");
-  assert.ok(body.includes("highlightCode("), "highlightInlineCode must call highlightCode when lang inferred");
+  assert.ok(
+    body.includes("highlightCode("),
+    "highlightInlineCode must call highlightCode when lang inferred",
+  );
 });
 
 test("R219: highlightInlineCode falls back to tokenize() when no lang inferred", () => {
@@ -231,7 +238,10 @@ test("R219: highlightInlineCode falls back to tokenize() when no lang inferred",
     i++;
   }
   const body = hl.slice(open, i);
-  assert.ok(body.includes("tokenize("), "highlightInlineCode must call tokenize() for universal fallback");
+  assert.ok(
+    body.includes("tokenize("),
+    "highlightInlineCode must call tokenize() for universal fallback",
+  );
 });
 
 // ----- 5. no new dependencies ----------------------------------------
@@ -239,9 +249,18 @@ test("R219: highlightInlineCode falls back to tokenize() when no lang inferred",
 test("R219: package.json does NOT add a new highlighter / inference dependency", () => {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   for (const forbidden of [
-    "cli-highlight", "highlight.js", "shiki", "prismjs",
-    "lowlight", "micromark", "starry-night", "pygments",
-    "highlight", "codejar", "codeflask", "refractor",
+    "cli-highlight",
+    "highlight.js",
+    "shiki",
+    "prismjs",
+    "lowlight",
+    "micromark",
+    "starry-night",
+    "pygments",
+    "highlight",
+    "codejar",
+    "codeflask",
+    "refractor",
   ]) {
     assert.equal(
       deps[forbidden],
@@ -257,30 +276,56 @@ test("R219: Markdown.tsx still imports highlightInlineCode (R218 wiring intact)"
   // R219 doesn't change the renderer — it only changes
   // the function the renderer calls. The import line
   // must still be present.
-  assert.match(md, /import\s*\{[^}]*highlightInlineCode[^}]*\}\s*from\s*["']\.\/markdown\/highlight\.js["']/);
+  assert.match(
+    md,
+    /import\s*\{[^}]*highlightInlineCode[^}]*\}\s*from\s*["']\.\/markdown\/highlight\.js["']/,
+  );
 });
 
 // ----- 7. tsc smoke test --------------------------------------------
 
 test("R219: TypeScript compile of highlight.ts + Markdown.tsx + theme.ts is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r219-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "Markdown.tsx") + '"',
-    '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
-    '"' + join(root, "src", "theme.ts") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      ...tscArgs,
+      '"' + join(root, "src", "components", "Markdown.tsx") + '"',
+      '"' + join(root, "src", "components", "markdown", "highlight.ts") + '"',
+      '"' + join(root, "src", "theme.ts") + '"',
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -329,10 +374,7 @@ test("R219 (runtime): `const x = arr => arr.map(n => n * 2)` → javascript toke
   if (!existsSync(compiled)) return;
   const require = createRequire(import.meta.url);
   const { highlightInlineCode, inferInlineLang } = require(compiled);
-  assert.equal(
-    inferInlineLang("const x = arr => arr.map(n => n * 2)"),
-    "javascript",
-  );
+  assert.equal(inferInlineLang("const x = arr => arr.map(n => n * 2)"), "javascript");
   const tokens = highlightInlineCode("const x = 42");
   const kinds = new Set(tokens.map((t) => t.kind));
   assert.ok(kinds.has("keyword"), "expected keyword (const) in js tokens");
@@ -354,7 +396,7 @@ test("R219 (runtime): `if [ $foo -gt 0 ]; then` → bash tokens", () => {
   assert.ok(kinds.has("operator"), "expected operator ([, -gt, ;, ]) in bash tokens");
 });
 
-test("R219 (runtime): `{\"name\": \"alice\"}` → json tokens", () => {
+test('R219 (runtime): `{"name": "alice"}` → json tokens', () => {
   const compiled = join(root, "tmp-r219-tsc", "components", "markdown", "highlight.js");
   if (!existsSync(compiled)) return;
   const require = createRequire(import.meta.url);

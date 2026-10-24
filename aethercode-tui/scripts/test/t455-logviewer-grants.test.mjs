@@ -35,7 +35,10 @@ test("T-455: LogViewer.tsx renders the grants-log tab when mode === 'grants'", (
 });
 
 test("T-455: LogViewer.tsx renders the 'expired' badge for past-due grants", () => {
-  assert.match(lv, /expired\s*=\s*g\.expiresAt\s*!=\s*null\s*&&\s*g\.expiresAt\s*<\s*Date\.now\(\)/);
+  assert.match(
+    lv,
+    /expired\s*=\s*g\.expiresAt\s*!=\s*null\s*&&\s*g\.expiresAt\s*<\s*Date\.now\(\)/,
+  );
   assert.match(lv, /\u26a0 expired/);
 });
 
@@ -47,21 +50,42 @@ test("T-455: LogViewer.tsx supports [/] tab switching", () => {
 test("T-455: TypeScript compile of LogViewer.tsx is clean", () => {
   const tmp = join(root, "tmp-t455-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "LogViewer.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "LogViewer.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

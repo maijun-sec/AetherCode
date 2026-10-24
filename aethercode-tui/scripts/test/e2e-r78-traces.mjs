@@ -21,8 +21,12 @@ const child = spawn(process.execPath, [acTui, "--line", "--jar", jar], {
 });
 
 let out = "";
-child.stdout.on("data", (chunk) => { out += chunk.toString(); });
-child.stderr.on("data", () => { /* ignore daemon stderr */ });
+child.stdout.on("data", (chunk) => {
+  out += chunk.toString();
+});
+child.stderr.on("data", () => {
+  /* ignore daemon stderr */
+});
 
 child.on("exit", (code) => {
   // The line-mode TUI dumps the raw JSON: `getTraces → {...}`.
@@ -55,7 +59,9 @@ child.on("exit", (code) => {
     console.log("✓ R78: getTraces correctly tracks completed spans");
     process.exit(0);
   }
-  console.log(`✗ R78: expected completed>=1 and traces.length>=1; got completed=${completed}, traces.length=${traces.length}`);
+  console.log(
+    `✗ R78: expected completed>=1 and traces.length>=1; got completed=${completed}, traces.length=${traces.length}`,
+  );
   process.exit(1);
 });
 
@@ -68,13 +74,21 @@ setTimeout(() => {
     // Keep stdin open briefly so the line mode has time to print
     // the traces block.
     setTimeout(() => {
-      try { child.stdin.end(); } catch { /* ignore */ }
+      try {
+        child.stdin.end();
+      } catch {
+        /* ignore */
+      }
     }, 2000);
   }, 8000);
 }, 5000);
 
 setTimeout(() => {
   console.log("[e2e] hard timeout — forcing exit");
-  try { child.kill(); } catch { /* ignore */ }
+  try {
+    child.kill();
+  } catch {
+    /* ignore */
+  }
   process.exit(1);
 }, 60000);

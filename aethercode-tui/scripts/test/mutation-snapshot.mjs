@@ -65,7 +65,11 @@ export function recoverIfInterrupted(snapshotPath) {
       // restore for it, and the rest of the snapshot still matters.
     }
   }
-  try { unlinkSync(snapshotPath); } catch { /* already gone */ }
+  try {
+    unlinkSync(snapshotPath);
+  } catch {
+    /* already gone */
+  }
   if (restored > 0) {
     console.log(`  !! recovered ${restored} file(s) from an interrupted mutation run`);
   }
@@ -85,7 +89,11 @@ export function writeSnapshot(entries, snapshotPath) {
   writeFileSync(snapshotPath, JSON.stringify(snap), "utf-8");
   return {
     clear() {
-      try { unlinkSync(snapshotPath); } catch { /* already gone */ }
+      try {
+        unlinkSync(snapshotPath);
+      } catch {
+        /* already gone */
+      }
     },
   };
 }

@@ -19,12 +19,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
 /** Server status. Mirrors the Java enum. */
-export type ServerStatus =
-  | "ok"
-  | "unauthenticated"
-  | "awaiting-reconnect"
-  | "error"
-  | "disabled";
+export type ServerStatus = "ok" | "unauthenticated" | "awaiting-reconnect" | "error" | "disabled";
 
 /** A tool's public info. */
 export interface ToolInfo {
@@ -42,9 +37,7 @@ export interface ServerInfo {
 /** Dismissal value: a server name, a reconnect sentinel, or
  *  `null` for cancel. Mirrors the Java sealed interface. */
 export type DismissValue =
-  | { kind: "server"; name: string }
-  | { kind: "reconnect" }
-  | { kind: "cancel" };
+  { kind: "server"; name: string } | { kind: "reconnect" } | { kind: "cancel" };
 
 export const RECONNECT_KEY = "ctrl+r";
 export const RECONNECT_KEY_LABEL = "Ctrl+R";
@@ -67,22 +60,32 @@ export interface McpViewerProps {
 /** Map a status onto a glyph character. */
 export function statusGlyph(status: ServerStatus): string {
   switch (status) {
-    case "ok": return "✓";
-    case "unauthenticated": return "⚠";
-    case "awaiting-reconnect": return "○";
-    case "disabled": return "⏸";
-    case "error": return "✗";
+    case "ok":
+      return "✓";
+    case "unauthenticated":
+      return "⚠";
+    case "awaiting-reconnect":
+      return "○";
+    case "disabled":
+      return "⏸";
+    case "error":
+      return "✗";
   }
 }
 
 /** Map a status onto a colour name understood by ink. */
 export function statusColor(status: ServerStatus): string {
   switch (status) {
-    case "ok": return "green";
-    case "unauthenticated": return "yellow";
-    case "error": return "red";
-    case "awaiting-reconnect": return "gray";
-    case "disabled": return "gray";
+    case "ok":
+      return "green";
+    case "unauthenticated":
+      return "yellow";
+    case "error":
+      return "red";
+    case "awaiting-reconnect":
+      return "gray";
+    case "disabled":
+      return "gray";
   }
 }
 
@@ -130,26 +133,28 @@ export const McpViewer: React.FC<McpViewerProps> = ({
   // Scroll window — keep the highlighted row visible.
   const start = useMemo(() => {
     if (servers.length <= maxVisible) return 0;
-    return Math.max(0, Math.min(highlight - Math.floor(maxVisible / 2), servers.length - maxVisible));
+    return Math.max(
+      0,
+      Math.min(highlight - Math.floor(maxVisible / 2), servers.length - maxVisible),
+    );
   }, [highlight, servers.length, maxVisible]);
   const end = Math.min(servers.length, start + maxVisible);
   const visible = servers.slice(start, end);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  ↑/↓ (j/k): navigate  Enter: sign in  {RECONNECT_KEY_LABEL}: reconnect  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor>
+          {" "}
+          ↑/↓ (j/k): navigate Enter: sign in {RECONNECT_KEY_LABEL}: reconnect Esc: close
+        </Text>
       </Box>
       <Text> </Text>
       {servers.length === 0 ? (
-        <Text dimColor>  no MCP servers connected</Text>
+        <Text dimColor> no MCP servers connected</Text>
       ) : (
         visible.map((s, i) => {
           const realIndex = start + i;
@@ -159,22 +164,27 @@ export const McpViewer: React.FC<McpViewerProps> = ({
           return (
             <Box key={s.name} flexDirection="column">
               <Box flexDirection="row">
-                <Text color={isHighlighted ? "cyan" : undefined}>
-                  {isHighlighted ? "▶" : " "}{" "}
-                </Text>
+                <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
                 <Text color={color}>{glyph}</Text>
-                <Text>  {s.name}</Text>
-                <Text dimColor>  ({s.status})</Text>
+                <Text> {s.name}</Text>
+                <Text dimColor> ({s.status})</Text>
               </Box>
               {s.tools.map((t) => (
-                <Text key={t.name} dimColor>     - {t.name}{t.description ? `: ${truncate(t.description, 50)}` : ""}</Text>
+                <Text key={t.name} dimColor>
+                  {" "}
+                  - {t.name}
+                  {t.description ? `: ${truncate(t.description, 50)}` : ""}
+                </Text>
               ))}
             </Box>
           );
         })
       )}
       {servers.length > maxVisible ? (
-        <Text dimColor>  {start + 1}–{end} of {servers.length}</Text>
+        <Text dimColor>
+          {" "}
+          {start + 1}–{end} of {servers.length}
+        </Text>
       ) : null}
     </Box>
   );

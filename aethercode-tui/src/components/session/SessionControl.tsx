@@ -43,12 +43,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { t, icon } from "../../theme.js";
 
-export type SessionState =
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type SessionState = "running" | "paused" | "completed" | "failed" | "cancelled";
 
 export type ControlAction = "continue" | "pause" | "stop";
 
@@ -70,12 +65,18 @@ export interface SessionControlProps {
 /** Pure helper: which actions are valid in each state. */
 export function validActions(state: SessionState): ReadonlySet<ControlAction> {
   switch (state) {
-    case "running":   return new Set(["pause", "stop"]);
-    case "paused":    return new Set(["continue", "stop"]);
-    case "completed": return new Set(["continue"]);
-    case "failed":    return new Set(["continue", "stop"]);
-    case "cancelled": return new Set(["continue"]);
-    default:          return new Set();
+    case "running":
+      return new Set(["pause", "stop"]);
+    case "paused":
+      return new Set(["continue", "stop"]);
+    case "completed":
+      return new Set(["continue"]);
+    case "failed":
+      return new Set(["continue", "stop"]);
+    case "cancelled":
+      return new Set(["continue"]);
+    default:
+      return new Set();
   }
 }
 
@@ -113,16 +114,31 @@ export const SessionControl: React.FC<SessionControlProps> = ({
     if (!valid.has(a)) return;
     if (disabled?.[a]) return;
     switch (a) {
-      case "continue": onContinue?.(); break;
-      case "pause":    onPause?.(); break;
-      case "stop":     onStop?.(); break;
+      case "continue":
+        onContinue?.();
+        break;
+      case "pause":
+        onPause?.();
+        break;
+      case "stop":
+        onStop?.();
+        break;
     }
   };
 
   useInput((input, key) => {
-    if (input === HOTKEY.continue) { onClick("continue"); return; }
-    if (input === HOTKEY.pause)    { onClick("pause");    return; }
-    if (input === HOTKEY.stop)     { onClick("stop");     return; }
+    if (input === HOTKEY.continue) {
+      onClick("continue");
+      return;
+    }
+    if (input === HOTKEY.pause) {
+      onClick("pause");
+      return;
+    }
+    if (input === HOTKEY.stop) {
+      onClick("stop");
+      return;
+    }
     if (key.tab) {
       setFocus((f) => (f + 1) % ACTION_ORDER.length);
       return;
@@ -157,11 +173,11 @@ export const SessionControl: React.FC<SessionControlProps> = ({
                 bold={isFocused}
                 backgroundColor={isFocused ? color : undefined}
               >
-                {isFocused ? " " : ""}{label}{isFocused ? " " : ""}
+                {isFocused ? " " : ""}
+                {label}
+                {isFocused ? " " : ""}
               </Text>
-              {isFocused ? (
-                <Text color="black"> </Text>
-              ) : null}
+              {isFocused ? <Text color="black"> </Text> : null}
               <Text dimColor> [{HOTKEY[a]}]</Text>
             </Box>
           );
@@ -179,11 +195,14 @@ export const SessionControl: React.FC<SessionControlProps> = ({
 /** Build the props for an integration test. The shape is
  *  intentionally minimal so a test can pass a literal
  *  without depending on the rest of the type hierarchy. */
-export function makeSessionControlProps(state: SessionState, cb: {
-  onContinue?: () => void;
-  onPause?: () => void;
-  onStop?: () => void;
-}): SessionControlProps {
+export function makeSessionControlProps(
+  state: SessionState,
+  cb: {
+    onContinue?: () => void;
+    onPause?: () => void;
+    onStop?: () => void;
+  },
+): SessionControlProps {
   return { state, ...cb };
 }
 

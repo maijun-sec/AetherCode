@@ -46,8 +46,8 @@ test("T-440: bucketColor returns cyan when no cap is set", () => {
 });
 
 test("T-440: bucketColor returns green below 50% of the cap", () => {
-  assert.equal(bucketColor(0,     1000), "green");
-  assert.equal(bucketColor(499,   1000), "green");
+  assert.equal(bucketColor(0, 1000), "green");
+  assert.equal(bucketColor(499, 1000), "green");
 });
 
 test("T-440: bucketColor returns yellow at 50-80% of the cap", () => {
@@ -95,7 +95,7 @@ test("T-440: TokenChart.tsx renders the tail bucket in the cap colour", () => {
 
 test("T-440: TokenChart.tsx adds a cap marker when the cap is set", () => {
   assert.match(src, /const renderCapMarker = cap > 0/);
-  assert.match(src, /<Text[^>]*>\u2595<\/Text>/);
+  assert.match(src, /<Text[^>]*>\s*\u2595\s*<\/Text>/);
 });
 
 // ----- 3. tsc compile ----------------------------------------------
@@ -103,21 +103,42 @@ test("T-440: TokenChart.tsx adds a cap marker when the cap is set", () => {
 test("T-440: TypeScript compile of TokenChart.tsx is clean", () => {
   const tmp = join(root, "tmp-t440-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--strict", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--strict",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "TokenChart.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "TokenChart.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

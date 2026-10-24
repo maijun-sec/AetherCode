@@ -18,12 +18,7 @@
  * 4-5 copies of the header on every mount and never settled.
  */
 
-import React, {
-  createContext,
-  useContext,
-  useRef,
-  useSyncExternalStore,
-} from "react";
+import React, { createContext, useContext, useRef, useSyncExternalStore } from "react";
 import { ThemeStore, type ListedTheme, type Theme } from "aethercode-themes";
 
 export interface AethercodeThemeContextValue {
@@ -38,9 +33,7 @@ export const AethercodeThemeContext = createContext<AethercodeThemeContextValue 
 export function useAethercodeThemeContext(): AethercodeThemeContextValue {
   const ctx = useContext(AethercodeThemeContext);
   if (!ctx) {
-    throw new Error(
-      "useAethercodeTheme must be used inside <AethercodeThemeProvider>"
-    );
+    throw new Error("useAethercodeTheme must be used inside <AethercodeThemeProvider>");
   }
   return ctx;
 }
@@ -88,7 +81,7 @@ export function useAethercodeThemeFromStore(store: ThemeStore): ListedTheme | nu
       cacheRef.current = { name, theme };
       return theme;
     },
-    () => null
+    () => null,
   );
 }
 
@@ -125,7 +118,7 @@ export function useAethercodeThemeList(store: ThemeStore): readonly ListedTheme[
       cacheRef.current = { version: versionRef.current, list };
       return list;
     },
-    () => store.list()
+    () => store.list(),
   );
 }
 

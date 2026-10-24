@@ -59,7 +59,9 @@ setTimeout(() => {
   // Even better: ask the model to "verify the file structure by
   // running glob for *.java, *.java again, *.java a third time".
   // This often triggers the same_fingerprint detector.
-  child.stdin.write("list all Java files in the current directory. then list them again. then list them a third time. just keep calling glob with the same pattern three times\n");
+  child.stdin.write(
+    "list all Java files in the current directory. then list them again. then list them a third time. just keep calling glob with the same pattern three times\n",
+  );
 }, 5000);
 
 // Keep stdin alive with periodic empty lines so the line mode's
@@ -67,14 +69,25 @@ setTimeout(() => {
 let beats = 0;
 const beat = setInterval(() => {
   beats++;
-  if (exited || beats > 30) { clearInterval(beat); return; }
-  try { child.stdin.write(" \n"); } catch { clearInterval(beat); }
+  if (exited || beats > 30) {
+    clearInterval(beat);
+    return;
+  }
+  try {
+    child.stdin.write(" \n");
+  } catch {
+    clearInterval(beat);
+  }
 }, 4000);
 
 // Hard timeout at 120s.
 setTimeout(() => {
   console.log("[e2e] hard timeout 120s — closing stdin");
-  try { child.stdin.end(); } catch { /* ignore */ }
+  try {
+    child.stdin.end();
+  } catch {
+    /* ignore */
+  }
 }, 120000);
 
 function summarize() {
@@ -83,7 +96,10 @@ function summarize() {
 
   // Look for run-end markers in the output.
   const hasHeader = out.includes("connected");
-  const hasReady = out.includes("[ready]") || out.includes("stopped — loop") || out.includes("stopped — max turns");
+  const hasReady =
+    out.includes("[ready]") ||
+    out.includes("stopped — loop") ||
+    out.includes("stopped — max turns");
   const hasLoopEnd = out.includes("stopped — loop") || out.includes("loop_detected");
   const hasPrompt = out.includes("❯");
 
@@ -96,10 +112,16 @@ function summarize() {
     console.log("✓ line mode rendered '[stopped — loop]' — loop visibility works");
     process.exit(0);
   } else if (hasReady) {
-    console.log("✓ line mode rendered a run-end line (kind=" + (out.match(/\[(stopped[^]]+|ready)\]/)?.[1] ?? "?") + ")");
+    console.log(
+      "✓ line mode rendered a run-end line (kind=" +
+        (out.match(/\[(stopped[^]]+|ready)\]/)?.[1] ?? "?") +
+        ")",
+    );
     process.exit(0);
   } else if (hasPrompt && hasHeader) {
-    console.log("⚠ line mode reached the prompt but no run-end yet (model still working or hit 5s timeout)");
+    console.log(
+      "⚠ line mode reached the prompt but no run-end yet (model still working or hit 5s timeout)",
+    );
     process.exit(2);
   } else {
     console.log("✗ line mode did not reach a usable state");

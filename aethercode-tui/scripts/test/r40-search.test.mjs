@@ -25,13 +25,10 @@ function searchTurns(turns, query) {
   const q = query.toLowerCase();
   return turns
     .map((t, i) => {
-      const hay = [
-        t.text,
-        t.toolName,
-        t.toolArgs,
-        t.toolResult,
-        ...(t.planItems ?? []),
-      ].filter(Boolean).join(" ").toLowerCase();
+      const hay = [t.text, t.toolName, t.toolArgs, t.toolResult, ...(t.planItems ?? [])]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
       return { index: i, hit: hay.includes(q) };
     })
     .filter((r) => r.hit)
@@ -41,9 +38,23 @@ function searchTurns(turns, query) {
 const sampleTurns = [
   { id: 1, role: "user", text: "list files in current directory" },
   { id: 2, role: "assistant", text: "I'll use the glob tool." },
-  { id: 3, role: "tool", text: "glob", toolName: "glob", toolArgs: "{\"pattern\":\"*.java\"}", toolResult: "A.java\nB.java" },
+  {
+    id: 3,
+    role: "tool",
+    text: "glob",
+    toolName: "glob",
+    toolArgs: '{"pattern":"*.java"}',
+    toolResult: "A.java\nB.java",
+  },
   { id: 4, role: "assistant", text: "Here are the Java files." },
-  { id: 5, role: "tool", text: "file_read", toolName: "file_read", toolArgs: "{\"path\":\"A.java\"}", toolResult: "public class A {}" },
+  {
+    id: 5,
+    role: "tool",
+    text: "file_read",
+    toolName: "file_read",
+    toolArgs: '{"path":"A.java"}',
+    toolResult: "public class A {}",
+  },
   { id: 6, role: "user", text: "now read the python files" },
   { id: 7, role: "tool", text: "glob", toolName: "glob", toolResult: "p.py\nq.py" },
 ];
@@ -98,8 +109,10 @@ test("R40: returns indices in order", () => {
 // ----- 2. Source code assertions -------------------------------------
 
 test("R40: SearchBar.tsx exists", () => {
-  assert.ok(existsSync(join(root, "src", "components", "SearchBar.tsx")),
-    "SearchBar.tsx not created");
+  assert.ok(
+    existsSync(join(root, "src", "components", "SearchBar.tsx")),
+    "SearchBar.tsx not created",
+  );
 });
 
 test("R40: SearchBar.tsx exports SearchBar + a search helper", () => {
@@ -125,22 +138,42 @@ test("R40: state.ts has showSearch field + showSearch action", () => {
 // ----- 3. Build smoke test -------------------------------------------
 
 test("R40: TypeScript compile of new SearchBar.tsx is clean", () => {
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
   const tmp = join(root, "tmp-r40-tsc");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
   const tscArgs = [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--jsx", "react",
-    "--esModuleInterop", "true", "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    tmp,
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [
-    ...tscArgs,
-    '"' + join(root, "src", "components", "SearchBar.tsx") + '"',
-  ], { encoding: "utf-8", shell: true });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, '"' + join(root, "src", "components", "SearchBar.tsx") + '"'],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
   }

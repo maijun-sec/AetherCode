@@ -88,7 +88,7 @@ export interface AssistantMessage {
  *  block (or the block is empty). */
 export function enrichmentRequired(
   messages: ReadonlyArray<AssistantMessage>,
-  lastIndex: number
+  lastIndex: number,
 ): boolean {
   if (lastIndex < 0 || lastIndex >= messages.length) return false;
   const m = messages[lastIndex]!;
@@ -99,7 +99,10 @@ export function enrichmentRequired(
 /** Pure helper: build the post-turn prompt the supervisor
  *  sends to the LLM when the summary is missing. The
  *  prompt is the spec's verbatim text (§12.3). */
-export function buildAutoSummaryPrompt(messages: ReadonlyArray<AssistantMessage>, lastIndex: number): string {
+export function buildAutoSummaryPrompt(
+  messages: ReadonlyArray<AssistantMessage>,
+  lastIndex: number,
+): string {
   const slice = messages.slice(Math.max(0, lastIndex - 4), lastIndex + 1);
   return `Summarize the last ${slice.length} messages in 1-3 lines, naming what was done and what is intended next.`;
 }
@@ -108,7 +111,9 @@ export function buildAutoSummaryPrompt(messages: ReadonlyArray<AssistantMessage>
  *  `summary_injected` from the supervisor? The TUI's
  *  `useRpcSubscription` calls this to filter the event
  *  stream. */
-export function isSummaryInjectedEvent(ev: RpcEvent | { kind?: string } | null | undefined): boolean {
+export function isSummaryInjectedEvent(
+  ev: RpcEvent | { kind?: string } | null | undefined,
+): boolean {
   if (!ev) return false;
   const k = (ev as { kind?: string }).kind;
   return k === "summary_injected" || k === "summary_injected_event";
@@ -164,7 +169,9 @@ export function useTranscriptEnricher(opts: UseTranscriptEnricherOptions): {
     const prompt = buildAutoSummaryPrompt(opts.messages, last);
     try {
       opts.onMissingSummary?.(last, prompt);
-    } catch { /* ignore — the host may be unmounted */ }
+    } catch {
+      /* ignore — the host may be unmounted */
+    }
     // We intentionally re-run on every change to
     // `messages` so a freshly-loaded transcript triggers
     // the enricher once per turn.

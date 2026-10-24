@@ -29,11 +29,15 @@ interface Props {
 }
 
 const FILLED = "█";
-const EMPTY  = "░";
-const TICK   = "▏";
+const EMPTY = "░";
+const TICK = "▏";
 
 export const ProgressBar: React.FC<Props> = ({
-  value, max, width = 20, color = "cyan", showEmpty = true,
+  value,
+  max,
+  width = 20,
+  color = "cyan",
+  showEmpty = true,
 }) => {
   if (max <= 0) {
     return <Text dimColor>[{"—".repeat(width)}]</Text>;
@@ -49,7 +53,10 @@ export const ProgressBar: React.FC<Props> = ({
   return (
     <Text>
       <Text color={color}>{"["}</Text>
-      <Text color={color}>{FILLED.repeat(full)}{partial ? TICK : ""}</Text>
+      <Text color={color}>
+        {FILLED.repeat(full)}
+        {partial ? TICK : ""}
+      </Text>
       {showEmpty ? <Text dimColor>{EMPTY.repeat(empty)}</Text> : null}
       <Text color={color}>{"]"}</Text>
     </Text>

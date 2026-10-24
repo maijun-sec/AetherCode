@@ -64,18 +64,18 @@ interface Props {
  *  ones a new user needs in the first 30 seconds (Tab accept, / ,
  *  @) before the power-user ones (Ctrl-B sidebar, Ctrl-? help). */
 const SHORTCUTS: ReadonlyArray<{ key: string; label: string }> = [
-  { key: "Tab",     label: "accept autocomplete" },
-  { key: "Enter",   label: "send prompt" },
-  { key: "↑ / ↓",   label: "input history" },
-  { key: "/",       label: "slash commands" },
-  { key: "@",       label: "@-mention files" },
-  { key: "Ctrl-B",  label: "toggle sidebar" },
-  { key: "Ctrl-D",  label: "toggle right panel" },
-  { key: "Ctrl-F",  label: "search scrollback" },
-  { key: "Ctrl-L",  label: "log viewer" },
-  { key: "Ctrl-S",  label: "subagent panel" },
-  { key: "Ctrl-T",  label: "theme picker" },
-  { key: "Ctrl-?",  label: "full help" },
+  { key: "Tab", label: "accept autocomplete" },
+  { key: "Enter", label: "send prompt" },
+  { key: "↑ / ↓", label: "input history" },
+  { key: "/", label: "slash commands" },
+  { key: "@", label: "@-mention files" },
+  { key: "Ctrl-B", label: "toggle sidebar" },
+  { key: "Ctrl-D", label: "toggle right panel" },
+  { key: "Ctrl-F", label: "search scrollback" },
+  { key: "Ctrl-L", label: "log viewer" },
+  { key: "Ctrl-S", label: "subagent panel" },
+  { key: "Ctrl-T", label: "theme picker" },
+  { key: "Ctrl-?", label: "full help" },
 ];
 
 /** context-sensitive tips. The first matching one wins; the
@@ -111,7 +111,10 @@ const TIPS: ReadonlyArray<{ when: (p: Props) => boolean; text: string }> = [
 
 /** render an icon + label pill. Used in the context strip. */
 const Pill: React.FC<{ glyph: string; label: string; color?: string; dim?: boolean }> = ({
-  glyph, label, color, dim,
+  glyph,
+  label,
+  color,
+  dim,
 }) => (
   <Text>
     <Text color={color ?? t.accent}>{glyph} </Text>
@@ -120,7 +123,7 @@ const Pill: React.FC<{ glyph: string; label: string; color?: string; dim?: boole
 );
 
 /** small connector between pills (a dim `·`). */
-const Sep: React.FC = () => <Text dimColor>  ·  </Text>;
+const Sep: React.FC = () => <Text dimColor> · </Text>;
 
 /** format a milliseconds duration as `1m 23s` or `12s`. */
 function formatUptime(ms: number | undefined): string {
@@ -148,13 +151,35 @@ function fmtCost(usd: number | null | undefined): string {
 }
 
 export const Welcome: React.FC<Props> = ({
-  model, cwd, sessionId, mode, provider, uptimeMs,
-  inputTokens, outputTokens, costUsd, bankStatus, subagentsAvailable,
+  model,
+  cwd,
+  sessionId,
+  mode,
+  provider,
+  uptimeMs,
+  inputTokens,
+  outputTokens,
+  costUsd,
+  bankStatus,
+  subagentsAvailable,
 }) => {
-  const tip = (TIPS.find((t) => t.when({
-    model, cwd, sessionId, mode, provider, uptimeMs,
-    inputTokens, outputTokens, costUsd, bankStatus, subagentsAvailable,
-  })) ?? TIPS[TIPS.length - 1]).text;
+  const tip = (
+    TIPS.find((t) =>
+      t.when({
+        model,
+        cwd,
+        sessionId,
+        mode,
+        provider,
+        uptimeMs,
+        inputTokens,
+        outputTokens,
+        costUsd,
+        bankStatus,
+        subagentsAvailable,
+      }),
+    ) ?? TIPS[TIPS.length - 1]
+  ).text;
 
   // session short form: first 8 chars of the id. Falls back to
   // em-dash when the daemon hasn't reported a session yet.
@@ -168,13 +193,7 @@ export const Welcome: React.FC<Props> = ({
   })();
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={t.brand}
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="round" borderColor={t.brand} paddingX={2} paddingY={1}>
       {/* wordmark row. The banner ASCII is shown when stdout is wide
        *  enough (>= 100 cols); otherwise fall back to the bold
        *  wordmark + version. The renderer's flex makes both work
@@ -183,9 +202,11 @@ export const Welcome: React.FC<Props> = ({
         <Text color={t.brand}>{banner}</Text>
       ) : (
         <Text>
-          <Text color={t.brand} bold>{icon.model} {wordmark}</Text>
+          <Text color={t.brand} bold>
+            {icon.model} {wordmark}
+          </Text>
           <Text> v0.2.71</Text>
-          <Text dimColor>  ·  type a prompt and press Enter</Text>
+          <Text dimColor> · type a prompt and press Enter</Text>
         </Text>
       )}
 
@@ -213,9 +234,9 @@ export const Welcome: React.FC<Props> = ({
       {/* live counters — input / output tokens + cost. Compact,
        *  one line. When counters are unknown (no run yet), show
        *  the em-dash placeholder so the row stays balanced. */}
-      {(inputTokens != null || outputTokens != null || costUsd != null) ? (
+      {inputTokens != null || outputTokens != null || costUsd != null ? (
         <Box marginTop={0}>
-          <Pill glyph={icon.in}  label={`${fmtTok(inputTokens)} in`}  dim />
+          <Pill glyph={icon.in} label={`${fmtTok(inputTokens)} in`} dim />
           <Sep />
           <Pill glyph={icon.out} label={`${fmtTok(outputTokens)} out`} dim />
           <Sep />

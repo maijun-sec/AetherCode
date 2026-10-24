@@ -123,37 +123,35 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
   });
 
   // Scroll window — keep the highlighted row visible.
-  const start = Math.max(0, Math.min(highlight - Math.floor(maxVisible / 2), Math.max(0, filtered.length - maxVisible)));
+  const start = Math.max(
+    0,
+    Math.min(highlight - Math.floor(maxVisible / 2), Math.max(0, filtered.length - maxVisible)),
+  );
   const end = Math.min(filtered.length, start + maxVisible);
   const visible = filtered.slice(start, end);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title}</Text>
-        <Text dimColor>  type to filter  ↑/↓ (j/k): navigate  Enter: select  Ctrl+S: set default  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title}
+        </Text>
+        <Text dimColor>
+          {" "}
+          type to filter ↑/↓ (j/k): navigate Enter: select Ctrl+S: set default Esc: close
+        </Text>
       </Box>
       <Text> </Text>
       <Box>
         <Text color="yellow">{">"}</Text>
         <Text> </Text>
-        <TextInput
-          value={query}
-          onChange={setQuery}
-          placeholder="filter agents…"
-        />
+        <TextInput value={query} onChange={setQuery} placeholder="filter agents…" />
       </Box>
       <Text> </Text>
       {agents.length === 0 ? (
-        <Text dimColor>  no agents found</Text>
+        <Text dimColor> no agents found</Text>
       ) : filtered.length === 0 ? (
-        <Text dimColor>  no matches for "{query}"</Text>
+        <Text dimColor> no matches for "{query}"</Text>
       ) : (
         visible.map((a, i) => {
           const realIndex = start + i;
@@ -161,24 +159,23 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
           const isCurrent = a.name === current;
           return (
             <Box key={a.name} flexDirection="row">
-              <Text color={isHighlighted ? "cyan" : undefined}>
-                {isHighlighted ? "▶" : " "}{" "}
-              </Text>
-              <Text color={isCurrent ? "yellowBright" : undefined}>
-                {isCurrent ? "●" : " "}{" "}
-              </Text>
+              <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
+              <Text color={isCurrent ? "yellowBright" : undefined}>{isCurrent ? "●" : " "} </Text>
               <Text>
                 <Text bold={isHighlighted}>{a.name.padEnd(20)}</Text>
                 {a.isDefault ? <Text color="magenta"> (default)</Text> : null}
                 {isCurrent ? <Text color="yellowBright"> (current)</Text> : null}
-                {a.description ? <Text dimColor>  — {truncate(a.description, 60)}</Text> : null}
+                {a.description ? <Text dimColor> — {truncate(a.description, 60)}</Text> : null}
               </Text>
             </Box>
           );
         })
       )}
       {filtered.length > maxVisible ? (
-        <Text dimColor>  {start + 1}–{end} of {filtered.length}</Text>
+        <Text dimColor>
+          {" "}
+          {start + 1}–{end} of {filtered.length}
+        </Text>
       ) : null}
     </Box>
   );

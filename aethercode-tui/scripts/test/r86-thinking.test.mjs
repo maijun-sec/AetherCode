@@ -34,22 +34,40 @@ if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
 
 // Compile state.ts to a tmp JS file we can import.
 // (Mirrors state.test.mjs's setup.)
-const tscBinAbs = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tscBinAbs = join(
+  root,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc",
+);
 const tscArgs = [
-  "--outDir", tmp,
-  "--target", "ES2022",
-  "--module", "ES2022",
-  "--moduleResolution", "bundler",
-  "--esModuleInterop", "true",
-  "--skipLibCheck", "true",
-  "--rootDir", join(root, "src"),
+  "--outDir",
+  tmp,
+  "--target",
+  "ES2022",
+  "--module",
+  "ES2022",
+  "--moduleResolution",
+  "bundler",
+  "--esModuleInterop",
+  "true",
+  "--skipLibCheck",
+  "true",
+  "--rootDir",
+  join(root, "src"),
 ];
-const tsc = spawnSync('"' + tscBinAbs + '"', [...tscArgs, '"' + join(root, "src", "state.ts") + '"'], {
-  encoding: "utf-8",
-  shell: true,
-});
+const tsc = spawnSync(
+  '"' + tscBinAbs + '"',
+  [...tscArgs, '"' + join(root, "src", "state.ts") + '"'],
+  {
+    encoding: "utf-8",
+    shell: true,
+  },
+);
 if (tsc.status !== 0) {
-  console.error("tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr);
+  console.error(
+    "tsc failed (status=" + tsc.status + "):\nSTDOUT:\n" + tsc.stdout + "\nSTDERR:\n" + tsc.stderr,
+  );
   process.exit(1);
 }
 

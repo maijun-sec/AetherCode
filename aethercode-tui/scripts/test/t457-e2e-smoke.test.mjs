@@ -23,13 +23,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,12 +31,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
-const tscBin = join(
-  root,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsc.cmd" : "tsc",
-);
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
@@ -56,20 +45,27 @@ function tscShim(label, shimBody) {
   mkdirSync(tmpTsc, { recursive: true });
   writeFileSync(shimPath, shimBody, "utf-8");
   const args = [
-    "--outDir", join(tmpTsc, "out"),
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--jsx", "react",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--outDir",
+    join(tmpTsc, "out"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
   ];
-  const r = spawnSync(
-    `"${tscBin}"`,
-    [...args, `"${shimPath}"`],
-    { encoding: "utf-8", shell: true },
-  );
+  const r = spawnSync(`"${tscBin}"`, [...args, `"${shimPath}"`], {
+    encoding: "utf-8",
+    shell: true,
+  });
   if (r.status !== 0) {
     console.error(`tsc shim failed for ${label}:\n${r.stdout}\n${r.stderr}`);
   }
@@ -152,44 +148,38 @@ test("T-457: state reducer / INITIAL / Action / State types compile (shim tsc)",
 
 test("T-457: every §5.3 component file exists in src/components/", () => {
   for (const f of [
-    "ConsentPrompt.tsx",     // T-420 / T-250..T-253
-    "AgentSelector.tsx",     // T-421
-    "EffortPicker.tsx",      // T-422
-    "CwdSwitcher.tsx",       // T-423
-    "MemoryPanel.tsx",       // T-424 / T-080
-    "ContextMeter.tsx",      // T-425 / T-180
-    "TaskPanel.tsx",         // T-426 / T-370
-    "McpLogin.tsx",          // T-428
-    "McpReconnect.tsx",      // T-428
-    "McpViewer.tsx",         // T-428
-    "ThreadSelector.tsx",    // T-429
-    "UpdateAvailable.tsx",   // T-430
-    "UpdateConfirm.tsx",     // T-430
-    "UpdateProgress.tsx",    // T-430
-    "NotificationCenter.tsx",// T-431
-    "NotificationDetail.tsx",// T-431
+    "ConsentPrompt.tsx", // T-420 / T-250..T-253
+    "AgentSelector.tsx", // T-421
+    "EffortPicker.tsx", // T-422
+    "CwdSwitcher.tsx", // T-423
+    "MemoryPanel.tsx", // T-424 / T-080
+    "ContextMeter.tsx", // T-425 / T-180
+    "TaskPanel.tsx", // T-426 / T-370
+    "McpLogin.tsx", // T-428
+    "McpReconnect.tsx", // T-428
+    "McpViewer.tsx", // T-428
+    "ThreadSelector.tsx", // T-429
+    "UpdateAvailable.tsx", // T-430
+    "UpdateConfirm.tsx", // T-430
+    "UpdateProgress.tsx", // T-430
+    "NotificationCenter.tsx", // T-431
+    "NotificationDetail.tsx", // T-431
     "NotificationSettings.tsx", // T-431
   ]) {
-    assert.ok(
-      existsSync(join(root, "src", "components", f)),
-      `missing component: ${f}`,
-    );
+    assert.ok(existsSync(join(root, "src", "components", f)), `missing component: ${f}`);
   }
 });
 
 test("T-457: every §5.5 desktop component file exists in aethercode-desktop/src/components/", () => {
   const desktopRoot = join(root, "..", "aethercode-desktop", "src", "components");
   for (const f of [
-    "ConfirmDialog.tsx",     // T-450
-    "MemoryPanel.tsx",       // T-451
-    "ContextMeter.tsx",      // T-452
-    "TaskWindow.tsx",        // T-453
-    "ThemeSettings.tsx",     // T-454
+    "ConfirmDialog.tsx", // T-450
+    "MemoryPanel.tsx", // T-451
+    "ContextMeter.tsx", // T-452
+    "TaskWindow.tsx", // T-453
+    "ThemeSettings.tsx", // T-454
   ]) {
-    assert.ok(
-      existsSync(join(desktopRoot, f)),
-      `missing desktop component: ${f}`,
-    );
+    assert.ok(existsSync(join(desktopRoot, f)), `missing desktop component: ${f}`);
   }
 });
 
@@ -212,10 +202,7 @@ test("T-457: every aethercode-themes source file exists", () => {
   } catch {
     count = 0;
   }
-  assert.ok(
-    count >= 10,
-    `aethercode-themes has ${count} src files (expected >= 10)`,
-  );
+  assert.ok(count >= 10, `aethercode-themes has ${count} src files (expected >= 10)`);
 });
 
 // =====================================================================
@@ -278,15 +265,31 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
 
   // T-432: every new command is registered in SLASH_COMMANDS.
   for (const c of [
-    "agent-pick", "effort-pick", "cwd-pick", "mcp", "mcp-login",
-    "mcp-reconnect", "threads", "update", "update-deps", "notifications",
+    "agent-pick",
+    "effort-pick",
+    "cwd-pick",
+    "mcp",
+    "mcp-login",
+    "mcp-reconnect",
+    "threads",
+    "update",
+    "update-deps",
+    "notifications",
   ]) {
     assert.ok(SLASH_COMMANDS.includes(c), `SLASH_COMMANDS missing: ${c}`);
   }
   // T-432: every new command is described in SLASH_HELP.
   for (const c of [
-    "/agent-pick", "/effort-pick", "/cwd-pick", "/mcp", "/mcp-login",
-    "/mcp-reconnect", "/threads", "/update", "/update-deps", "/notifications",
+    "/agent-pick",
+    "/effort-pick",
+    "/cwd-pick",
+    "/mcp",
+    "/mcp-login",
+    "/mcp-reconnect",
+    "/threads",
+    "/update",
+    "/update-deps",
+    "/notifications",
   ]) {
     assert.ok(SLASH_HELP.includes(c), `SLASH_HELP missing: ${c}`);
   }
@@ -295,10 +298,7 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
 test("T-457: legacy slash commands still work (no regression)", async () => {
   tscShim(
     "cmds-legacy",
-    [
-      `export { handleSlash, SLASH_HELP } from "./commands.js";`,
-      ``,
-    ].join("\n"),
+    [`export { handleSlash, SLASH_HELP } from "./commands.js";`, ``].join("\n"),
   );
   const out = join(tmpTsc, "out", "_t457_smoke_shim.js");
   const mod = await import(`file:///${out.replace(/\\/g, "/")}`);
@@ -325,10 +325,7 @@ test("T-457: legacy slash commands still work (no regression)", async () => {
 // =====================================================================
 
 test("T-457: every §5.3 command maps to either a local token or a known RPC", async () => {
-  tscShim(
-    "cmds-rpc",
-    [`export { handleSlash, routeSlash } from "./commands.js";`, ``].join("\n"),
-  );
+  tscShim("cmds-rpc", [`export { handleSlash, routeSlash } from "./commands.js";`, ``].join("\n"));
   const out = join(tmpTsc, "out", "_t457_smoke_shim.js");
   const mod = await import(`file:///${out.replace(/\\/g, "/")}`);
   const { handleSlash, routeSlash } = mod;
@@ -366,9 +363,17 @@ test("T-457: every §5.3 command maps to either a local token or a known RPC", a
 test("T-457: tui.tsx mounts the major TUI components (Header / Scrollback / InputBox / StatusBar / Sidebar / Welcome / ThemePicker / SubagentPanel / CommandPalette / LogViewer)", () => {
   const src = read("src/tui.tsx");
   for (const c of [
-    "Header", "Scrollback", "InputBox", "StatusBar",
-    "Sidebar", "Welcome", "ThemePicker", "SubagentPanel",
-    "CommandPalette", "LogViewer", "HelpOverlay",
+    "Header",
+    "Scrollback",
+    "InputBox",
+    "StatusBar",
+    "Sidebar",
+    "Welcome",
+    "ThemePicker",
+    "SubagentPanel",
+    "CommandPalette",
+    "LogViewer",
+    "HelpOverlay",
   ]) {
     assert.ok(
       src.includes(`<${c}`) || src.includes(`import { ${c}`),
@@ -381,17 +386,8 @@ test("T-457: tui.tsx has the §5.3 local-token handlers", () => {
   const src = read("src/tui.tsx");
   // The TUI's input handler maps the local tokens returned
   // by handleSlash onto the corresponding components.
-  for (const tok of [
-    "__EXIT__",
-    "__CLEAR__",
-    "__THEMES_PICK__",
-    "__TUTORIAL__",
-    "__HISTORY__",
-  ]) {
-    assert.ok(
-      src.includes(tok),
-      `tui.tsx is missing handler for ${tok}`,
-    );
+  for (const tok of ["__EXIT__", "__CLEAR__", "__THEMES_PICK__", "__TUTORIAL__", "__HISTORY__"]) {
+    assert.ok(src.includes(tok), `tui.tsx is missing handler for ${tok}`);
   }
 });
 
@@ -412,13 +408,20 @@ test("T-457: tsc --noEmit on the full TUI source runs (succeeds or fails with di
   }
   const args = [
     "--noEmit",
-    "--target", "ES2022",
-    "--module", "ES2022",
-    "--moduleResolution", "bundler",
-    "--jsx", "react",
-    "--esModuleInterop", "true",
-    "--skipLibCheck", "true",
-    "--rootDir", join(root, "src"),
+    "--target",
+    "ES2022",
+    "--module",
+    "ES2022",
+    "--moduleResolution",
+    "bundler",
+    "--jsx",
+    "react",
+    "--esModuleInterop",
+    "true",
+    "--skipLibCheck",
+    "true",
+    "--rootDir",
+    join(root, "src"),
     join(root, "src", "tui.tsx"),
   ];
   // Run tsc into a file so we capture output even when
@@ -431,10 +434,7 @@ test("T-457: tsc --noEmit on the full TUI source runs (succeeds or fails with di
   });
   // tsc with --noEmit may exit 0 (no errors) or 2 (errors).
   // Either is acceptable; we just want a numeric status.
-  assert.ok(
-    typeof r.status === "number",
-    "tsc did not produce a status code (binary missing?)",
-  );
+  assert.ok(typeof r.status === "number", "tsc did not produce a status code (binary missing?)");
   // Write the captured output so the test always sees it.
   writeFileSync(
     outFile,

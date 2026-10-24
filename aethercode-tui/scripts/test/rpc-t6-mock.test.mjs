@@ -27,10 +27,7 @@ const root = join(here, "..", "..");
 
 // ----- 1. Load the TS source via a transpile-on-demand shim. ---
 
-const candidates = [
-  "dist/rpc/MockRpcServer.js",
-  "rpc/MockRpcServer.js",
-];
+const candidates = ["dist/rpc/MockRpcServer.js", "rpc/MockRpcServer.js"];
 let loaded = null;
 for (const c of candidates) {
   const p = join(root, c);
@@ -42,19 +39,42 @@ for (const c of candidates) {
 if (!loaded) {
   const tmp = join(root, "tmp-t6-mock");
   if (existsSync(tmp)) {
-    spawnSync(process.platform === "win32" ? "cmd" : "rm",
-      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp]);
+    spawnSync(
+      process.platform === "win32" ? "cmd" : "rm",
+      process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
+    );
   }
-  const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-  const r = spawnSync(`"${tscBin}"`, [
-    "--outDir", tmp, "--target", "ES2022", "--module", "ES2022",
-    "--moduleResolution", "bundler", "--esModuleInterop", "true",
-    "--skipLibCheck", "true", "--strict", "true",
-    "--rootDir", join(root, "src"),
-    join(root, "src", "rpc", "types.ts"),
-    join(root, "src", "rpc", "client.ts"),
-    join(root, "src", "rpc", "MockRpcServer.ts"),
-  ], { encoding: "utf-8", shell: true });
+  const tscBin = join(
+    root,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc",
+  );
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [
+      "--outDir",
+      tmp,
+      "--target",
+      "ES2022",
+      "--module",
+      "ES2022",
+      "--moduleResolution",
+      "bundler",
+      "--esModuleInterop",
+      "true",
+      "--skipLibCheck",
+      "true",
+      "--strict",
+      "true",
+      "--rootDir",
+      join(root, "src"),
+      join(root, "src", "rpc", "types.ts"),
+      join(root, "src", "rpc", "client.ts"),
+      join(root, "src", "rpc", "MockRpcServer.ts"),
+    ],
+    { encoding: "utf-8", shell: true },
+  );
   if (r.status !== 0) {
     throw new Error("tsc compile failed for MockRpcServer.ts:\n" + r.stdout + "\n" + r.stderr);
   }
@@ -87,12 +107,16 @@ test("T-6-02: async handler (returns a promise)", async () => {
 
 test("T-6-02: handler errors are wrapped as -32603 (Internal error)", async () => {
   const mock = new MockRpcServer();
-  mock.handle("fail", () => { throw new Error("kaboom"); });
+  mock.handle("fail", () => {
+    throw new Error("kaboom");
+  });
   const client = mock.buildClient();
   let caught = null;
   try {
     await client.request("fail");
-  } catch (e) { caught = e; }
+  } catch (e) {
+    caught = e;
+  }
   assert.ok(caught, "expected an error");
   assert.equal(caught.code, -32603);
   assert.match(caught.message, /kaboom/);
@@ -159,7 +183,10 @@ test("T-6-02: newSession / getSession / listSessions / ensureSession", () => {
   const list = mock.listSessions();
   const ids = list.map((s) => s.id).sort();
   // default + a + b
-  assert.deepEqual(ids, ["a", "b", mock.listSessions().find((s) => s.id !== "a" && s.id !== "b").id].sort());
+  assert.deepEqual(
+    ids,
+    ["a", "b", mock.listSessions().find((s) => s.id !== "a" && s.id !== "b").id].sort(),
+  );
   const c = mock.ensureSession("c");
   assert.equal(c.id, "c");
   // ensureSession is idempotent.

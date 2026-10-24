@@ -71,10 +71,13 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
   const decisionPending = state.permissionAsk != null;
   // short status string describing what the model is doing.
   const runStatus = state.submitting
-    ? state.status === "running-tool" ? "running tool"
-    : state.status === "streaming"   ? "streaming reply"
-    : state.status === "thinking"    ? "thinking"
-    :                                 "working"
+    ? state.status === "running-tool"
+      ? "running tool"
+      : state.status === "streaming"
+        ? "streaming reply"
+        : state.status === "thinking"
+          ? "thinking"
+          : "working"
     : "ready";
 
   // Cursor blink — 530ms on / 530ms off. The cursor is the
@@ -94,10 +97,14 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
   // input change), so a single useMemo instance is enough.
   const completion = useMemo(() => {
     const mgr = new MultiCompletionManager();
-    mgr.add(new SlashCommandController(SLASH_COMMANDS_DETAILED.map((c) => ({
-      name: c.name,
-      description: c.description,
-    }))));
+    mgr.add(
+      new SlashCommandController(
+        SLASH_COMMANDS_DETAILED.map((c) => ({
+          name: c.name,
+          description: c.description,
+        })),
+      ),
+    );
     mgr.add(new FuzzyFileController(fileListSupplier ?? (() => [])));
     return mgr;
   }, [fileListSupplier]);
@@ -169,8 +176,10 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
     // and Esc closes the dropdown. None of those keys
     // should reach the text-editing branch.
     if (suggestions.suggestions.length > 0) {
-      const moveFn = (completion.activeController() as unknown as { move?: (d: number) => void } | null)?.move;
-      if (key.tab || (input === "\t")) {
+      const moveFn = (
+        completion.activeController() as unknown as { move?: (d: number) => void } | null
+      )?.move;
+      if (key.tab || input === "\t") {
         if (acceptSuggestion()) return;
       }
       if (key.return) {
@@ -179,10 +188,16 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
         }
         // No dropdown? Fall through to the submit branch.
       } else if (key.upArrow) {
-        if (moveFn) { moveFn(-1); setSuggestions(completion.current()); }
+        if (moveFn) {
+          moveFn(-1);
+          setSuggestions(completion.current());
+        }
         return;
       } else if (key.downArrow) {
-        if (moveFn) { moveFn(1); setSuggestions(completion.current()); }
+        if (moveFn) {
+          moveFn(1);
+          setSuggestions(completion.current());
+        }
         return;
       } else if (key.escape) {
         completion.reset();
@@ -239,8 +254,8 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
       {state.submitting && !decisionPending ? (
         <Box paddingX={1}>
           <Spinner type="dots" />
-          <Text color={t.brand}>  {runStatus}…</Text>
-          <Text dimColor>  ·  type your next prompt below</Text>
+          <Text color={t.brand}> {runStatus}…</Text>
+          <Text dimColor> · type your next prompt below</Text>
         </Box>
       ) : null}
       {/* thin horizontal rule (matching R167's
@@ -262,14 +277,17 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
           <Text color={promptColor}>▌ {promptChar} </Text>
           {lines.length > 1
             ? lines.slice(1).map((line, i) => (
-                <Text key={i} color={promptColor}>{"  "}</Text>
+                <Text key={i} color={promptColor}>
+                  {"  "}
+                </Text>
               ))
             : null}
         </Box>
         <Box flexDirection="column" flexGrow={1}>
           {decisionPending ? (
             <Text dimColor>
-              waiting for permission decision — press A / T / P / U / D / N (or collapse the card with Esc)
+              waiting for permission decision — press A / T / P / U / D / N (or collapse the card
+              with Esc)
             </Text>
           ) : state.input.length === 0 ? (
             // Placeholder + a blinking cursor on the SAME
@@ -280,7 +298,8 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
             // the user has no idea where to type.
             <Text>
               <Text dimColor>
-                type a prompt — Enter to send, shift+Enter for newline, / for commands, @ for files, ↑/↓ for history, Tab to accept, Ctrl-? for help
+                type a prompt — Enter to send, shift+Enter for newline, / for commands, @ for files,
+                ↑/↓ for history, Tab to accept, Ctrl-? for help
               </Text>
               <Text color={promptColor}>{cursorOn ? "▍" : " "}</Text>
             </Text>

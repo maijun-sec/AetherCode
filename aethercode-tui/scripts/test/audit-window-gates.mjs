@@ -242,7 +242,9 @@ if (exhausted.length > 0) {
   console.log("\nEXHAUSTED — must become structural bounds. Widening the number just");
   console.log("re-breaks the next time someone writes a comment above the token:");
   for (const r of exhausted) {
-    console.log(`  ${rel(r.file)} :: "${r.anchor}" -> "${r.nearestToken}" (needs ${r.nearest}, has ${r.window})`);
+    console.log(
+      `  ${rel(r.file)} :: "${r.anchor}" -> "${r.nearestToken}" (needs ${r.nearest}, has ${r.window})`,
+    );
   }
   process.exit(1);
 }

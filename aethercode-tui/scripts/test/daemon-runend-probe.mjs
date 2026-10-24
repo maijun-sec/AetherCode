@@ -34,12 +34,16 @@ rl.on("line", (line) => {
   const trimmed = line.trim();
   if (trimmed.length === 0) return;
   let msg;
-  try { msg = JSON.parse(trimmed); } catch { return; }
+  try {
+    msg = JSON.parse(trimmed);
+  } catch {
+    return;
+  }
 
   // Notification (no id) — record stream_event for run_end.
   if (!("id" in msg) || msg.id === null || msg.id === undefined) {
     if (msg.method === "stream_event") {
-      const ev = (msg.params?.event) ?? {};
+      const ev = msg.params?.event ?? {};
       streamEventsSeen.push(ev.type);
       if (ev.type === "run_end") {
         runEndCaptured = ev;
@@ -62,10 +66,17 @@ rl.on("line", (line) => {
     console.log(`[e2e] getState → ${r.slice(0, 200)}${r.length > 200 ? "..." : ""}`);
     // Fire off a query that will need multiple turns to complete.
     const id = nextId++;
-    child.stdin.write(JSON.stringify({
-      jsonrpc: "2.0", id, method: "query",
-      params: { prompt: "list the contents of the current directory, then list the contents of the parent directory, then list the contents of the user's home directory — three directory listings in total" },
-    }) + "\n");
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "query",
+        params: {
+          prompt:
+            "list the contents of the current directory, then list the contents of the parent directory, then list the contents of the user's home directory — three directory listings in total",
+        },
+      }) + "\n",
+    );
     console.log(`[e2e] sent query (id=${id})`);
   }
 });
@@ -85,14 +96,20 @@ child.on("exit", (code) => {
 
 setTimeout(() => {
   // Send getState after 1s to give the daemon a moment to come up.
-  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getState", params: {} }) + "\n");
+  child.stdin.write(
+    JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getState", params: {} }) + "\n",
+  );
   console.log(`[e2e] sent getState`);
 }, 1000);
 
 // Hard timeout at 60s.
 setTimeout(() => {
   console.log("[e2e] hard timeout 60s — forcing exit");
-  try { child.kill(); } catch { /* ignore */ }
+  try {
+    child.kill();
+  } catch {
+    /* ignore */
+  }
   summarize();
 }, 60000);
 

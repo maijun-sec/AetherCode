@@ -41,12 +41,35 @@ const T = {
   // detector exists rather than counting failures only.
   caps: join(root, "src", "rpcCapabilities.ts"),
   // R367: the daemon the TUI actually spawns.
-  runner: join(root, "..", "aethercode", "aethercode-cli", "src", "main", "java",
-    "org", "aethercode", "cli", "DaemonRunner.java"),
+  runner: join(
+    root,
+    "..",
+    "aethercode",
+    "aethercode-cli",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "cli",
+    "DaemonRunner.java",
+  ),
   // R367: the OTHER transport. Editing the daemon alone leaves the
   // desktop broken and every TUI-observable assertion green.
-  http: join(root, "..", "aethercode", "aethercode-protocol", "src", "main", "java",
-    "org", "aethercode", "protocol", "http", "HttpJsonRpcServer.java"),
+  http: join(
+    root,
+    "..",
+    "aethercode",
+    "aethercode-protocol",
+    "src",
+    "main",
+    "java",
+    "org",
+    "aethercode",
+    "protocol",
+    "http",
+    "HttpJsonRpcServer.java",
+  ),
   // R370: the Java comment stripper moved here (out of the gate) so
   // the R370 gate could reuse it instead of keeping a second,
   // untested copy. The two `javaCode` BYPASS cases below used to edit
@@ -59,7 +82,6 @@ const GATE = join(here, "r366-rpc-names.test.mjs");
 
 const PATHS = { ...T, gate: GATE };
 
-
 // R375: a battery that is KILLED mid-case must not leave a mutation on
 // disk — the next test run would then read a deliberately broken product
 // and the failures would belong to neither round. See
@@ -69,7 +91,10 @@ recoverIfInterrupted(SNAPSHOT);
 const original = Object.fromEntries(
   Object.entries(PATHS).map(([k, p]) => [k, readFileSync(p, "utf-8")]),
 );
-const snapshot = writeSnapshot(Object.entries(PATHS).map(([k, p]) => [p, original[k]]), SNAPSHOT);
+const snapshot = writeSnapshot(
+  Object.entries(PATHS).map(([k, p]) => [p, original[k]]),
+  SNAPSHOT,
+);
 
 function runGate() {
   const r = spawnSync(process.execPath, ["--test", GATE], { encoding: "utf-8", cwd: root });
@@ -86,76 +111,247 @@ function runGate() {
  *                          mutation is no longer detected)
  */
 const CASES = [
-  ["re-introduce the R364-era setCwd (Tauri name over JSON-RPC)", "red",
-    [["tui", (s) => s.replace('.request("switchProject", { cwd: path } as RpcValue)',
-      '.request("setCwd", { cwd: path } as RpcValue)')]]],
-  ["re-introduce setCwd in line mode", "red",
-    [["line", (s) => s.replace('probe(ctx, "switchProject", { cwd: picked } as RpcValue)',
-      'probe(ctx, "setCwd", { cwd: picked } as RpcValue)')]]],
-  ["re-introduce model/set (DTOs exist, handler never wired)", "red",
-    [["commands", (s) => s.replace('rpcMethod: "setModel", rpcParams: { model: String(rest[0]) }',
-      'rpcMethod: "model/set", rpcParams: { name: String(rest[0]) }')]]],
-  ["fix the NAME but leave the wrong param key on setModel", "red",
-    [["commands", (s) => s.replace('rpcMethod: "setModel", rpcParams: { model: String(rest[0]) }',
-      'rpcMethod: "setModel", rpcParams: { name: String(rest[0]) }')]]],
-  ["re-introduce workflow/run (SupervisorRpcServer name)", "red",
-    [["line", (s) => s.replace('probe(ctx, "runWorkflow", { name: picked }',
-      'probe(ctx, "workflow/run", { name: picked }')]]],
-  ["re-introduce workflow/list in the picker", "red",
-    [["line", (s) => s.replace('probe(ctx, "listWorkflows")', 'probe(ctx, "workflow/list")')]]],
-  ["drop `workflows` back out of the asRows envelope list", "red",
-    [["line", (s) => s.replace('"todos", "data", "projects", "workflows"', '"todos", "data", "projects"')]]],
-  ["drop `projects` back out of the asRows envelope list", "red",
-    [["line", (s) => s.replace('"todos", "data", "projects", "workflows", "grants"', '"todos", "data", "workflows", "grants"')]]],
-  ["R367: drop `grants` back out of the asRows envelope list", "red",
+  [
+    "re-introduce the R364-era setCwd (Tauri name over JSON-RPC)",
+    "red",
+    [
+      [
+        "tui",
+        (s) =>
+          s.replace(
+            '.request("switchProject", { cwd: path } as RpcValue)',
+            '.request("setCwd", { cwd: path } as RpcValue)',
+          ),
+      ],
+    ],
+  ],
+  [
+    "re-introduce setCwd in line mode",
+    "red",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            'probe(ctx, "switchProject", { cwd: picked } as RpcValue)',
+            'probe(ctx, "setCwd", { cwd: picked } as RpcValue)',
+          ),
+      ],
+    ],
+  ],
+  [
+    "re-introduce model/set (DTOs exist, handler never wired)",
+    "red",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            'rpcMethod: "setModel", rpcParams: { model: String(rest[0]) }',
+            'rpcMethod: "model/set", rpcParams: { name: String(rest[0]) }',
+          ),
+      ],
+    ],
+  ],
+  [
+    "fix the NAME but leave the wrong param key on setModel",
+    "red",
+    [
+      [
+        "commands",
+        (s) =>
+          s.replace(
+            'rpcMethod: "setModel", rpcParams: { model: String(rest[0]) }',
+            'rpcMethod: "setModel", rpcParams: { name: String(rest[0]) }',
+          ),
+      ],
+    ],
+  ],
+  [
+    "re-introduce workflow/run (SupervisorRpcServer name)",
+    "red",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            'probe(ctx, "runWorkflow", { name: picked }',
+            'probe(ctx, "workflow/run", { name: picked }',
+          ),
+      ],
+    ],
+  ],
+  [
+    "re-introduce workflow/list in the picker",
+    "red",
+    [["line", (s) => s.replace('probe(ctx, "listWorkflows")', 'probe(ctx, "workflow/list")')]],
+  ],
+  [
+    "drop `workflows` back out of the asRows envelope list",
+    "red",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            /"todos",\s*"data",\s*"projects",\s*"workflows"/,
+            '"todos", "data", "projects"',
+          ),
+      ],
+    ],
+  ],
+  [
+    "drop `projects` back out of the asRows envelope list",
+    "red",
+    [
+      [
+        "line",
+        (s) =>
+          s.replace(
+            /"todos",\s*"data",\s*"projects",\s*"workflows",\s*"grants"/,
+            '"todos", "data", "workflows", "grants"',
+          ),
+      ],
+    ],
+  ],
+  [
+    "R367: drop `grants` back out of the asRows envelope list",
+    "red",
     // The bug the R367 wiring would have SHIPPED: endpoint reachable,
     // panel confident and empty. Wiring is only half a feature.
-    [["line", (s) => s.replace('"workflows", "grants"', '"workflows"')]]],
+    [["line", (s) => s.replace(/"workflows",\s*"grants"/, '"workflows"')]],
+  ],
 
   // --- aimed at the allowlist itself ---
-  ["delete an allowlist entry (must surface as an unknown method)", "red",
-    [["caps", (s) => s.replace(/\[\s*"rewind",\s*\n?\s*"no rewind handler[^\]]*\],?\s*\n/, "")]]],
-  ["blank an allowlist reason (the reason gate must bite)", "red",
-    [["caps", (s) => s.replace('"no rewind handler; transcript rollback is unimplemented daemon-side"', '""')]]],
-  ["make the extraction pattern stop matching (must fail the floor)", "red",
+  [
+    "delete an allowlist entry (must surface as an unknown method)",
+    "red",
+    [["caps", (s) => s.replace(/\[\s*"rewind",\s*\n?\s*"no rewind handler[^\]]*\],?\s*\n/, "")]],
+  ],
+  [
+    "blank an allowlist reason (the reason gate must bite)",
+    "red",
+    [
+      [
+        "caps",
+        (s) =>
+          s.replace('"no rewind handler; transcript rollback is unimplemented daemon-side"', '""'),
+      ],
+    ],
+  ],
+  [
+    "make the extraction pattern stop matching (must fail the floor)",
+    "red",
     // Break the character class the four extraction patterns share, so every
     // one of them stops matching method names. If the `sent.size >= 40` floor
     // is real this must go red — otherwise the gate's main assertion was
     // passing because it matched nothing.
-    [["gate", (s) => s.split("[\\w/.]").join("[zzz]")]]],
+    [["gate", (s) => s.split("[\\w/.]").join("[zzz]")]],
+  ],
 
   // --- R367: the seam ---
-  ["R367: comment out PermissionMethods.registerAll in DaemonRunner", "red",
-    [["runner", (s) => s.replace("        permRpcs.registerAll(server.dispatcher());",
-      "        // permRpcs.registerAll(server.dispatcher());")]]],
-  ["R367: comment out GrantMethods.registerAll in DaemonRunner", "red",
-    [["runner", (s) => s.replace("        grantRpcs.registerAll(server.dispatcher());",
-      "        // grantRpcs.registerAll(server.dispatcher());")]]],
-  ["R367: delete the GrantMethods entry from EXTRA_METHOD_CLASSES", "red",
-    [["gate", (s) => s.replace(/\n\s*\{ type: "GrantMethods"[^\n]*\n/, "\n")]]],
-  ["R367: delete the PermissionMethods entry from EXTRA_METHOD_CLASSES", "red",
-    [["gate", (s) => s.replace(/\n\s*\{ type: "PermissionMethods"[^\n]*\n/, "\n")]]],
+  [
+    "R367: comment out PermissionMethods.registerAll in DaemonRunner",
+    "red",
+    [
+      [
+        "runner",
+        (s) =>
+          s.replace(
+            "        permRpcs.registerAll(server.dispatcher());",
+            "        // permRpcs.registerAll(server.dispatcher());",
+          ),
+      ],
+    ],
+  ],
+  [
+    "R367: comment out GrantMethods.registerAll in DaemonRunner",
+    "red",
+    [
+      [
+        "runner",
+        (s) =>
+          s.replace(
+            "        grantRpcs.registerAll(server.dispatcher());",
+            "        // grantRpcs.registerAll(server.dispatcher());",
+          ),
+      ],
+    ],
+  ],
+  [
+    "R367: delete the GrantMethods entry from EXTRA_METHOD_CLASSES",
+    "red",
+    [["gate", (s) => s.replace(/\n\s*\{ type: "GrantMethods"[^\n]*\n/, "\n")]],
+  ],
+  [
+    "R367: delete the PermissionMethods entry from EXTRA_METHOD_CLASSES",
+    "red",
+    [["gate", (s) => s.replace(/\n\s*\{ type: "PermissionMethods"[^\n]*\n/, "\n")]],
+  ],
   // The stdio-only fix: everything the TUI can observe stays green and
   // only the desktop breaks. These mutate the JAVA, never the gate —
   // deleting an assertion from the gate proves nothing about the gate.
-  ["R367: drop the HTTP `grants/revoke` case arm", "red",
-    [["http", (s) => s.replace(/\n\s*case "grants\/revoke"[^\n]*\n/, "\n")]]],
-  ["R367: drop the HTTP `permission/list` case arm", "red",
-    [["http", (s) => s.replace(/\n\s*case "permission\/list"[^\n]*\n/, "\n")]]],
-  ["R367: drop http.setGrantMethods from DaemonRunner", "red",
-    [["runner", (s) => s.replace(/\n\s*http\.setGrantMethods\([^)]*\);/, "")]]],
-  ["R367: drop http.setPermissionMethods from DaemonRunner", "red",
-    [["runner", (s) => s.replace(/\n\s*http\.setPermissionMethods\([^)]*\);/, "")]]],
-  ["R367: delete setPermissionMethods from HttpJsonRpcServer", "red",
-    [["http", (s) => s.replace(/public void setPermissionMethods\(\s*[\r\n][\s\S]*?\)\s*\{\s*\r?\n\s*this\.permissionMethods = pm;\s*\r?\n\s*\}/, "")]]],
+  [
+    "R367: drop the HTTP `grants/revoke` case arm",
+    "red",
+    [["http", (s) => s.replace(/\n\s*case "grants\/revoke"[^\n]*\n/, "\n")]],
+  ],
+  [
+    "R367: drop the HTTP `permission/list` case arm",
+    "red",
+    [["http", (s) => s.replace(/\n\s*case "permission\/list"[^\n]*\n/, "\n")]],
+  ],
+  [
+    "R367: drop http.setGrantMethods from DaemonRunner",
+    "red",
+    [["runner", (s) => s.replace(/\n\s*http\.setGrantMethods\([^)]*\);/, "")]],
+  ],
+  [
+    "R367: drop http.setPermissionMethods from DaemonRunner",
+    "red",
+    [["runner", (s) => s.replace(/\n\s*http\.setPermissionMethods\([^)]*\);/, "")]],
+  ],
+  [
+    "R367: delete setPermissionMethods from HttpJsonRpcServer",
+    "red",
+    [
+      [
+        "http",
+        (s) =>
+          s.replace(
+            /public void setPermissionMethods\(\s*[\r\n][\s\S]*?\)\s*\{\s*\r?\n\s*this\.permissionMethods = pm;\s*\r?\n\s*\}/,
+            "",
+          ),
+      ],
+    ],
+  ],
 
   // --- the discriminators themselves: these MUST go green ---
-  ["BYPASS: isWired := true, then un-wire PermissionMethods", "green",
-    [["gate", (s) => s.replace("const isWired = !!varName && daemonRunnerCode.includes(`${varName}.registerAll(`);",
-      "const isWired = true;")],
-     ["runner", (s) => s.replace("        permRpcs.registerAll(server.dispatcher());",
-      "        // permRpcs.registerAll(server.dispatcher());")]]],
-  ["BYPASS: javaCode stops blanking block comments", "red",
+  [
+    "BYPASS: isWired := true, then un-wire PermissionMethods",
+    "green",
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            "const isWired = !!varName && daemonRunnerCode.includes(`${varName}.registerAll(`);",
+            "const isWired = true;",
+          ),
+      ],
+      [
+        "runner",
+        (s) =>
+          s.replace(
+            "        permRpcs.registerAll(server.dispatcher());",
+            "        // permRpcs.registerAll(server.dispatcher());",
+          ),
+      ],
+    ],
+  ],
+  [
+    "BYPASS: javaCode stops blanking block comments",
+    "red",
     // R364 Lesson 1112, in Java. A comment-stripper that stops
     // understanding comments does not merely stop blanking them —
     // it misreads them. The apostrophe test is the one that bites:
@@ -164,13 +360,38 @@ const CASES = [
     // http.setPermissionMethods call this gate reads. Requiring RED
     // here because a broken scanner that still returns plausible
     // output is the most dangerous failure this gate has.
-    [["javastrip", (s) => s.replace('if (c === "/" && src[i + 1] === "*") {', 'if (false) {')]]],
-  ["BYPASS: javaCode blanks string literals along with comments", "red",
-    [["javastrip", (s) => s.replace('      const q = c;\n      out += c;', '      const q = c;\n      for (let z = i; z < n && src[z] !== "\\n"; z++) out += " ";\n      out += c;')]]],
-  ["BYPASS: the R367 regression test is deleted", "green",
+    [["javastrip", (s) => s.replace('if (c === "/" && src[i + 1] === "*") {', "if (false) {")]],
+  ],
+  [
+    "BYPASS: javaCode blanks string literals along with comments",
+    "red",
+    [
+      [
+        "javastrip",
+        (s) =>
+          s.replace(
+            "      const q = c;\n      out += c;",
+            '      const q = c;\n      for (let z = i; z < n && src[z] !== "\\n"; z++) out += " ";\n      out += c;',
+          ),
+      ],
+    ],
+  ],
+  [
+    "BYPASS: the R367 regression test is deleted",
+    "green",
     // If removing the assertion entirely leaves the gate green, then the
     // R367 case was never actually load-bearing — it was decoration.
-    [["gate", (s) => s.replace(/test\("REGRESSION R367: the permission\/grant surfaces the TUI uses are live"[\s\S]*?\n\}\);\n/, "")]]],
+    [
+      [
+        "gate",
+        (s) =>
+          s.replace(
+            /test\("REGRESSION R367: the permission\/grant surfaces the TUI uses are live"[\s\S]*?\n\}\);\n/,
+            "",
+          ),
+      ],
+    ],
+  ],
 ];
 
 console.log(`r366 mutation battery — ${CASES.length} cases\n`);
@@ -183,13 +404,19 @@ for (const [name, expect, edits] of CASES) {
     const before = original[key];
     const after = mutate(before);
     if (after === before) {
-      console.log(`  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`);
+      console.log(
+        `  ??  ${name}\n      NO-OP on ${key} — the pattern did not match, so this case tests nothing`,
+      );
       noop = true;
       break;
     }
     applied.push([key, before, after]);
   }
-  if (noop) { holes++; restore(applied); continue; }
+  if (noop) {
+    holes++;
+    restore(applied);
+    continue;
+  }
 
   for (const [key, , after] of applied) writeFileSync(PATHS[key], after, "utf-8");
   const { fail, out } = runGate();
@@ -200,9 +427,8 @@ for (const [name, expect, edits] of CASES) {
   const ok = expect === "red" ? fail > 0 : fail === 0;
   if (!ok) holes++;
   const tag = ok ? "ok  " : "HOLE";
-  const why = expect === "red"
-    ? "gate must go red"
-    : "gate must go green (bypass proven load-bearing)";
+  const why =
+    expect === "red" ? "gate must go red" : "gate must go green (bypass proven load-bearing)";
   console.log(`  ${tag}  ${name}\n      gate fail=${fail}  — ${why}`);
   if (!ok) {
     // Say WHICH assertion moved AND why. A count is not a diagnosis:
@@ -235,6 +461,8 @@ for (const [k, p] of Object.entries(PATHS)) {
   }
 }
 
-console.log(`\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`);
+console.log(
+  `\n${holes === 0 ? "ALL MUTATIONS CAUGHT" : `${holes} MUTATION(S) SURVIVED — holes in the gate`}`,
+);
 snapshot.clear();
 process.exit(holes === 0 ? 0 : 1);

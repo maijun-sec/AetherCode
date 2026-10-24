@@ -51,12 +51,7 @@ export interface UpdatePanelProps {
   title?: string;
 }
 
-export const UpdatePanel: React.FC<UpdatePanelProps> = ({
-  model,
-  onChangelog,
-  onClose,
-  title,
-}) => {
+export const UpdatePanel: React.FC<UpdatePanelProps> = ({ model, onChangelog, onClose, title }) => {
   useInput((_input, key) => {
     if (key.escape) {
       onClose();
@@ -68,18 +63,14 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor="cyan"
-      paddingX={2}
-      paddingY={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
       <Box>
-        <Text color="cyan" bold>◆ {title ?? model.title}</Text>
-        <Text dimColor>  Enter: changelog  Esc: close</Text>
+        <Text color="cyan" bold>
+          ◆ {title ?? model.title}
+        </Text>
+        <Text dimColor> Enter: changelog Esc: close</Text>
       </Box>
-      <Text dimColor>  {model.endpoint}</Text>
+      <Text dimColor> {model.endpoint}</Text>
       <Text> </Text>
       {/* The honest answer leads. A panel whose first line is a
           button is a promise the daemon cannot keep. */}
@@ -87,7 +78,7 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({
       <Text> </Text>
       {model.rows.map(([k, v]) => (
         <Box key={k} flexDirection="row">
-          <Text dimColor>  {k.padEnd(16)}</Text>
+          <Text dimColor> {k.padEnd(16)}</Text>
           <Text>{v}</Text>
         </Box>
       ))}
@@ -100,9 +91,9 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({
       ))}
       <Text> </Text>
       <Box flexDirection="row">
-        <Text color="cyan">  ▶ </Text>
+        <Text color="cyan"> ▶ </Text>
         <Text>View changelog</Text>
-        <Text dimColor>  {model.changelogUrl}</Text>
+        <Text dimColor> {model.changelogUrl}</Text>
       </Box>
     </Box>
   );

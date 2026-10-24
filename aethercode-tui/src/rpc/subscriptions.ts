@@ -78,10 +78,18 @@ class RingBuffer<T> {
     this.buf.push(item);
     if (this.buf.length > this.cap) this.buf.shift();
   }
-  clear(): void { this.buf = []; }
-  snapshot(): T[] { return this.buf; }
-  size(): number { return this.buf.length; }
-  last(): T | null { return this.buf.length > 0 ? (this.buf[this.buf.length - 1] as T) : null; }
+  clear(): void {
+    this.buf = [];
+  }
+  snapshot(): T[] {
+    return this.buf;
+  }
+  size(): number {
+    return this.buf.length;
+  }
+  last(): T | null {
+    return this.buf.length > 0 ? (this.buf[this.buf.length - 1] as T) : null;
+  }
 }
 
 function getClient(injected?: JsonRpcClient): JsonRpcClient {
@@ -90,7 +98,7 @@ function getClient(injected?: JsonRpcClient): JsonRpcClient {
 
 export function useRpcSubscription(
   sessionId: string | null,
-  opts: UseRpcSubscriptionOptions = {}
+  opts: UseRpcSubscriptionOptions = {},
 ): UseRpcSubscriptionResult {
   const client = getClient(opts.client);
   const capacity = opts.capacity ?? 200;
@@ -121,7 +129,9 @@ export function useRpcSubscription(
       // different sessions.
       const k = kindRef.current;
       if (k) {
-        const allowed = Array.isArray(k) ? (k as string[]).includes(method) : (k as string) === method;
+        const allowed = Array.isArray(k)
+          ? (k as string[]).includes(method)
+          : (k as string) === method;
         if (!allowed) return;
       }
       // Build an RpcEvent from the notification.
