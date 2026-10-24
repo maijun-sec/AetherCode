@@ -11,6 +11,14 @@
  * status / spinner animation.
  */
 
+// R373: the workflow row type lives in `src/workflowRows.ts` — a leaf
+// module with no imports — so the conversion functions and the state
+// share ONE definition. Two declarations of "a workflow" would drift,
+// and the drift would show up as a panel that renders a field the
+// reducer dropped.
+import type { WorkflowRow } from "./workflowRows.js";
+export type { WorkflowRow } from "./workflowRows.js";
+
 export type Role = "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
 export type ToolStatus = "running" | "ok" | "error";
 export type AppStatus = "connecting" | "ready" | "thinking" | "streaming" | "running-tool" | "exiting";
@@ -115,7 +123,8 @@ export type PanelId =
   | "grants"
   | "notifications"
   | "mcp"
-  | "context";   // R371 — /context, the row R362 shipped as a placeholder
+  | "context"   // R371 — /context, the row R362 shipped as a placeholder
+  | "workflows"; // R373 — /workflow, the row R365 found line-mode-only
 
 /** Loading / error / notice triple shared by every panel. Drives
  *  the shell's pending row and its red error row so a failed RPC is
@@ -186,6 +195,16 @@ export interface GrantRow {
   createdAt: number;
   expiresAt?: number | null;
 }
+
+/**
+ * R373: one workflow, normalised from `listWorkflows`.
+ *
+ * The type lives in `src/workflowRows.ts` — a leaf module with no
+ * imports — so the conversion functions and the state share ONE
+ * definition. Two declarations of "a workflow" would drift, and the
+ * drift would show up as a panel that renders a field the reducer
+ * dropped.
+ */
 
 /** One MCP server, normalised from the (not-yet-existing) daemon
  *  MCP surface. Kept so the McpViewer mounts against a real type
@@ -752,6 +771,27 @@ export interface State {
   threads: ThreadRow[];
   /** R362: consent grants, from `permission/list`. */
   grants: GrantRow[];
+  /** R373: workflow-picker rows, from `listWorkflows`. */
+  workflows: WorkflowRow[];
+  /**
+   * R373: the directory the daemon scanned for workflows.
+   *
+   * <p>Renderer-side this is the fact only the daemon knows, and the
+   * EMPTY state needs it: "no workflows defined" is not actionable
+   * unless the user is told WHERE to put one. `null` means the daemon
+   * has not answered yet — which is NOT the same as "the directory is
+   * empty", so the empty state must not claim the latter.
+   */
+  workflowDir: string | null;
+  /**
+   * R373: the workflow files the daemon could not read.
+   *
+   * <p>Empty in the normal case. When it is NOT empty, the picker says
+   * so instead of showing an empty list that reads like a deliberate
+   * choice — "every workflow in this directory is unreadable" and
+   * "there are no workflows here" are different facts.
+   */
+  workflowSkipped: string[];
   /** R362: MCP servers. Empty until the daemon grows an MCP RPC. */
   mcpServers: McpServerRow[];
   /** R362: the active reasoning-effort id. The daemon exposes no
@@ -1105,6 +1145,7 @@ export type Action =
   | { type: "setMemoryCompact"; progress: MemoryCompactProgress }        // R362: `memory/compact` result
   | { type: "setThreads"; threads: ThreadRow[] }              // R362: `listSessions` result
   | { type: "setGrants"; grants: GrantRow[] }                 // R362: `permission/list` result
+  | { type: "setWorkflows"; workflows: WorkflowRow[]; dir: string | null; skipped: string[] } // R373: `listWorkflows` result
   | { type: "setMcpServers"; servers: McpServerRow[] }        // R362: MCP listing
   | { type: "setEffortCurrent"; effort: string | null }       // R362: local effort mirror
   | { type: "setNotificationToggle"; key: string; enabled: boolean }     // R362: warning toggle
@@ -1263,6 +1304,9 @@ export const INITIAL: State = {
   memoryCompact: { state: "idle" },
   threads: [],
   grants: [],
+  workflows: [],
+  workflowDir: null,
+  workflowSkipped: [],
   mcpServers: [],
   effortCurrent: null,
   notificationToggles: {},
@@ -2331,6 +2375,14 @@ export function reducer(state: State, action: Action): State {
 
     case "setGrants":
       return { ...state, grants: action.grants };
+
+    case "setWorkflows":
+      return {
+        ...state,
+        workflows: action.workflows,
+        workflowDir: action.dir,
+        workflowSkipped: action.skipped,
+      };
 
     case "setMcpServers":
       return { ...state, mcpServers: action.servers };

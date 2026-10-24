@@ -167,4 +167,169 @@ class WorkflowReaderTest {
         assertTrue(p.toString().endsWith("quick-review.yaml"),
                 "expected .yaml appended: " + p);
     }
+
+    // --- R373: the stem is the addressable id ------------------------
+
+    @Test
+    void scanKeepsTheFileNameSeparateFromTheDeclaredName() throws IOException {
+        // The load-bearing case: a file called `deploy.yaml` that
+        // declares `name: ship-it` is ADDRESSED by "deploy.yaml",
+        // because `WorkflowPaths.workflowFile(cwd, "ship-it")`
+        // resolves `ship-it.yaml` — which does not exist. Before R373
+        // the only published field was the declared name, so a client
+        // had no way to start what it was shown.
+        Path dir = Files.createTempDirectory("wf-scan-stem");
+        try {
+            Path wrap = dir.resolve(".aethercode").resolve("workflows");
+            Files.createDirectories(wrap);
+            Files.writeString(wrap.resolve("deploy.yaml"),
+                    "name: ship-it\nsteps:\n  - id: x\n    type: shell\n");
+            var listing = WorkflowReader.scan(dir);
+            assertEquals(1, listing.entries().size(),
+                    "expected exactly one workflow, got " + listing.entries().size());
+            var e = listing.entries().get(0);
+            assertEquals("deploy.yaml", e.fileName(),
+                    "the id is the FILE NAME, not the declared name");
+            assertEquals("ship-it", e.doc().name(),
+                    "the declared name is still the display name");
+            // The decisive assertion: the published id RESOLVES.
+            assertTrue(Files.isRegularFile(WorkflowPaths.workflowFile(dir, e.fileName())),
+                    "the published id must resolve to a real file");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    @Test
+    void workflowFileResolvesTheYmlExtensionToo() throws IOException {
+        // R373: the reader accepted BOTH `.yaml` and `.yml`, but the
+        // resolver only ever produced `.yaml`. A workflow stored as
+        // `beta.yml` was therefore listed and could not be started,
+        // written to, or deleted — every one of those three went
+        // through `workflowFile` and every one of them missed it.
+        Path dir = Files.createTempDirectory("wf-yml-ext");
+        try {
+            Path wrap = dir.resolve(".aethercode").resolve("workflows");
+            Files.createDirectories(wrap);
+            Files.writeString(wrap.resolve("beta.yml"), "name: beta\n");
+
+            // The bare name must find the `.yml` file.
+            assertEquals("beta.yml",
+                    WorkflowPaths.workflowFile(dir, "beta").getFileName().toString(),
+                    "a bare name must resolve to the existing .yml file");
+
+            // ...and the id the listing publishes must resolve too.
+            var listing = WorkflowReader.scan(dir);
+            assertEquals(1, listing.entries().size());
+            assertEquals("beta.yml", listing.entries().get(0).fileName());
+            assertTrue(Files.isRegularFile(
+                    WorkflowPaths.workflowFile(dir, listing.entries().get(0).fileName())));
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    @Test
+    void workflowFilePrefersYamlWhenBothExtensionsExist() throws IOException {
+        // The tie-break has to be deterministic, and it has to be the
+        // SAME one the listing uses — otherwise the first row and the
+        // second row of the picker would launch different files for
+        // the same name.
+        Path dir = Files.createTempDirectory("wf-both-ext");
+        try {
+            Path wrap = dir.resolve(".aethercode").resolve("workflows");
+            Files.createDirectories(wrap);
+            Files.writeString(wrap.resolve("both.yaml"), "name: both\n");
+            Files.writeString(wrap.resolve("both.yml"), "name: both\n");
+            assertEquals("both.yaml",
+                    WorkflowPaths.workflowFile(dir, "both").getFileName().toString());
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    @Test
+    void scanFallsBackToTheStemWhenTheYamlDeclaresNoName() throws IOException {
+        Path dir = Files.createTempDirectory("wf-scan-noname");
+        try {
+            Path wrap = dir.resolve(".aethercode").resolve("workflows");
+            Files.createDirectories(wrap);
+            Files.writeString(wrap.resolve("anon.yaml"),
+                    "description: no name here\nsteps:\n  - id: x\n    type: shell\n");
+            var listing = WorkflowReader.scan(dir);
+            assertEquals(1, listing.entries().size());
+            assertEquals("anon.yaml", listing.entries().get(0).fileName());
+            assertEquals("anon", listing.entries().get(0).doc().name(),
+                    "the declared name falls back to the stem");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    @Test
+    void scanReportsFilesItCouldNotReadInsteadOfDroppingThem() throws IOException {
+        // The branch that keeps "no workflows here" from being a lie.
+        //
+        // It used to be unreachable from a test: file locks are
+        // ADVISORY on Linux, so a lock-based fixture would skip itself
+        // on half the platforms. The reader seam makes it reachable
+        // everywhere — and a branch that no test can reach is a branch
+        // that rots.
+        Path dir = Files.createTempDirectory("wf-scan-skip");
+        try {
+            Path wrap = dir.resolve(".aethercode").resolve("workflows");
+            Files.createDirectories(wrap);
+            Files.writeString(wrap.resolve("good.yaml"), "name: good\n");
+            Files.writeString(wrap.resolve("bad.yaml"), "name: bad\n");
+            var listing = WorkflowReader.scan(dir, p -> {
+                if (p.getFileName().toString().startsWith("bad")) {
+                    throw new IOException("simulated unreadable workflow file");
+                }
+                return WorkflowReader.read(p);
+            });
+            assertEquals(1, listing.entries().size(),
+                    "the readable file is still listed");
+            assertEquals("good.yaml", listing.entries().get(0).fileName());
+            assertEquals(List.of("bad.yaml"), listing.skipped(),
+                    "the unreadable file is REPORTED, not dropped");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    @Test
+    void scanOfAMissingDirectoryIsEmptyNotAnError() {
+        Path missing = Path.of("Z:/definitely/not/here/for/the/test");
+        var listing = WorkflowReader.scan(missing);
+        assertTrue(listing.entries().isEmpty(), "missing dir yields no entries");
+        assertTrue(listing.skipped().isEmpty(),
+                "a missing dir is not a skipped file — those are different facts");
+    }
+
+    @Test
+    void listStillReturnsDocumentsOnly() throws IOException {
+        // `list` is the pre-R373 API. R373 added `scan`; it must NOT
+        // change what `list` returns.
+        Path dir = Files.createTempDirectory("wf-list-compat");
+        try {
+            Path wrap = dir.resolve(".aethercode").resolve("workflows");
+            Files.createDirectories(wrap);
+            Files.writeString(wrap.resolve("a.yaml"), "name: a\n");
+            var docs = WorkflowReader.list(dir);
+            assertEquals(1, docs.size());
+            assertEquals("a", docs.get(0).name());
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    /** Best-effort recursive delete; the tests only ever create small
+     *  temp trees, so a failure here must not fail the test. */
+    private static void deleteTree(Path dir) {
+        try (var s = Files.walk(dir)) {
+            s.sorted((x, y) -> y.compareTo(x)).forEach(p -> {
+                try { Files.deleteIfExists(p); } catch (IOException ignored) { }
+            });
+        } catch (IOException ignored) { }
+    }
 }

@@ -28,7 +28,7 @@ import { findJar } from "./ac-tui.js";
 import {
   reducer, INITIAL, nextTurnId, type State, type Action, type PermissionAsk, type SddRunState,
   type PanelId, type PanelStatus, type MemoryScopeId, type MemoryRow, type ThreadRow,
-  type GrantRow,
+  type GrantRow, type WorkflowRow,
 } from "./state.js";
 // R372: the messages→turns converter. Until this existed the TUI had
 // no way to show a session's history after switching to it.
@@ -46,6 +46,14 @@ import { partitionByCwd, cwdBasename, sameCwd } from "./cwdMatch.js";
 // R371: mounted on Ink for the first time. T-441 wrote this component
 // in T-441 and nothing has imported it since.
 import { ContextMeter } from "./components/ContextMeter.js";
+// R373: the Ink half of `/workflow`. Line mode has had a workflow
+// panel since R102; the registry row sat at `ink: 'unavailable'`
+// because nobody wrote this one.
+import { WorkflowPicker } from "./components/WorkflowPicker.js";
+// R373: the pure part of the workflow list — normalising the daemon's
+// envelope, and the empty-state copy. Kept out of this file so the
+// gate can RUN it instead of grepping for it.
+import { parseWorkflowListing } from "./workflowRows.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
@@ -337,6 +345,9 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   "mcp-viewer": "mcp",
   // R371: the row that R362 shipped as a `no-command` placeholder.
   "context-meter": "context",
+  // R373: the row R365 re-derived as "line mode has a real frame,
+  // Ink has none". This is the Ink half.
+  "workflow-picker": "workflows",
 };
 
 /** Intents whose panel row list is scoped to the active cwd. Kept as
@@ -401,6 +412,15 @@ const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string
     title: "Context",
     hint: "Esc close · /context re-reads on a 15 s tick",
     loading: "reading the context window",
+  },
+  // R373: `/workflow`. The hint names the two actions the panel
+  // actually has — navigate and run — because a hint that lists
+  // keys the component does not handle is how a picker ends up
+  // advertising a filter it never had.
+  workflows: {
+    title: "Workflows",
+    hint: "↑/↓ (j/k): navigate · Enter: run · Esc close",
+    loading: "listing workflows",
   },
 };
 
@@ -1541,6 +1561,45 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
       // explicitly — a wrong empty state is worse than a gap.
       notice("this daemon exposes no MCP RPC yet — /mcp shows the viewer shell only");
     }
+
+    if (panel === "workflows") {
+      // R373. `listWorkflows` answers `{ workflows, count, dir,
+      // skipped }`.
+      //
+      // The daemon drops workflow files it cannot READ, so the
+      // `skipped` list is what tells "the directory is empty" apart
+      // from "you cannot read what is in it". The picker renders the
+      // two differently; collapsing them here would make that
+      // impossible.
+      begin();
+      void client
+        .request("listWorkflows", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          if (envErr) {
+            dispatch({
+              type: "setWorkflows",
+              workflows: [],
+              dir: null,
+              skipped: [],
+            });
+            fail("listWorkflows", envErr);
+            return;
+          }
+          const listing = parseWorkflowListing(raw);
+          dispatch({
+            type: "setWorkflows",
+            workflows: listing.workflows,
+            dir: listing.dir,
+            skipped: listing.skipped,
+          });
+          done();
+        })
+        .catch((e: unknown) => fail("listWorkflows", e));
+      return () => { cancelled = true; };
+    }
+
     // "todos", "cwd", "effort" and "notifications" are served from
     // local state; nothing to fetch, so nothing to await.
     return () => { cancelled = true; };
@@ -1998,10 +2057,10 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
     // fallback below without first being given a declared owner.
     //
     // `bareSentinel` strips the `:<arg>` suffix (`__MCP_LOGIN__:gh`)
-    // so the registry's bare-token keys resolve. Four intents have
-    // no component (`__UPDATE_*__`, `__WORKFLOW_PICKER__`,
-    // `__CONTEXT_METER__`) and deliberately fall through to the
-    // human-readable fallback.
+    // so the registry's bare-token keys resolve. The only sentinel
+    // with no component left is the `__UPDATE_*__` family (R373
+    // mounted `__WORKFLOW_PICKER__`, R371 `__CONTEXT_METER__`), so
+    // it deliberately falls through to the human-readable fallback.
     const panelLocal = slash?.local;
     if (panelLocal) {
       const intent = intentForSentinel(bareSentinel(panelLocal));
@@ -3373,6 +3432,65 @@ const App: React.FC<{ client: JsonRpcClient; cwd: string; stateRef: React.Mutabl
             onReconnect={() =>
               setNotice("reconnect needs an MCP RPC, which this daemon does not expose")
             }
+            onClose={closePanel}
+            title=""
+            maxVisible={10}
+          />
+        );
+      }
+
+      case "workflows": {
+        // R373. The Ink half of `/workflow`.
+        //
+        // The picker sends the workflow's ADDRESSABLE id, never its
+        // display name: `runWorkflow` resolves a FILE, and the
+        // YAML's declared `name:` is not necessarily that file's
+        // name. The daemon publishes `id` for exactly this.
+        //
+        // `WorkflowRow` and the component's `WorkflowInfo` are the
+        // same shape (one type, declared in `workflowRows.ts`), so
+        // the rows go straight through — a copy here would be a
+        // second place for a field to be dropped.
+        return (
+          <WorkflowPicker
+            workflows={state.workflows}
+            dir={state.workflowDir}
+            skipped={state.workflowSkipped}
+            onRun={(id) => {
+              closePanel();
+              // `runWorkflow` answers `{ok:true, runId, name,
+              // stepCount, accepted}` — "accepted", NOT "finished".
+              // The workflow runs on a daemon thread and reports
+              // through the stream, so saying "started" would be
+              // claiming an outcome this call did not report.
+              void client
+                .request("runWorkflow", { name: id } as RpcValue)
+                .then((res: unknown) => {
+                  const envErr = envelopeError(res);
+                  if (envErr) {
+                    dispatch({
+                      type: "pushToast",
+                      kind: "warn",
+                      text: `workflow ${id} was not accepted: ${envErr}`,
+                    });
+                    return;
+                  }
+                  const r = (res ?? {}) as { runId?: unknown; stepCount?: unknown };
+                  const runId = typeof r.runId === "string" ? r.runId : "unknown";
+                  dispatch({
+                    type: "pushToast",
+                    kind: "ok",
+                    text: `workflow ${id} accepted (run ${runId})`,
+                  });
+                })
+                .catch((e: unknown) =>
+                  dispatch({
+                    type: "pushToast",
+                    kind: "warn",
+                    text: `runWorkflow failed: ${errMsg(e)}`,
+                  })
+                );
+            }}
             onClose={closePanel}
             title=""
             maxVisible={10}

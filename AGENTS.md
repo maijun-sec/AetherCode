@@ -1126,6 +1126,18 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   red, say so in the test — a test named as a gate that is not one is worse
   than no test.
 
+- **R373** (the `/workflow` Ink panel + the two lies the contract was
+  hiding): the registry row `workflow-picker` sat at `ink: 'unavailable'`
+  for three rounds while line mode had had a real frame since R102. R373
+  mounted the Ink half — and in doing so found that the DTO's `name` was
+  NOT the addressable id (`runWorkflow` resolves a FILE), and that an
+  empty workflow list could not say WHY it was empty. The daemon now
+  publishes an addressable `id` (the file's name) and `skipped` (the
+  files it could not read); `WorkflowPaths.workflowFile` resolves
+  `.yaml` AND `.yml` (it only ever did the former, so a `.yml` workflow
+  was listed but could not be started, written, or deleted). See
+  "Watch out for (R373 additions)" and `docs/R373-workflow-picker.md`.
+
 - **Reverting the predicate is not the only mutation; pick the mutation your
   fix actually introduced.** Each round's gate must be checked against the
   specific change under test, and a fix that is *only* reachable through a
@@ -1303,3 +1315,50 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   的行为却跑 R370 的门禁**、1 个是「中和一条断言 + 引入只有另一条
   断言能看见的缺陷」(按构造就是单点故障,证明不了冗余)。
   **Lesson 1164.**
+
+## Watch out for (R373 additions)
+
+- **变异电池会原地改写产品源码,所以绝不能和测试套件并发跑。**
+  R373 收尾时后台跑 `npm test`、前台同时跑 9 个电池,全量多出 2 个
+  失败(`resp.runId` 那条、INLINE_OK 那条)—— 两条**单跑都是绿的**。
+  原因是 `r363-mutate.mjs:41` 正好删掉 `src/tui.tsx` 里
+  `const runId = resp.runId ?? …` 那一行,而 r363 的门禁正在读同一个
+  文件。**Lesson 1166.** 遇到「多出 N 个失败」,先问「我的验证流程
+  是不是自己污染了」—— 判据是那几条**单跑绿不绿**。这次污染是
+  「多出失败」,运气好;反过来就是**掩盖**一个真回归。
+- **DTO 的字段名不保证它就是可寻址的 id。** `listWorkflows` 回
+  `name`(YAML 声明的显示名),`runWorkflow` 按**文件名**解析。文件
+  `deploy.yaml` 声明 `name: ship-it` 时,列出来是 "ship-it" 但按
+  "ship-it" **启动不了**。R373 让 daemon 公布可寻址的 `id`
+  (工作流**文件名**,带扩展名 —— 带扩展名才能让 `foo.yaml` 和
+  `foo.yml` 同目录时无歧义)。**Lesson 1167.**
+- **同一族文件的「枚举」和「解析」必须认同一批后缀。**
+  `WorkflowReader.list` 收 `.yaml` 和 `.yml`,而
+  `WorkflowPaths.workflowFile` 只会拼 `.yaml` → `foo.yml` 能被列出
+  却**启动/写入/删除全失败**(三个操作共用这一个函数)。
+  `workflowFile` 现在按 `.yaml` → `.yml` → 默认 `.yaml` 解析。
+  **Lesson 1168.**
+- **断言「公布的 id 能解析回文件」要用全列表,不要挑一行。** 我第一版
+  挑了 `.yaml` 那一行,全绿;把 `.yml` 放进去才红 —— 一行断言对
+  「只有某一行没被修」的缺陷是盲的。
+- **一个分支如果只能用某个 OS 的手段触发,它就等于没被测。** 「让文件
+  读不出来」的自然做法是**锁文件**,但文件锁在 Linux 上是**建议性**
+  的,一个基于锁的 fixture 会在一半平台上自己跳过自己。
+  `WorkflowReader.scan(cwd, reader)` 因此注入了 reader,分支到处可测。
+  **Lesson 1169.**
+- **源码钉要钉「调用」,不是「标识符出现过」。** 断言
+  `/workflowEmptyState/` 会被 `import { workflowEmptyState } from …`
+  满足 —— 渲染器不再调用该函数,门禁照样全绿。改用
+  `/workflowEmptyState\(/`(`name(` 才能区分调用和 import)。
+  **Lesson 1170.**
+- **提取器的 header 在结构「内部」时,要往回找开口括号。** registry 行
+  的 `id:` 在对象字面量**里面**,所以「header 之后的第一个 `{`」读到的是
+  **下一行**。用 `enclosingObject()`(回退到最近的 `{`)而不是
+  `block()`。
+- **R373 的行模式也有同一个寻址 bug。** `panelWorkflow` 原来把
+  `nameOf(w)`(显示名)发给 `runWorkflow`;现在发 `idOf(w)`,并保留
+  `name` 作为老 daemon 的回退。
+- **`runWorkflow` 报的是 "accepted",不是 "finished"。** 它把工作流丢到
+  daemon 线程上就返回了,结果走 stream 事件。toast 必须说
+  `workflow deploy.yaml accepted (run wf-3)`,说 "started" 就是在
+  声称这次调用没有报告过的结果。

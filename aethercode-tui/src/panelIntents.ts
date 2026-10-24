@@ -327,18 +327,28 @@ export const PANEL_INTENTS: PanelIntent[] = [
     command: '/workflow',
     title: 'Run a workflow by name, or pick one from the list',
     group: 'workflow',
-    ink: 'unavailable',
-    line: 'rendered', // R365: line mode HAS a real frame (panelWorkflow).
-    blocker: 'not-wired',
-    gapNote:
-      'R362 declared both renderers unavailable. R365 re-derived the ' +
-      'columns from source and found line mode has always had a real ' +
-      'frame (line.ts panelWorkflow) - only Ink lacks a case. R366 then ' +
-      'found the frame itself was calling `workflow/list`, which is ' +
-      'registered on SupervisorRpcServer (a separate CLI the TUI never ' +
-      'starts); the daemon the TUI spawns registers the flat ' +
-      '`listWorkflows` / `runWorkflow`. Both are now called by the right ' +
-      'name, so this is a bounded UI task on Ink, not a dead end.',
+    component: 'components/WorkflowPicker.tsx',
+    // R373: this row was `ink: 'unavailable'` with
+    // `blocker: 'not-wired'` for three rounds, and the blocker was
+    // TRUE each time — line mode really did have a frame and Ink
+    // really did not.
+    //
+    // R366 had already fixed the deeper bug underneath: the line
+    // frame called `workflow/list` / `workflow/run`, which are
+    // registered on SupervisorRpcServer (a separate CLI the TUI never
+    // starts), while the daemon the TUI spawns registers the flat
+    // `listWorkflows` / `runWorkflow`. So the line frame was calling
+    // methods that do not exist on its own daemon.
+    //
+    // R373 mounted the Ink half and fixed the daemon contract it
+    // needs: `listWorkflows` now publishes an ADDRESSABLE `id` (the
+    // workflow file's name) alongside the display `name`, because
+    // `runWorkflow` resolves a FILE and the YAML's declared `name:`
+    // is not necessarily that file's name. It also publishes
+    // `skipped`, so "the directory is empty" and "you cannot read
+    // what is in it" stop being the same answer.
+    ink: 'mounted',
+    line: 'rendered',
   },
 
   // --- system ------------------------------------------------------

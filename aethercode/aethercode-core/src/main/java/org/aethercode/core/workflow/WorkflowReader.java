@@ -48,14 +48,75 @@ public final class WorkflowReader {
         return parse(raw, stripExt(file.getFileName().toString()));
     }
 
-    /** List workflows in {@link WorkflowPaths#workflowDir(Path)} as
-     *  ordered {@link WorkflowDoc}s (sorted by name). Skips files that
-     *  fail to parse — the desktop surfaces a count of skipped files
-     *  in the picker footer. */
-    public static List<WorkflowDoc> list(Path cwd) {
+    /**
+     * One workflow file plus its parsed metadata.
+     *
+     * <p><b>R373:</b> {@code fileName} is the workflow's ADDRESSABLE id
+     * — the file name WITH its extension ({@code deploy.yaml}). It is
+     * not the same as {@link WorkflowDoc#name()}, which is the
+     * {@code name:} the YAML declares (falling back to the file stem
+     * when it declares none).
+     *
+     * <p>The two can differ, and the difference is load-bearing:
+     * {@link WorkflowPaths#workflowFile(Path, String)} resolves a FILE,
+     * so a file called {@code deploy.yaml} that declares
+     * {@code name: ship-it} is LISTED as "ship-it" but cannot be
+     * STARTED under that name. Publishing the file name is what lets a
+     * client address the thing it was shown.
+     *
+     * <p>The extension is part of the id on purpose. It is what keeps
+     * a directory holding BOTH {@code foo.yaml} and {@code foo.yml}
+     * unambiguous — with a bare stem, both rows would publish the id
+     * "foo" and picking the second would silently launch the first.
+     */
+    public record WorkflowEntry(String fileName, WorkflowDoc doc) {}
+
+    /**
+     * The result of scanning the workflow directory.
+     *
+     * <p>{@code skipped} names the YAML files that could not be read.
+     * {@link #list(Path)} dropped them silently, which made "there are
+     * no workflows here" and "every workflow here is unreadable" the
+     * SAME answer. R373 publishes the names so a picker can tell the
+     * two apart instead of showing an empty list that reads like a
+     * deliberate choice.
+     */
+    public record WorkflowListing(List<WorkflowEntry> entries, List<String> skipped) {}
+
+    /**
+     * Reads one workflow file. Separated out so the scan's error path
+     * is testable on every platform.
+     *
+     * <p>The obvious way to make a file unreadable is to lock it, but
+     * file locks are ADVISORY on Linux and MANDATORY on Windows — so a
+     * lock-based test would silently skip itself on half the CI
+     * matrix and the "we skipped a file" branch would never be
+     * exercised anywhere but a developer's Windows box. Injecting the
+     * reader keeps the branch reachable from a unit test everywhere.
+     */
+    @FunctionalInterface
+    interface DocReader {
+        WorkflowDoc read(Path file) throws IOException;
+    }
+
+    /**
+     * Scan {@link WorkflowPaths#workflowDir(Path)} for workflow files.
+     *
+     * <p>Returns the parsed documents in file-name order together with
+     * the file stem of each, and the names of the files that could not
+     * be read. A missing directory is an EMPTY listing, not an error —
+     * most projects have no workflows at all.
+     */
+    public static WorkflowListing scan(Path cwd) {
+        return scan(cwd, WorkflowReader::read);
+    }
+
+    /** Package-private seam: see {@link DocReader}. */
+    static WorkflowListing scan(Path cwd, DocReader reader) {
         Path dir = WorkflowPaths.workflowDir(cwd);
-        List<WorkflowDoc> out = new ArrayList<>();
-        if (!Files.isDirectory(dir)) return out;
+        List<WorkflowEntry> out = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        if (!Files.isDirectory(dir)) return new WorkflowListing(out, skipped);
         try (var stream = Files.list(dir)) {
             // Sort by file name so the picker is stable across calls.
             stream.filter((p) -> Files.isRegularFile(p))
@@ -67,16 +128,32 @@ public final class WorkflowReader {
                                      .compareTo(b.getFileName().toString()))
                   .forEach((p) -> {
                       try {
-                          out.add(read(p));
+                          out.add(new WorkflowEntry(
+                                  p.getFileName().toString(),
+                                  reader.read(p)));
                       } catch (IOException e) {
-                          // Skip unreadable / unparseable; the picker
-                          // can still show the file name in a "skipped"
-                          // section if needed. For R102 we just drop it.
+                          // Unreadable: bad encoding, a lock, a
+                          // half-written file. R373 reports it
+                          // instead of dropping it — a directory full
+                          // of files the daemon cannot read is NOT the
+                          // same as an empty directory, and the picker
+                          // has to be able to say so.
+                          skipped.add(p.getFileName().toString());
                       }
                   });
         } catch (IOException e) {
             // Directory inaccessible — return whatever we have so far.
         }
+        return new WorkflowListing(out, skipped);
+    }
+
+    /** List workflows in {@link WorkflowPaths#workflowDir(Path)} as
+     *  ordered {@link WorkflowDoc}s (sorted by name). Unreadable files
+     *  are dropped — use {@link #scan(Path)} when the caller needs to
+     *  know that they existed. */
+    public static List<WorkflowDoc> list(Path cwd) {
+        List<WorkflowDoc> out = new ArrayList<>();
+        for (WorkflowEntry e : scan(cwd).entries()) out.add(e.doc());
         return out;
     }
 

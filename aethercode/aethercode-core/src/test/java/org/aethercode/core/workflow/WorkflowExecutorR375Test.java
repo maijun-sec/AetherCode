@@ -93,9 +93,21 @@ class WorkflowExecutorR375Test {
         AtomicInteger calls = new AtomicInteger();
         List<String> seenPrompts = new ArrayList<>();
         WorkflowExecutor.SkillInvoker inv = (kind, name, prompt, model, ev) -> {
-            calls.incrementAndGet();
+            // R373: use the value `incrementAndGet` RETURNED. Re-reading
+            // the shared counter (`calls.get()`) after the increment is a
+            // race: the three replicas run concurrently, so by the time
+            // the first one reads the counter the other two have already
+            // bumped it, and the outputs come back as "out-3", "out-3",
+            // "out-3" with no "out-1" anywhere. That made this test fail
+            // or pass depending on machine load — the known
+            // `parallelism_three_fansOut_andAggregates` flake.
+            //
+            // The counter is still incremented exactly once per replica;
+            // only the VALUE used for the label is now the one this
+            // replica actually claimed.
+            int n = calls.incrementAndGet();
             synchronized (seenPrompts) { seenPrompts.add(prompt); }
-            return "out-" + calls.get();
+            return "out-" + n;
         };
         WorkflowReader.WorkflowDoc doc = parse(
                 "- id: step1\n" +

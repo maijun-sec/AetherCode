@@ -1,5 +1,6 @@
 package org.aethercode.core.workflow;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -33,7 +34,25 @@ public final class WorkflowPaths {
         return cwd.resolve(WORKFLOW_DIR).resolve(WORKFLOW_SUBDIR);
     }
 
-    /** Absolute path to one workflow's YAML file. */
+    /** Absolute path to one workflow's YAML file.
+     *
+     * <p>R373: the reader accepts BOTH {@code .yaml} and {@code .yml}
+     * ({@link WorkflowReader#list(Path)} filters on either), so the
+     * resolver must too. Before this, a workflow stored as
+     * {@code foo.yml} was LISTED by the picker but could never be
+     * started, written to, or deleted by its name — all three went
+     * through this one function, and all three silently missed it and
+     * answered "not found".
+     *
+     * <p>When the name carries no extension, an existing file wins:
+     * {@code .yaml} first, then {@code .yml}. When neither exists, the
+     * canonical {@code .yaml} is returned so a NEW workflow is created
+     * under the same name it will later be addressed by.
+     *
+     * <p>A name that carries its own extension is used verbatim, so a
+     * caller can address {@code foo.yml} exactly — which is what keeps
+     * a directory holding BOTH {@code foo.yaml} and {@code foo.yml}
+     * unambiguous instead of a coin flip. */
     public static Path workflowFile(Path cwd, String name) {
         // Sanitise: refuse path separators and `..` so a hostile
         // RPC param cannot escape the workflow dir.
@@ -44,11 +63,15 @@ public final class WorkflowPaths {
                 || name.contains("\0")) {
             throw new IllegalArgumentException("invalid workflow name: " + name);
         }
-        if (!name.endsWith(".yaml") && !name.endsWith(".yml")) {
-            // Auto-append so a `/workflow run foo` RPC param doesn't
-            // need to include the extension.
-            name = name + ".yaml";
+        Path dir = workflowDir(cwd);
+        if (name.endsWith(".yaml") || name.endsWith(".yml")) {
+            return dir.resolve(name).normalize();
         }
-        return workflowDir(cwd).resolve(name).normalize();
+        Path yaml = dir.resolve(name + ".yaml").normalize();
+        if (Files.exists(yaml)) return yaml;
+        Path yml = dir.resolve(name + ".yml").normalize();
+        if (Files.exists(yml)) return yml;
+        // Neither exists yet: the canonical default.
+        return yaml;
     }
 }

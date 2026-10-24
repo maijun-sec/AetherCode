@@ -4510,14 +4510,28 @@ public class AetherCodeMethods {
     public Object listWorkflows(Object params) {
         java.nio.file.Path cwd = java.nio.file.Paths.get(
                 System.getProperty("user.dir"));
-        java.util.List<org.aethercode.core.workflow.WorkflowReader.WorkflowDoc> docs =
-                org.aethercode.core.workflow.WorkflowReader.list(cwd);
+        var listing = org.aethercode.core.workflow.WorkflowReader.scan(cwd);
         java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
-        for (var d : docs) out.add(d.toMap());
+        for (var e : listing.entries()) {
+            java.util.Map<String, Object> m =
+                    new java.util.LinkedHashMap<>(e.doc().toMap());
+            // R373: the ADDRESSABLE id. `runWorkflow` / `getWorkflow`
+            // resolve a FILE, but `name` is whatever the YAML
+            // declared. Those are not always the same string, and a
+            // client that only had `name` could not start what it was
+            // shown. `id` is the file name (with extension) — pass
+            // THIS to runWorkflow.
+            m.put("id", e.fileName());
+            out.add(m);
+        }
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("workflows", out);
         r.put("count", out.size());
         r.put("dir", org.aethercode.core.workflow.WorkflowPaths.workflowDir(cwd).toString());
+        // R373: the files the daemon could not read. Without this,
+        // "no workflows here" and "every workflow here is unreadable"
+        // are the same answer, and a picker has to pick one of them.
+        r.put("skipped", listing.skipped());
         return r;
     }
 
@@ -4536,6 +4550,10 @@ public class AetherCodeMethods {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("ok", true);
             r.putAll(doc.toMap());
+            // R373: the addressable id, same as `listWorkflows`
+            // publishes — the file's name, which is what
+            // `workflowFile(cwd, id)` resolves.
+            r.put("id", file.getFileName().toString());
             r.put("raw", doc.raw());
             // R234 (daemon parity fix): also surface `content` so
             // desktop clients that follow the writeWorkflow wire

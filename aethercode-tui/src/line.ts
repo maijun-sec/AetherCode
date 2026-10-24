@@ -24,6 +24,9 @@ import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 import { partitionByCwd } from "./cwdMatch.js";
 // R372: the messages→turns converter, shared with the Ink renderer.
 import { replayTranscript } from "./transcriptHydrate.js";
+// R373: the workflow empty-state copy, shared with the Ink panel so
+// the two renderers cannot drift apart.
+import { workflowEmptyCopy } from "./workflowRows.js";
 
 export interface LineOptions {
   jar: string;
@@ -2677,12 +2680,29 @@ async function panelWorkflow(ctx: PanelCtx): Promise<void> {
     return;
   }
   const flows = asRows(r.value);
+  // R373: the DISPLAY name and the ADDRESSABLE id are different
+  // strings, and `runWorkflow` resolves a FILE. The daemon publishes
+  // `id` (the workflow file's name) for exactly this; the fallback to
+  // `name` keeps an older daemon working.
   const nameOf = (w: unknown): string => fieldStr(w, ["name", "id"], "");
+  const idOf = (w: unknown): string => fieldStr(w, ["id", "name"], "");
   const rows: PanelCell[][] = flows.map((w) => [
     { text: nameOf(w), tone: "strong" },
     { text: fieldStr(w, ["description", "summary"]), tone: "plain" },
     { text: String(asRows(field(w, ["steps"])).length), align: "right", tone: "muted" },
   ]);
+  // R373: the daemon publishes the files it could not READ. An
+  // unreadable file and an empty directory are different facts, and
+  // the empty state has to say which one it is — "no workflows
+  // defined" would blame the user for a permission problem.
+  //
+  // The COPY comes from the same pure function the Ink panel uses, so
+  // the two renderers cannot drift apart. The line frame's `empty:`
+  // slot is only rendered when there are no rows, so it asks for the
+  // copy directly rather than for "the empty state, if any".
+  const skipped = asRows(field(r.value, ["skipped"])).map((s) => String(s));
+  const dir = fieldStr(r.value, ["dir"], "") || null;
+  const empty: string[] = workflowEmptyCopy(skipped, dir).lines;
   emitPanel(
     ctx,
     renderPanel({
@@ -2696,17 +2716,18 @@ async function panelWorkflow(ctx: PanelCtx): Promise<void> {
         { header: "steps", align: "right", min: 5 },
       ],
       rows,
-      empty: ["no workflows defined \u2014 drop a .yaml under the workflows directory"],
+      empty,
     }),
   );
   const picked = await choose(ctx, {
-    options: flows.map((w) => ({ label: nameOf(w), value: nameOf(w) })),
+    options: flows.map((w) => ({ label: nameOf(w), value: idOf(w) })),
     initial: 0,
     title: "Run a workflow",
     alt: "use `/workflow <name>` instead",
   });
   repaint(ctx);
   if (picked === null) return;
+  // The id, not the display name — see `idOf` above.
   const res = await probe(ctx, "runWorkflow", { name: picked } as RpcValue);
   ctx.logAbove(
     res.ok
