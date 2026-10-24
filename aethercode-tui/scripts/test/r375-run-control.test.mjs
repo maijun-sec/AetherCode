@@ -706,16 +706,17 @@ test("G1: the refusal table names exactly the gaps that remain", () => {
     (m) => m[1],
   );
   assert.ok(
-    names.length >= 4,
+    names.length >= 3,
     `only ${names.length} entries parsed from rpcCapabilities.ts — the ` +
       "extraction probably stopped matching",
   );
   assert.deepEqual(
     names.sort(),
-    ["agent/setDefault", "effort/set", "rewind", "session/tokens"],
+    ["agent/setDefault", "rewind", "session/tokens"],
     "the refusal table must name exactly the methods the TUI still wants " +
       "and cannot have. R375 removed the three task/* entries because the TUI " +
-      "stopped naming those methods at all.",
+      "stopped naming those methods at all; R377 removed effort/set because " +
+      "the daemon serves that capability as switchVariant.",
   );
 });
 

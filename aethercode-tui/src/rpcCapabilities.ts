@@ -16,6 +16,23 @@
  *     request guaranteed to return -32601;
  *   - the R366 gate imports it, so the gate and the UI cannot drift.
  *
+ * ## R377 — a refusal can hide a working feature
+ *
+ * The table had four entries. One of them — `effort/set` — was a
+ * **name mismatch**, not a missing capability: the daemon calls the
+ * thing a VARIANT and serves it through `switchVariant`, registered on
+ * both transports since R285. The TUI had been refusing the user for
+ * a feature the desktop has been driving the whole time.
+ *
+ * The other three were real gaps, and their REASONS were still wrong in
+ * their details: `session/tokens` pointed at `getState` for the
+ * aggregate counters, and `getState` carries no token counters at all
+ * (the aggregates live in `CostTracker`).
+ *
+ * So the reason text is now part of the contract, not decoration: every
+ * reason quotes the daemon's OWN identifiers, and the R377 gate checks
+ * that each quoted identifier really exists in the daemon's code.
+ *
  * ## The distinction that matters
  *
  * These are NOT unimplemented features of the TUI. Each is a REAL
@@ -28,20 +45,51 @@
  */
 
 /**
+ * The daemon's method for the reasoning-effort capability.
+ *
+ * <p>The USER says "effort"; the daemon says "variant". `Variant` is
+ * documented as a "per-model effort / quality preset", inspired by
+ * Claude Code's low / medium / high / xhigh levels, and `switchVariant`
+ * is registered on BOTH transports. The desktop has driven it from its
+ * Quality dropdown since R285.
+ *
+ * <p>R377: the TUI used to call `effort/set` — a method that does not
+ * exist — and REFUSED the user, while the real one sat right there,
+ * registered. The refusal was honest about the METHOD and a lie about
+ * the CAPABILITY. A refusal that hides a working feature is worse than
+ * no refusal: the user is told the thing is impossible when it is one
+ * word away.
+ *
+ * <p>Lesson 1193 — a refusal is a claim about ANOTHER system's
+ * vocabulary, and such a claim cannot verify itself. The fix is not a
+ * better sentence; it is to make the claim about the daemon's own
+ * identifiers, and to look the capability up in the daemon before
+ * declaring it missing. See `docs/R377-capability-naming.md`.
+ */
+export const EFFORT_METHOD = "switchVariant";
+
+/**
  * Methods the TUI may name that the TUI's daemon does not register.
+ *
+ * <p>Every reason below quotes the daemon's OWN identifiers — a class,
+ * a method, a registered RPC — and the R377 gate checks that each
+ * quoted identifier really exists in the daemon's code. A reason that
+ * cannot be checked is a rumour.
  *
  * @type {ReadonlyMap<string, string>}
  */
 export const BACKEND_MISSING: ReadonlyMap<string, string> = new Map<string, string>([
   [
     "agent/setDefault",
-    "no 'set the active agent' RPC; updateAgent writes agent DEFINITIONS, listAgents lists them",
+    "the daemon has no notion of a DEFAULT agent: `AgentRegistry` exposes `list`, `create`, `update` and `delete`, and `listAgents` publishes no default flag",
   ],
-  ["effort/set", "no effort concept on the daemon at all; no registered name contains 'effort'"],
-  ["rewind", "no rewind handler; transcript rollback is unimplemented daemon-side"],
+  [
+    "rewind",
+    "the daemon cannot roll a transcript back: `AppState` only appends through `appendMessage` and exposes `transcript` read-only",
+  ],
   [
     "session/tokens",
-    "no per-session token RPC; getState carries the aggregate counters (see /metrics)",
+    "the daemon accounts tokens by MODEL, not by session: `CostTracker` sums into `totalInput`, `totalOutput` and `byModel`, and `listSessions` rows carry no token counts",
   ],
   // R375: `task/kill`, `task/pause` and `task/resume` used to be here,
   // and every one of those entries was WRONG — twice over.

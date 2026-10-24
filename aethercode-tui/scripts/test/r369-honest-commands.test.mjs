@@ -107,17 +107,19 @@ test("the capability table is not empty and every reason is user-facing", () => 
   //
   // The floor was 7 while the table still carried the three `task/*`
   // entries. R375 removed them (the TUI stopped naming those methods
-  // altogether), so the measured count is 4 as of 2026-10-24.
+  // altogether) and R377 removed `effort/set` (the daemon serves that
+  // capability as `switchVariant`), so the measured count is 3 as of
+  // 2026-10-24.
   const entries = [...capsSrc.matchAll(/^\s*\[\s*"[a-z][\w/]*",/gm)];
   assert.ok(
-    entries.length >= 4,
+    entries.length >= 3,
     `only ${entries.length} entries parsed from rpcCapabilities.ts — the table ` +
       "probably stopped parsing, which would make the honesty checks vacuous",
   );
 
   const reasons = [...capsSrc.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)];
   assert.ok(
-    reasons.length >= 4,
+    reasons.length >= 3,
     `only ${reasons.length} reasons parsed — the per-reason check would run ` +
       "zero times and pass on a table it never read",
   );
@@ -218,10 +220,14 @@ test("the filter lives in handleSlash, not in the five case bodies", () => {
 });
 
 test("line mode's direct probes consult the same table", () => {
-  // `/agent-pick` and `/effort-pick` do not go through handleSlash —
-  // they call probe() directly after the user picks. Those two were
-  // still returning raw -32601 while the Ink side already warned.
-  for (const m of ["agent/setDefault", "effort/set"]) {
+  // `/agent-pick` does not go through handleSlash — it calls probe()
+  // directly after the user picks. That one was still returning raw
+  // -32601 while the Ink side already warned.
+  //
+  // R377: `/effort-pick` LEFT this list too. The daemon serves the
+  // capability (`switchVariant`), so there is nothing to refuse —
+  // line mode now calls the real method, exactly like Ink.
+  for (const m of ["agent/setDefault"]) {
     assert.ok(
       lineSrc.includes(`unsupportedReason("${m}")`),
       `line.ts must check unsupportedReason("${m}") before probing it — the ` +
@@ -230,7 +236,12 @@ test("line mode's direct probes consult the same table", () => {
   }
   assert.match(
     lineSrc,
-    /import \{ unsupportedReason, unsupportedMessage \} from "\.\/rpcCapabilities\.js"/,
+    /probe\(ctx, EFFORT_METHOD, \{ variant: picked \}/,
+    "line mode must call the daemon's real method for the effort capability",
+  );
+  assert.match(
+    lineSrc,
+    /import \{[^}]*unsupportedReason[^}]*\} from "\.\/rpcCapabilities\.js"/,
     "line.ts must read the same table handleSlash does, not a local copy",
   );
 });

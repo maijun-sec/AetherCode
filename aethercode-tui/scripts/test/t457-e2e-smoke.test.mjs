@@ -225,18 +225,18 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
 
   // T-420: /agent-pick
   assert.equal(handleSlash("/agent-pick").local, "__AGENT_PICK__");
-  // R369: `/agent-pick-set-default` and `/effort <level>` map to methods
-  // the TUI's daemon does not register, so `handleSlash` now refuses
-  // them in words instead of dispatching into a -32601. The mapping is
-  // still pinned — it appears in the refusal text — and a returned
-  // `rpcMethod` here would be the pre-R369 behaviour, i.e. the bug.
+  // R369: `/agent-pick-set-default` maps to a method the TUI's daemon
+  // does not register, so `handleSlash` refuses it in words instead of
+  // dispatching into a -32601. The mapping is still pinned — it appears
+  // in the refusal text — and a returned `rpcMethod` here would be the
+  // pre-R369 behaviour, i.e. the bug.
+  //
+  // R377: `/effort <level>` LEFT this list. The daemon DOES serve the
+  // capability — as `switchVariant`, under the name "variant" — so
+  // refusing it hid a working feature behind a wrong reason.
   assert.match(
     handleSlash("/agent-pick-set-default work").local ?? "",
     /agent\/setDefault is not available on this daemon/,
-  );
-  assert.match(
-    handleSlash("/effort high").local ?? "",
-    /effort\/set is not available on this daemon/,
   );
   // T-421: /effort-pick + /effort <level>
   assert.equal(handleSlash("/effort-pick").local, "__EFFORT_PICK__");
@@ -244,8 +244,11 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
     handleSlash("/effort").local,
     "usage: /effort <low|medium|high|xhigh>  (or /effort-pick)",
   );
-  assert.equal(handleSlash("/effort high").rpcMethod, undefined);
-  assert.equal(routeSlash("/effort high").rpcMethod, "effort/set");
+  // R377: `/effort high` now REACHES the daemon. The capability is
+  // served as `switchVariant`, so the refusal filter lets it through
+  // instead of answering that the feature is impossible.
+  assert.equal(handleSlash("/effort high").rpcMethod, "switchVariant");
+  assert.equal(routeSlash("/effort high").rpcMethod, "switchVariant");
   // T-423: /cwd-pick
   assert.equal(handleSlash("/cwd-pick").local, "__CWD_PICK__");
   // T-428: /mcp, /mcp-login, /mcp-reconnect
@@ -341,7 +344,6 @@ test("T-457: every §5.3 command maps to either a local token or a known RPC", a
   // actually sees.
   const cases = [
     ["/agent-pick-set-default myagent", "agent/setDefault"],
-    ["/effort high", "effort/set"],
     ["/memory-compact", "memory/compact"],
   ];
   for (const [cmd, expected] of cases) {

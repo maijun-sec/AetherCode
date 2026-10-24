@@ -16,7 +16,12 @@ import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { handleSlash, SLASH_HELP } from "./commands.js";
 // R369: the one table that says what this daemon cannot do, shared
 // with `handleSlash` and with the R366 gate.
-import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
+import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
+// R377: the reasoning-effort vocabulary, shared with the Ink renderer.
+// The daemon calls the capability a VARIANT; the levels and their
+// one-line blurbs live in one place so the two renderers cannot
+// describe the same preset differently.
+import { EFFORT_EFFECT, EFFORT_LEVELS, variantLine, type VariantInfo } from "./effort.js";
 import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 // R370 — `/sessions` filters rows by cwd with the same comparator
 // Ink uses. See src/cwdMatch.ts for the four ways string equality
@@ -2752,15 +2757,6 @@ async function panelAgentPick(ctx: PanelCtx): Promise<void> {
 //  /effort-pick
 // -------------------------------------------------------------------------
 
-const EFFORT_LEVELS = ["low", "medium", "high", "xhigh"] as const;
-
-const EFFORT_EFFECT: Record<string, string> = {
-  low: "fastest and cheapest; mechanical edits, lookups",
-  medium: "balanced \u2014 the default for most work",
-  high: "thorough; multi-file reasoning and architecture",
-  xhigh: "slowest, priciest; only for genuinely hard problems",
-};
-
 async function pickEffort(ctx: PanelCtx): Promise<void> {
   const nc = ctx.noColor;
   const rows: PanelCell[][] = EFFORT_LEVELS.map((lv) => [
@@ -2778,7 +2774,7 @@ async function pickEffort(ctx: PanelCtx): Promise<void> {
         { header: "effect", flex: 1 },
       ],
       rows,
-      hint: "the engine records the level per run; /effort <level> sets it without a prompt",
+      hint: "the daemon applies the level to the next run; /effort <level> sets it without a prompt",
     }),
   );
   const picked = await choose(ctx, {
@@ -2792,18 +2788,21 @@ async function pickEffort(ctx: PanelCtx): Promise<void> {
   });
   repaint(ctx);
   if (picked === null) return;
-  // R369: same as above — `effort/set` is not registered either, so the
-  // picker must say so in words instead of probing into -32601.
-  const effortWhy = unsupportedReason("effort/set");
-  if (effortWhy) {
-    ctx.logAbove(colorize(`  ✗ ${unsupportedMessage("effort/set", effortWhy)}`, C.red, nc));
+  // R377: the daemon calls this a VARIANT. `switchVariant` answers with
+  // the RESOLVED preset, so the line reports what the daemon actually
+  // applied rather than the name that was asked for.
+  const res = await probe(ctx, EFFORT_METHOD, { variant: picked } as RpcValue);
+  if (!res.ok) {
+    ctx.logAbove(colorize(`  \u2717 reasoning effort not changed — ${res.reason}`, C.red, nc));
     return;
   }
-  const res = await probe(ctx, "effort/set", { effort: picked } as RpcValue);
+  const active = (res.value as { activeVariant?: VariantInfo } | undefined)?.activeVariant;
   ctx.logAbove(
-    res.ok
-      ? colorize(`  \u2713 effort \u2192 ${picked}`, C.green, nc)
-      : colorize(`  \u2717 effort/set failed: ${res.reason}`, C.red, nc),
+    colorize(
+      `  \u2713 reasoning effort \u2192 ${active ? variantLine(active) : picked}`,
+      C.green,
+      nc,
+    ),
   );
 }
 

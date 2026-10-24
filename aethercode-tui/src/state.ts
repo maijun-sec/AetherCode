@@ -848,8 +848,12 @@ export interface State {
   updateFacts: UpdateFacts | null;
   /** R362: MCP servers. Empty until the daemon grows an MCP RPC. */
   mcpServers: McpServerRow[];
-  /** R362: the active reasoning-effort id. The daemon exposes no
-   *  effort RPC, so this is renderer-local. */
+  /** R377: the active reasoning-effort id — the daemon's CURRENT
+   *  variant, as `switchVariant` resolved it. It used to be a purely
+   *  local wish: the TUI called a method that did not exist, so the
+   *  picker wrote the level down and nothing ever applied it. Now the
+   *  value is the daemon's answer, which is why it can be `null`
+   *  (nothing has asked the daemon yet). */
   effortCurrent: string | null;
   /** R362: notification-hub warning toggles. Local only — there
    *  is no persistence RPC for them. */

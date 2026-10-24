@@ -18,7 +18,7 @@ export interface SlashResult {
 // this daemon cannot serve. Imported here so `handleSlash` can refuse
 // honestly instead of returning -32601; the R366 gate imports the same
 // table, so the UI and the gate cannot disagree about it.
-import { unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
+import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
 
 // /help text — generated from a curated group/description list
 // above. Source of truth for autocomplete is SLASH_COMMANDS_DETAILED;
@@ -976,18 +976,24 @@ export function routeSlash(input: string): SlashResult | null {
       // modal. The host knows the catalog (it
       // depends on the active provider:model
       // pair) and feeds it to the picker. Enter
-      // dispatches `effort/set` RPC.
+      // dispatches the daemon's `switchVariant`.
       return { local: "__EFFORT_PICK__" };
     }
     case "effort": {
       // T-421: shortcut to set the effort
       // directly without opening the picker.
       // Usage: /effort <low|medium|high|xhigh>
+      //
+      // R377: the daemon calls this a VARIANT. `switchVariant` takes
+      // `{ variant: "<name>" }` and answers with the RESOLVED preset
+      // (name + temperature / maxTokens / reasoningBudget), so the
+      // caller reports what the daemon actually applied rather than
+      // what it asked for.
       if (rest.length === 0) {
         return { local: "usage: /effort <low|medium|high|xhigh>  (or /effort-pick)" };
       }
       const effort = String(rest[0]).toLowerCase();
-      return { rpcMethod: "effort/set", rpcParams: { effort } };
+      return { rpcMethod: EFFORT_METHOD, rpcParams: { variant: effort } };
     }
     case "cwd-pick": {
       // T-423: open the cwd switcher modal. The

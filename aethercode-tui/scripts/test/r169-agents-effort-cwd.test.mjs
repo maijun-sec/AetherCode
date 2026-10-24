@@ -121,9 +121,12 @@ test("R169: commands.ts wires agent-pick / effort / cwd-pick to RPCs", () => {
   // /agent-pick-set-default forwards to agent/setDefault RPC.
   assert.match(src, /case "agent-pick-set-default":/);
   assert.match(src, /rpcMethod:\s+"agent\/setDefault"/);
-  // /effort forwards to effort/set RPC.
+  // R377: /effort forwards to the daemon's REAL method for the
+  // capability. The daemon calls it a variant (`switchVariant`), and
+  // the param is `variant` — not `effort`.
   assert.match(src, /case "effort":/);
-  assert.match(src, /rpcMethod:\s+"effort\/set"/);
+  assert.match(src, /rpcMethod:\s*EFFORT_METHOD/);
+  assert.match(src, /rpcParams:\s*\{\s*variant:/);
   // /agent-pick /effort-pick /cwd-pick use the local token pattern
   // (the App mounts the modal).
   assert.match(src, /__AGENT_PICK__/);

@@ -271,6 +271,23 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   number-spelling-tolerant. Final: 1345/1302/43, 0 new failures vs
   the R375 baseline (45), 12/12 batteries green AFTER the format.
   Doc: `docs/R376-tui-format.md`.
+- **R377** (a refusal must never hide a working feature): the TUI's
+  refusal table claimed `effort/set` was missing — the daemon calls the
+  thing a **variant** and has served it as `switchVariant` on BOTH
+  transports since R285 (the desktop's Quality dropdown drives it). The
+  TUI's own comment carried the "verification" that produced the lie:
+  the method registry has no "effort" in it, it has a **synonym**. The
+  entry is gone; `/effort` is real in both renderers via
+  `EFFORT_METHOD = "switchVariant"` + `{ variant }`, and both report the
+  daemon's **resolved** `activeVariant` — never the request, because
+  `Variant.byName` falls back silently. The three genuine gaps now
+  ground their reasons in the daemon's own identifiers, and the R377
+  gate checks that each quoted identifier exists in the daemon's
+  **code** (comments stripped). The refusal also guards EVERY path:
+  Ctrl-Z called `rewind` directly, so the slash command answered in
+  words while the same key press emitted a raw `-32601`.
+  **Lesson 1193 — a refusal is a claim about ANOTHER system's vocabulary
+  and cannot verify itself.** Doc: `docs/R377-capability-naming.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1593,3 +1610,50 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   其余四个包(desktop / memory / compact / themes)还没 prettier-clean,
   跑一次就是 400+ 文件的无关 diff。等它们清理干净,根级脚本再收窄。
   文档:`docs/R376-tui-format.md`。
+
+## Watch out for (R377 additions)
+
+- **一次拒绝必须引用 daemon 自己的标识符,而且门禁要能核对它。**
+  `src/rpcCapabilities.ts` 的每条理由都引用 daemon 的类/方法/注册名;
+  `scripts/test/r377-capabilities.test.mjs` 把每个被引用的标识符拿到
+  daemon 的 Java **代码**里查(用 `javaCode` 剥掉注释 —— 靠一句 Javadoc
+  撑着的断言是关于散文的断言,不是关于行为的断言)。
+  **推论:不要相信"我查过了,注册表里没有"。注册表里没有你要找的那个
+  `词`,它有的是**同义词**(`effort` → `switchVariant`)。**
+  **Lesson 1193 —— 一次拒绝是对另一个系统的词汇表的断言,而这种断言无法自证。**
+- **拒绝表要守住每一条会调它的路径,不只是斜杠分发器。**
+  Ctrl-Z 直接调 `rewind`,于是斜杠命令用**人话**回答、同一个按键甩一个裸的
+  `-32601` 出去。门禁钉的是**顺序**:拒绝检查必须在请求之前。
+- **报 daemon 解析出来的结果,不要报你请求的值。**
+  `Variant.byName` 对不认识的变体名**静默回退**到 bundled default,
+  所以 toast/日志必须用 `activeVariant`。
+- **一个动作,一份实现。** `variantLine()` 只在 `src/effort.ts`;
+  门禁钉住两个渲染器都不得有自己的一份。
+- **变异电池有前置条件:门禁在变异之前必须是绿的。**
+  新增 `scripts/test/mutation-baseline.mjs`,13 个电池全接上。
+  **一个已经红的门禁在任何变异下都还是红的** —— 所以每个用例都报"抓到了",
+  而**测的东西是零**。R377 的 15 个用例就是这样"全绿"的。
+  **Lesson 1194 —— 先证明门禁是绿的,再问它能不能抓住。**
+- **一个变异改在错误的出现位置,是一个伪装成通过的 no-op。**
+  `String.replace` 改的是**第一个**出现。R377 踩了三次:`switchProvider`
+  也读 `variant`(参数检查扫整份文件 → 收进 handler 方法体,用大括号配对
+  提取);`effort.ts` 的**文档注释**里就有 `"xhigh"`(字符串存在性检查 →
+  改比**编译后**的 `EFFORT_LEVELS` 与 daemon 的 `Variant.BUILTIN`,后者
+  从 Java **推导**出来)。
+  **推论:"某个字符串出现在这个文件里"不是对一个值的检查。**
+  **Lesson 1195 —— 文件确实变了、报告确实说"抓到了",而被测的那一处
+  根本没被碰过。**
+- **按 KEY 定位表项,不按文案定位。** `scripts/test/caps-table.mjs`
+  (`findEntry`/`readEntries`/`deleteEntry`/`setReason`/`replaceInReason`/
+  `insertEntry`) 是 r366/r369/r375 三个电池共用的编辑器,**自己也有自测**
+  (`selfTest()`,由 R377 门禁执行)。R377 重写理由文案时,这 3 个电池的
+  4 根文案针脚当场变成 no-op —— **文案会被改写,键不会。**
+- **提取要收进目标块,不要用猜的字符窗口。**
+  `body.indexOf("\n  }")` 这种猜法在本项目**匹配不到**:`AetherCodeMethods`
+  的方法收尾大括号缩进**四个**空格。用 `javaMethod(code, signature)`
+  做**大括号配对**。
+- **别在电池运行时看工作树。** 变异电池**原地改产品源码**,所以在它运行
+  期间 `git diff` / `git status` 读到的是**变异中间态**。R377 差点把
+  r364 电池的一个变异(r364 那个 `cwd_changed` 处理器的删除)当成真实回归。
+  **判据:电池和测试套件不能并发,电池和"看代码"也不能并发。**
+  文档:`docs/R377-capability-naming.md`。

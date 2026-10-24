@@ -27,6 +27,16 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
+// The gate must be GREEN before anything is mutated — otherwise every
+// case reports "caught" for the wrong reason and the battery measures
+// nothing. See scripts/test/mutation-baseline.mjs.
+import { requireGreenBaseline } from "./mutation-baseline.mjs";
+// R377: the table's REASON TEXT is not a stable anchor — R377 rewrote
+// every reason and the two allowlist needles below went NO-OP on the
+// spot, silently testing nothing. They now address the table BY KEY
+// through one shared editor, so a rewrite of the prose cannot blind
+// them again.
+import { deleteEntry, setReason } from "./caps-table.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -110,6 +120,12 @@ function runGate() {
  *                "green" → the gate must pass (bypass proved: the
  *                          mutation is no longer detected)
  */
+// The gate must be green BEFORE the first mutation. A gate that is
+// already red stays red under every mutation, so every case would
+// report "caught" and the battery would measure nothing. (R377 Lesson
+// 1194.)
+requireGreenBaseline(runGate, "r366 mutation battery");
+
 const CASES = [
   [
     "re-introduce the R364-era setCwd (Tauri name over JSON-RPC)",
@@ -226,18 +242,12 @@ const CASES = [
   [
     "delete an allowlist entry (must surface as an unknown method)",
     "red",
-    [["caps", (s) => s.replace(/\[\s*"rewind",\s*\n?\s*"no rewind handler[^\]]*\],?\s*\n/, "")]],
+    [["caps", (s) => deleteEntry(s, "rewind")]],
   ],
   [
     "blank an allowlist reason (the reason gate must bite)",
     "red",
-    [
-      [
-        "caps",
-        (s) =>
-          s.replace('"no rewind handler; transcript rollback is unimplemented daemon-side"', '""'),
-      ],
-    ],
+    [["caps", (s) => setReason(s, "rewind", "")]],
   ],
   [
     "make the extraction pattern stop matching (must fail the floor)",

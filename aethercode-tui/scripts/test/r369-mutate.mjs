@@ -22,6 +22,15 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
+// The gate must be GREEN before anything is mutated — otherwise every
+// case reports "caught" for the wrong reason and the battery measures
+// nothing. See scripts/test/mutation-baseline.mjs.
+import { requireGreenBaseline } from "./mutation-baseline.mjs";
+// R377: the table's REASON TEXT is not a stable anchor — R377 rewrote
+// every reason and the needle below went NO-OP on the spot, silently
+// testing nothing. It now addresses the table BY KEY through one
+// shared editor, so a rewrite of the prose cannot blind it again.
+import { setReason } from "./caps-table.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -52,6 +61,12 @@ function runGate() {
   const m = out.match(/^ℹ fail (\d+)$/m);
   return { fail: m ? Number(m[1]) : -1, out };
 }
+
+// The gate must be green BEFORE the first mutation. A gate that is
+// already red stays red under every mutation, so every case would
+// report "caught" and the battery would measure nothing. (R377 Lesson
+// 1194.)
+requireGreenBaseline(runGate, "r369 mutation battery");
 
 const CASES = [
   // --- 1. the filter stops running ---
@@ -147,18 +162,13 @@ const CASES = [
   // shown to the user verbatim, so it must stand alone — a pointer at
   // another entry ("same as X") is internal shorthand the reader
   // cannot resolve.
+  //
+  // R377: the needle is now KEY-based (`setReason(s, "rewind", …)`),
+  // because R377 rewrote the reasons and a TEXT-based needle went
+  // NO-OP — reporting like a pass while testing nothing.
   [
     "a reason is internal shorthand again ('same as rewind')",
-    [
-      [
-        "caps",
-        (s) =>
-          s.replace(
-            '"no rewind handler; transcript rollback is unimplemented daemon-side"',
-            '"same as rewind"',
-          ),
-      ],
-    ],
+    [["caps", (s) => setReason(s, "rewind", "same as rewind")]],
   ],
 
   // --- line mode's direct probes ---
@@ -176,20 +186,20 @@ const CASES = [
     ],
   ],
 
-  [
-    "line mode stops consulting the table before probing effort/set",
-    [
-      [
-        "line",
-        (s) =>
-          s.replace(
-            'const effortWhy = unsupportedReason("effort/set");',
-            "const effortWhy = undefined as string | undefined;",
-          ),
-      ],
-    ],
-  ],
-
+  // R377 DELETED: "line mode stops consulting the table before probing
+  // effort/set".
+  //
+  // The shape it aimed at is GONE, and gone for a good reason: the
+  // daemon DOES serve the capability — as `switchVariant` — so there
+  // is nothing to consult a table about. A case that measures nothing
+  // is not honest; deleting it is.
+  //
+  // The MECHANISM it covered ("line mode must consult the shared
+  // table before probing a method the daemon lacks") is still covered
+  // by the `agent/setDefault` case above, and the NEW shape ("the TUI
+  // must call the daemon's real method, with the daemon's param
+  // name") is covered by `r377-mutate.mjs`.
+  //
   // --- the table itself ---
   // My first attempt here was "lower the floor from 7 to 0". It
   // SURVIVED, and correctly so: that disables the guard without

@@ -45,6 +45,13 @@ import {
 // no way to show a session's history after switching to it.
 import { replayTranscript } from "./transcriptHydrate.js";
 import { handleSlash, completeSlash } from "./commands.js";
+// R377: the reasoning-effort capability. The daemon calls it a VARIANT
+// (`switchVariant`); the TUI used to call `effort/set`, refuse the
+// user, and never touch the daemon at all. The vocabulary and the
+// one-line description live in their own module so both renderers
+// describe the same preset the same way.
+import { EFFORT_METHOD, unsupportedMessage, unsupportedReason } from "./rpcCapabilities.js";
+import { EFFORT_EFFECT, EFFORT_LEVELS, variantLine, type VariantInfo } from "./effort.js";
 // R362 — the sentinel → intent contract. The slash dispatcher looks
 // intents up here instead of hand-writing an `if (local === "__X__")`
 // chain, so a sentinel can never be emitted without a declared owner
@@ -542,17 +549,24 @@ const CWD_VALIDATE = makeStatValidator((p: string) => {
 
 /** Static reasoning-effort catalog.
  *
- *  NOTE: the daemon exposes no effort RPC (verified against
- *  `AetherCodeMethods`' method registry — there is neither a read
- *  nor a write path for it), so this catalog cannot be model-
- *  specific yet. It is the de-facto OpenAI/Anthropic ladder.
- *  Flagged for a product decision rather than invented. */
-const EFFORT_CATALOG: ReadonlyArray<EffortEntry> = [
-  { label: "low", id: "low", description: "fastest, least reasoning" },
-  { label: "medium", id: "medium", description: "balanced" },
-  { label: "high", id: "high", description: "more reasoning, slower" },
-  { label: "xhigh", id: "xhigh", description: "maximum reasoning" },
-];
+ *  R377: this used to carry the note "the daemon exposes no effort
+ *  RPC (verified against `AetherCodeMethods`' method registry — there
+ *  is neither a read nor a write path for it)". The verification was
+ *  real; the conclusion was not. The registry does not contain the
+ *  word "effort" — it contains a SYNONYM: `switchVariant`, the
+ *  daemon's "per-model effort / quality preset" (`Variant`), which has
+ *  been registered on both transports since R285. The TUI was the only
+ *  renderer refusing a feature the desktop has been driving all along.
+ *
+ *  The catalog is still static — the daemon publishes the ACTIVE
+ *  preset (`listAvailableModels` → `activeVariant`) but not the list
+ *  of available ones — so the four canonical levels are the ones the
+ *  daemon's bundled presets define. */
+const EFFORT_CATALOG: ReadonlyArray<EffortEntry> = EFFORT_LEVELS.map((id) => ({
+  label: id,
+  id,
+  description: EFFORT_EFFECT[id],
+}));
 
 /* ------------------------- wire normalisers ------------------------ */
 
@@ -2945,6 +2959,42 @@ const App: React.FC<{
   }
 
   /**
+   * R377 — set the reasoning effort for real.
+   *
+   * <p>The daemon calls it a VARIANT: `switchVariant { variant: "<name>" }`
+   * answers with the RESOLVED preset, so the toast reports what the
+   * daemon actually applied — not the name the TUI asked for. (A name
+   * the daemon does not know falls back to its bundled default, and a
+   * toast that echoed the request would be lying.)
+   */
+  async function applyEffort(variant: string): Promise<void> {
+    try {
+      const r = (await client.request(EFFORT_METHOD, { variant })) as
+        { ok?: boolean; variant?: string; activeVariant?: VariantInfo } | null | undefined;
+      if (!r?.ok) {
+        dispatch({
+          type: "pushToast",
+          kind: "err",
+          text: `reasoning effort not changed — the daemon refused ${variant}`,
+        });
+        return;
+      }
+      dispatch({ type: "setEffortCurrent", effort: r.activeVariant?.name ?? r.variant ?? variant });
+      dispatch({
+        type: "pushToast",
+        kind: "info",
+        text: `reasoning effort → ${r.activeVariant ? variantLine(r.activeVariant) : (r.variant ?? variant)}`,
+      });
+    } catch (e) {
+      dispatch({
+        type: "pushToast",
+        kind: "err",
+        text: `reasoning effort not changed — ${(e as Error).message}`,
+      });
+    }
+  }
+
+  /**
    * R362 — drain the prompt queue.
    *
    * Fires whenever the run stops (`submitting` flips false) and the queue is
@@ -3384,6 +3434,21 @@ const App: React.FC<{
       // The engine RPC `rewind` is called; on success, the
       // engine emits a fresh "run_start" event for the rewound
       // session, which we handle like any other run.
+      //
+      // R377: this path used to call `rewind` DIRECTLY, bypassing the
+      // refusal table that `/rewind` consults — so the slash command
+      // answered in plain words and the SAME key press answered with a
+      // raw -32601. One capability, two answers. The refusal now
+      // applies here too, and says the same thing.
+      const rewindWhy = unsupportedReason("rewind");
+      if (rewindWhy) {
+        dispatch({
+          type: "pushToast",
+          kind: "warn",
+          text: unsupportedMessage("rewind", rewindWhy),
+        });
+        return;
+      }
       if (state.history.length === 0) {
         dispatch({ type: "pushToast", kind: "warn", text: "nothing to rewind" });
         return;
@@ -3730,17 +3795,13 @@ const App: React.FC<{
       case "effort":
         return (
           <Box flexDirection="column">
-            <Text color={t.warn}>
-              this daemon exposes no effort RPC — the level below is recorded locally only
-            </Text>
             <EffortPicker
               efforts={EFFORT_CATALOG}
               current={state.effortCurrent}
               defaultEffort="medium"
               modelSpec={state.model}
               onSelect={(id) => {
-                dispatch({ type: "setEffortCurrent", effort: id });
-                dispatch({ type: "pushToast", kind: "info", text: `reasoning effort → ${id}` });
+                void applyEffort(id);
               }}
               onClose={closePanel}
               title=""

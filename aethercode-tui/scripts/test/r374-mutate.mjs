@@ -30,6 +30,10 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
+// The gate must be GREEN before anything is mutated — otherwise every
+// case reports "caught" for the wrong reason and the battery measures
+// nothing. See scripts/test/mutation-baseline.mjs.
+import { requireGreenBaseline } from "./mutation-baseline.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -89,6 +93,12 @@ function runGate() {
   // non-zero. That is still RED, so it counts as caught.
   return { fail: m ? Number(m[1]) : -1, status: r.status, out };
 }
+
+// The gate must be green BEFORE the first mutation. A gate that is
+// already red stays red under every mutation, so every case would
+// report "caught" and the battery would measure nothing. (R377 Lesson
+// 1194.)
+requireGreenBaseline(runGate, "r374 mutation battery");
 
 const CASES = [
   // --- the verb mapping -----------------------------------------------------
