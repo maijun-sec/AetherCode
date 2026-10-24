@@ -1,91 +1,91 @@
 /**
- * help overlay.
- * categorized help. Instead of a flat list of every shortcut,
- *      the help is organized into 4 sections:
- *        1. Session      — control the session / exit
- *        2. Display      — toggle panels, focus, search
- *        3. Editing      — history, completion, expand/collapse
- *        4. Slash cmds   — categorized command groups
- *      Each section gets a header + the relevant shortcuts.
- *      This is a much better "discovery" surface than the R31
- *      flat list — the user can scan by category.
+ * The Ctrl-? help overlay.
  *
- * R49 also updates the slash-command list to include all the
- * new commands added in prior round:
- *   - /theme NAME
- *   - /layout NAME
- *   - /budget USD
+ * R378: this used to carry its OWN hand-written lists of shortcuts and
+ * slash commands — a second copy of a truth that had already drifted
+ * out of sync with the app-level key handler (it was missing Esc to
+ * stop a running turn, among 22 other chords) and that leaked eight
+ * development notes into user-facing text ("R37: toggle side panel",
+ * "对应历史 round: …").
+ *
+ * Now there is one registry — `src/keybindings.ts` — and this file
+ * RENDERS it. The R378 gate checks the registry against the handler,
+ * so the overlay cannot promise a chord nobody binds, and the handler
+ * cannot grow a chord the overlay does not mention.
+ *
+ * The slash-command section is derived too: the panel-opening commands
+ * come from the panel registry, and the full list is one keystroke
+ * away (`/help`), which is where the complete catalogue lives.
  */
 
 import React from "react";
 import { Box, Text } from "ink";
 import { t, wordmark } from "../theme.js";
+import {
+  bindingUnavailable,
+  bindingsIn,
+  unavailableNote,
+  type KeyGroup,
+  type Keybinding,
+} from "../keybindings.js";
+import { ADVERTISED_INTENTS } from "../panelIntents.js";
 
 interface Shortcut {
   key: string;
   desc: string;
+  when?: string;
+  /** The RPC this chord calls, when the daemon cannot serve it. */
+  unavailable?: string;
 }
 
-const SESSION_SHORTCUTS: Shortcut[] = [
-  { key: "Enter", desc: "submit the current prompt" },
-  { key: "Ctrl-C", desc: "exit the TUI" },
-  { key: "Ctrl-? / F1", desc: "show this help" },
-  { key: "Esc", desc: "dismiss overlay / close search" },
-];
+/** One registry entry, flattened for display. */
+function toShortcut(b: Keybinding): Shortcut {
+  return {
+    key: b.label,
+    desc: b.desc,
+    when: b.when,
+    unavailable: bindingUnavailable(b) ? unavailableNote(b) : undefined,
+  };
+}
 
-const DISPLAY_SHORTCUTS: Shortcut[] = [
-  { key: "Ctrl-B", desc: "R37: toggle side panel" },
-  { key: "Ctrl-F", desc: "R40: open search bar" },
-  { key: "Ctrl-P", desc: "R47: open command palette" },
-  { key: "Ctrl-O", desc: "对应历史 round: collapse / expand all cards" },
-];
+// R378: the three section names are kept — the R49 gate pins them, and
+// they still describe what the overlay shows. What changed is WHERE the
+// rows come from: one registry, not three hand-written arrays.
+const SESSION_SHORTCUTS: Shortcut[] = bindingsIn("session").map(toShortcut);
+const DISPLAY_SHORTCUTS: Shortcut[] = bindingsIn("display").map(toShortcut);
+const EDITING_SHORTCUTS: Shortcut[] = bindingsIn("editing").map(toShortcut);
+const SUBAGENT_SHORTCUTS: Shortcut[] = bindingsIn("subagent").map(toShortcut);
+const PERMISSION_SHORTCUTS: Shortcut[] = bindingsIn("permission").map(toShortcut);
 
-const EDITING_SHORTCUTS: Shortcut[] = [
-  { key: "↑ / ↓", desc: "navigate input history" },
-  { key: "Tab", desc: "R38: complete slash command" },
-  { key: "d", desc: "R34: expand / collapse tool card details" },
-  { key: "Ctrl-E", desc: "对应历史 round: toggle the most recent card" },
-  { key: "A / Y / D / N", desc: "对应历史 round: permission response" },
-];
-
+/**
+ * The commands the overlay lists: the ones that open a UI surface.
+ *
+ * <p>Derived from the panel registry, so a command that opens a panel
+ * and a command that does not cannot drift apart. The FULL catalogue
+ * (every command the dispatcher answers) is one keystroke away in
+ * `/help`, which is where it belongs — 86 rows do not fit in a modal.
+ */
 const SLASH_GROUPS: Array<{ title: string; cmds: Array<{ name: string; desc: string }> }> = [
   {
-    title: "session",
-    cmds: [
-      { name: "/help", desc: "this list" },
-      { name: "/state", desc: "engine state" },
-      { name: "/ping", desc: "liveness check" },
-      { name: "/exit", desc: "quit the TUI" },
-    ],
-  },
-  {
-    title: "tools",
-    cmds: [
-      { name: "/tools", desc: "list available tools" },
-      { name: "/tasks", desc: "recent tool invocations" },
-      { name: "/projects", desc: "known projects (cwds)" },
-    ],
-  },
-  {
-    title: "config",
-    cmds: [
-      { name: "/model <n>", desc: "switch model" },
-      { name: "/mode <n>", desc: "switch permission mode" },
-      { name: "/theme <n>", desc: "default / solarized / monokai" },
-      { name: "/layout <n>", desc: "full / minimal / focus" },
-      { name: "/budget <n>", desc: "set per-session cost cap" },
-    ],
-  },
-  {
-    title: "data",
-    cmds: [
-      { name: "/history", desc: "input history" },
-      { name: "/sessions", desc: "saved sessions" },
-      { name: "/stats", desc: "session stats" },
-      { name: "/cwd <path>", desc: "switch project" },
-    ],
+    title: "panels",
+    cmds: ADVERTISED_INTENTS.map((i) => ({ name: i.command, desc: i.title })),
   },
 ];
+
+function ShortcutRows({ items }: { items: Shortcut[] }): React.ReactElement {
+  return (
+    <>
+      {items.map((s, i) => (
+        <Text key={i}>
+          <Text color={t.warn}> {s.key.padEnd(14, " ")}</Text>
+          <Text dimColor={!!s.unavailable}>{s.desc}</Text>
+          {s.when ? <Text dimColor> ({s.when})</Text> : null}
+          {s.unavailable ? <Text color={t.err}> — {s.unavailable}</Text> : null}
+        </Text>
+      ))}
+    </>
+  );
+}
 
 export const HelpOverlay: React.FC = () => {
   return (
@@ -105,21 +105,23 @@ export const HelpOverlay: React.FC = () => {
       <Text> </Text>
 
       <SectionHeader label="session" />
-      {SESSION_SHORTCUTS.map((s, i) => (
-        <Row key={"s" + i} k={s.key} v={s.desc} />
-      ))}
+      <ShortcutRows items={SESSION_SHORTCUTS} />
 
       <Text> </Text>
       <SectionHeader label="display" />
-      {DISPLAY_SHORTCUTS.map((s, i) => (
-        <Row key={"d" + i} k={s.key} v={s.desc} />
-      ))}
+      <ShortcutRows items={DISPLAY_SHORTCUTS} />
 
       <Text> </Text>
       <SectionHeader label="editing" />
-      {EDITING_SHORTCUTS.map((s, i) => (
-        <Row key={"e" + i} k={s.key} v={s.desc} />
-      ))}
+      <ShortcutRows items={EDITING_SHORTCUTS} />
+
+      <Text> </Text>
+      <SectionHeader label="sub-agent panel" />
+      <ShortcutRows items={SUBAGENT_SHORTCUTS} />
+
+      <Text> </Text>
+      <SectionHeader label="permission prompt" />
+      <ShortcutRows items={PERMISSION_SHORTCUTS} />
 
       <Text> </Text>
       <Text bold color={t.accent}>
@@ -138,6 +140,9 @@ export const HelpOverlay: React.FC = () => {
           ))}
         </Box>
       ))}
+      <Box marginLeft={2}>
+        <Text dimColor>type /help for every command</Text>
+      </Box>
 
       <Text> </Text>
       <Text dimColor>Press any key to close.</Text>
@@ -150,12 +155,5 @@ const SectionHeader: React.FC<{ label: string }> = ({ label }) => (
     <Text color={t.accent} bold>
       {label}
     </Text>
-  </Text>
-);
-
-const Row: React.FC<{ k: string; v: string }> = ({ k, v }) => (
-  <Text>
-    <Text color={t.warn}> {k.padEnd(14, " ")}</Text>
-    <Text dimColor>{v}</Text>
   </Text>
 );

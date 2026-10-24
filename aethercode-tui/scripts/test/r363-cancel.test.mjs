@@ -319,12 +319,22 @@ test("tui.tsx captures the runId from BOTH the query response and the notificati
 
 test("the Esc-cancel block sits ABOVE the decision-card branches", () => {
   const cancelIdx = tuiCode.indexOf("void stopActiveRun()");
-  // Anchor on the `key.ctrl && input === "l"` branch, which sits below
-  // the whole permission / decision-card region. Anchoring on
-  // `setDecisionCardExpanded` itself is wrong: the FIRST occurrence is
-  // the collapse branch, so "cancel is before the card branches" would
-  // still hold with the block physically below them.
-  const downstreamIdx = tuiCode.indexOf('if (key.ctrl && input === "l")');
+  // Anchor on a branch that sits below the whole permission /
+  // decision-card region. Anchoring on `setDecisionCardExpanded` itself
+  // is wrong: the FIRST occurrence is the collapse branch, so "cancel
+  // is before the card branches" would still hold with the block
+  // physically below them.
+  //
+  // R378: this used to anchor on the `key.ctrl && input === "l"`
+  // branch — and R378 DELETED that branch, because it was a dead
+  // placeholder that shadowed the real Ctrl-L (the log viewer). The
+  // anchor is now the help toggle, which sits in the same place and
+  // is not a placeholder.
+  //
+  // **A dead branch used as a position anchor is a time bomb**: the
+  // moment the dead code is cleaned up, the gate that was quietly
+  // leaning on it goes blind — and nobody knows it was leaning on it.
+  const downstreamIdx = tuiCode.indexOf('if (key.ctrl && input === "?")');
   const cardIdx = tuiCode.indexOf("setDecisionCardExpanded");
   assert.ok(cancelIdx > -1, "no Esc→cancel wiring found in tui.tsx");
   assert.ok(cardIdx > -1, "decision-card branch not found (the test needs re-anchoring)");

@@ -27,6 +27,9 @@ import { runTui } from "./tui.js";
 // R374: the version lives in a leaf module so the `--version` banner
 // and the `/update` panel cannot drift apart.
 import { TUI_VERSION as VERSION } from "./version.js";
+// R378: `--help` renders the SAME key-binding registry the in-app help
+// overlay and the welcome screen use, so the three cannot disagree.
+import { bindingsIn } from "./keybindings.js";
 
 function parseCli(argv: string[]): { values: Record<string, unknown>; positionals: string[] } {
   return parseArgs({
@@ -81,13 +84,38 @@ Modes:
 
   Pass --tui or --line to override the auto-detect.
 
-Shortcuts (in the Ink TUI):
-  Enter              submit the prompt
-  Up / Down          navigate input history
-  Ctrl-C             exit
-  Ctrl-L             clear scrollback
-  Ctrl-?  /  F1      help overlay
+${inkShortcuts()}
 `);
+}
+
+/**
+ * The Ink TUI's key bindings, for `--help`.
+ *
+ * R378: this used to be a hand-written list of FIVE shortcuts, in a
+ * product that binds thirty-five — and the five it named were not even
+ * the five that mattered most (Esc to stop a running turn was not
+ * among them). It is now rendered from the same registry the in-app
+ * help overlay and the welcome screen use, so `--help` cannot promise
+ * a chord nobody binds.
+ *
+ * The contextual groups (the sub-agent panel, the permission prompt)
+ * are left out: they only apply when something is on screen, and the
+ * in-app help is where the user looks when that happens.
+ */
+function inkShortcuts(): string {
+  const rows: string[] = [];
+  for (const group of ["session", "display", "editing"] as const) {
+    for (const b of bindingsIn(group)) {
+      const pad = b.label.padEnd(16, " ");
+      rows.push(`  ${pad}${b.desc}${b.when ? ` (${b.when})` : ""}`);
+    }
+  }
+  return [
+    "Shortcuts (in the Ink TUI):",
+    ...rows,
+    "",
+    "  press Ctrl-? inside the TUI for the full list",
+  ].join("\n");
 }
 
 export function findJar(explicit?: string): string {

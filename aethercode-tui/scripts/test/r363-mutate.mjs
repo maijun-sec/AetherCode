@@ -90,9 +90,16 @@ const CASES = [
       );
       if (!m) throw new Error("cancel block not found — re-anchor this mutation");
       const cut = s.replace(m[0], "");
-      // `key.ctrl && input === "l"` sits below the whole permission /
-      // decision-card region.
-      const anchor = cut.indexOf('if (key.ctrl && input === "l")');
+      // The help toggle sits below the whole permission / decision-card
+      // region.
+      //
+      // R378: this used to anchor on `key.ctrl && input === "l"` — the
+      // dead placeholder branch that R378 deleted (it shadowed the real
+      // Ctrl-L, the log viewer). Same re-aim as the gate's own
+      // downstream anchor: a dead branch used as a position anchor is a
+      // time bomb, and the day the dead code is cleaned up, the needle
+      // that leaned on it stops mutating anything.
+      const anchor = cut.indexOf('if (key.ctrl && input === "?")');
       if (anchor < 0) throw new Error("downstream anchor not found");
       return cut.slice(0, anchor) + m[0] + "\n" + cut.slice(anchor);
     },

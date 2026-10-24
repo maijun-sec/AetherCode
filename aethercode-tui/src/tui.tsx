@@ -3213,10 +3213,6 @@ const App: React.FC<{
         return;
       }
     }
-    if (key.ctrl && input === "l") {
-      dispatch({ type: "log", message: "(clear is a no-op in this build)" });
-      return;
-    }
     if (key.ctrl && input === "?") {
       dispatch({ type: "showHelp", show: !state.helpVisible });
       return;

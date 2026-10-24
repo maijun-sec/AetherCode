@@ -6,9 +6,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadTsModule } from "./load-ts-module.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
+
+// R378: the welcome screen's shortcut grid is the registry's, not a
+// hand-written copy of it. The data moved; the property did not.
+const kbMod = await loadTsModule(root, "src/keybindings.ts");
 
 // ----- 1. Pure helper tests (T-443) --------------------------------
 
@@ -117,14 +122,17 @@ test("T-443: WelcomeBanner.tsx renders one row per deepagents-code field", () =>
 test("T-443: Welcome.tsx still exists (kept for backward compat) and adds SHORTCUTS", () => {
   assert.match(welcome, /export const Welcome\b/);
   assert.match(welcome, /const SHORTCUTS/);
-  // At least 5 entries.
-  const entries = (welcome.match(/\{\s*key:\s*"/g) || []).length;
-  assert.ok(entries >= 5, `expected >= 5 SHORTCUTS, got ${entries}`);
+  // R378: the rows come from the one key-binding registry, so the grid
+  // cannot disagree with the handler (it used to say "Ctrl-T — theme
+  // picker", while the handler binds Ctrl-T to re-open this screen).
+  assert.match(welcome, /keybindings\.js/);
+  const entries = kbMod.welcomeBindings().length;
+  assert.ok(entries >= 5, `expected >= 5 welcome shortcuts, got ${entries}`);
   // Mentions the new shortcuts.
-  assert.match(welcome, /Tab/);
-  assert.match(welcome, /Ctrl-B/);
-  assert.match(welcome, /Ctrl-F/);
-  assert.match(welcome, /Ctrl-\?/);
+  const chords = new Set(kbMod.registryChords());
+  for (const chord of ["tab", "ctrl+b", "ctrl+f", "ctrl+?"]) {
+    assert.ok(chords.has(chord), `the welcome no longer mentions ${chord}`);
+  }
 });
 
 // ----- 3. tsc compile ----------------------------------------------

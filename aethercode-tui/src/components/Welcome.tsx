@@ -36,6 +36,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { t, icon, wordmark, banner } from "../theme.js";
+// R378: the shortcut grid is the registry's, not a second copy of it.
+import { welcomeBindings } from "../keybindings.js";
 
 interface Props {
   model: string;
@@ -60,23 +62,21 @@ interface Props {
   subagentsAvailable?: boolean;
 }
 
-/** static shortcut catalog. The order is deliberate: surface the
- *  ones a new user needs in the first 30 seconds (Tab accept, / ,
- *  @) before the power-user ones (Ctrl-B sidebar, Ctrl-? help). */
-const SHORTCUTS: ReadonlyArray<{ key: string; label: string }> = [
-  { key: "Tab", label: "accept autocomplete" },
-  { key: "Enter", label: "send prompt" },
-  { key: "↑ / ↓", label: "input history" },
-  { key: "/", label: "slash commands" },
-  { key: "@", label: "@-mention files" },
-  { key: "Ctrl-B", label: "toggle sidebar" },
-  { key: "Ctrl-D", label: "toggle right panel" },
-  { key: "Ctrl-F", label: "search scrollback" },
-  { key: "Ctrl-L", label: "log viewer" },
-  { key: "Ctrl-S", label: "subagent panel" },
-  { key: "Ctrl-T", label: "theme picker" },
-  { key: "Ctrl-?", label: "full help" },
-];
+/** The welcome screen's dense shortcut grid.
+ *
+ *  R378: this used to be a HAND-WRITTEN list, and it had already
+ *  drifted out of sync with the key handler: it said "Ctrl-T — theme
+ *  picker", but the handler binds Ctrl-T to re-open this screen and the
+ *  theme picker to Ctrl-Shift-T. It also claimed "Ctrl-L — log viewer"
+ *  while the handler's Ctrl-L was a placeholder that swallowed the key
+ *  before the log viewer could open.
+ *
+ *  Now the grid is the registry's `welcome` entries, so it cannot
+ *  disagree with the handler. See `src/keybindings.ts`. */
+const SHORTCUTS: ReadonlyArray<{ key: string; label: string }> = welcomeBindings().map((b) => ({
+  key: b.label,
+  label: b.short ?? b.desc,
+}));
 
 /** context-sensitive tips. The first matching one wins; the
  *  fallback "no-tip" hint is shown when none match. Tips are

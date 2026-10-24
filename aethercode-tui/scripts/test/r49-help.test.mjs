@@ -6,9 +6,21 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadTsModule } from "./load-ts-module.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
+
+// R378: the shortcut rows moved out of the overlay and into the ONE
+// registry (`src/keybindings.ts`), because the overlay, the welcome
+// screen and `--help` were three hand-written copies of the same list
+// and they had already contradicted each other AND the key handler.
+//
+// The PROPERTIES below are unchanged. Only the file they are read from
+// moved — and a pin that follows its data is still a pin; a pin that
+// is deleted is not.
+const kbMod = await loadTsModule(root, "src/keybindings.ts");
+const registryChords = new Set(kbMod.registryChords());
 
 test("R49: HelpOverlay.tsx has 4 sections (session/display/editing/slash)", () => {
   const src = readFileSync(join(root, "src", "components", "HelpOverlay.tsx"), "utf-8");
@@ -18,20 +30,33 @@ test("R49: HelpOverlay.tsx has 4 sections (session/display/editing/slash)", () =
   assert.match(src, /SLASH_GROUPS/);
 });
 
-test("R49: HelpOverlay mentions the new R37-R48 shortcuts", () => {
-  const src = readFileSync(join(root, "src", "components", "HelpOverlay.tsx"), "utf-8");
-  // Each new round's shortcut should appear in the help.
-  assert.match(src, /Ctrl-B/);
-  assert.match(src, /Ctrl-F/);
-  assert.match(src, /Ctrl-P/);
-  assert.match(src, /Tab/);
+test("R49: the help mentions the new R37-R48 shortcuts", () => {
+  // R378: the rows live in the registry now. The property is the same
+  // one R49 was protecting: the help still offers these chords.
+  for (const chord of ["ctrl+b", "ctrl+f", "ctrl+p", "tab"]) {
+    assert.ok(
+      registryChords.has(chord),
+      `the help no longer offers ${chord} — R49 pinned this chord and it must not go`,
+    );
+  }
 });
 
-test("R49: HelpOverlay slash-command groups include the new commands", () => {
-  const src = readFileSync(join(root, "src", "components", "HelpOverlay.tsx"), "utf-8");
-  assert.match(src, /\/theme/);
-  assert.match(src, /\/layout/);
-  assert.match(src, /\/budget/);
+test("R49: the help's command list includes the new commands", () => {
+  // R378: the overlay's own list is now DERIVED (the panel commands),
+  // and the complete catalogue is one keystroke away in `/help`. The
+  // property R49 protected — "the user can find /theme, /layout and
+  // /budget" — is therefore checked where those commands are listed
+  // now, plus the overlay's duty to point at `/help`.
+  const commands = readFileSync(join(root, "src", "commands.ts"), "utf-8");
+  for (const name of ["theme", "layout", "budget"]) {
+    assert.match(
+      commands,
+      new RegExp(`"${name}"`),
+      `/${name} is no longer listed by the help — R49 pinned this command`,
+    );
+  }
+  const overlay = readFileSync(join(root, "src", "components", "HelpOverlay.tsx"), "utf-8");
+  assert.match(overlay, /\/help/, "the overlay must point the user at /help for the full list");
 });
 
 test("R49: HelpOverlay keeps the R31 contract (double border + brand color)", () => {

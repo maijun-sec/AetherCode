@@ -288,6 +288,25 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   words while the same key press emitted a raw `-32601`.
   **Lesson 1193 — a refusal is a claim about ANOTHER system's vocabulary
   and cannot verify itself.** Doc: `docs/R377-capability-naming.md`.
+- **R378** (the help must be GENERATED from the truth): the TUI carried
+  THREE hand-written copies of the key-binding list — the Ctrl-? help
+  overlay, the welcome screen's grid, and `--help` — and they had
+  already contradicted each other AND the handler. The welcome said
+  "Ctrl-T — theme picker" (the handler binds Ctrl-T to re-open the
+  welcome; the theme picker is Ctrl-SHIFT-T); the overlay said "Ctrl-L
+  — clear scrollback" (that chord was a dead placeholder that shadowed
+  the log viewer, so the viewer was unreachable); the overlay listed
+  **13** chords where the handler binds **35**, and the missing ones
+  included **Esc to stop a running turn** — the one binding R363
+  exists to provide. Eight development notes leaked into user-facing
+  text. Now ONE registry (`src/keybindings.ts`) serves all three
+  consumers, and the R378 gate ties it to the handler in BOTH
+  directions: every chord the handler binds is documented, and every
+  chord documented is really bound. A chord whose RPC is on R377's
+  refusal table is marked unavailable, so the help cannot promise what
+  this daemon cannot do.
+  **Lesson 1197 — a second copy of a truth drifts, and it drifts
+  silently.** Doc: `docs/R378-help-truth.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1657,3 +1676,40 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   r364 电池的一个变异(r364 那个 `cwd_changed` 处理器的删除)当成真实回归。
   **判据:电池和测试套件不能并发,电池和"看代码"也不能并发。**
   文档:`docs/R377-capability-naming.md`。
+
+## Watch out for (R378 additions)
+
+- **一份真相只能有一份拷贝。** 第二份拷贝**无法被验证**,而且会漂移 ——
+  而且漂移得毫无声响:三份都是合法的 TypeScript,碰过它们的门禁全是绿的。
+  R378 之前 TUI 有**三份**手写的按键表(帮助浮层 / 欢迎页 / `--help`),
+  它们互相矛盾,而且和 handler 矛盾。
+  **推论:修法不是"改的时候小心点",是根本没有第二份可以改。**
+  新增 `src/keybindings.ts` 是唯一的注册表,三个消费者全部渲染它。
+  **Lesson 1197 —— 一份真相的第二份拷贝会漂移,而且漂移得毫无声响。**
+- **注册表和 handler 要双向绑定。** `scripts/test/r378-keybindings.test.mjs`
+  从 `tui.tsx` 的 app 级 handler 里**重新推导**和弦集合(用大括号配对提取,
+  不是猜的字符窗口),然后断言:handler 绑的每一条都在注册表里,注册表写的
+  每一条都真的被绑。**判据:注册表和 handler 谁都不是真相,两者的交集才是。**
+- **帮助不承诺这个 daemon 做不到的事。** 注册表条目带 `method`(它调用的 RPC),
+  "能不能用"**从 R377 的拒绝表推导**(`bindingUnavailable()`),不手写。
+  所以 `Ctrl+Z` 那一行会写 "rewind is not available on this daemon"。
+- **import 了不等于渲染了。** 门禁除了查"消费者 import 了注册表",还查
+  "每个分区都真的被渲染"(`bindingsIn("display")` 被改成 `[]` 必须变红)。
+- **位置锚点要挑一个"活着、且有理由活下去"的东西。**
+  R363 的门禁拿 `key.ctrl && input === "l"` 那个**死分支**当"下面还有东西"
+  的标记;R378 删掉那段死代码(它遮住了 log viewer),门禁当场失明 ——
+  而且**没人知道它一直靠在那儿**。
+  **Lesson 1198 —— 一段死代码被当成位置锚点,就是一颗定时炸弹。**
+  判据:**这个锚点被删掉的时候,会有人觉得可惜吗?** 不会,就换一个。
+- **正则没锚定时,"改短"不等于"改坏"。** R378 的电池用
+  `/key\.ctr/g` 去废掉 `/key\.ctrl/g` —— 但 `"key.ctr"` 是 `"key.ctrl"` 的
+  **前缀**,正则照样匹配,**变异根本没发生**,用例"通过"了。
+  **判据:变异之后,被测的行为真的变了吗?没变,就不是变异。**
+- **扫描器必须跳注释。** `scripts/test/ts-scan.mjs` 的括号匹配同时跳注释和
+  字符串 —— 否则 `InputBox.tsx` 注释里的一个撇号("the user's …")会被当成
+  字符串开头,吞掉后面 2 KB 真实代码。**这正是 R366 记录过的 Java 陷阱在 TS 里
+  的翻版。**
+- **只有单一推导的性质,不写"阉废门禁"用例。** 阉废唯一的推导只能证明
+  "它就是唯一的推导",那是废话,不是证据。R378 删掉了 dev-note 那根针脚,
+  并写下了原因。
+  文档:`docs/R378-help-truth.md`。
