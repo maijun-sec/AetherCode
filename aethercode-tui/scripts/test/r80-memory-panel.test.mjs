@@ -140,18 +140,13 @@ test("T-085: /help documents the new /memory commands", () => {
   // with clean copy instead.
   //
   // SLASH_HELP is derived from SLASH_COMMANDS_DETAILED at module-eval time, so
-  // the meaningful check is catalog + group membership.
+  // the meaningful check is catalog membership. R380: the group is now a
+  // field ON THE ENTRY, so "catalog + group membership" is just
+  // "catalog membership" — there is no second list to be a member of.
   const cmds = readFileSync(cmdsPath, "utf-8");
   assert.match(cmds, /name: "memory"/);
   assert.match(cmds, /name: "memory-edit"/);
   assert.match(cmds, /name: "memory-compact"/);
-  const groups = cmds.slice(
-    cmds.indexOf("const SLASH_COMMAND_GROUPS"),
-    cmds.indexOf("];", cmds.indexOf("const SLASH_COMMAND_GROUPS")),
-  );
-  assert.match(groups, /"memory"/);
-  assert.match(groups, /"memory-edit"/);
-  assert.match(groups, /"memory-compact"/);
   // and the user-facing copy must no longer carry the round tag
   assert.doesNotMatch(
     cmds,
@@ -164,9 +159,19 @@ test("T-085: SLASH_COMMANDS includes the new /memory commands for tab-completion
   const cmds = readFileSync(cmdsPath, "utf-8");
   // Must be registered so the Tab-completion logic in
   // completeSlash() picks them up.
-  assert.match(cmds, /"memory",\s*\/\/ T-080/);
-  assert.match(cmds, /"memory-edit",\s*\/\/ T-083/);
-  assert.match(cmds, /"memory-compact",\s*\/\/ T-084/);
+  //
+  // R380: the flat array is derived from the catalog, so the entries
+  // live in the CATALOG now. The round tags this used to look for
+  // ("memory", // T-080) were comments in the flat array; the catalog
+  // carries its own comments, and the tag is an engineering record that
+  // belongs there rather than in a completion list.
+  const catalog = cmds.slice(
+    cmds.indexOf("export const SLASH_COMMANDS_DETAILED"),
+    cmds.indexOf("];", cmds.indexOf("export const SLASH_COMMANDS_DETAILED")),
+  );
+  assert.match(catalog, /name: "memory"/);
+  assert.match(catalog, /name: "memory-edit"/);
+  assert.match(catalog, /name: "memory-compact"/);
 });
 
 // ----- 2. Compile smoke test -----------------------------------------

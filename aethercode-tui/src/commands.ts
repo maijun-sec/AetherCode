@@ -20,179 +20,404 @@ export interface SlashResult {
 // table, so the UI and the gate cannot disagree about it.
 import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
 
-// /help text — generated from a curated group/description list
-// above. Source of truth for autocomplete is SLASH_COMMANDS_DETAILED;
-// this string is only the user-facing /help printout. To add a new
-// command, add an entry in SLASH_COMMANDS_DETAILED (which feeds Tab
-// completion) and optionally a row in the group below for the /help
-// blurb. /help is grouped so a user can scan it without a wall of text.
+// R380: the command surface is ONE list.
+//
+// Before this round there were THREE lists of the same command set:
+//   1. SLASH_COMMANDS          — a flat array of 77 strings
+//   2. SLASH_COMMANDS_DETAILED — the catalog (name + description + args)
+//   3. SLASH_COMMAND_GROUPS    — group -> ordered names, for /help
+//
+// They had already drifted, and the comments above them were wrong:
+// "source of truth for autocomplete is SLASH_COMMANDS_DETAILED" (it was
+// SLASH_COMMANDS), and "mirrors the entries in SLASH_COMMANDS" (it did
+// not: `/demo` was missing from the flat array, so it was neither
+// Tab-completable nor in the command palette, and `budget` appeared
+// twice).
+//
+// Now the catalog is the only list. Each entry carries its `group`, and
+// an alias carries the command it stands for (`aliasOf`). The flat
+// array and the /help grouping are DERIVED from it, so the three
+// surfaces (Tab completion, the InputBox dropdown, the command
+// palette) cannot disagree, and a command cannot be in the catalog and
+// missing from /help.
+//
+// To add a command: add ONE entry to SLASH_COMMANDS_DETAILED (with a
+// group) and handle it in `routeSlash` below. Nothing else to update.
 
-/** the set of slash command names (without the leading "/" and
- *  without arguments). Used by the Tab-completion logic to find
- *  matches as the user types. We list each command's primary name
- *  and common aliases.
+/**
+ * The command catalog — the ONE list of slash commands.
  *
- *  Adding a new slash command? Add it here AND in handleSlash. */
-export const SLASH_COMMANDS: string[] = [
-  "help",
-  "?",
-  "clear",
-  "exit",
-  "quit",
-  "q",
-  "tools",
-  "state",
-  "ping",
-  "model",
-  "mode",
-  "sessions",
-  "tasks",
-  "projects",
-  "cwd",
-  "stats",
-  "history",
-  "lastplan",
-  "theme",
-  "theme-pick",
-  "layout",
-  "budget",
-  "rewind",
-  "snippet",
-  "export",
-  "tutorial",
-  "bookmark",
-  "metrics",
-  "context", // R371 — the command the context-meter placeholder needed
-  "trace",
-  "agents",
-  "agent",
-  "prompt",
-  "phase",
-  "budget",
-  "sessions-list",
-  "session",
-  "session-new",
-  "session-del",
-  "skip", // R99
-  "skip-stats", // R106
-  "tool-actions", // R100
-  "memory", // T-080
-  "memory-edit", // T-083
-  "memory-compact", // T-084
-  "agent-pick", // T-420
-  "effort-pick", // T-421
-  "cwd-pick", // T-423
-  "mcp", // T-428
-  "mcp-login", // T-428
-  "mcp-reconnect", // T-428
-  "threads", // T-429
-  "update", // T-430
-  "update-deps", // T-430
-  "notifications", // T-431
-  // Phase 6.3 (T-6-17) — long-running + must-have commands.
-  "continue", // task/resume
-  "pause", // task/pause
-  "stop", // task/kill
-  "todos", // open the TodoBoard
-  "tokens", // show current token usage
-  "consents", // open the GrantsManager
-  "grants", // alias for /consents
-  // `model` is already in the list (the pre-existing
-  // /model <name> → setModel RPC). We re-route its handler
-  // so the Phase 6.3 spec'd behaviour wins: it calls
-  // `model/set` instead of the legacy `setModel`. The
-  // legacy alias still works because the daemon maps both.
-  "workflow", // run a workflow by name (or open the picker)
-  // R245.1 (O-10) — daemon bank read commands.
-  "bank-stats", // snapshot the bank (size + per-kind + ok / notOk)
-  "bank-recall", // recall top-N units for a task kind
-  // R245.2 (O-6) — cross-process self-eval audit.
-  "memory-audit", // aggregate self-eval metrics from the daemon bank
-  // Spec-driven development — 8-phase run with phase artefacts.
-  "sdd", // start SDD run with intent
-  "sdd-status", // show current SDD run state
-  "sdd-list", // list every SDD run under the cwd
-  "sdd-approve", // approve current phase
-  "sdd-modify", // re-run current phase with feedback
-  "sdd-skip", // skip current phase (REQUIRED phases refuse)
-  "sdd-abort", // abort the current SDD run
-  // SDD modify-flow helpers (snapshot + diff the phase artefact).
-  "sdd-view", // show artefact + file:// link
-  "sdd-snapshot", // cache the current artefact for diff
-  "sdd-diff", // render diff between snapshot + on-disk
-  "sdd-clear-cache", // drop every cached snapshot
-];
-
-/** T-442: structured slash-command catalog. Each entry is
- *  (name, description) so the InputBox can render a
- *  fuzzy-autocomplete dropdown with one-line hints.
- *  Mirrors the entries in `SLASH_COMMANDS` above (the
- *  flat string array is kept for the legacy
- *  `completeSlash` consumer). */
+ * Each entry is (name, description, args?, group, aliasOf?) so the
+ * InputBox can render a fuzzy-autocomplete dropdown with one-line
+ * hints, `/help` can group the rows, and the flat name list can be
+ * derived.
+ */
 export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
   name: string;
   description: string;
   args?: string;
+  /** The /help group. R380: the group lives ON THE ENTRY, so a command
+   *  cannot be in the catalog and missing from /help. */
+  group: string;
+  /** Set on an alias: the command it stands for. An alias gets no /help
+   *  row of its own — the primary mentions it, and that mention is
+   *  DERIVED from this field. */
+  aliasOf?: string;
 }> = [
-  { name: "help", description: "show the shortcut + command list (alias: /?)" },
-  { name: "?", description: "alias for /help" },
-  { name: "clear", description: "clear the scrollback" },
-  { name: "exit", description: "exit the TUI (aliases: /quit, /q)" },
-  { name: "quit", description: "alias for /exit" },
-  { name: "q", description: "alias for /exit" },
-  { name: "tools", description: "list available tools" },
-  { name: "state", description: "show the reducer state (debug)" },
-  { name: "ping", description: "round-trip the daemon" },
-  { name: "model", args: "<name>", description: "show or switch the active model" },
-  { name: "mode", description: "show or switch the permission mode" },
-  { name: "sessions", description: "this project's sessions — pick one to continue" },
-  { name: "tasks", description: "list recent tasks" },
-  { name: "projects", description: "list known projects" },
-  { name: "cwd", args: "<path>", description: "show or switch the working directory" },
-  { name: "stats", description: "show session stats" },
-  { name: "history", description: "show input history" },
-  { name: "lastplan", description: "show the most recent plan" },
-  { name: "theme", args: "<name>", description: "show or set the active theme" },
-  { name: "theme-pick", description: "open the interactive theme picker" },
+  { name: "help", group: "session", description: "show the shortcut + command list" },
+
+  { name: "?", group: "session", aliasOf: "help", description: "alias for /help" },
+
+  { name: "clear", group: "session", description: "clear the scrollback" },
+
+  { name: "exit", group: "session", description: "exit the TUI" },
+
+  { name: "quit", group: "session", aliasOf: "exit", description: "alias for /exit" },
+
+  { name: "q", group: "session", aliasOf: "exit", description: "alias for /exit" },
+
+  { name: "history", group: "session", description: "show input history" },
+
+  { name: "session", group: "session", args: "<id>", description: "switch the active session" },
+
+  {
+    name: "session-new",
+    group: "session",
+    args: "<id>",
+    description: "create a new session and switch to it",
+  },
+
+  {
+    name: "session-del",
+    group: "session",
+    args: "<id>",
+    description: "delete a session (default is protected)",
+  },
+
+  { name: "sessions-list", group: "session", description: "list every session in the daemon" },
+
+  {
+    name: "sessions",
+    group: "session",
+    description: "this project's sessions — pick one to continue",
+  },
+
+  { name: "threads", group: "session", description: "switch to another session thread" },
+
+  { name: "lastplan", group: "session", description: "show the most recent plan" },
+
+  { name: "tutorial", group: "session", description: "re-show the welcome overlay" },
+
+  { name: "rewind", group: "session", description: "rewind to a previous turn" },
+
+  { name: "bookmark", group: "session", args: "[N]", description: "bookmark the current turn" },
+
+  {
+    name: "snippet",
+    group: "session",
+    args: "<save|load|list|delete> <name>",
+    description: "save / load a snippet",
+  },
+
+  { name: "export", group: "session", description: "export the session to markdown or json" },
+
+  // R344: /demo walks the user through a canned conversation
+  // that exercises every visual surface (welcome banner, tool
+  // cards, permission modal, status changes, error path). It's
+  // the fastest way to evaluate the TUI without needing a real
+  // model round-trip.
+
+  { name: "demo", group: "session", description: "walk a canned conversation (no LLM round-trip)" },
+
+  {
+    name: "memory",
+    group: "context",
+    description: "open the memory panel (global / project / session)",
+  },
+
+  {
+    name: "memory-edit",
+    group: "context",
+    description: "edit the focused fact in the memory panel",
+  },
+
+  { name: "memory-compact", group: "context", description: "force a project-memory compact" },
+
+  // R245.2 (O-6) — cross-process self-eval audit.
+
+  {
+    name: "memory-audit",
+    group: "context",
+    description: "aggregate self-eval metrics from the daemon bank",
+  },
+
+  // R245.1 (O-10) — daemon bank read commands.
+
+  { name: "bank-stats", group: "context", description: "snapshot the daemon strategy bank" },
+
+  {
+    name: "bank-recall",
+    group: "context",
+    args: "<kind> [n]",
+    description: "recall top-N units for a task kind (default N=3)",
+  },
+
+  { name: "todos", group: "context", description: "open the live TODO board (j/k nav)" },
+  { name: "todo", group: "context", aliasOf: "todos", description: "alias for /todos" },
+
+  {
+    name: "context",
+    group: "context",
+    description: "what is filling the context window, itemised",
+  },
+  { name: "ctx", group: "context", aliasOf: "context", description: "alias for /context" },
+
+  {
+    name: "tokens",
+    group: "context",
+    description: "show current token usage (input / output / total / cost)",
+  },
+  { name: "token", group: "context", aliasOf: "tokens", description: "alias for /tokens" },
+
+  { name: "metrics", group: "context", description: "show session metrics" },
+
+  { name: "trace", group: "context", description: "list recent traces" },
+
+  {
+    name: "model",
+    group: "config",
+    args: "<name>",
+    description: "show or switch the active model",
+  },
+
+  { name: "mode", group: "config", description: "show or switch the permission mode" },
+  { name: "no-confirm", group: "config", aliasOf: "mode", description: "alias for /mode" },
+  { name: "noconfirm", group: "config", aliasOf: "mode", description: "alias for /mode" },
+  { name: "yes-do-it", group: "config", aliasOf: "mode", description: "alias for /mode" },
+
+  { name: "tool-actions", group: "config", description: "list recent tool actions" },
+
+  { name: "theme", group: "config", args: "<name>", description: "show or set the active theme" },
+
+  { name: "theme-pick", group: "config", description: "open the interactive theme picker" },
+
   {
     name: "layout",
+    group: "config",
     args: "<full|focus|minimal>",
     description: "switch layout (full / focus / minimal)",
   },
-  { name: "budget", args: "<usd> [calls]", description: "set a phase's tool-call / cost cap" },
-  { name: "rewind", description: "rewind to a previous turn" },
-  { name: "snippet", args: "<save|load|list|delete> <name>", description: "save / load a snippet" },
-  { name: "export", description: "export the session to markdown or json" },
-  { name: "tutorial", description: "re-show the welcome overlay" },
-  { name: "bookmark", args: "[N]", description: "bookmark the current turn" },
-  { name: "metrics", description: "show session metrics" },
-  { name: "context", description: "what is filling the context window, itemised" },
-  { name: "trace", description: "list recent traces" },
-  { name: "agents", description: "list Mavis agents with model column" },
-  { name: "agent", args: "<name>", description: "show an agent's body + frontmatter" },
-  { name: "prompt", args: "[section]", description: "show current system prompt sections" },
-  { name: "phase", args: "<name>", description: "show / transition the current phase" },
-  { name: "sessions-list", description: "list every session in the daemon" },
-  { name: "session", args: "<id>", description: "switch the active session" },
-  { name: "session-new", args: "<id>", description: "create a new session and switch to it" },
-  { name: "session-del", args: "<id>", description: "delete a session (default is protected)" },
-  { name: "skip", args: "<N|off>", description: "arm / clear skip-confirmation (N rounds)" },
-  { name: "skip-stats", description: "show skip-confirmation adoption" },
-  { name: "tool-actions", description: "list recent tool actions" },
-  { name: "memory", description: "open the memory panel (global / project / session)" },
-  { name: "memory-edit", description: "edit the focused fact in the memory panel" },
-  { name: "memory-compact", description: "force a project-memory compact" },
-  { name: "agent-pick", description: "open the agent picker (type to filter)" },
-  { name: "effort-pick", description: "set reasoning effort (low / medium / high / xhigh)" },
-  { name: "cwd-pick", description: "switch the daemon working directory" },
-  { name: "mcp", description: "open the MCP server + tool viewer" },
+
+  {
+    name: "budget",
+    group: "config",
+    args: "<usd> [calls]",
+    description: "set a phase's tool-call / cost cap",
+  },
+
+  { name: "agent-pick", group: "config", description: "open the agent picker (type to filter)" },
+  {
+    name: "agent-pick-set-default",
+    group: "config",
+    args: "[name]",
+    description: "set the highlighted agent as your default",
+  },
+
+  {
+    name: "effort-pick",
+    group: "config",
+    description: "set reasoning effort (low / medium / high / xhigh)",
+  },
+  {
+    name: "effort",
+    group: "config",
+    args: "<level>",
+    description: "set the effort directly (low / medium / high / xhigh)",
+  },
+
+  { name: "cwd-pick", group: "config", description: "switch the daemon working directory" },
+
+  { name: "agents", group: "config", description: "list Mavis agents with model column" },
+
+  {
+    name: "agent",
+    group: "config",
+    args: "<name>",
+    description: "show an agent's body + frontmatter",
+  },
+
+  {
+    name: "prompt",
+    group: "config",
+    args: "[section]",
+    description: "show current system prompt sections",
+  },
+
+  {
+    name: "phase",
+    group: "config",
+    args: "<name>",
+    description: "show / transition the current phase",
+  },
+
+  {
+    name: "skip",
+    group: "config",
+    args: "<N|off>",
+    description: "arm / clear skip-confirmation (N rounds)",
+  },
+
+  { name: "skip-stats", group: "config", description: "show skip-confirmation adoption" },
+
+  { name: "mcp", group: "mcp & integrations", description: "open the MCP server + tool viewer" },
+
   {
     name: "mcp-login",
+    group: "mcp & integrations",
     args: "<name>",
     description: "start the OAuth login flow for an MCP server",
   },
-  { name: "mcp-reconnect", description: "force a reconnect of the MCP registry" },
-  { name: "threads", description: "switch to another session thread" },
+
+  {
+    name: "mcp-reconnect",
+    group: "mcp & integrations",
+    description: "force a reconnect of the MCP registry",
+  },
+
+  { name: "consents", group: "mcp & integrations", description: "open the grants manager" },
+
+  {
+    name: "grants",
+    group: "mcp & integrations",
+    aliasOf: "consents",
+    description: "alias for /consents",
+  },
+
+  {
+    name: "notifications",
+    group: "mcp & integrations",
+    description: "open the notification center",
+  },
+
+  {
+    name: "workflow",
+    group: "workflows & sdd",
+    description: "run a workflow by name, or open the picker",
+  },
+
+  // Phase 6.3 (T-6-17) — long-running + must-have commands.
+  // R375: these three used to name methods the daemon does not have
+  // ("task/resume", "task/pause", "task/kill"), which made the help
+  // text a promise the TUI could not keep. The descriptions now say
+  // what the command DOES, and the method names live in the code.
+
+  {
+    name: "continue",
+    group: "workflows & sdd",
+    description: "resume this session's automatic continuation",
+  },
+  {
+    name: "resume",
+    group: "workflows & sdd",
+    aliasOf: "continue",
+    description: "alias for /continue",
+  },
+
+  {
+    name: "pause",
+    group: "workflows & sdd",
+    description: "pause this session's automatic continuation",
+  },
+
+  { name: "stop", group: "workflows & sdd", description: "interrupt the run that is in flight" },
+  { name: "kill", group: "workflows & sdd", aliasOf: "stop", description: "alias for /stop" },
+
+  // Spec-driven development — 8-phase run with phase artefacts.
+
+  {
+    name: "sdd",
+    group: "workflows & sdd",
+    args: "<intent>",
+    description: "start an 8-phase spec-driven run with an intent",
+  },
+
+  { name: "sdd-status", group: "workflows & sdd", description: "show the current SDD run state" },
+
+  {
+    name: "sdd-list",
+    group: "workflows & sdd",
+    description: "list every SDD run under the current cwd",
+  },
+
+  {
+    name: "sdd-approve",
+    group: "workflows & sdd",
+    description: "approve the current phase and advance",
+  },
+
+  {
+    name: "sdd-modify",
+    group: "workflows & sdd",
+    args: "<feedback>",
+    description: "re-run the current phase with your feedback",
+  },
+
+  {
+    name: "sdd-skip",
+    group: "workflows & sdd",
+    description: "skip the current phase (required phases refuse)",
+  },
+
+  { name: "sdd-abort", group: "workflows & sdd", description: "abort the current SDD run" },
+
+  // SDD modify-flow helpers (snapshot + diff the phase artefact).
+
+  {
+    name: "sdd-view",
+    group: "workflows & sdd",
+    args: "[phase]",
+    description: "show the phase artefact and its path",
+  },
+
+  {
+    name: "sdd-snapshot",
+    group: "workflows & sdd",
+    args: "[phase]",
+    description: "cache the current artefact for a later diff",
+  },
+
+  {
+    name: "sdd-diff",
+    group: "workflows & sdd",
+    args: "[phase]",
+    description: "diff the cached snapshot against the file on disk",
+  },
+
+  {
+    name: "sdd-clear-cache",
+    group: "workflows & sdd",
+    description: "drop every cached per-phase snapshot",
+  },
+
+  { name: "tools", group: "diagnostics", description: "list available tools" },
+
+  { name: "state", group: "diagnostics", description: "show the reducer state (debug)" },
+
+  { name: "stats", group: "diagnostics", description: "show session stats" },
+
+  { name: "ping", group: "diagnostics", description: "round-trip the daemon" },
+
+  { name: "tasks", group: "diagnostics", description: "list recent tasks" },
+
+  { name: "projects", group: "diagnostics", description: "list known projects" },
+
+  {
+    name: "cwd",
+    group: "diagnostics",
+    args: "<path>",
+    description: "show or switch the working directory",
+  },
+
   // R374: these two descriptions were T-430's originals — "review an
   // available update" and "confirm a dependency refresh" — and both
   // were LIES. There is no available update to review (the daemon has
@@ -203,176 +428,42 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
   // The optional `[install]` is the third verb. It existed since T-430
   // and was reachable, but invisible — the catalog advertised one
   // shape for a command that has two.
+
   {
     name: "update",
+    group: "diagnostics",
     args: "[install]",
     description: "check for a newer release (add 'install' to see how to apply one)",
   },
-  { name: "update-deps", description: "check how to refresh dependencies" },
-  // R344: /demo walks the user through a canned conversation
-  // that exercises every visual surface (welcome banner, tool
-  // cards, permission modal, status changes, error path). It's
-  // the fastest way to evaluate the TUI without needing a real
-  // model round-trip.
-  { name: "demo", description: "walk a canned conversation (no LLM round-trip)" },
-  { name: "notifications", description: "open the notification center" },
-  // Phase 6.3 (T-6-17) — long-running + must-have commands.
-  // R375: these three used to name methods the daemon does not have
-  // ("task/resume", "task/pause", "task/kill"), which made the help
-  // text a promise the TUI could not keep. The descriptions now say
-  // what the command DOES, and the method names live in the code.
-  { name: "continue", description: "resume this session's automatic continuation" },
-  { name: "pause", description: "pause this session's automatic continuation" },
-  { name: "stop", description: "interrupt the run that is in flight" },
-  { name: "todos", description: "open the live TODO board (j/k nav)" },
-  { name: "tokens", description: "show current token usage (input / output / total / cost)" },
-  { name: "consents", description: "open the grants manager (alias: /grants)" },
-  { name: "grants", description: "alias for /consents" },
-  { name: "workflow", description: "run a workflow by name, or open the picker" },
-  // R245.1 (O-10) — daemon bank read commands.
-  { name: "bank-stats", description: "snapshot the daemon strategy bank" },
-  {
-    name: "bank-recall",
-    args: "<kind> [n]",
-    description: "recall top-N units for a task kind (default N=3)",
-  },
-  // R245.2 (O-6) — cross-process self-eval audit.
-  { name: "memory-audit", description: "aggregate self-eval metrics from the daemon bank" },
-  // Spec-driven development — 8-phase run with phase artefacts.
-  { name: "sdd", args: "<intent>", description: "start an 8-phase spec-driven run with an intent" },
-  { name: "sdd-status", description: "show the current SDD run state" },
-  { name: "sdd-list", description: "list every SDD run under the current cwd" },
-  { name: "sdd-approve", description: "approve the current phase and advance" },
-  {
-    name: "sdd-modify",
-    args: "<feedback>",
-    description: "re-run the current phase with your feedback",
-  },
-  { name: "sdd-skip", description: "skip the current phase (required phases refuse)" },
-  { name: "sdd-abort", description: "abort the current SDD run" },
-  // SDD modify-flow helpers (snapshot + diff the phase artefact).
-  { name: "sdd-view", args: "[phase]", description: "show the phase artefact and its path" },
-  {
-    name: "sdd-snapshot",
-    args: "[phase]",
-    description: "cache the current artefact for a later diff",
-  },
-  {
-    name: "sdd-diff",
-    args: "[phase]",
-    description: "diff the cached snapshot against the file on disk",
-  },
-  { name: "sdd-clear-cache", description: "drop every cached per-phase snapshot" },
+
+  { name: "update-deps", group: "diagnostics", description: "check how to refresh dependencies" },
 ];
 
 /**
- * `/help` grouping + renderer.
+ * The command NAMES, DERIVED from the catalog above.
  *
- * R362: SLASH_HELP used to be a hand-maintained 88-line string literal that
- * had drifted from SLASH_COMMANDS (76) — the two disagreed, `/help`
- * advertised commands autocomplete could not reach, and the user-facing text
- * carried development notes ("T-080:", "对应历史 round:", "R700:").
+ * R380: this used to be a hand-maintained array of 77 strings — a
+ * SECOND copy of the command list, and it had already drifted: `/demo`
+ * was missing from it (so `/demo` was neither Tab-completable nor in the
+ * command palette), and `budget` appeared twice. The catalog is the only
+ * list now; this is its projection, so the two cannot disagree.
  *
- * It is now derived from SLASH_COMMANDS_DETAILED, which is also what feeds
- * the Tab autocomplete dropdown, so `/help` and the dropdown can never
- * disagree and the descriptions are literally the same strings.
- *
- * SLASH_COMMAND_GROUPS controls grouping and display order only. A command
- * in the catalog but in no group does not appear in `/help` (it still
- * completes) — scripts/test/r362-help-derived.test.mjs makes that an
- * explicit, asserted decision rather than an accident.
- *
- * Declared after SLASH_COMMANDS_DETAILED on purpose: the renderer reads it
- * at module-eval time, so an earlier declaration would be a TDZ crash that
- * `tsc` does NOT catch.
+ * Declared AFTER the catalog on purpose: the catalog is read at
+ * module-eval time, and an earlier declaration would be a TDZ crash
+ * that `tsc` does NOT catch.
  */
+export const SLASH_COMMANDS: string[] = SLASH_COMMANDS_DETAILED.map((c) => c.name);
 
-const SLASH_COMMAND_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  [
-    "session",
-    [
-      "help",
-      "clear",
-      "exit",
-      "history",
-      "session",
-      "session-new",
-      "session-del",
-      "sessions-list",
-      "sessions",
-      "threads",
-      "lastplan",
-      "tutorial",
-      "rewind",
-      "bookmark",
-      "snippet",
-      "export",
-      "demo",
-    ],
-  ],
-  [
-    "context",
-    [
-      "memory",
-      "memory-edit",
-      "memory-compact",
-      "memory-audit",
-      "bank-stats",
-      "bank-recall",
-      "todos",
-      "context",
-      "tokens",
-      "metrics",
-      "trace",
-    ],
-  ],
-  [
-    "config",
-    [
-      "model",
-      "mode",
-      "tool-actions",
-      "theme",
-      "theme-pick",
-      "layout",
-      "budget",
-      "agent-pick",
-      "effort-pick",
-      "cwd-pick",
-      "agents",
-      "agent",
-      "prompt",
-      "phase",
-      "skip",
-      "skip-stats",
-    ],
-  ],
-  ["mcp & integrations", ["mcp", "mcp-login", "mcp-reconnect", "consents", "notifications"]],
-  [
-    "workflows & sdd",
-    [
-      "workflow",
-      "continue",
-      "pause",
-      "stop",
-      "sdd",
-      "sdd-status",
-      "sdd-list",
-      "sdd-approve",
-      "sdd-modify",
-      "sdd-skip",
-      "sdd-abort",
-      "sdd-view",
-      "sdd-snapshot",
-      "sdd-diff",
-      "sdd-clear-cache",
-    ],
-  ],
-  [
-    "diagnostics",
-    ["tools", "state", "stats", "ping", "tasks", "projects", "cwd", "update", "update-deps"],
-  ],
-];
+/**
+ * Which command each alias stands for.
+ *
+ * R380: the catalog says it, so the tab completion can use it — an
+ * alias must not shadow the command it stands for.
+ */
+const ALIAS_PRIMARY = new Map<string, string>();
+for (const c of SLASH_COMMANDS_DETAILED) {
+  if (c.aliasOf) ALIAS_PRIMARY.set(c.name, c.aliasOf);
+}
 
 /**
  * Render the `/help` blurb.
@@ -383,20 +474,40 @@ const SLASH_COMMAND_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> 
  * carrying development notes like "T-080:" and "对应历史 round:" into the
  * user-facing text.
  *
- * It is now derived, so the drift is structurally impossible: a command
- * appears in `/help` iff it is in SLASH_COMMANDS_DETAILED, and the
- * descriptions are the SAME strings the autocomplete dropdown shows.
+ * R380: the grouping came from a SECOND list (`SLASH_COMMAND_GROUPS`, a
+ * table of group -> ordered names). A command in the catalog but in no
+ * group simply did not appear in `/help`, and the comment here claimed
+ * a test made that "an explicit decision" — there was no such test, and
+ * the four commands it covered happened to be aliases whose primaries
+ * mentioned them. The group is now a field ON THE ENTRY, so the
+ * grouping cannot drift and the claim is true.
  *
- * SLASH_COMMAND_GROUPS controls grouping and display order only. A command
- * that is in the catalog but in no group simply does not appear in `/help`
- * (it still completes); the test below makes that an explicit decision
- * rather than an accident.
+ * The alias mention is derived too: the catalog says which command an
+ * alias stands for, and the help text follows.
  */
 function renderSlashHelp(): string {
-  const byName = new Map(SLASH_COMMANDS_DETAILED.map((c) => [c.name, c]));
   const out: string[] = [];
   out.push("TUI command reference — grouped below. Tab completes; the autocomplete");
   out.push("dropdown shows the same one-line hints. <arg> is required, [arg] optional.");
+
+  // The alias mention is DERIVED. The catalog says which command an
+  // alias stands for (the aliasOf field); the help text follows from
+  // that. A hand-written "(aliases: /quit, /q)" inside the description
+  // would be a second copy of the same fact — and the R377 lesson
+  // applies to prose too: a second copy of a truth drifts silently.
+  const aliases = new Map<string, string[]>();
+  for (const c of SLASH_COMMANDS_DETAILED) {
+    if (!c.aliasOf) continue;
+    const list = aliases.get(c.aliasOf) ?? [];
+    list.push(c.name);
+    aliases.set(c.aliasOf, list);
+  }
+  const describe = (c: (typeof SLASH_COMMANDS_DETAILED)[number]): string => {
+    const list = aliases.get(c.name);
+    if (!list || list.length === 0) return c.description;
+    const label = list.length === 1 ? "alias" : "aliases";
+    return `${c.description} (${label}: ${list.map((a) => "/" + a).join(", ")})`;
+  };
 
   // Longest "/name <arg>" label across the whole catalog, so every group
   // aligns its description column on the same gutter.
@@ -407,21 +518,21 @@ function renderSlashHelp(): string {
   }
   gutter += 2;
 
-  for (const [group, names] of SLASH_COMMAND_GROUPS) {
-    const rows: string[] = [];
-    for (const name of names) {
-      const entry = byName.get(name);
-      // A group row with no catalog entry means the two lists drifted again.
-      // Skip rather than print a blank row — the test makes that an explicit
-      // decision instead of an accident.
-      if (!entry) continue;
-      const label = `/${name}${entry.args ? " " + entry.args : ""}`;
-      rows.push(`${label.padEnd(gutter)}${entry.description}`.trimEnd());
+  // The groups are the CATALOG'S groups, in the catalog's order. R380:
+  // there is no second group table any more, so a command cannot be in
+  // the catalog and missing from /help — the group is a field on the
+  // entry itself.
+  let current = "";
+  for (const c of SLASH_COMMANDS_DETAILED) {
+    // An alias has no row of its own: the primary mentions it.
+    if (c.aliasOf) continue;
+    if (c.group !== current) {
+      current = c.group;
+      out.push("");
+      out.push(`# ${current}`);
     }
-    if (rows.length === 0) continue;
-    out.push("");
-    out.push(`# ${group}`);
-    out.push(...rows);
+    const label = `/${c.name}${c.args ? " " + c.args : ""}`;
+    out.push(`${label.padEnd(gutter)}${describe(c)}`.trimEnd());
   }
   return out.join("\n");
 }
@@ -470,7 +581,22 @@ export function completeSlash(partial: string): Completion {
     };
   }
 
-  const matches = SLASH_COMMANDS.filter((c) => c.startsWith(cmdPart));
+  // R380: an alias must not SHADOW the command it stands for.
+  //
+  // `/token` is an alias of `/tokens`, so the prefix "/tok" used to
+  // complete to "/tokens " in one keystroke. With both in the list it
+  // became two candidates, and the user had to type one more letter
+  // for a distinction nobody cares about. The alias is dropped when
+  // the primary it stands for also matches — the user who typed
+  // "/tok" wanted the real command.
+  //
+  // An alias whose primary does NOT match stays: "/q" still offers
+  // both "/q" and "/quit", because neither is the other.
+  const matches = SLASH_COMMANDS.filter((c) => c.startsWith(cmdPart)).filter((c) => {
+    const primary = ALIAS_PRIMARY.get(c);
+    if (!primary || primary === c) return true;
+    return !primary.startsWith(cmdPart);
+  });
   if (matches.length === 0) {
     return { completed: partial, alternatives: [], oneShot: false };
   }

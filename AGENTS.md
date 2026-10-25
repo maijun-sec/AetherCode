@@ -332,6 +332,30 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   reported a hole for the wrong reason.
   **Lesson 1199 — the same truth twice in ONE file hides bugs just as
   well as two files.** Doc: `docs/R379-gap-closers-and-countdown.md`.
+- **R380** (the command surface has ONE list): the slash-command
+  surface was described by FOUR lists — a flat `string[]` the Tab
+  completion and the command palette read, a structured catalog the
+  InputBox dropdown read, a hand-written group table the `/help`
+  renderer walked, and the router's own `case` arms — and they had
+  already drifted: `/demo` was in the catalog but NOT in the flat
+  array (so it was neither Tab-completable nor in the palette),
+  `budget` appeared TWICE in the flat array, and the router served ten
+  commands the catalog had never heard of — including `/effort`
+  (R377's own feature, invisible in `/help`) and the permission
+  shortcut whose comment called it "discoverable in one word". The
+  comments describing the structure were wrong too ("source of truth
+  for autocomplete is SLASH_COMMANDS_DETAILED" — it was
+  `SLASH_COMMANDS`; "mirrors the entries in SLASH_COMMANDS" — it did
+  not). Now the catalog is the only list: each entry carries its
+  `group` (so a command cannot be in the catalog and missing from
+  `/help`) and, for an alias, its `aliasOf` (so the alias mention in
+  the help text is derived, and the flat name list is the catalog's
+  projection). The R380 gate checks BOTH directions — every `case`
+  the router can reach is declared in the catalog, and every catalog
+  entry is routable. A one-way check would have left half the drift
+  standing. `/help` is byte-identical before and after.
+  **Lesson 1207 — one "list" can be several lists, and every one of
+  them drifts.** Doc: `docs/R380-one-command-list.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1792,3 +1816,37 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   手写键位表(清单见 `docs/R379-gap-closers-and-countdown.md` 第 4.3 节),
   用 `node scripts/test/probe-component-keys.mjs` 可复现。
   文档:`docs/R379-gap-closers-and-countdown.md`。
+
+## Watch out for (R380 additions)
+
+- **"一个清单"可以有好几份,而且每一份都会漂。** R380 实测:命令面有**四份**
+  名单(扁平 `string[]` / 结构化目录 / 手写分组表 / 路由器的 `case` 分支),
+  **三份已经漂了**:`/demo` 只在目录里(所以补全不出来、面板里没有)、`budget`
+  在扁平数组里**出现两次**、路由器能到的 10 个命令目录里没有。
+  **Lesson 1207 —— 一份"清单"可以有好几份,而且每一份都会漂。**
+- **注释里的"真相来源是 X"是一句需要被验证的断言。** R380 之前 `commands.ts`
+  写着"Source of truth for autocomplete is SLASH_COMMANDS_DETAILED"——而
+  `completeSlash()` 读的是 `SLASH_COMMANDS`;还写着"Mirrors the entries in
+  `SLASH_COMMANDS`"——而 `demo` 缺失、`budget` 重复。**注释在撒谎,而且没人查。**
+- **单向校验留下的正是会漂的那一半。** 分组表方向有门禁、反向没有 → 新增命令
+  忘了加分组 → **静默**从 `/help` 消失。而且代码注释**自称**"the test makes that
+  an explicit decision"——**那个测试不存在**。
+  **Lesson 1208 —— 单向校验留下的正是会漂的那一半;注释里的"有测试保证"要验证。**
+- **分组表曾经是 `/help` 的唯一分组来源,现在是条目上的 `group` 字段。**
+  好处:命令不可能"在目录里却不在 `/help` 里"。代价:**分组必须在目录里连续**
+  (否则 `/help` 会打印两个同名标题)——`r380-command-catalog.test.mjs` 钉了这条。
+- **一个别名不得遮住它的主命令。** `/token` 是 `/tokens` 的别名;两个都在补全
+  列表里,`/tok` 就失去一键补全。规则:**别名指向的主命令也匹配该前缀时,丢掉
+  这个别名**(`/q` 的主命令 `exit` 不匹配 → 两个都留)。
+  **Lesson 1209 —— 别名不得遮住主命令。**
+- **针脚要钉字段,不是钉整条文本。** prettier 会重排条目(长的描述会被折行),
+  钉整条文本的针脚就失配 —— 失配的表现是"用例没测到任何东西",不是"用例失败"。
+  R380 里 3 个针脚是这样死的(`r374-mutate.mjs` 的 update/update-deps 那几条)。
+  **Lesson 1210 —— 针脚钉字段,不钉整条文本。**
+- **`aliases?` 不是 "alias + 可选 es"。** 正则的量词挂在**最后一个字符**上:
+  `aliases?` = "aliase" + 可选 "s",所以**单数 "alias" 匹配不上**。
+  同一个拼写坑了两次(一次在补丁脚本里剥不掉手写的别名提及,一次在门禁的正则里)。
+  **Lesson 1211 —— 量词挂在最后一个字符上。**
+- **`/help` 的重构必须用"重构前的文件编译一遍再逐字节 diff"来证明没变**,
+  而不是"看起来没变"。R380 的做法:把旧 `commands.ts` 拷到临时目录编译,
+  和新版本逐行 diff —— 结果 `IDENTICAL`。

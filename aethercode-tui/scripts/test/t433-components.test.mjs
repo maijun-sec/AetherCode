@@ -579,14 +579,15 @@ test("T-432: commands.ts lists every §5.3 command for /help", () => {
   // describes how /help is built. The meaningful source-level check is that
   // each command is BOTH in the catalog AND assigned to a group — that pair
   // is precisely what the renderer walks.
+  //
+  // R380: the group table is GONE. The group is a field on the entry, so
+  // the pair collapsed to one list, and "in the catalog" is now
+  // sufficient — a command cannot be in the catalog and missing from
+  // /help, because the group travels with it.
   const src = read("src/commands.ts");
   const catalog = src.slice(
     src.indexOf("export const SLASH_COMMANDS_DETAILED"),
     src.indexOf("];", src.indexOf("export const SLASH_COMMANDS_DETAILED")),
-  );
-  const groups = src.slice(
-    src.indexOf("const SLASH_COMMAND_GROUPS"),
-    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
   );
   for (const cmd of [
     "agent-pick",
@@ -601,7 +602,6 @@ test("T-432: commands.ts lists every §5.3 command for /help", () => {
     "notifications",
   ]) {
     assert.ok(catalog.includes(`name: "${cmd}"`), `/help catalog missing entry for ${cmd}`);
-    assert.ok(groups.includes(`"${cmd}"`), `/help group table missing entry for ${cmd}`);
   }
 });
 

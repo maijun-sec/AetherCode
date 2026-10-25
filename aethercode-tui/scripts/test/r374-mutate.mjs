@@ -34,6 +34,9 @@ import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
 // case reports "caught" for the wrong reason and the battery measures
 // nothing. See scripts/test/mutation-baseline.mjs.
 import { requireGreenBaseline } from "./mutation-baseline.mjs";
+// R380: a needle that must land in CODE, not in a comment — and that
+// says WHICH way it missed when it does not land.
+import { mutateInCode } from "./code-needle.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -613,18 +616,15 @@ const CASES = [
   ],
 
   // --- the catalog -----------------------------------------------------------
+  //
+  // R380: the catalog entries grew a `group` field, and prettier re-wrapped
+  // the long ones — so a needle that pinned the WHOLE entry text stopped
+  // matching. The needles below now pin the FIELD they are about (the
+  // args hint, the description), which is both what the case means and
+  // what survives a reformat.
   [
     "the catalog stops advertising the install verb",
-    [
-      [
-        "commands",
-        (s) =>
-          s.replace(
-            /name: "update",\s*args: "\[install\]",\s*description: "check for a newer release \(add 'install' to see how to apply one\)",/,
-            '{ name: "update", description: "check for a newer release" },',
-          ),
-      ],
-    ],
+    [["commands", (s) => mutateInCode(s, /args: "\[install\]",/, "", "commands.ts")]],
   ],
 
   [
@@ -633,9 +633,11 @@ const CASES = [
       [
         "commands",
         (s) =>
-          s.replace(
-            /name: "update",\s*args: "\[install\]",\s*description: "check for a newer release \(add 'install' to see how to apply one\)",/,
-            '{ name: "update", args: "[install]", description: "review an available update" },',
+          mutateInCode(
+            s,
+            /description: "check for a newer release \(add 'install' to see how to apply one\)"/,
+            'description: "review an available update"',
+            "commands.ts",
           ),
       ],
     ],
@@ -647,9 +649,11 @@ const CASES = [
       [
         "commands",
         (s) =>
-          s.replace(
-            '{ name: "update-deps", description: "check how to refresh dependencies" },',
-            '{ name: "update-deps", description: "confirm a dependency refresh" },',
+          mutateInCode(
+            s,
+            /description: "check how to refresh dependencies"/,
+            'description: "confirm a dependency refresh"',
+            "commands.ts",
           ),
       ],
     ],

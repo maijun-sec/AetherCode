@@ -196,11 +196,19 @@ test("R78: TUI state.ts has TraceSummary type and setRecentTraces action", () =>
 
 test("R78: SLASH_COMMANDS includes 'trace'", () => {
   const cmds = readFileSync(join(root, "src", "commands.ts"), "utf-8");
-  // The list is a flat string[] — make sure "trace" is one of the entries.
-  // The simplest check: it appears as a literal in the SLASH_COMMANDS array.
-  const lines = cmds.split("\n").map((l) => l.trim());
-  const slashLine = lines.find((l) => l.startsWith('"trace",'));
-  assert.ok(slashLine !== undefined, 'expected "trace", as a SLASH_COMMANDS entry');
+  // R380: the flat array is DERIVED from the catalog now, so the
+  // literal this used to look for ("trace",) lives in the CATALOG.
+  // The property is unchanged — "trace" must be a registered command
+  // the user can type — but it is now expressed against the one list.
+  //
+  // The stronger form of the same property is in the R380 gate: the
+  // compiled SLASH_COMMANDS must contain "trace", i.e. the command is
+  // actually completable, not merely present in the source.
+  const catalog = cmds.slice(
+    cmds.indexOf("export const SLASH_COMMANDS_DETAILED"),
+    cmds.indexOf("];", cmds.indexOf("export const SLASH_COMMANDS_DETAILED")),
+  );
+  assert.match(catalog, /name: "trace"/, 'expected "trace" as a SLASH_COMMANDS_DETAILED entry');
 });
 
 // ----- 3. Build smoke test ------------------------------------------

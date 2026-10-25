@@ -98,17 +98,16 @@ test("R169: commands.ts exposes agent-pick / effort-pick / cwd-pick", () => {
   // the renderer at runtime. The assertion that actually matters is that each
   // command is in the catalog AND assigned to a group, because that pair is
   // exactly what renderSlashHelp walks.
+  //
+  // R380: the group table is gone; the group is a field on the entry. So
+  // "in the catalog AND in a group" is now just "in the catalog" — and
+  // a command can no longer be in the catalog and missing from /help.
   const catalog = src.slice(
     src.indexOf("export const SLASH_COMMANDS_DETAILED"),
     src.indexOf("];", src.indexOf("export const SLASH_COMMANDS_DETAILED")),
   );
-  const groups = src.slice(
-    src.indexOf("const SLASH_COMMAND_GROUPS"),
-    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
-  );
   for (const cmd of ["agent-pick", "effort-pick", "cwd-pick"]) {
     assert.ok(catalog.includes(`name: "${cmd}"`), `${cmd} missing from the /help catalog`);
-    assert.ok(groups.includes(`"${cmd}"`), `${cmd} missing from the /help group table`);
   }
   // The cases themselves.
   assert.match(src, /case "agent-pick":/);

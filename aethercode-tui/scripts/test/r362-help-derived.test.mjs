@@ -10,6 +10,16 @@
 //   * SLASH_COMMANDS_DETAILED  (the autocomplete catalog 鈥?single source of truth)
 //   * SLASH_COMMAND_GROUPS      (group -> ordered names, display order only)
 //
+// R380 removed the second list. The group is now a field ON the catalog
+// entry, and SLASH_COMMANDS (the flat array the Tab completion and the
+// command palette read) is DERIVED from the catalog too — so there is
+// one list, and the three surfaces (Tab completion, the InputBox
+// dropdown, the command palette) cannot disagree.
+//
+// The tests below were RE-AIMED at the new shape, not deleted: the
+// properties they protected (the help is derived, every command is
+// findable, the aliases are honest) are unchanged.
+//
 // These tests pin that derivation, because the value of the change is entirely
 // in "it cannot drift again", not in today's particular /help text.
 
@@ -19,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { codeOf } from "./strip-comments.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -62,19 +73,14 @@ if (r.status !== 0) {
 const mod = await import(pathToFileURL(join(tmp, "out", "commands.js")).href);
 const { SLASH_HELP, SLASH_COMMANDS, SLASH_COMMANDS_DETAILED } = mod;
 const src = readFileSync(join(root, "src", "commands.ts"), "utf-8");
-/** Pull ONLY the command names out of the group table.
+/** The catalog entries, as the compiled module sees them.
  *
- *  The table shape is `["<group name>", ["cmd", "cmd", ...]],` so a naive
- *  /"([a-z0-9-]+)"/g also captures the group names ("session", "context",
- *  ...) and the test then reports those as commands missing from the
- *  catalog. Capture the inner array of each tuple instead.
+ *  R380: the group table is gone, so "which commands are grouped" is
+ *  now "every entry that is not an alias" — the group travels with the
+ *  entry, and an alias has no row of its own.
  */
-function extractGroupedCommands(groupsSrc) {
-  const out = [];
-  for (const m of groupsSrc.matchAll(/"[^"]*"\s*,\s*\[([^\]]*)\]/g)) {
-    for (const n of m[1].matchAll(/"([^"]+)"/g)) out.push(n[1]);
-  }
-  return out;
+function rowEntries() {
+  return SLASH_COMMANDS_DETAILED.filter((c) => !c.aliasOf);
 }
 
 test("SLASH_HELP is derived, not a hand-written literal", () => {
@@ -84,9 +90,22 @@ test("SLASH_HELP is derived, not a hand-written literal", () => {
     src.includes("function renderSlashHelp"),
     "commands.ts must render /help from the catalog via renderSlashHelp()",
   );
-  assert.ok(
-    src.includes("const SLASH_COMMAND_GROUPS"),
-    "commands.ts must declare the grouping table",
+  // R380: the group table is GONE. The renderer walks the catalog and
+  // reads each entry's own `group`, so there is no second list that
+  // could drift from the first.
+  //
+  // The check is on the CODE, not the raw file: the history of what the
+  // table used to be lives in a comment, and a comment is not a second
+  // list (Lesson: comments do not count as code).
+  assert.doesNotMatch(
+    codeOf(src, "commands.ts"),
+    /SLASH_COMMAND_GROUPS/,
+    "the group table must not come back — the group is a field on the entry",
+  );
+  assert.match(
+    src,
+    /for \(const c of SLASH_COMMANDS_DETAILED\)/,
+    "the renderer must walk the catalog — that is the derivation",
   );
   assert.doesNotMatch(
     src.slice(src.indexOf("export const SLASH_HELP")),
@@ -112,34 +131,38 @@ test("the renderer is declared AFTER the catalog it reads", () => {
   );
 });
 
-test("every grouped command exists in the catalog", () => {
-  // A group row naming a command that is not in the catalog means the two
-  // lists drifted again. renderSlashHelp silently skips those today; this
-  // test makes the skip impossible to miss.
-  const groupsSrc = src.slice(
-    src.indexOf("const SLASH_COMMAND_GROUPS"),
-    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
-  );
-  const grouped = extractGroupedCommands(groupsSrc);
-  const catalogNames = new Set(SLASH_COMMANDS_DETAILED.map((c) => c.name));
-  const orphans = grouped.filter((n) => !catalogNames.has(n));
-  assert.deepEqual(
-    orphans,
-    [],
-    `group table names commands missing from SLASH_COMMANDS_DETAILED: ${orphans.join(", ")}`,
-  );
+test("every catalog entry carries a group, and no group is split", () => {
+  // R380: the group is a field on the entry, so "a command with no
+  // group" is now a TYPE error rather than a silent omission — but a
+  // group that appears in two separate runs would render TWO sections
+  // with the same header, and the user's scan would read as a mistake.
+  // The catalog order is the display order, so a group must be one
+  // contiguous run.
+  const groups = rowEntries().map((c) => c.group);
+  const seen = new Set();
+  let previous = null;
+  for (const g of groups) {
+    if (g === previous) continue;
+    assert.ok(
+      !seen.has(g),
+      `the group "${g}" appears in two separate runs of the catalog — /help would print ` +
+        "the same header twice",
+    );
+    seen.add(g);
+    previous = g;
+  }
+  assert.ok(seen.size >= 4, `only ${seen.size} groups in the catalog — re-anchor this test`);
 });
 
-test("every grouped command renders a non-empty row in /help", () => {
-  const groupsSrc = src.slice(
-    src.indexOf("const SLASH_COMMAND_GROUPS"),
-    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
-  );
-  const grouped = extractGroupedCommands(groupsSrc);
-  for (const name of grouped) {
+test("every command renders a non-empty row in /help", () => {
+  // The property this file has always protected: a command the user can
+  // type must be FINDABLE in /help. R380: the group travels with the
+  // entry, so this is now a total check over the catalog rather than
+  // over a group table — a command cannot slip through ungrouped.
+  for (const c of rowEntries()) {
     assert.ok(
-      SLASH_HELP.includes(`/${name}`),
-      `/help does not render /${name} even though it is in the group table`,
+      SLASH_HELP.includes(`/${c.name}`),
+      `/help does not render /${c.name} even though it is in the catalog`,
     );
   }
 });
@@ -182,8 +205,34 @@ test("aliases are mentioned so /help stays honest", () => {
   // `/quit`, `/q`, `/?`, `/grants` are real commands the user can type but
   // are not separate catalog rows. Mentioning them in the primary's
   // description keeps /help complete without inflating the row count.
+  //
+  // R380: the mention is DERIVED from the alias's `aliasOf` field, so
+  // the alias set is stated once (in the catalog) and the help text
+  // follows. A hand-written "(alias: /?)" in a description would be a
+  // second copy of the same fact.
   for (const a of ["/quit", "/q", "/grants"]) {
     assert.ok(SLASH_HELP.includes(a), `/help does not mention the ${a} alias`);
+  }
+  // And the source must NOT carry the mention as well — that would be
+  // the second copy, and the two would drift (the renderer would
+  // append a second mention to the hand-written one).
+  assert.doesNotMatch(
+    src,
+    /description: "[^"]*\(alias(?:es)?: \//,
+    "the alias mention must be derived from aliasOf, not hand-written in the description",
+  );
+  // Every alias in the catalog points at a command that exists, and
+  // that command's row mentions it.
+  for (const c of SLASH_COMMANDS_DETAILED) {
+    if (!c.aliasOf) continue;
+    assert.ok(
+      SLASH_COMMANDS_DETAILED.some((p) => p.name === c.aliasOf),
+      `the alias /${c.name} points at /${c.aliasOf}, which is not in the catalog`,
+    );
+    assert.ok(
+      SLASH_HELP.includes(`/${c.aliasOf}`),
+      `the alias /${c.name} points at /${c.aliasOf}, which has no row in /help`,
+    );
   }
 });
 
@@ -237,9 +286,22 @@ test("SLASH_COMMANDS (the flat array) is unchanged in size", () => {
   // other tests depend on. 76 as of the R362 baseline, 77 as of R371
   // (which added `/context` — the command the context-meter placeholder
   // had been advertising without one since R362).
+  //
+  // R380: 87. The flat array is DERIVED from the catalog now, and the
+  // catalog grew by ten — the router had ten case arms the catalog
+  // never knew about, and "the router's surface must be declared" is
+  // now a gate. Two of them are user-facing commands that /help never
+  // mentioned (`/effort` — R377's feature — and the permission
+  // shortcut); the other eight are aliases (`/resume`, `/kill`,
+  // `/todo`, `/ctx`, `/token`, `/no-confirm`, `/noconfirm`,
+  // `/yes-do-it`).
+  //
+  // The number moved on purpose. The "did not drift" property is now
+  // structural, not a count: SLASH_COMMANDS is the catalog's
+  // projection, so the two cannot disagree.
   assert.equal(
     SLASH_COMMANDS.length,
-    77,
+    87,
     "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident",
   );
   assert.ok(

@@ -60,22 +60,17 @@ test("R103: /help output mentions /skip and /tool-actions", () => {
   // what killed the drift where `/help` advertised 88 commands while
   // autocomplete knew 76.
   //
-  // So the meaningful source-level assertion is: the command is in the catalog
-  // AND appears in a group row. That pair is exactly what the renderer walks,
-  // so this test now guards the real input rather than a dead literal.
+  // R380: the group table is GONE — the group is a field on the catalog
+  // entry itself, so "in the catalog AND in a group row" collapsed to
+  // "in the catalog". The property is unchanged (these two commands
+  // must be in /help); only the number of places to look shrank.
   const src = readFileSync(join(root, "src", "commands.ts"), "utf-8");
   const catalog = src.slice(
     src.indexOf("export const SLASH_COMMANDS_DETAILED"),
     src.indexOf("];", src.indexOf("export const SLASH_COMMANDS_DETAILED")),
   );
-  const groups = src.slice(
-    src.indexOf("const SLASH_COMMAND_GROUPS"),
-    src.indexOf("];", src.indexOf("const SLASH_COMMAND_GROUPS")),
-  );
   assert.match(catalog, /name: "skip"/, "skip missing from the autocomplete catalog");
-  assert.match(groups, /"skip"/, "skip missing from the /help group table");
   assert.match(catalog, /name: "tool-actions"/, "tool-actions missing from the catalog");
-  assert.match(groups, /"tool-actions"/, "tool-actions missing from the /help group table");
   // argument placeholder must survive into the rendered help
   assert.match(
     catalog,
