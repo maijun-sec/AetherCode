@@ -18,7 +18,7 @@
  * Layout:
  *
  *  ╭─────────────────────────────────────────────────────╮
- *  │  ⌬  AETHERCODE  v0.2.72  ·  Type a prompt to start  │
+ *  │  ⌬  AETHERCODE  v0.2.73  ·  Type a prompt to start  │
  *  │                                                      │
  *  │  ⌬ model: MiniMax-M3   ⚙ mode: DEFAULT             │
  *  │  ⌃ provider: MiniMax   # session: dcffbb65          │

@@ -25,4 +25,4 @@
  * a release bumps the version. The Java one lives in another module
  * and is not reachable from the TUI's test scope.
  */
-export const TUI_VERSION = "0.2.72";
+export const TUI_VERSION = "0.2.73";

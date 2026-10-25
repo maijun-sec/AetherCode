@@ -1,6 +1,6 @@
 {
   "name": "aethercode-tui",
-  "version": "0.2.72",
+  "version": "0.2.73",
   "description": "Modern terminal UI for AetherCode. Communicates with the AetherCode daemon over JSON-RPC 2.0. Built on Ink (React for CLI).",
   "type": "module",
   "bin": {
