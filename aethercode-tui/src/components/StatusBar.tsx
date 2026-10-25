@@ -57,25 +57,36 @@ interface Props {
   onReattach?: (id: string) => void;
 }
 
-/** Stop-reason → user-facing label. */
-const STOP_LABEL: Record<string, string> = {
-  end_turn: "✓ ready",
-  end_turn_and_tool: "✓ ready",
-  tool_use_end: "✓ ready",
-  stop: "✓ ready",
-  tool_calls: "✓ ready",
-  max_tokens: "✓ ready",
-  length: "✓ ready",
-  loop_detected: "stopped: loop",
-  same_fingerprint: "stopped: loop",
-  same_error: "stopped: loop",
-  long_output: "stopped: long output",
-  high_risk_repeat: "stopped: high-risk repeat",
-  user_interrupt: "stopped: user interrupt",
-  max_iterations: "stopped: max turns",
+/** Display kind → user-facing label. THE ONE label table.
+ *
+ * R383: this used to be TWO tables — `STOP_LABEL` (keyed by the stop
+ * reason) and `KIND_LABEL` (keyed by the display kind) — and the
+ * renderer consulted the FIRST one. That was a second copy of the
+ * classification truth living in the renderer, which is exactly the
+ * bug this round removes: the daemon decides the verdict (`isError`)
+ * and names the kind (`stopKind`), and the renderer only words it.
+ *
+ * Two things proved the two tables could not both be right:
+ *
+ *   1. The reason table could never hit for a decorated reason.
+ *      The engine sends `"error: <class>: <msg>"`, so a lookup keyed
+ *      by the raw reason missed every failure and the strip showed a
+ *      GREEN "✓ ready" for a run that had died with an upstream 500.
+ *   2. It disagreed with the classifier. `"same_fingerprint"` was
+ *      labelled "stopped: loop" while the classifier called it "ok" —
+ *      so the strip rendered the words "stopped: loop" in the colour
+ *      for success. (That reason is a progress-loop-detector KIND,
+ *      not a stop reason; the engine's stop reason is
+ *      `"loop_detected: <tier> (…)"`.)
+ *
+ * Every live entry of the old table was already reproduced by
+ * `KIND_LABEL`, so removing it loses no wording. */
+const KIND_LABEL: Record<NonNullable<State["lastStopKind"]>, string> = {
+  ok: "✓ ready",
+  loop: "stopped: loop",
   max_turns: "stopped: max turns",
   error: "stopped: error",
-  empty_input: "empty input",
+  empty: "empty input",
 };
 
 /** Run state → running label. */
@@ -128,10 +139,13 @@ export const StatusBar: React.FC<Props> = ({
   onReattach,
 }) => {
   const color = state.submitting ? t.warn : colorForKind(state.lastStopKind);
-  const reason = state.lastStopReason ?? "";
+  // R383: the label comes from the DISPLAY KIND, which the daemon's own
+  // verdict produced — never from a lookup on the raw stopReason. The
+  // raw reason is decorated ("error: <class>: <msg>"), so a lookup on
+  // it never hit and every failure rendered as the green "✓ ready".
   const label = state.submitting
     ? labelForRunning(state.status)
-    : (STOP_LABEL[reason] ?? "✓ ready");
+    : KIND_LABEL[state.lastStopKind ?? "ok"];
 
   const showControl = !!(onContinue || onPause || onStop);
   const showStale =

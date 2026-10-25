@@ -100,8 +100,13 @@ test("R32-G: line.ts emits a 'stopped — loop' tag for loop_detected", () => {
 });
 
 test("R32-G: line.ts colours the loop run-end line red", () => {
-  // Look for: kind === "loop" ? C.red : ...
-  assert.match(lineTs, /kind === "loop"\s*\?\s*C\.red/);
+  // R383: the pin used to be `kind === "loop" ? C.red` — the shape the
+  // function had BEFORE it became a switch. The pin was stale (a
+  // pre-existing red in the suite) while the BEHAVIOUR was always
+  // right: the switch's `case "loop": return C.red;` colours the loop
+  // run-end line red. A pin that no longer matches the code is a hole
+  // that says nothing, so the pin now names the field it checks.
+  assert.match(lineTs, /case "loop":\s+return C\.red/);
 });
 
 test("R32-G: line.ts prints a follow-up hint for loop", () => {
@@ -154,100 +159,87 @@ test("R32-G: reducer clears lastStopReason on submit (so a new run starts clean)
   assert.equal(s.lastStopReason, null);
 });
 
-test("R32-G: classifyStopReason does NOT match 'main_loop' as loop", async () => {
+test("R32-G: the shared taxonomy does NOT match 'main_loop' as loop", async () => {
   // Critical regression guard: a reason like 'main_loop' must NOT
   // be classified as "loop" (which would falsely show the red
   // "stopped" banner). Only 'loop_detected' or reasons that
   // start with 'loop_' should be loop.
-  const stateMod = await import("file:///" + join(tmp, "state.js").replace(/\\/g, "/"));
-  const { classifyStopReason } = stateMod;
-  // The strict version of classifyStopReason in state.ts uses
-  // r === "loop_detected" || r.startsWith("loop_") — it should
-  // NOT include "main_loop" in "loop".
-  assert.notEqual(classifyStopReason("main_loop"), "loop");
+  //
+  // R383: the rules live in src/stopKind.ts now — this test drives
+  // THAT module, not a per-renderer copy.
+  const { classifyRunEnd } = await import(
+    "file:///" + join(tmp, "stopKind.js").replace(/\\/g, "/")
+  );
+  const classify = (reason) => classifyRunEnd({ stopReason: reason });
+  assert.notEqual(classify("main_loop"), "loop");
   // But it should match loop_detected.
-  assert.equal(classifyStopReason("loop_detected"), "loop");
+  assert.equal(classify("loop_detected"), "loop");
   // And loop_anything.
-  assert.equal(classifyStopReason("loop_same_fingerprint"), "loop");
+  assert.equal(classify("loop_same_fingerprint"), "loop");
 });
 
-test("R32-G: classifyStopReason does NOT match 'max_tokens' as max_turns", async () => {
-  const stateMod = await import("file:///" + join(tmp, "state.js").replace(/\\/g, "/"));
-  const { classifyStopReason } = stateMod;
+test("R32-G: the shared taxonomy does NOT match 'max_tokens' as max_turns", async () => {
+  const { classifyRunEnd } = await import(
+    "file:///" + join(tmp, "stopKind.js").replace(/\\/g, "/")
+  );
+  const classify = (reason) => classifyRunEnd({ stopReason: reason });
   // "max_tokens" is the model hitting its output cap. It's a
   // normal completion, not a max_turns.
-  assert.notEqual(classifyStopReason("max_tokens"), "max_turns");
+  assert.notEqual(classify("max_tokens"), "max_turns");
   // But max_iterations IS max_turns.
-  assert.equal(classifyStopReason("max_iterations"), "max_turns");
+  assert.equal(classify("max_iterations"), "max_turns");
 });
 
-test("R32-G: line.ts uses STRICT classifyStopReason (no .includes fallbacks)", () => {
-  // Regression guard: line.ts must NOT use r.includes("loop") or
-  // r.includes("max_") — those would false-positive on "main_loop"
-  // or "max_tokens". The strict prefix-match version in state.ts
-  // is the source of truth; line.ts must match it.
+test("R383: neither renderer carries its own copy of the taxonomy", () => {
+  // R32-G's regression guard, restated for the new home. The old
+  // line.ts rule matched "error_" / "_error" with an UNDERSCORE while
+  // the engine emits "error: <class>: <msg>" with a COLON — so an
+  // upstream 500 was classified "ok" and the line printed a green
+  // "✓ ready". The rules now live in src/stopKind.ts, once.
+  const stateTs = readFileSync(join(root, "src", "state.ts"), "utf-8");
+  assert.doesNotMatch(
+    lineTs,
+    /function classifyStopReason/,
+    "line.ts must not define its own copy — it imports src/stopKind.ts",
+  );
+  assert.doesNotMatch(
+    stateTs,
+    /function classifyStopReason/,
+    "state.ts must not define its own copy — it imports src/stopKind.ts",
+  );
+  // …and both must actually import the shared module.
+  assert.match(lineTs, /from "\.\/stopKind\.js"/);
+  assert.match(stateTs, /from "\.\/stopKind\.js"/);
+  // The strict guards stay: no loose .includes matching.
   assert.doesNotMatch(
     lineTs,
     /r\.includes\("loop"\)/,
-    "loop.ts must not use r.includes('loop') — would match 'main_loop'",
+    "must not use r.includes('loop') — would match 'main_loop'",
   );
   assert.doesNotMatch(
     lineTs,
     /r\.includes\("max_"\)/,
-    "line.ts must not use r.includes('max_') — would match 'max_tokens'",
+    "must not use r.includes('max_') — would match 'max_tokens'",
   );
-  // The strict versions should be there.
-  assert.match(lineTs, /r\.startsWith\("loop_"\)/);
-  assert.match(lineTs, /r === "max_iterations"/);
 });
 
-test("R32-G: state.ts and line.ts classifyStopReason are equivalent", async () => {
-  // Cross-check: feed a wide range of inputs through both and
-  // assert they agree. We can't import line.ts's classify directly
-  // (it's not exported), but we re-implement the strict version
-  // and assert it matches state.ts's output for every input.
-  const stateMod = await import("file:///" + join(tmp, "state.js").replace(/\\/g, "/"));
-  const { classifyStopReason: classify } = stateMod;
-  // The strict implementation (matches state.ts AND the patched line.ts).
-  const strict = (reason) => {
-    if (reason == null) return null;
-    const r = reason.toLowerCase();
-    if (r === "loop_detected" || r.startsWith("loop_")) return "loop";
-    if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations")
-      return "max_turns";
-    if (r === "empty_input" || r === "empty") return "empty";
-    if (r === "error" || r.startsWith("error_") || r.endsWith("_error")) return "error";
-    return "ok";
-  };
-  // A wide net of inputs that have caused false positives in the past.
-  const inputs = [
-    null,
-    undefined,
-    "end_turn",
-    "end_turn_and_tool",
-    "stop",
-    "tool_calls",
-    "max_tokens",
-    "length",
-    "loop_detected",
-    "loop_same_fingerprint",
-    "loop_same_error",
-    "max_iterations",
-    "max_turns",
-    "max_tool_iterations",
-    "main_loop",
-    "mainloop",
-    "loop_",
-    "_loop",
-    "error",
-    "rpc_error",
-    "tool_error",
-    "empty_input",
-    "empty",
-    "weird_thing",
-    "foo_bar",
-  ];
-  for (const i of inputs) {
-    assert.equal(strict(i), classify(i), `mismatch for input=${JSON.stringify(i)}`);
-  }
+test("R383: the taxonomy exists in exactly ONE place, and it is the shared module", async () => {
+  // The old gate proved the two copies were EQUIVALENT. That could
+  // not catch the bug they shared: two copies that are wrong together
+  // agree perfectly. What has to be true now is that there is only
+  // one copy at all.
+  const stateTs = readFileSync(join(root, "src", "state.ts"), "utf-8");
+  const stopKindTs = readFileSync(join(root, "src", "stopKind.ts"), "utf-8");
+  assert.match(stopKindTs, /export function classifyRunEnd/);
+  assert.match(stopKindTs, /export function bareKind/);
+  // state.ts re-exports it for consumers; it does not redefine it.
+  assert.doesNotMatch(stateTs, /export function classifyRunEnd\s*\(/);
+  assert.doesNotMatch(lineTs, /export function classifyRunEnd\s*\(/);
+  // The shared module is the one that knows the engine's failure set.
+  assert.match(stopKindTs, /ENGINE_ERROR_KINDS/);
+  // And it is reachable: the compiled module exports the function the
+  // reducer calls.
+  const mod = await import("file:///" + join(tmp, "stopKind.js").replace(/\\/g, "/"));
+  assert.equal(typeof mod.classifyRunEnd, "function");
+  assert.equal(typeof mod.bareKind, "function");
 });

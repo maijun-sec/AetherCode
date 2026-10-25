@@ -8135,6 +8135,24 @@ public class AetherCodeMethods {
         } else if (ev instanceof StreamEvent.RunEnd re) {
             r.put("type",       "run_end");
             r.put("stopReason", re.stopReason());
+            // R383: carry the CANONICAL kind on the wire, always.
+            //
+            // The stopReason is DECORATED — "error:
+            // WebClientResponseException$…: 500 from POST https://…",
+            // "loop_detected: empty_tool_input (4 consecutive …)" — so a
+            // client that wants to know WHAT HAPPENED has to re-parse it.
+            // Every client that did wrote its own parser, and every one of
+            // them got it wrong: the TUI matched "error_" / "_error" and
+            // so reported an upstream 500 as a green "✓ ready", while the
+            // desktop's list carried the display kinds "loop" and
+            // "max_turns" (which the engine never emits) and missed
+            // "loop_detected" entirely.
+            //
+            // The kind is already computed by the engine's own taxonomy
+            // (StreamEvent.bareKind). Put it on the wire so no client has
+            // to re-derive it — and keep the field ADDITIVE, so a client
+            // that predates it keeps working.
+            r.put("stopKind", re.bareKind());
             // R750d: carry the failure bit on the wire.
             //
             // Pre-R750d this branch emitted type + stopReason and nothing

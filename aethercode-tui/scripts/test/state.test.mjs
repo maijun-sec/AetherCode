@@ -73,47 +73,100 @@ if (!existsSync(join(tmp, "state.js"))) {
 }
 
 const mod = await import("file:///" + join(tmp, "state.js").replace(/\\/g, "/"));
-const { reducer, INITIAL, classifyStopReason, nextTurnId } = mod;
+const { reducer, INITIAL, nextTurnId } = mod;
 
-// ----- 1. classifyStopReason --------------------------------------------
+// ----- 1. the shared taxonomy (src/stopKind.ts) -------------------------
+//
+// R383: the classification rules moved out of state.ts into
+// src/stopKind.ts — the ONE place that knows how a finished run is
+// classified. The verdict comes from the daemon (`isError` on the
+// wire) and the canonical kind from `stopKind`.
 
-test("classifyStopReason: end_turn → ok", () => {
-  assert.equal(classifyStopReason("end_turn"), "ok");
-  assert.equal(classifyStopReason("end_turn_and_tool"), "ok");
+const stopKindMod = await import("file:///" + join(tmp, "stopKind.js").replace(/\\/g, "/"));
+const { classifyRunEnd, bareKind } = stopKindMod;
+/** Classify a bare stop reason, the way an OLD daemon's event would. */
+const classify = (reason) => classifyRunEnd({ stopReason: reason });
+
+test("the taxonomy: end_turn → ok", () => {
+  assert.equal(classify("end_turn"), "ok");
+  assert.equal(classify("end_turn_and_tool"), "ok");
 });
 
-test("classifyStopReason: loop_detected → loop", () => {
-  assert.equal(classifyStopReason("loop_detected"), "loop");
+test("the taxonomy: loop_detected → loop", () => {
+  assert.equal(classify("loop_detected"), "loop");
 });
 
-test("classifyStopReason: max_iterations → max_turns", () => {
-  assert.equal(classifyStopReason("max_iterations"), "max_turns");
-  assert.equal(classifyStopReason("max_turns"), "max_turns");
+test("the taxonomy: max_iterations → max_turns", () => {
+  assert.equal(classify("max_iterations"), "max_turns");
+  assert.equal(classify("max_turns"), "max_turns");
 });
 
-test("classifyStopReason: error → error", () => {
-  assert.equal(classifyStopReason("error"), "error");
-  assert.equal(classifyStopReason("rpc_error"), "error");
+test("the taxonomy: error → error", () => {
+  assert.equal(classify("error"), "error");
 });
 
-test("classifyStopReason: empty_input → empty", () => {
-  assert.equal(classifyStopReason("empty_input"), "empty");
+test("R383: the taxonomy: a DECORATED error → error (the bug this round fixes)", () => {
+  // The engine decorates its failures: "error: <class>: <msg>". The old
+  // rule matched "error_" / "_error" with an UNDERSCORE, so this fell
+  // through to "ok" and the StatusBar showed a green "✓ ready" for a
+  // run that had died with an upstream 500.
+  assert.equal(
+    classify(
+      "error: WebClientResponseException$InternalServerError: 500 from POST https://api.minimaxi.com/v1/chat/completions",
+    ),
+    "error",
+  );
+  assert.equal(classify("runtime_exception: java.lang.IllegalStateException: boom"), "error");
+  assert.equal(classify("same_error_hard_stop"), "loop");
+  assert.equal(classify("stale_force_end"), "error");
+  assert.equal(
+    classify("loop_detected: empty_tool_input (4 consecutive empty tool calls)"),
+    "loop",
+  );
 });
 
-test("classifyStopReason: null → null", () => {
-  assert.equal(classifyStopReason(null), null);
-  assert.equal(classifyStopReason(undefined), null);
+test("R383: the daemon's isError / stopKind win over the raw reason", () => {
+  // The wire is the authority: a run the daemon calls a failure is a
+  // failure, whatever the string says.
+  assert.equal(
+    classifyRunEnd({ stopReason: "error: boom", stopKind: "error", isError: true }),
+    "error",
+  );
+  // A kind the local rules know nothing about still classifies.
+  assert.equal(classifyRunEnd({ stopReason: "weird_new_kind", stopKind: "weird_new_kind" }), "ok");
+  // …and a kind the daemon says is a failure is a failure.
+  assert.equal(
+    classifyRunEnd({ stopReason: "weird_new_kind", stopKind: "weird_new_kind", isError: true }),
+    "error",
+  );
 });
 
-test("classifyStopReason: MiniMax 'stop' / 'tool_calls' / 'max_tokens' → ok", () => {
+test("the taxonomy: empty_input → empty", () => {
+  assert.equal(classify("empty_input"), "empty");
+});
+
+test("the taxonomy: no signal → null (no run has finished)", () => {
+  assert.equal(classify(null), null);
+  assert.equal(classify(undefined), null);
+  assert.equal(classifyRunEnd({}), null);
+});
+
+test("the taxonomy: MiniMax 'stop' / 'tool_calls' / 'max_tokens' → ok", () => {
   // R32-G: MiniMax's API uses "stop" and "tool_calls" as stop
   // reasons. Both should classify as ok.
-  assert.equal(classifyStopReason("stop"), "ok");
-  assert.equal(classifyStopReason("tool_calls"), "ok");
+  assert.equal(classify("stop"), "ok");
+  assert.equal(classify("tool_calls"), "ok");
   // "max_tokens" is the model hitting its output cap — not an
   // error, not a loop; it's a normal completion.
-  assert.equal(classifyStopReason("max_tokens"), "ok");
-  assert.equal(classifyStopReason("length"), "ok");
+  assert.equal(classify("max_tokens"), "ok");
+  assert.equal(classify("length"), "ok");
+});
+
+test("bareKind: the prefix before the first ':', ' ' or '('", () => {
+  assert.equal(bareKind("error: WebClientResponseException: 500"), "error");
+  assert.equal(bareKind("loop_detected: empty_tool_input (4 calls)"), "loop_detected");
+  assert.equal(bareKind("end_turn"), "end_turn");
+  assert.equal(bareKind(null), "");
 });
 
 // ----- 2. reducer: streamEnd sets lastStopReason + lastStopKind --------
@@ -135,6 +188,19 @@ test("reducer: streamEnd with end_turn sets kind=ok", () => {
 test("reducer: streamEnd with max_iterations sets kind=max_turns", () => {
   let s = reducer(INITIAL, { type: "streamEnd", stopReason: "max_iterations" });
   assert.equal(s.lastStopKind, "max_turns");
+});
+
+test("R383: the reducer takes the verdict from the daemon, not from the string", () => {
+  // The daemon says this run failed. The reducer must believe it.
+  let s = reducer(INITIAL, {
+    type: "streamEnd",
+    stopReason: "error: WebClientResponseException$InternalServerError: 500 from POST https://x",
+    stopKind: "error",
+    isError: true,
+  });
+  assert.equal(s.lastStopKind, "error");
+  // The raw reason is still kept for display.
+  assert.match(s.lastStopReason, /^error:/);
 });
 
 test("reducer: streamEnd captures usage", () => {

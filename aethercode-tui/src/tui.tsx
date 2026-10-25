@@ -204,6 +204,16 @@ function handleStreamEvent(dispatch: (a: Action) => void, ev: Record<string, unk
       dispatch({
         type: "streamEnd",
         stopReason: String(ev.stopReason ?? "end_turn"),
+        // R383: hand the daemon's OWN verdict + kind to the reducer.
+        //
+        // The stopReason is decorated ("error: <class>: <msg>"), so the
+        // reducer must not re-derive the outcome from it — that is how an
+        // upstream 500 became a green "✓ ready" (the old rule matched
+        // "error_" with an underscore; the engine emits "error:" with a
+        // colon). The daemon already knows: `isError` is the verdict
+        // (R750d) and `stopKind` the canonical kind (R383).
+        stopKind: typeof ev.stopKind === "string" ? ev.stopKind : undefined,
+        isError: ev.isError === true ? true : undefined,
         usage: ev.usage as { input?: number; output?: number; costUsd?: number } | undefined,
       });
       break;

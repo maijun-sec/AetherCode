@@ -3274,13 +3274,23 @@ export const useStore = create<AppState>((set, get) => {
         //  remains visible.
         const failedStopKinds = [
           'error',
-          'loop',
-          'max_turns',
+          // R383: "loop" was WRONG — the engine's loop hard-stop is
+          // "loop_detected: <tier> (…)", never "loop", so a death
+          // spiral matched nothing and fell through to ● Idle with no
+          // ↻ retry button. "max_turns" was wrong too: it is a
+          // DISPLAY kind (the TUI's bucket), not an engine stop
+          // reason — the engine emits "max_iterations", and a turn cap
+          // is not a failure (the daemon's taxonomy agrees). The two
+          // consumer-side terminals the daemon reports as failures
+          // were added.
+          'loop_detected',
           'same_error_hard_stop',
           'awaiting_user_decision',
           'runtime_exception',
           'stale_force_end',
           'cancelled',
+          'no_run_end',
+          'consumer_timeout',
         ] as const;
         // R735b (2026-10-20): prefix match, NOT Set.has().
         //
@@ -3314,10 +3324,30 @@ export const useStore = create<AppState>((set, get) => {
         // the Header pill (it embeds a full URL). Keep the *kind* for
         // display; the pill shows `● Failed (error)` and the ↻ retry
         // button still works because it only needs lastFailedPrompt.
-        const failedKind = stopReason
-          ? failedStopKinds.find((k) => stopReason === k
-            || stopReason.startsWith(`${k}:`) || stopReason.startsWith(`${k} `))
-          : undefined;
+        // R383: the daemon's OWN verdict wins.
+        //
+        // The daemon already tells us on the wire whether the run
+        // failed — R750d puts `isError` on the run_end frame, derived
+        // from the engine's own taxonomy (StreamEvent.isErrorOutcome) —
+        // and R383 adds `stopKind`, the canonical bare kind. The
+        // prefix-match list above is now only the FALLBACK for an
+        // older daemon that sends neither.
+        //
+        // The stored value is the BARE kind either way, so the pill
+        // reads "● Failed (error)" / "● Failed (loop_detected)" and
+        // never the ~120-char decorated string (which embeds a URL).
+        const wireKind =
+          typeof (ev as any).stopKind === 'string' && (ev as any).stopKind
+            ? ((ev as any).stopKind as string)
+            : undefined;
+        const wireFailed =
+          (ev as any).isError === true ? (wireKind ?? 'error') : undefined;
+        const failedKind =
+          wireFailed ??
+          (stopReason
+            ? failedStopKinds.find((k) => stopReason === k
+              || stopReason.startsWith(`${k}:`) || stopReason.startsWith(`${k} `))
+            : undefined);
         if (failedKind) {
           set({
             lastFailedPrompt: get().currentInput || get().lastFailedPrompt,

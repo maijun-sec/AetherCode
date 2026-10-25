@@ -22,6 +22,8 @@ import { ToolCard } from "./ToolCard.js";
 import { PlanList } from "./PlanList.js";
 import { Welcome } from "./Welcome.js";
 import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/SummaryFooter.js";
+// R383: the shared stop-kind type — one definition, not one per component.
+import type { StopKind } from "../stopKind.js";
 
 interface Props {
   turns: Turn[];
@@ -35,8 +37,10 @@ interface Props {
   /** most recent run's stop reason — null if the run is
    *  still in flight or hasn't started yet. */
   lastStopReason: string | null;
-  /** derived kind of the stop reason. Controls banner colour. */
-  lastStopKind: "ok" | "loop" | "max_turns" | "error" | "empty" | null;
+  /** derived kind of the stop reason. Controls banner colour.
+   *  R383: the shared type — the kind is ONE definition, not one per
+   *  component. */
+  lastStopKind: StopKind;
   /** most recent error to display as a dedicated card.
    *  Cleared when the user submits a new query. */
   lastError: { message: string; ts: number; stack?: string } | null;
@@ -408,10 +412,7 @@ export const Scrollback: React.FC<Props> = ({
   );
 };
 
-function renderStopBanner(
-  kind: "ok" | "loop" | "max_turns" | "error" | "empty" | null,
-  reason: string | null,
-): React.ReactNode {
+function renderStopBanner(kind: StopKind, reason: string | null): React.ReactNode {
   if (kind == null || kind === "ok" || kind === "empty") return null;
   const color = kind === "loop" || kind === "error" ? t.err : kind === "max_turns" ? t.warn : t.dim;
   const icon = kind === "loop" ? "■" : kind === "error" ? "✗" : "▲";

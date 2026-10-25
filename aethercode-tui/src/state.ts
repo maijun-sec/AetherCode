@@ -29,6 +29,13 @@ export type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
 // uses), so the "esc to cancel" the countdown line promises is
 // backed by a real call.
 import type { ContinuationCountdown } from "./continuationCountdown.js";
+// R383: the stop-reason taxonomy lives in `src/stopKind.ts` — the ONE
+// place that knows how a finished run is classified. The VERDICT comes
+// from the daemon (`isError` on the wire, R750d) and the canonical kind
+// from `stopKind` (R383); this file used to carry a second copy of the
+// rules, and so did `line.ts`.
+import { classifyRunEnd } from "./stopKind.js";
+import type { StopKind } from "./stopKind.js";
 
 export type Role =
   "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
@@ -472,16 +479,16 @@ export interface State {
    */
   lastStopReason: string | null;
   /**
-   * derived from {@link #lastStopReason} for UI styling.
-   *   - "ok"        → normal end (end_turn, end_turn_and_tool)
-   *   - "loop"      → loop detector fired (loop_detected, or any
-   *                   loop kind from ProgressLoopDetector)
+   * R383: derived from the DAEMON's verdict + kind, not from a local
+   * re-parse of the decorated stopReason.
+   *   - "ok"        → the daemon said the run ended cleanly
+   *   - "loop"      → loop detector fired (loop_detected / same_error_hard_stop)
    *   - "max_turns" → hit the per-query turn cap
-   *   - "error"     → engine / RPC error
+   *   - "error"     → the daemon reported a failure (`isError` on the wire)
    *   - "empty"     → empty user input
    *   - null        → no run completed yet
    */
-  lastStopKind: "ok" | "loop" | "max_turns" | "error" | "empty" | null;
+  lastStopKind: StopKind;
   /**
    * whether the side panel is visible. Toggled with Ctrl+B.
    * Default: false (panel hidden) — the user explicitly opts in.
@@ -1150,6 +1157,10 @@ export type Action =
   | {
       type: "streamEnd";
       stopReason: string;
+      /** R383: the daemon's canonical kind ("error", "loop_detected", …). */
+      stopKind?: string;
+      /** R750d: the daemon's failure verdict. */
+      isError?: boolean;
       usage?: { input?: number; output?: number; costUsd?: number };
     }
   | { type: "sideNote"; kind: string; message: string }
@@ -1465,40 +1476,19 @@ export const INITIAL: State = {
   autoCompactDisabled: false,
 };
 
-/** classify a stop reason for the StatusBar. The daemon
- *  emits a small set of stopReason values; we map them to a
- *  four-bucket UI kind (ok / loop / max_turns / error).
+/** R383: the stop-reason taxonomy moved to `src/stopKind.ts` — the ONE
+ *  place that knows how a finished run is classified.
  *
- *  Known daemon reason values (MiniMax + OpenAI + engine-internal):
- *  - "end_turn"               → ok (Anthropic / OpenAI standard)
- *  - "stop"                   → ok (MiniMax)
- *  - "tool_calls"             → ok (MiniMax — model wants to call tools)
- *  - "max_tokens" / "length"  → ok (model hit output cap, not an error)
- *  - "loop_detected"          → loop (prior round)
- *  - "max_iterations"         → max_turns (prior round)
- *  - "error" / "rpc_error"    → error
- *  - "empty_input"            → empty
- *  - default                   → ok (we treat unknown reasons as
- *                                "the run finished" — better to show
- *                                a green check than a red X for a
- *                                reason we don't recognise) */
-export function classifyStopReason(
-  reason: string | null | undefined,
-): "ok" | "loop" | "max_turns" | "error" | "empty" | null {
-  if (reason == null) return null;
-  const r = reason.toLowerCase();
-  // Loop detector — only the engine's own "loop_detected" or
-  // progress-loop-detector variants. Avoid matching arbitrary
-  // words containing "loop" (e.g. "main_loop").
-  if (r === "loop_detected" || r.startsWith("loop_")) return "loop";
-  // Per-query turn cap. NOT "max_tokens" (that's the model-side
-  // output cap, which is a normal completion).
-  if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations")
-    return "max_turns";
-  if (r === "empty_input" || r === "empty") return "empty";
-  if (r === "error" || r.startsWith("error_") || r.endsWith("_error")) return "error";
-  return "ok";
-}
+ *  It used to live HERE as a second copy (and `line.ts` had a third).
+ *  Both copies matched `"error_"` / `"_error"` with an UNDERSCORE while
+ *  the engine emits `"error: <class>: <msg>"` with a COLON, so the most
+ *  common failure of all — an upstream 4xx/5xx — was classified "ok"
+ *  and the StatusBar showed a green "✓ ready" with no error banner.
+ *
+ *  The verdict now comes from the daemon (`isError` on the wire, R750d)
+ *  and the canonical kind from `stopKind` (R383). See stopKind.ts. */
+export { classifyRunEnd, bareKind } from "./stopKind.js";
+export type { StopKind } from "./stopKind.js";
 
 /** sensible default collapse state for a new turn.
  *  Tool turns and intermediate "thinking" turns start collapsed;
@@ -2018,7 +2008,11 @@ export function reducer(state: State, action: Action): State {
       // (e.g. "<think>A</think>mid1<think>B" ended with thinking,
       // but the leftover text "final" should land in the previous
       // assistant turn, not open a new one).
-      const kind = classifyStopReason(action.stopReason);
+      const kind = classifyRunEnd({
+        stopReason: action.stopReason,
+        stopKind: action.stopKind,
+        isError: action.isError,
+      });
       let turns = state.turns;
       let leftover = state.tagLookahead;
       if (leftover.length > 0) {

@@ -35,6 +35,11 @@ import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 import { partitionByCwd } from "./cwdMatch.js";
 // R372: the messages→turns converter, shared with the Ink renderer.
 import { replayTranscript } from "./transcriptHydrate.js";
+// R383: the stop-reason taxonomy, shared with the Ink renderer. This file
+// used to carry a second copy of the rules — and the copy missed the
+// engine's decorated failures ("error: <class>: <msg>"), so an upstream
+// 500 printed "✓ ready" in line mode too.
+import { classifyRunEnd, type StopKind } from "./stopKind.js";
 // R373: the workflow empty-state copy, shared with the Ink panel so
 // the two renderers cannot drift apart.
 import { workflowEmptyCopy } from "./workflowRows.js";
@@ -166,18 +171,12 @@ function colorize(s: string, color: string, noColor: boolean): string {
   return `${color}${s}${C.reset}`;
 }
 
-type StopKind = "ok" | "loop" | "max_turns" | "error" | "empty" | null;
-
-function classifyStopReason(reason: string | null | undefined): StopKind {
-  if (reason == null) return null;
-  const r = reason.toLowerCase();
-  if (r === "loop_detected" || r.startsWith("loop_")) return "loop";
-  if (r === "max_iterations" || r === "max_turns" || r === "max_tool_iterations")
-    return "max_turns";
-  if (r === "empty_input" || r === "empty") return "empty";
-  if (r === "error" || r.startsWith("error_") || r.endsWith("_error")) return "error";
-  return "ok";
-}
+/** R383: the stop-reason classification moved to `src/stopKind.ts` — the
+ *  ONE place that knows how a finished run is classified. The verdict
+ *  comes from the daemon (`isError` on the wire, R750d) and the canonical
+ *  kind from `stopKind` (R383). This copy matched "error_" / "_error"
+ *  with an UNDERSCORE while the engine emits "error: <class>: <msg>" with
+ *  a COLON — so the most common failure of all printed as "✓ ready". */
 
 function stopKindLabel(kind: StopKind, rawReason?: string): string {
   switch (kind) {
@@ -3911,7 +3910,13 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
           });
         }
         const stopReason = String(ev.stopReason ?? "end_turn");
-        const kind = classifyStopReason(stopReason);
+        // R383: the daemon's verdict + canonical kind, not a local
+        // re-parse of the decorated stopReason. See src/stopKind.ts.
+        const kind = classifyRunEnd({
+          stopReason,
+          stopKind: typeof ev.stopKind === "string" ? ev.stopKind : undefined,
+          isError: ev.isError === true ? true : undefined,
+        });
         const tag = stopKindLabel(kind, stopReason);
         const color = stopKindColor(kind);
         logAbove(

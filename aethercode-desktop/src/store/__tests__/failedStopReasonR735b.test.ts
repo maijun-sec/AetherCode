@@ -62,7 +62,10 @@ describe('store — R735b failed-stopReason prefix classification', () => {
   it('includes every known failure kind in the list', () => {
     // `error` — SpringAiChatClient's three error RunEnd paths
     //   (lines 135, 275-279, 326).
-    // `loop` / `max_turns` — R348's original set.
+    // `loop_detected` — R383: the list used to say `loop`, which the
+    //   engine NEVER emits (its loop hard-stop is
+    //   "loop_detected: <tier> (…)"), so a death spiral matched
+    //   nothing and fell through to ● Idle with no ↻ retry button.
     // `same_error_hard_stop` — R181's death-spiral hard-stop (R735).
     // `awaiting_user_decision` — TodoRunController pause (R735).
     // `runtime_exception` — R735a's tryAdvance catch.
@@ -74,20 +77,32 @@ describe('store — R735b failed-stopReason prefix classification', () => {
     //   races a real failure would hide the failure. Included so the
     //   failed pill at least shows `● Failed (cancelled)` when the
     //   user did not initiate it.
+    // `no_run_end` / `consumer_timeout` — R745/R746's consumer-side
+    //   terminal events, which the daemon's taxonomy calls failures.
+    //
+    // R383: `max_turns` was REMOVED — it is a DISPLAY kind (the TUI's
+    // bucket), not an engine stop reason. The engine emits
+    // `max_iterations`, and a turn cap is not a failure.
     for (const kind of [
       'error',
-      'loop',
-      'max_turns',
+      'loop_detected',
       'same_error_hard_stop',
       'awaiting_user_decision',
       'runtime_exception',
       'stale_force_end',
       'cancelled',
+      'no_run_end',
+      'consumer_timeout',
     ]) {
       if (!new RegExp(`'${kind}'`).test(source)) {
         throw new Error(`R735b: failedStopKinds must include '${kind}'`);
       }
     }
+    // R383: the two entries that could never match are gone. "loop" is
+    // not an engine stop reason ("loop_detected" is), and "max_turns"
+    // is a display kind, not a reason.
+    expect(source).not.toMatch(/'max_turns'/);
+    expect(source).not.toMatch(/'loop',\s*\n/);
   });
 
   it('stores the BARE KIND in lastFailedStopReason, not the decorated string', () => {
@@ -95,11 +110,17 @@ describe('store — R735b failed-stopReason prefix classification', () => {
     // (`"... from POST https://api.minimaxi.com/v1/chat/completions"`),
     // which would blow out the Header pill. The pill must render
     // `● Failed (error)`, so we store the matched kind.
-    expect(source).toMatch(
-      /const failedKind = stopReason\s*\?\s*failedStopKinds\.find\(\s*\(k\)\s*=>/,
-    );
     expect(source).toMatch(/lastFailedStopReason:\s*failedKind,/);
     expect(source).not.toMatch(/lastFailedStopReason:\s*stopReason/);
+  });
+
+  it('R383: prefers the DAEMON\'s verdict over the local prefix match', () => {
+    // The daemon already puts the verdict on the wire (R750d's
+    // `isError`) and the canonical kind (R383's `stopKind`). The
+    // prefix-match list is the FALLBACK for an older daemon.
+    expect(source).toMatch(/\(ev as any\)\.isError === true/);
+    expect(source).toMatch(/\(ev as any\)\.stopKind/);
+    expect(source).toMatch(/wireFailed\s*\?\?/);
   });
 
   it('does not treat the successful-run branch as a prefix match', () => {

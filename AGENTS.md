@@ -428,6 +428,54 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   cannot be fetched.**
   **Lesson 1224 — the numbers in a document are assertions too.**
   Doc: `docs/R382-the-build-was-never-green.md`.
+- **R383** (the verdict comes from the daemon): the engine
+  **DECORATES** its stop reasons (`"error: <class>: <msg>"`,
+  `"loop_detected: empty_tool_input (…)"`), so every client that wants
+  to know "did that run fail?" has to re-parse the string — and the TUI
+  had **two** such parsers (`state.ts`, `line.ts`) and the desktop a
+  third, all three wrong: the TUI matched `"error_"` / `"_error"` with
+  an UNDERSCORE while the engine emits `"error:"` with a COLON, so the
+  single most common failure (an upstream 4xx/5xx) was classified
+  `"ok"` and the StatusBar showed a green **"✓ ready"** (4 of 13 real
+  reasons misreported); the desktop's list carried the DISPLAY kinds
+  `"loop"` / `"max_turns"` (which the engine never emits) and **missed
+  `"loop_detected"`**, so a death spiral showed as **● Idle**. The
+  daemon already knew: R750d put `isError` on the wire, and R383 adds
+  `stopKind` (the engine's bare kind) beside it — so
+  `AetherCodeMethods.eventToMap`'s `run_end` branch now always carries
+  `stopKind` and carries `isError` exactly when
+  `StreamEvent.isErrorOutcome()` says "failure". The TUI's rules moved
+  into ONE module (`src/stopKind.ts`): the verdict comes from the
+  daemon, the kind comes from the daemon, and the local failure set is
+  only a FALLBACK for a daemon that expresses no verdict — pinned
+  kind-for-kind against `StreamEvent.isErrorOutcomeOf` by the new gate.
+  `StatusBar`'s second label table (`STOP_LABEL`, keyed by the raw
+  reason) was **deleted**: it could never hit a decorated reason, it
+  disagreed with the classifier (`same_fingerprint` said "stopped: loop"
+  while the classifier said "ok" — the words in the success colour),
+  and 4 of its entries were **detector kinds, not stop reasons**.
+  The old gate had pinned the two TUI copies to EACH OTHER
+  ("state.ts and line.ts classifyStopReason are equivalent") — two
+  copies that are wrong together agree perfectly.
+  **Lesson 1225 — a renderer never decides on its own whether a run
+  failed.**
+  **Lesson 1226 — a gate that pins two copies to EACH OTHER is not a
+  gate; ask how MANY there are, not whether they agree.**
+  **Lesson 1227 — a decorated wire string means every client writes its
+  own parser, and every parser is wrong; put the kind on the wire.**
+  **Lesson 1228 — a table keyed by the reason and a table keyed by the
+  kind can contradict each other, and the contradiction is invisible.**
+  **Lesson 1229 — extract a Java switch's case labels ARM by ARM: a
+  `case "a", "b" -> true;` names TWO labels, and taking only the first
+  silently halves the taxonomy.**
+  **Lesson 1230 — "the key is present" is not "the value is used":
+  `isError: undefined` satisfies `/isError\s*:/` while throwing the
+  verdict away.**
+  **Lesson 1231 — a loop detector's kind is not a stop reason:
+  `same_fingerprint` / `same_error` / `long_output` / `user_interrupt` /
+  `empty_tool_input` are `ProgressLoopDetector.lastLoopKind()` values
+  and travel INSIDE the decoration, never as a bare kind.**
+  Doc: `docs/R383-the-verdict-comes-from-the-daemon.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1967,3 +2015,44 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   **空目录**(而 README 声称里面有安装包),以及运行期目录
   `.aethercode/sessions/` 被**打进了包里**。`zipLayoutR268b` 那条 vitest 会在
   最新 release 目录上跑,发布目录没装完它是红的 —— **它红得有道理**。
+
+## Watch out for (R383 additions)
+
+- **渲染器不许自己判断一次运行有没有失败。** 判决来自 daemon
+  (`run_end` 帧上的 `isError`),kind 来自 daemon(同一帧上的 `stopKind`),
+  渲染器只负责**措辞**。要改 TUI 的失败判定,改 `src/stopKind.ts`,
+  **不要在渲染器里再写一条规则**。
+  **Lesson 1225。**
+- **`src/stopKind.ts` 是分类法的唯一一份。** `state.ts` 和 `line.ts` 都从它
+  import;`state.ts` 里的 `export { classifyRunEnd, bareKind }` 是 **re-export**,
+  不是第二份定义。门禁 `r383-stop-kind.test.mjs` 会扫整个 `src/`,
+  任何别的文件里出现 `function classifyRunEnd` / `const ENGINE_ERROR_KINDS`
+  就变红。**Lesson 1226。**
+- **兜底集合只在"daemon 没有表达判决"时生效**,判据是
+  `sig.isError === undefined`,**不是**"没收到 `stopKind`"。
+  曾经写成后者 —— 于是"有 kind 但没有判决"(中间层丢字段、版本错配)
+  会把失败报成成功。daemon 只在失败时写 `isError`,所以**缺失 ≠ false**。
+  **Lesson 1230 的邻居。**
+- **提取 Java `switch` 的 case 标签要按整条 arm 取。**
+  `case "no_run_end", "consumer_timeout" -> true;` 是**一条 arm 两个标签**;
+  只取第一个会让"引擎集合"少一半,而**比较照常进行**。
+  `r383-stop-kind.test.mjs` 的提取用 `/case\s+((?:"[^"]+"\s*,?\s*)+)->/g`。
+  **Lesson 1229。**
+- **循环检测器的 kind 不是 stop reason。**
+  `same_fingerprint` / `same_error` / `long_output` / `user_interrupt` /
+  `empty_tool_input` 是 `ProgressLoopDetector.lastLoopKind()` 的值,
+  **待在装饰里**(`loop_detected: <tier> (…)`)。任何按这些字符串建的
+  标签表 / 失败表,列的都是**永远不会发生的东西**。
+  判据:**这个字符串是引擎在 `RunEnd` 里发的,还是检测器报的?**
+  **Lesson 1231。**
+- **存在性断言会被一个"键在、值被丢掉"的写法骗过。** R383 的变异
+  "reducer stops passing the daemon's verdict"(把 `isError: action.isError`
+  改成 `isError: undefined`)在门禁里**存活了一轮** —— 当时的断言只查
+  `/isError\s*:/`。现在查的是**值**:`/isError\s*:\s*action\.isError/`。
+  **Lesson 1230 / 1217。**
+- **`StatusBar` 现在只有一张标签表**(`KIND_LABEL`,按显示种类查)。
+  往里加"按 stopReason 查"的第二张表之前先问:
+  **这个 kind 引擎真的发吗?**(见上面那条检测器 kind 的坑。)
+  门禁会数 `const *LABEL*: Record<` 的个数,多一张就红。
+  **Lesson 1228。**
+
