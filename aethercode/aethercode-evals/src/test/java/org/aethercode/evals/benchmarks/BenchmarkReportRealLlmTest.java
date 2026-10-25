@@ -23,11 +23,35 @@ import static org.junit.jupiter.api.Assertions.*;
  * <h2>Cost</h2>
  * ~270 tasks × ~1k tokens each ≈ 270k input tokens + ~50k output tokens.
  * Run on demand, not on every CI.
+ *
+ * <p><b>R382: opt-in via {@code -Daethercode.evals.realLlm=true}.</b>
+ * The default build must not silently spend money or 20 minutes, so this
+ * report only runs when the flag is set (and {@code MINIMAX_API_KEY} is
+ * present). The two single-call smoke tests next to it
+ * ({@link MinimaxM3SmokeTest}, {@link EngineQueryRealLlmTest}) stay on the
+ * env-var gate — one call each is cheap and worth the signal.
  */
 class BenchmarkReportRealLlmTest {
 
     @Test
     void runRealLlmBenchmarkReport() {
+        // R382: this benchmark is OPT-IN.
+        //
+        // It issues ~45 real LLM calls (~270k input tokens) across 9
+        // benchmarks, so it needs network access, a paid key, and ~20
+        // minutes. Leaving it in the default `mvn install` made every
+        // build slow, non-hermetic and quietly expensive — and it stalled
+        // the 0.2.72 packaging build for 20 minutes straight.
+        //
+        // The class javadoc already said "Run on demand, not on every CI";
+        // this makes the code match that intent. Opt in with:
+        //
+        //   mvn -pl aethercode-evals test -Daethercode.evals.realLlm=true
+        if (!Boolean.parseBoolean(System.getProperty("aethercode.evals.realLlm", "false"))) {
+            System.out.println("[skip] real-LLM report is opt-in: "
+                    + "re-run with -Daethercode.evals.realLlm=true");
+            return;
+        }
         String apiKey = System.getenv("MINIMAX_API_KEY");
         if (apiKey == null || apiKey.isBlank()) {
             System.out.println("[skip] MINIMAX_API_KEY unset; real-LLM report skipped");

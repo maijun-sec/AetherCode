@@ -2,7 +2,7 @@
     "name": "aethercode-desktop",
     "version": "0.2.34",
     "private": true,
-    "description": "AetherCode Desktop App 鈥?local UI for the multi-protocol daemon",
+    "description": "AetherCode Desktop App — local UI for the multi-protocol daemon",
     "type": "module",
     "scripts": {
         "dev": "vite",
@@ -18,9 +18,9 @@
     },
     "dependencies": {
         "@tanstack/react-query": "^5.102.8",
-        "@tauri-apps/api": "^2.0.0",
-        "@tauri-apps/plugin-dialog": "^2.0.0",
-        "@tauri-apps/plugin-shell": "^2.0.0",
+        "@tauri-apps/api": "2.11.1",
+        "@tauri-apps/plugin-dialog": "2.7.2",
+        "@tauri-apps/plugin-shell": "2.3.6",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "react-markdown": "^9.1.0",

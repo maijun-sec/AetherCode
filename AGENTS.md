@@ -393,6 +393,41 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   occurrence and pretends to have tested something; a check a LOOKUP can
   satisfy is no check at all.**
   Doc: `docs/R381-panel-keys.md`.
+- **R382** (the build was never green): packaging 0.2.72 surfaced three
+  defects that had made a **full** release build impossible since R747.
+  (1) `--print` without an argv prompt read stdin **to EOF**; surefire's
+  fork stdin is an open pipe that never closes, so `MainCliTest` blocked
+  on `System.in.readLine()` **forever** and took `mvn install` down with
+  it. Every recent "BUILD SUCCESS" in the helper log was a `-pl`
+  **subset** — the full reactor had not completed since R747. The plain
+  `--print` path now reads only the **already-buffered** bytes
+  (`Main.readBufferedPrompt`); the **stream-json** path still reads to
+  EOF, because the protocol requires it (the peer keeps the pipe open
+  for `control_response` frames).
+  (2) `aethercode-evals`' `BenchmarkReportRealLlmTest` issued ~45 **live**
+  model calls (~270k input tokens) inside the default test run — its own
+  javadoc said "run on demand". It is now opt-in via
+  `-Daethercode.evals.realLlm=true`; the two single-call smoke tests
+  beside it stay on the env-var gate.
+  (3) The `@tauri-apps/*` npm packages had floated to newer minors than
+  the pinned Rust crates, and **nothing compared the two** — `tauri
+  build` failed with "Found version mismatched Tauri packages". The npm
+  side is now pinned to the crates' minors, and
+  `aethercode-desktop/src/__tests__/tauriVersionPairingR382.test.ts`
+  keeps them paired (rule: **same major.minor** — the two sides have
+  different patch cadences, so exact equality is a rule the ecosystem
+  cannot satisfy).
+  **Lesson 1219 — a build that has not run to completion is not a build;
+  "BUILD SUCCESS" must name WHICH build.**
+  **Lesson 1220 — a test that needs a secret, the network and 20 minutes
+  is a job, not a test; "the key is set" is not "please run".**
+  **Lesson 1221 — two floating ranges on two sides of a wire will drift.**
+  **Lesson 1222 — read a tool's contract from its SOURCE, not from its
+  error message.**
+  **Lesson 1223 — one host being unreachable does not mean the artifact
+  cannot be fetched.**
+  **Lesson 1224 — the numbers in a document are assertions too.**
+  Doc: `docs/R382-the-build-was-never-green.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1887,3 +1922,48 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - **`/help` 的重构必须用"重构前的文件编译一遍再逐字节 diff"来证明没变**,
   而不是"看起来没变"。R380 的做法:把旧 `commands.ts` 拷到临时目录编译,
   和新版本逐行 diff —— 结果 `IDENTICAL`。
+
+## Watch out for (R382 additions)
+
+- **子集构建的绿色会冒充全量构建的绿色。** `mvn install` 从 R747 起就没跑完过
+  —— helper 日志里那些"BUILD SUCCESS"全是 `-pl` 子集,而**子集的日志尾巴和全量
+  一模一样**。R382 修了 CLI 挂死之后,全量 reactor 第一次跑完:**576.55s**。
+  **Lesson 1219 —— 一次没跑完的构建不算构建;"BUILD SUCCESS"必须指明是哪个构建。**
+- **`--print` 的 stdin 读法要按输出形态分家。** plain `--print` 的 prompt 走
+  argv(文档化的通道),stdin 只在**已经缓冲了字节**时读;**stream-json 必须读到
+  EOF**(对端发完 prompt 会继续持有管道,后面还有 `control_response` 帧)。
+  两者共用一条"读到 EOF"的路径 → surefire fork 里**永久阻塞**。
+  **Lesson 1220 / 1219。**
+- **默认构建里不许有"要密钥 + 要网络 + 要 20 分钟"的测试。**
+  `BenchmarkReportRealLlmTest` 的守卫是"`MINIMAX_API_KEY` 没设就跳过"——
+  **这恰好在最会付钱的机器上不触发**。现在是
+  `-Daethercode.evals.realLlm=true` 显式开启。
+  **Lesson 1220 —— "密钥存在"不等于"请运行"。**
+- **同一个东西的两份浮动范围,一定会漂。** `Cargo.toml` 的 `tauri = "2"` 和
+  `package.json` 的 `"@tauri-apps/api": "^2.0.0"` 各漂各的,没人比较 →
+  `tauri build` 直接报 "Found version mismatched Tauri packages"。
+  修法:**钉死一边(精确版本)+ 加一条比较门禁**。规则是 **major.minor**,
+  不是完全相等(`@tauri-apps/api` 压根没有 2.11.5 —— 两边 patch 节奏不同)。
+  **Lesson 1221。**
+- **工具的契约要从工具的源码读。** `tauri build` 的报错只说"版本不匹配";
+  `crates/tauri-bundler/src/bundle/windows/nsis/mod.rs` 说了**规则、缓存目录
+  (`%LOCALAPPDATA%\tauri\NSIS`)、两个 SHA1、需要的文件清单**。走 GitHub
+  contents API 就能取到(github.com 超时时 api.github.com 仍通,且资源端点会
+  302 到 `objects.githubusercontent.com` 这个可达的 CDN)。
+  **Lesson 1222 / 1223。**
+- **注意工具的哈希算法。** NSIS 工具链用的是 **SHA1**(40 位十六进制),
+  不是 SHA-256。我第一次拿 SHA-256 去比,当然对不上 —— **从二进制字符串里抓到的
+  十六进制串,长度不对就说明你认错了算法。**
+- **打 zip 别用 .NET Framework 的 `ZipFile.CreateFromDirectory`。** 它在 Windows
+  上写**反斜杠**的条目名(违反 zip 规范,某些解压工具会解成一个巨型文件名);
+  0.2.71 的 zip 用的是正斜杠。用 `C:\Program Files\7-Zip\7z.exe a -tzip`。
+  **Lesson 1224 的邻居:产物本身也有规范。**
+- **发布 README 里的数字是断言。** 0.2.72 的 README 写 `54.25 MiB` /
+  `95.96 MiB`,实测是 `54.26` / `95.95`(手算的舍入错了);目录树和磁盘结构
+  也差了两处。**每个数字都要从文件重新推导一遍** —— 目录树用"解析树 → 重建
+  路径 → 和磁盘双向比对",大小用"同单位同小数位重新格式化后逐字比较"。
+  **Lesson 1224。**
+- **0.2.71 的发布包有两个洞,0.2.72 补上了:** `desktop/bundle/{msi,nsis}` 是
+  **空目录**(而 README 声称里面有安装包),以及运行期目录
+  `.aethercode/sessions/` 被**打进了包里**。`zipLayoutR268b` 那条 vitest 会在
+  最新 release 目录上跑,发布目录没装完它是红的 —— **它红得有道理**。

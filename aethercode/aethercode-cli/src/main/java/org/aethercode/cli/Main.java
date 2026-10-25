@@ -387,14 +387,35 @@ public class Main implements Callable<Integer> {
      *   <li>anything else — treated as the raw prompt text.</li>
      * </ul>
      *
-     * <p>Reading stops at EOF. The scheduler keeps its end of the pipe open
-     * after the prompt (the Claude Code protocol uses the same stdin for
-     * {@code control_response} frames), so a single {@code readLine()} is
-     * not enough: collect every line and concatenate.
+     * <p><b>R382 — the two output shapes need DIFFERENT read strategies.</b>
+     *
+     * <p>The stream-json shape reads to EOF: the scheduler keeps its end of
+     * the pipe open after the prompt (the Claude Code protocol uses the same
+     * stdin for {@code control_response} frames), so a single
+     * {@code readLine()} is not enough — collect every line and concatenate.
+     *
+     * <p>The plain (text) shape does NOT need EOF. argv is the documented
+     * channel there ({@code --print "…"}), and reading to EOF had a real
+     * failure mode: an open-but-silent stdin — a wrapper that starts the
+     * process without writing, a CI job with an inherited pipe — blocked the
+     * CLI <i>forever</i>. The full Maven suite hit exactly that:
+     * {@code MainCliTest.call_rejectsPrintWithoutPrompt} hung the surefire
+     * fork on {@code System.in.readLine()} and took the whole
+     * {@code mvn install} down with it.
+     *
+     * <p>So the plain path reads only what is ALREADY buffered
+     * ({@link #readBufferedPrompt()}) and otherwise reports the missing
+     * prompt (exit 2) — the pre-R747 behaviour. No timeout constant is
+     * invented: "is there a byte right now" is a fact we can ask, while
+     * "how long should we wait for one" would be a guess.
      */
-    private String readPromptFromStdin(boolean streamJson) {
+    String readPromptFromStdin(boolean streamJson) {
         if (System.console() != null && !stdinHasData()) {
             return null;
+        }
+        if (!streamJson) {
+            // plain --print: bounded, never-blocking read.
+            return readBufferedPrompt();
         }
         StringBuilder sb = new StringBuilder();
         try (var reader = new java.io.BufferedReader(
@@ -410,8 +431,51 @@ public class Main implements Callable<Integer> {
         }
         String raw = sb.toString().trim();
         if (raw.isEmpty()) return null;
-        if (!streamJson) return raw;
         return extractClaudeUserText(raw);
+    }
+
+    /**
+     * R382: read the prompt from stdin WITHOUT ever blocking.
+     *
+     * <p>Reads exactly the bytes that are already buffered and returns them
+     * as the prompt; returns {@code null} when nothing is waiting (or when
+     * the buffered bytes are blank), which the caller reports as a missing
+     * prompt.
+     *
+     * <p>The read is one byte at a time on purpose. A bulk
+     * {@code read(byte[], 0, available)} asks the pipe for N bytes and then
+     * BLOCKS for the ones that never arrive; a single-byte {@code read()}
+     * returns as soon as that byte is in the buffer.
+     *
+     * <p>Why this exists: the plain {@code --print} path used to read to
+     * EOF, which turned "the peer sent no prompt" into "wait forever".
+     */
+    private static String readBufferedPrompt() {
+        int avail;
+        try {
+            avail = System.in.available();
+        } catch (java.io.IOException e) {
+            return null;
+        }
+        if (avail <= 0) {
+            return null;
+        }
+        byte[] buf = new byte[avail];
+        int n = 0;
+        for (int i = 0; i < avail; i++) {
+            int b;
+            try {
+                b = System.in.read();
+            } catch (java.io.IOException e) {
+                break;
+            }
+            if (b < 0) {
+                break;
+            }
+            buf[n++] = (byte) b;
+        }
+        String raw = new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8).trim();
+        return raw.isEmpty() ? null : raw;
     }
 
     /**
