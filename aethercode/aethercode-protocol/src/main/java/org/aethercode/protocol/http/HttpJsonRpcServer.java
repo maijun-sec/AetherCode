@@ -927,6 +927,10 @@ public final class HttpJsonRpcServer {
             // stdio + HTTP paths expose the same RPC.
             case "summary" -> methods.summary(params);
             case "listSessions" -> methods.listSessions(params);
+            // R379: per-session token accounting.
+            case "session/tokens" -> methods.sessionTokens(params);
+            // R379: roll the transcript back to an earlier user message.
+            case "rewind"         -> methods.rewind(params);
             case "loadSession" -> methods.loadSession(params);
             case "listTasks" -> methods.listTasks(params);
             // Kanban-style task CRUD. The
@@ -1042,6 +1046,8 @@ public final class HttpJsonRpcServer {
             // AgentPicker (in the workflow editor) reads the
             // list; the modal preview reads getAgentBody.
             case "listAgents"     -> methods.listAgents(params);
+            // R379: mark an agent as the session default.
+            case "agent/setDefault" -> methods.setDefaultAgent(params);
             case "getAgentBody"   -> methods.getAgentBody(params);
             // dynamic Agent CRUD. Without
             // these switch arms the renderer

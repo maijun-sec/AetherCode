@@ -79,18 +79,29 @@ export const EFFORT_METHOD = "switchVariant";
  * @type {ReadonlyMap<string, string>}
  */
 export const BACKEND_MISSING: ReadonlyMap<string, string> = new Map<string, string>([
-  [
-    "agent/setDefault",
-    "the daemon has no notion of a DEFAULT agent: `AgentRegistry` exposes `list`, `create`, `update` and `delete`, and `listAgents` publishes no default flag",
-  ],
-  [
-    "rewind",
-    "the daemon cannot roll a transcript back: `AppState` only appends through `appendMessage` and exposes `transcript` read-only",
-  ],
-  [
-    "session/tokens",
-    "the daemon accounts tokens by MODEL, not by session: `CostTracker` sums into `totalInput`, `totalOutput` and `byModel`, and `listSessions` rows carry no token counts",
-  ],
+  // R379: the table is EMPTY, and that is the point.
+  //
+  // R377 left three entries here — `agent/setDefault`, `rewind`,
+  // `session/tokens` — and every one of them was a REAL gap in the
+  // daemon (not a name mismatch like `effort/set` was). R379 CLOSED
+  // all three:
+  //
+  //   - `agent/setDefault` → `AgentRegistry` owns a default agent
+  //     and the daemon installs its body into the system prompt, so
+  //     the marker is a BEHAVIOUR, not a label nobody reads;
+  //   - `rewind` → `AppState.truncateTranscript` +
+  //     `Transcript.truncateTo` roll the conversation back, in
+  //     memory AND on disk;
+  //   - `session/tokens` → `CostTracker` keeps a per-session
+  //     bucket and `QueryEngine` books usage against the live
+  //     session.
+  //
+  // The mechanism STAYS: `handleSlash` still consults this table
+  // before dispatching, and the Ink / line renderers still consult it
+  // before calling a method directly. So the next capability that
+  // lands without a daemon behind it is honest for free. An empty
+  // table is not a dead guard — it is a guard that currently has
+  // nothing to refuse.
   // R375: `task/kill`, `task/pause` and `task/resume` used to be here,
   // and every one of those entries was WRONG — twice over.
   //

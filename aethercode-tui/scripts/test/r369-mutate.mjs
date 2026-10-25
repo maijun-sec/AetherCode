@@ -30,7 +30,7 @@ import { requireGreenBaseline } from "./mutation-baseline.mjs";
 // every reason and the needle below went NO-OP on the spot, silently
 // testing nothing. It now addresses the table BY KEY through one
 // shared editor, so a rewrite of the prose cannot blind it again.
-import { setReason } from "./caps-table.mjs";
+import { insertEntry } from "./caps-table.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -166,11 +166,28 @@ const CASES = [
   // R377: the needle is now KEY-based (`setReason(s, "rewind", …)`),
   // because R377 rewrote the reasons and a TEXT-based needle went
   // NO-OP — reporting like a pass while testing nothing.
+  //
+  // R379: the table is EMPTY (the daemon serves every method the TUI
+  // names), so `setReason(s, "rewind", …)` has nothing to rewrite and
+  // went NO-OP. The needle is re-aimed at the only shape the table can
+  // still take: an entry whose reason is internal shorthand. The
+  // method name is one the daemon does NOT register, so the mutation
+  // isolates the REASON check rather than tripping the stale-allowlist
+  // check on the way.
   [
     "a reason is internal shorthand again ('same as rewind')",
-    [["caps", (s) => setReason(s, "rewind", "same as rewind")]],
+    [
+      [
+        "caps",
+        (s) =>
+          insertEntry(
+            s,
+            "session/rewindAll",
+            "same as the rewind entry, which the daemon also lacks",
+          ),
+      ],
+    ],
   ],
-
   // --- line mode's direct probes ---
   [
     "line mode stops consulting the table before probing agent/setDefault",
@@ -201,20 +218,36 @@ const CASES = [
   // name") is covered by `r377-mutate.mjs`.
   //
   // --- the table itself ---
-  // My first attempt here was "lower the floor from 7 to 0". It
-  // SURVIVED, and correctly so: that disables the guard without
-  // breaking anything, so every other assertion still holds. The
-  // failure the floor exists for is the EXTRACTION silently matching
-  // nothing — reformat the table and `n` becomes 0 while the table
-  // itself is perfectly fine.
+  // R379: the table is EMPTY, so the two "the extraction stops
+  // matching" cases above had nothing to aim at: the regex they broke
+  // was reading a table with no entries, and breaking it changed
+  // nothing. One went NO-OP and the other left a HOLE.
+  //
+  // The PROPERTY — "the gate must not be blind to the table" — is
+  // still real, and it now has a SHAPE the empty table can express:
+  // the gate CROSS-CHECKS the source extraction against the compiled
+  // table, so an entry the extraction cannot see is a hole, and an
+  // entry with a bad reason is a hole.
   [
-    "the capability-table floor stops extracting (regex drift)",
-    [["gate", (s) => s.replace('[a-z][\\w/]*",/gm', '[zzz][\\w/]*",/gm')]],
+    "the refusal table gains an entry the source extraction cannot see",
+    [
+      [
+        "caps",
+        // The key starts with a capital, so the gate's extraction
+        // pattern ([a-z][\w/]*) cannot match it — but the COMPILED
+        // table has it. The cross-check must fire.
+        (s) =>
+          insertEntry(
+            s,
+            "Session/RewindAll",
+            "a reason long enough to be shown to a user on its own, standing alone",
+          ),
+      ],
+    ],
   ],
-
   [
-    "the per-reason regex stops extracting (terse-reason check goes blind)",
-    [["gate", (s) => s.replace('"([a-z][\\w/]*)",', '"([zzz][\\w/]*)",')]],
+    "the refusal table gains an entry with a terse reason (the per-reason check must bite)",
+    [["caps", (s) => insertEntry(s, "session/rewindAll", "nope")]],
   ],
 ];
 

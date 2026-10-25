@@ -37,6 +37,19 @@ public class CostTracker {
     private final AtomicLong totalInput = new AtomicLong();
     private final AtomicLong totalOutput = new AtomicLong();
 
+    /** R379: bucket key for usage recorded before a session id
+     *  was known (the daemon's boot window, before the first
+     *  query reaches the engine). It is a REAL bucket, not a
+     *  missing one — {@link #sessionSummary(String)} can always
+     *  answer with a number instead of null. */
+    public static final String UNKNOWN_SESSION = "__unknown__";
+    /** R379: per-session token counters, keyed by session id and
+     *  then by model. The process-wide counters above stay the
+     *  global totals; these are the per-session view that the
+     *  {@code session/tokens} RPC serves. */
+    private final Map<String, Map<String, AtomicLong>> sessionInput = new LinkedHashMap<>();
+    private final Map<String, Map<String, AtomicLong>> sessionOutput = new LinkedHashMap<>();
+
     public CostTracker() { defaultPriceTable(); }
 
     /** list model ids known to this tracker (i.e.
@@ -96,6 +109,53 @@ public class CostTracker {
         totalOutput.addAndGet(usage.outputTokens());
     }
 
+    /** R379: record one LLM call's usage against a SPECIFIC
+     *  session. The process-wide counters are updated too (so the
+     *  global summary stays correct); this adds the per-session
+     *  dimension the {@code session/tokens} RPC serves.
+     *
+     *  <p>A null / blank session id lands in the
+     *  {@link #UNKNOWN_SESSION} bucket rather than being dropped:
+     *  silently discarding tokens would make the per-session
+     *  numbers disagree with the global ones. */
+    public synchronized void record(String sessionId, String model, Usage usage) {
+        record(model, usage);
+        if (model == null || model.isBlank() || usage == null) return;
+        String key = (sessionId == null || sessionId.isBlank()) ? UNKNOWN_SESSION : sessionId;
+        sessionInput.computeIfAbsent(key, k -> new LinkedHashMap<>())
+                .computeIfAbsent(model, k -> new AtomicLong())
+                .addAndGet(usage.inputTokens());
+        sessionOutput.computeIfAbsent(key, k -> new LinkedHashMap<>())
+                .computeIfAbsent(model, k -> new AtomicLong())
+                .addAndGet(usage.outputTokens());
+    }
+
+    /** R379: per-session token + cost snapshot. Returns an
+     *  all-zero Summary for a session that has recorded nothing —
+     *  never null, so the RPC can serialise it without a special
+     *  case. A null / blank session id resolves to the
+     *  {@link #UNKNOWN_SESSION} bucket. */
+    public synchronized Summary sessionSummary(String sessionId) {
+        String key = (sessionId == null || sessionId.isBlank()) ? UNKNOWN_SESSION : sessionId;
+        Map<String, AtomicLong> in = sessionInput.get(key);
+        Map<String, AtomicLong> out = sessionOutput.get(key);
+        Map<String, ModelUsage> by = new LinkedHashMap<>();
+        long totalIn = 0;
+        long totalOut = 0;
+        if (in != null) {
+            for (String m : in.keySet()) {
+                long mi = in.get(m).get();
+                long mo = out == null ? 0L : out.getOrDefault(m, new AtomicLong()).get();
+                by.put(m, new ModelUsage(mi, mo, costFor(m, mi, mo)));
+                totalIn += mi;
+                totalOut += mo;
+            }
+        }
+        double cost = 0.0;
+        for (ModelUsage u : by.values()) cost += u.costUsd();
+        return new Summary(totalIn, totalOut, cost, by);
+    }
+
     /** Cumulative usage snapshot, broken down by model. */
     public Summary summary() {
         Map<String, ModelUsage> by = new LinkedHashMap<>();
@@ -132,5 +192,10 @@ public class CostTracker {
         output.values().forEach(a -> a.set(0));
         totalInput.set(0);
         totalOutput.set(0);
+        // R379: the per-session buckets are part of the same
+        // accounting — leaving them behind would make
+        // session/tokens disagree with the global summary.
+        sessionInput.clear();
+        sessionOutput.clear();
     }
 }

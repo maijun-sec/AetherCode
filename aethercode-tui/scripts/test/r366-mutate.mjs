@@ -36,7 +36,7 @@ import { requireGreenBaseline } from "./mutation-baseline.mjs";
 // spot, silently testing nothing. They now address the table BY KEY
 // through one shared editor, so a rewrite of the prose cannot blind
 // them again.
-import { deleteEntry, setReason } from "./caps-table.mjs";
+import { insertEntry } from "./caps-table.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -239,15 +239,40 @@ const CASES = [
   ],
 
   // --- aimed at the allowlist itself ---
+  //
+  // R379: the table is EMPTY — the daemon serves every method the TUI
+  // names — so "delete an entry" and "blank a reason" have nothing to
+  // aim at and went NO-OP (a NO-OP reports like a pass). The PROPERTIES
+  // are still real, so the needles are re-aimed at the only shape the
+  // table can still take: an entry that is WRONG.
+  //
+  //   - an entry naming a method the daemon HAS → the stale-allowlist
+  //     gate must bite;
+  //   - an entry with no reason → the reason gate must bite.
+  //
+  // The method names used here are ones the daemon does NOT register,
+  // so the mutation isolates the gate it is aimed at: the "stale
+  // entry" case names `rewind` (which the daemon DOES serve, since
+  // R379) and the "no reason" case names a method nobody has.
   [
-    "delete an allowlist entry (must surface as an unknown method)",
+    "the allowlist regains an entry for a method the daemon HAS (the stale-allowlist gate must bite)",
     "red",
-    [["caps", (s) => deleteEntry(s, "rewind")]],
+    [
+      [
+        "caps",
+        (s) =>
+          insertEntry(
+            s,
+            "rewind",
+            "the daemon cannot roll a transcript back: `AppState` only appends",
+          ),
+      ],
+    ],
   ],
   [
-    "blank an allowlist reason (the reason gate must bite)",
+    "the allowlist gains an entry with no reason (the reason gate must bite)",
     "red",
-    [["caps", (s) => setReason(s, "rewind", "")]],
+    [["caps", (s) => insertEntry(s, "session/rewindAll", "")]],
   ],
   [
     "make the extraction pattern stop matching (must fail the floor)",

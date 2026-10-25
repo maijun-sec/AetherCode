@@ -168,12 +168,12 @@ test("T-6-17: /todos → __TODO_BOARD__ local token", () => {
 // ----- 4. /tokens → session/tokens RPC ---------------------------------
 
 test("T-6-17: /tokens → session/tokens RPC", () => {
-  // R369: same shape as /stop — the method is not registered, so the
-  // command refuses in words instead of dispatching. The mapping is
-  // still pinned, via the refusal text and via routeSlash.
-  refusedMethod(handleSlash("/tokens"), "session/tokens");
+  // R379: the daemon SERVES `session/tokens` now (per-session token
+  // accounting in `CostTracker`), so the command DISPATCHES. R369
+  // pinned the refusal; R379 pins the capability.
+  assert.equal(handleSlash("/tokens").rpcMethod, "session/tokens");
   // /token singular alias.
-  refusedMethod(handleSlash("/token"), "session/tokens");
+  assert.equal(handleSlash("/token").rpcMethod, "session/tokens");
   assert.equal(routeSlash("/tokens").rpcMethod, "session/tokens");
 });
 

@@ -17,6 +17,12 @@ import { handleSlash, SLASH_HELP } from "./commands.js";
 // R369: the one table that says what this daemon cannot do, shared
 // with `handleSlash` and with the R366 gate.
 import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
+// R379 — the daemon's auto-continuation countdown. Shared with the
+// Ink renderer so the two word the same warning the same way.
+import { COUNTDOWN_METHOD, countdownLine, parseCountdown } from "./continuationCountdown.js";
+// R379 — one-line reports for the RPCs the TUI fires on the user's
+// behalf. Shared with the Ink renderer.
+import { formatRewind, formatSessionTokens } from "./rpcReports.js";
 // R377: the reasoning-effort vocabulary, shared with the Ink renderer.
 // The daemon calls the capability a VARIANT; the levels and their
 // one-line blurbs live in one place so the two renderers cannot
@@ -2730,7 +2736,11 @@ async function panelAgentPick(ctx: PanelCtx): Promise<void> {
   const picked = await choose(ctx, {
     options: agents.map((a) => ({ label: nameOf(a), value: nameOf(a) })),
     initial: 0,
-    title: "Pick active agent",
+    // R379 — the daemon's agent-level write is the DEFAULT agent
+    // (its body is installed into the system prompt). Calling the
+    // picker "active agent" would promise a concept the daemon does
+    // not have.
+    title: "Pick default agent",
     alt: "use `/agent <name>` instead",
   });
   repaint(ctx);
@@ -3815,7 +3825,15 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
   (runLineMode as unknown as { _onRunEnd?: () => void })._onRunEnd = onRunEnd;
 
   client.setNotificationHandler((method: string, params: RpcValue | undefined) => {
-    if (method === "stream_event") {
+    if (method === COUNTDOWN_METHOD) {
+      // R379 — the daemon is about to start a turn on its own. Line
+      // mode had no case for the notification, so an automatic turn
+      // began with no warning at all.
+      const countdown = parseCountdown(params);
+      if (countdown) {
+        logAbove(colorize(`  ${countdownLine(countdown)}`, C.dim, noColor));
+      }
+    } else if (method === "stream_event") {
       const p = (params ?? {}) as { event?: Record<string, unknown>; runId?: string };
       const ev = p.event ?? {};
       const t = ev.type as string | undefined;
@@ -4501,7 +4519,15 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       }
       try {
         const result = await client.request<unknown>(slash.rpcMethod, slash.rpcParams as RpcValue);
-        logAbove(colorize(`${slash.rpcMethod} \u2192 ${JSON.stringify(result)}`, C.dim, noColor));
+        // R379 — a raw JSON dump is the absence of a report. The two
+        // RPCs the user asks for BY NAME get a sentence.
+        if (slash.rpcMethod === "session/tokens") {
+          logAbove(colorize(`  ${formatSessionTokens(result)}`, C.dim, noColor));
+        } else if (slash.rpcMethod === "rewind") {
+          logAbove(colorize(`  ${formatRewind(result)}`, C.dim, noColor));
+        } else {
+          logAbove(colorize(`${slash.rpcMethod} \u2192 ${JSON.stringify(result)}`, C.dim, noColor));
+        }
       } catch (e) {
         logAbove(colorize(`${slash.rpcMethod} failed: ${(e as Error).message}`, C.red, noColor));
       }

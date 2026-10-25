@@ -324,7 +324,13 @@ public class EngineContinuationDispatcher implements ContinuationDispatcher {
         payload.put("totalCount",       totalCount);
         payload.put("remainingMs",      remainingMs);
         payload.put("kind",             "countdown-start");
-        methods.notifyCustom("todo_continuation_countdown", payload);
+        // R379 — the constant, not the literal. The name used to live in
+        // TWO places in this file (the constant declaration and this
+        // call), and the constant was dead code. Two copies of a truth
+        // drift silently: deleting the emission left the literal behind
+        // in the constant, so a gate that looked for the literal still
+        // went green on a daemon that had stopped counting down.
+        methods.notifyCustom(NOTIFY_TODO_CONTINUATION_COUNTDOWN, payload);
     }
 
     @Override

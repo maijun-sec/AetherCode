@@ -32,6 +32,7 @@
  * </ul>
  */
 
+import { emptyNoteFor, hintFor } from "../../componentKeys.js";
 import React, { useState, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import { t, icon } from "../../theme.js";
@@ -313,7 +314,7 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
               ) : null}
             </Box>
           ) : (
-            <Text dimColor>(no grant focused — use ↑/↓ to pick one)</Text>
+            <Text dimColor>{emptyNoteFor("components/permissions/GrantsManager.tsx")}</Text>
           )}
         </Box>
 
@@ -368,7 +369,7 @@ export const GrantsManager: React.FC<GrantsManagerProps> = ({
       </Box>
       <Text> </Text>
       <Text dimColor>
-        ↑/↓ navigate · r revoke · 1-4 scope filter · {PRESETS.length} presets available
+        {hintFor("components/permissions/GrantsManager.tsx", { presets: PRESETS.length })}
       </Text>
     </Box>
   );

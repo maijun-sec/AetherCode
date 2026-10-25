@@ -88,82 +88,120 @@ async function load() {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
   }
-  return import(pathToFileURL(join(tmp, "out", "commands.js")).href);
+  // `commands.ts` imports `rpcCapabilities.js`, so the compiled
+  // output carries BOTH — one tsc run, two modules, and no second
+  // copy of the table anywhere.
+  const commands = await import(pathToFileURL(join(tmp, "out", "commands.js")).href);
+  const caps = await import(pathToFileURL(join(tmp, "out", "rpcCapabilities.js")).href);
+  return { ...commands, ...caps };
 }
 
-const { handleSlash } = await load();
+const { handleSlash, unsupportedMessage, BACKEND_MISSING } = await load();
 
 // --- the table ----------------------------------------------------------
 
-test("the capability table is not empty and every reason is user-facing", () => {
-  // Two SEPARATE extractions, each with its own floor.
+test("every refusal reason is user-facing", () => {
+  // R379: the table is EMPTY — the daemon now serves every method the
+  // TUI names (`agent/setDefault`, `rewind` and `session/tokens`
+  // were all real gaps until this round). An empty table makes a loop
+  // over it VACUOUS, which is the R368 hole: a check that matches
+  // nothing can never fire.
   //
-  // The floor is there because a `for...of matchAll(...)` loop is
-  // structurally blind to its own failure to match: if the regex
-  // drifts, the body never runs, no assertion fires, and the gate is
-  // green on a table it never read. That is the R368 hole for the
-  // fifth time — an unchecked extraction. So neither loop is allowed
-  // to be unmeasured.
+  // Three things keep this check alive:
   //
-  // The floor was 7 while the table still carried the three `task/*`
-  // entries. R375 removed them (the TUI stopped naming those methods
-  // altogether) and R377 removed `effort/set` (the daemon serves that
-  // capability as `switchVariant`), so the measured count is 3 as of
-  // 2026-10-24.
-  const entries = [...capsSrc.matchAll(/^\s*\[\s*"[a-z][\w/]*",/gm)];
-  assert.ok(
-    entries.length >= 3,
-    `only ${entries.length} entries parsed from rpcCapabilities.ts — the table ` +
-      "probably stopped parsing, which would make the honesty checks vacuous",
+  //   1. the table is read from the COMPILED value, so there is no
+  //      regex that can drift out of the extraction;
+  //   2. the source extraction is CROSS-CHECKED against the compiled
+  //      table, so a drift in EITHER one is caught — and an entry the
+  //      product has but the extraction cannot see is caught too;
+  //   3. the checker itself is exercised against FIXTURES, so it
+  //      cannot silently stop rejecting.
+  const extracted = [...capsSrc.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)].map(
+    (m) => m[1],
+  );
+  const compiled = [...BACKEND_MISSING.keys()];
+  assert.deepEqual(
+    extracted.sort(),
+    compiled.sort(),
+    "the source extraction and the compiled table disagree — the gate would " +
+      "check a table the product does not have (or miss one it does)",
   );
 
-  const reasons = [...capsSrc.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)];
-  assert.ok(
-    reasons.length >= 3,
-    `only ${reasons.length} reasons parsed — the per-reason check would run ` +
-      "zero times and pass on a table it never read",
+  const checkReason = (name, reason) => {
+    assert.ok(reason.length > 25, `${name}'s reason is too terse to show a user: ${reason}`);
+    // A reason is shown to the user verbatim, so it must STAND ALONE.
+    // A pointer at another entry ("same as X") is internal shorthand
+    // the reader cannot resolve.
+    assert.doesNotMatch(
+      reason,
+      /^same as /i,
+      `${name}'s reason points at another entry instead of standing alone: ${reason}`,
+    );
+  };
+  for (const [name, why] of BACKEND_MISSING) checkReason(name, why);
+
+  // The fixtures: the checker must still reject a terse reason and a
+  // pointer. A checker that accepts everything is not a checker.
+  assert.throws(
+    () => checkReason("fixture", "nope"),
+    /too terse/,
+    "the reason check must still reject a terse reason",
   );
-  for (const m of reasons) {
-    assert.ok(m[2].length > 25, `${m[1]}'s reason is too terse to show a user: ${m[2]}`);
-  }
+  assert.throws(
+    () => checkReason("fixture", "same as the rewind entry, which the daemon also lacks"),
+    /standing alone/,
+    "the reason check must still reject internal shorthand",
+  );
+  checkReason("fixture", "the daemon has no notion of a default agent at all, and never will");
+});
+
+test("the refusal sentence never leaks the raw error or a sentinel token", () => {
+  // R379: no command produces a refusal any more (the table is empty),
+  // so this property is checked on the HELPER itself. Otherwise the
+  // two battery cases that mutate the sentence would go NO-OP and
+  // report like a pass while testing nothing.
+  const sentence = unsupportedMessage("some/method", "because the daemon does not have it");
+  assert.ok(sentence.length > 25, `the refusal sentence is too terse to show a user: ${sentence}`);
+  assert.doesNotMatch(
+    sentence,
+    /-32601|method not found/i,
+    `the refusal must not leak the JSON-RPC error the user cannot act on: ${sentence}`,
+  );
+  assert.doesNotMatch(
+    sentence,
+    /__[A-Z0-9_]+__/,
+    `the refusal must be a sentence, never a leaked sentinel token: ${sentence}`,
+  );
+  assert.ok(
+    sentence.includes("some/method") && sentence.includes("because the daemon does not have it"),
+    `the refusal must name the method and the reason: ${sentence}`,
+  );
 });
 
 // --- the behaviour ------------------------------------------------------
 
-test("every backend-missing command answers in words, not with an rpcMethod", () => {
-  // The advertised ones that are STILL missing. `/rewind` only reaches
-  // its RPC with an argument — with none it returns a usage string,
-  // which is already honest, so both forms are asserted.
-  //
-  // R375 removed `/stop`, `/pause` and `/continue` from this list:
-  // they no longer name a missing method, so there is nothing to
-  // refuse. They are asserted to WORK in `phase-6-t6-17.test.mjs`.
+test("a command that names a daemon-served method DISPATCHES", () => {
+  // R379: the three commands that used to be refused now reach the
+  // daemon, because the daemon now SERVES those methods. The refusal
+  // filter must not swallow them — a filter that outlived its table
+  // is a filter that hides working features, which is exactly what
+  // R377 found with `effort/set`.
   const CASES = [
     ["/rewind 3", "rewind"],
     ["/tokens", "session/tokens"],
+    ["/agent-pick-set-default alpha", "agent/setDefault"],
   ];
   for (const [input, method] of CASES) {
     const res = handleSlash(input);
     assert.equal(
       res?.rpcMethod,
+      method,
+      `${input} must dispatch to ${method}, got: ${res?.rpcMethod ?? res?.local}`,
+    );
+    assert.equal(
+      res?.local,
       undefined,
-      `${input} still returns rpcMethod=${res?.rpcMethod} — the capability filter ` +
-        "is not running, so this answers -32601",
-    );
-    assert.ok(res?.local, `${input} returned neither local nor rpcMethod`);
-    assert.ok(
-      res.local.includes(method),
-      `${input} should name ${method} in its refusal, got: ${res.local}`,
-    );
-    assert.doesNotMatch(
-      res.local,
-      /__[A-Z0-9_]+__/,
-      "a refusal must be a sentence, never a leaked sentinel token",
-    );
-    assert.doesNotMatch(
-      res.local,
-      /-32601|method not found/i,
-      "the refusal must not leak the JSON-RPC error the user cannot act on",
+      `${input} answered in words instead of dispatching — the daemon serves ${method}`,
     );
   }
 });

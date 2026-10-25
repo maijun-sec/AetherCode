@@ -38,6 +38,7 @@
  * them into one.
  */
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 // R373: the row type and the empty-state copy live in one leaf module
@@ -128,7 +129,7 @@ export const WorkflowPicker: React.FC<WorkflowPickerProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor> ↑/↓ (j/k): navigate Enter: run Esc: cancel</Text>
+        <Text dimColor> {hintFor("components/WorkflowPicker.tsx")}</Text>
       </Box>
       {dir ? <Text dimColor> {dir}</Text> : null}
       <Text> </Text>

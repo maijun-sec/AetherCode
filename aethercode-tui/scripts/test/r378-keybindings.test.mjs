@@ -325,13 +325,22 @@ test("the help does not promise what this daemon cannot do", () => {
     "the set of bindings the help marks as unavailable must be exactly the set whose RPC " +
       "is on the refusal table",
   );
-  // And the one that matters: Ctrl-Z calls `rewind`, which this daemon
-  // does not have. If somebody drops the `method` field, the help
-  // starts promising a feature that does not exist.
+  // R379: `rewind` is SERVED now, so Ctrl-Z is NOT marked unavailable.
+  // The mark is derived from the SAME refusal table the dispatcher
+  // consults, so the two cannot disagree — which is the point: when
+  // the daemon gained the capability, the help stopped apologising
+  // for it without anybody editing the help.
   assert.ok(
-    marked.includes("Ctrl+Z"),
-    "Ctrl-Z calls `rewind`, which the refusal table says this daemon cannot serve — the " +
-      "help must say so rather than promise it",
+    !marked.includes("Ctrl+Z"),
+    "Ctrl-Z calls `rewind`, which the daemon serves since R379 — marking it " +
+      "unavailable tells the user a working key is dead",
+  );
+  // The derivation must still be wired: the mark comes from the table,
+  // it is not a hand-written list.
+  assert.match(
+    readSrc("src/keybindings.ts"),
+    /bindingUnavailable/,
+    "the unavailable mark must be derived from the refusal table",
   );
 });
 

@@ -15,6 +15,7 @@
  * catalog — that's a per-model concern of the LLM provider.
  */
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
@@ -130,7 +131,7 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor> ↑/↓ (j/k): navigate Enter: select Esc: close</Text>
+        <Text dimColor> {hintFor("components/EffortPicker.tsx")}</Text>
       </Box>
       {modelSpec ? <Text dimColor> for {modelSpec}</Text> : null}
       <Text> </Text>

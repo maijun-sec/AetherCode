@@ -15,6 +15,7 @@
  * Enter and `null` on cancel.
  */
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
@@ -154,7 +155,7 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor> type to filter ↑/↓ (j/k): navigate Enter: select Esc: cancel</Text>
+        <Text dimColor> {hintFor("components/ThreadSelector.tsx")}</Text>
       </Box>
       {subtitle ? <Text dimColor> {subtitle}</Text> : null}
       <Text> </Text>

@@ -225,6 +225,10 @@ public class AetherCodeMethods {
         m.put("getSkipStats",                          new String[]{TAG_READ, TAG_PERMISSION});
         // Session
         m.put("listSessions",                          new String[]{TAG_READ, TAG_SESSION});
+        // R379: per-session token accounting.
+        m.put("session/tokens",                          new String[]{TAG_READ, TAG_SESSION});
+        // R379: roll the transcript back to an earlier user message.
+        m.put("rewind",                                  new String[]{TAG_WRITE, TAG_SESSION});
         m.put("loadSession",                           new String[]{TAG_READ, TAG_SESSION});
         m.put("createSession",                         new String[]{TAG_WRITE, TAG_SESSION});
         m.put("deleteSession",                         new String[]{TAG_WRITE, TAG_SESSION});
@@ -276,6 +280,8 @@ public class AetherCodeMethods {
         m.put("reloadRegistries",                       new String[]{TAG_WRITE, TAG_SKILL});
         // Agents
         m.put("listAgents",                            new String[]{TAG_READ, TAG_AGENT});
+        // R379: mark an agent as the session default.
+        m.put("agent/setDefault",                        new String[]{TAG_WRITE, TAG_AGENT});
         m.put("getAgentBody",                          new String[]{TAG_READ, TAG_AGENT});
         m.put("createAgent",                           new String[]{TAG_WRITE, TAG_AGENT});
         m.put("updateAgent",                           new String[]{TAG_WRITE, TAG_AGENT});
@@ -1664,6 +1670,10 @@ public class AetherCodeMethods {
         // can flip it on for production.
         dispatcher.register("setAutoRestart",        this::setAutoRestart);
         dispatcher.register("listSessions",          this::listSessions);
+        // R379: per-session token accounting.
+        dispatcher.register("session/tokens",          this::sessionTokens);
+        // R379: roll the transcript back to an earlier user message.
+        dispatcher.register("rewind",                  this::rewind);
         dispatcher.register("loadSession",           this::loadSession);
         // mint a new session / delete an existing one. The
         // desktop's `createNewSession` action calls createSession
@@ -1800,6 +1810,8 @@ public class AetherCodeMethods {
         // on the wire too so the desktop can preview an agent's body
         // before wiring it into a workflow.
         dispatcher.register("listAgents",     this::listAgents);
+        // R379: mark an agent as the session default.
+        dispatcher.register("agent/setDefault", this::setDefaultAgent);
         dispatcher.register("getAgentBody",   this::getAgentBody);
         // dynamic Agent CRUD. The Settings
         // panel's "Agents" tab uses these to
@@ -7077,6 +7089,13 @@ public class AetherCodeMethods {
 
     public Object listAgents(Object params) {
         List<org.aethercode.core.agent.AgentRegistry.AgentMeta> all = engine.listAgents();
+        // R379: publish which agent is the default, so a picker
+        // can badge it without a second round-trip.
+        String defaultAgent = "";
+        var reg = engine.agentRegistry();
+        if (reg != null) {
+            defaultAgent = reg.defaultAgent().orElse("");
+        }
         List<Map<String, Object>> out = new java.util.ArrayList<>(all.size());
         for (var m : all) {
             // include the agent's frontmatter
@@ -7097,9 +7116,11 @@ public class AetherCodeMethods {
                     "displayName", m.displayName(),
                     "model", m.model() == null ? "" : m.model(),
                     "variant", m.variant() == null ? "" : m.variant(),
-                    "lastModifiedMs", m.lastModifiedMs()));
+                    "lastModifiedMs", m.lastModifiedMs(),
+                    "default", m.name().equals(defaultAgent)));
         }
-        return Map.of("ok", true, "count", out.size(), "agents", out);
+        return Map.of("ok", true, "count", out.size(), "agents", out,
+                "defaultAgent", defaultAgent);
     }
 
     public Object getAgentBody(Object params) {
@@ -7929,6 +7950,122 @@ public class AetherCodeMethods {
         variantRow.put("extendedThinking", activeVariant.extendedThinking());
         resp.put("activeVariant", variantRow);
         return resp;
+    }
+
+    // ------------------------------------------------------------------
+    // R379 — the three gaps the TUI used to refuse
+    // ------------------------------------------------------------------
+    //
+    // Until R379 the TUI's refusal table carried three entries
+    // (agent/setDefault, rewind, session/tokens). Each was a REAL
+    // gap in the daemon — not a name mismatch — so the honest fix
+    // was to build the capability, not to reword the refusal.
+    // ------------------------------------------------------------------
+
+    /** R379: mark an agent as the session default.
+     *
+     *  <p>Params: {@code {name}}. A missing / empty name CLEARS
+     *  the default. Response: {@code {ok, defaultAgent}} — the
+     *  RESOLVED name, never the request (the same rule R377
+     *  applied to the variant). */
+    public Object setDefaultAgent(Object params) {
+        Map<String, Object> p = asMap(params);
+        String name = p.get("name") instanceof String s ? s.trim() : "";
+        var reg = engine == null ? null : engine.agentRegistry();
+        if (reg == null) {
+            throw new JsonRpcProtocolException(
+                    "agent/setDefault unavailable: no agent registry wired",
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR,
+                            "start the daemon with --agents-dir or agentsDir in the engine builder"));
+        }
+        String resolved;
+        try {
+            resolved = engine.setDefaultAgent(name.isEmpty() ? null : name);
+        } catch (IllegalArgumentException e) {
+            return Map.of("ok", false, "error", e.getMessage());
+        } catch (IllegalStateException e) {
+            throw new JsonRpcProtocolException(
+                    "agent/setDefault unavailable: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        } catch (java.io.IOException e) {
+            throw new JsonRpcProtocolException(
+                    "agent/setDefault failed: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+        return Map.of("ok", true, "defaultAgent", resolved);
+    }
+
+    /** R379: roll the transcript back to an earlier user message.
+     *
+     *  <p>Params: {@code {target}} — a 0-based index into the
+     *  sequence of USER messages. Response:
+     *  {@code {ok, target, kept, removed, transcriptSize}}, or
+     *  {@code {ok: false, reason}} when no such user message
+     *  exists. */
+    public Object rewind(Object params) {
+        Map<String, Object> p = asMap(params);
+        Object raw = p.get("target");
+        int target;
+        if (raw instanceof Number n) {
+            target = n.intValue();
+        } else if (raw instanceof String s) {
+            try {
+                target = Integer.parseInt(s.trim());
+            } catch (NumberFormatException e) {
+                throw invalidParams("target must be an integer, got " + s);
+            }
+        } else {
+            throw invalidParams("missing required integer field: target");
+        }
+        if (engine == null) {
+            throw new JsonRpcProtocolException(
+                    "rewind unavailable: no engine wired",
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR,
+                            "no engine; the daemon needs an AetherCodeEngine on startup"));
+        }
+        try {
+            return engine.rewind(target);
+        } catch (IllegalArgumentException e) {
+            return Map.of("ok", false, "reason", e.getMessage());
+        } catch (java.io.IOException e) {
+            throw new JsonRpcProtocolException(
+                    "rewind failed: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+    }
+
+    /** R379: per-session token usage.
+     *
+     *  <p>Params: {@code {sessionId?}} — the active session when
+     *  omitted. Response: {@code {ok, sessionId, input, output,
+     *  total, costUsd, byModel}}. */
+    public Object sessionTokens(Object params) {
+        Map<String, Object> p = asMap(params);
+        String sessionId = p.get("sessionId") instanceof String s && !s.isBlank()
+                ? s
+                : (engine == null ? "" : engine.appState().sessionId());
+        var tracker = engine == null ? null : engine.costTracker();
+        if (tracker == null) {
+            return Map.of("ok", false, "error", "no cost tracker wired");
+        }
+        var s = tracker.sessionSummary(sessionId);
+        java.util.Map<String, Object> byModel = new java.util.LinkedHashMap<>();
+        for (var e : s.byModel().entrySet()) {
+            byModel.put(e.getKey(), Map.of(
+                    "inputTokens", e.getValue().inputTokens(),
+                    "outputTokens", e.getValue().outputTokens(),
+                    "totalTokens", e.getValue().totalTokens(),
+                    "costUsd", e.getValue().costUsd()));
+        }
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("sessionId", sessionId);
+        out.put("input", s.totalInput());
+        out.put("output", s.totalOutput());
+        out.put("total", s.totalInput() + s.totalOutput());
+        out.put("costUsd", s.totalCostUsd());
+        out.put("byModel", byModel);
+        return out;
     }
 
     // ------------------------------------------------------------------

@@ -15,6 +15,7 @@
  * via `onClose`.
  */
 
+import { hintFor, RECONNECT_KEY_LABEL } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
@@ -40,7 +41,9 @@ export type DismissValue =
   { kind: "server"; name: string } | { kind: "reconnect" } | { kind: "cancel" };
 
 export const RECONNECT_KEY = "ctrl+r";
-export const RECONNECT_KEY_LABEL = "Ctrl+R";
+// R379: the label moved into the key registry, so the hint and the
+// handler's key table cannot disagree about what the reconnect chord is.
+export { RECONNECT_KEY_LABEL } from "../componentKeys.js";
 
 export interface McpViewerProps {
   /** All known MCP servers, typically from `mcp/listServers`. */
@@ -147,10 +150,7 @@ export const McpViewer: React.FC<McpViewerProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor>
-          {" "}
-          ↑/↓ (j/k): navigate Enter: sign in {RECONNECT_KEY_LABEL}: reconnect Esc: close
-        </Text>
+        <Text dimColor> {hintFor("components/McpViewer.tsx")}</Text>
       </Box>
       <Text> </Text>
       {servers.length === 0 ? (

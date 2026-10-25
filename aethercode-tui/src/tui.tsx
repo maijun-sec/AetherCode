@@ -51,6 +51,15 @@ import { handleSlash, completeSlash } from "./commands.js";
 // one-line description live in their own module so both renderers
 // describe the same preset the same way.
 import { EFFORT_METHOD, unsupportedMessage, unsupportedReason } from "./rpcCapabilities.js";
+// R379 — the daemon's auto-continuation countdown. The daemon
+// schedules a turn and says so; until R379 neither renderer had a
+// case for the notification, so the user saw a turn start on its own
+// with no warning and no way to call it off.
+import { COUNTDOWN_METHOD, countdownLine, parseCountdown } from "./continuationCountdown.js";
+// R379 — one-line reports for the RPCs the TUI fires on the user's
+// behalf. Shared with the line renderer so the two cannot word the
+// same answer differently.
+import { formatRewind, formatSessionTokens, formatSetDefaultAgent } from "./rpcReports.js";
 import { EFFORT_EFFECT, EFFORT_LEVELS, variantLine, type VariantInfo } from "./effort.js";
 // R362 — the sentinel → intent contract. The slash dispatcher looks
 // intents up here instead of hand-writing an `if (local === "__X__")`
@@ -1004,6 +1013,21 @@ const App: React.FC<{
           }
           break;
         }
+        case COUNTDOWN_METHOD: {
+          // R379 — the daemon is about to start a turn on its own.
+          // Claude Code says "Continuing automatically at 3:45pm · esc
+          // to cancel"; so does the TUI, and the "esc" half is wired
+          // to the RPC that actually stops the continuation.
+          const countdown = parseCountdown(params);
+          if (!countdown) break;
+          dispatch({ type: "setContinuationCountdown", countdown });
+          dispatch({
+            type: "sideNote",
+            kind: "continuation",
+            message: countdownLine(countdown),
+          });
+          break;
+        }
         case "stream_event": {
           const p = (params ?? {}) as { runId?: string; event?: Record<string, unknown> };
           // R363 — runId fallback. `sendPrompt` captures the id from
@@ -1643,7 +1667,11 @@ const App: React.FC<{
               : (arr as Record<string, unknown>[]).map((a) => ({
                   name: String(a.name ?? a.displayName ?? "?"),
                   description: a.description == null ? undefined : String(a.description),
-                  isDefault: Boolean(a.isDefault),
+                  // R379 — the daemon publishes the default agent
+                  // two ways: a top-level `defaultAgent` and a
+                  // per-row `default` flag. Read the row flag, and
+                  // fall back to the legacy `isDefault` spelling.
+                  isDefault: Boolean(a.default ?? a.isDefault),
                 }));
           dispatch({ type: "setAgents", agents });
           dispatch({
@@ -2770,6 +2798,25 @@ const App: React.FC<{
             kind: "systemPromptSection",
             message: formatSystemPromptSection(r),
           });
+        } else if (slash.rpcMethod === "session/tokens" && result && typeof result === "object") {
+          // R379 — the token report used to be a raw JSON dump.
+          dispatch({
+            type: "sideNote",
+            kind: "tokens",
+            message: formatSessionTokens(result),
+          });
+        } else if (slash.rpcMethod === "rewind" && result && typeof result === "object") {
+          dispatch({
+            type: "sideNote",
+            kind: "rewind",
+            message: formatRewind(result),
+          });
+        } else if (slash.rpcMethod === "agent/setDefault" && result && typeof result === "object") {
+          dispatch({
+            type: "sideNote",
+            kind: "agent",
+            message: formatSetDefaultAgent(result),
+          });
         } else {
           dispatch({
             type: "sideNote",
@@ -3151,6 +3198,16 @@ const App: React.FC<{
       }
       if (state.submitting) {
         void stopActiveRun();
+        return;
+      }
+      if (state.continuationCountdown) {
+        // R379 — Esc cancels a PENDING auto-continuation. The line in
+        // the transcript promises "esc to cancel", so the promise has
+        // to be backed by the RPC that stops it. `pauseAutoContinue`
+        // is the same implementation `/pause` and the status bar's
+        // button use, so there is one path, not three.
+        dispatch({ type: "setContinuationCountdown", countdown: null });
+        void pauseAutoContinue(true);
         return;
       }
     }
@@ -3771,16 +3828,68 @@ const App: React.FC<{
             agents={state.agents}
             current={state.defaultAgent}
             onSelect={(name) => {
-              // The daemon registers no "set active agent" method
-              // (checked against AetherCodeMethods' registry), so
-              // there is nothing to dispatch. Say so instead of
-              // accepting the pick and silently doing nothing.
-              setNotice(`this daemon has no "set active agent" RPC — ${name} was not applied`);
-              dispatch({
-                type: "pushToast",
-                kind: "warn",
-                text: "agent switching is not supported by this daemon",
-              });
+              // R379 — the daemon owns a DEFAULT agent now, and
+              // setting it is a real behaviour: the agent's body is
+              // installed into the system prompt for every subsequent
+              // turn. Before R379 this handler refused the pick in
+              // plain words, because the daemon really had no
+              // agent-level write at all.
+              void (async () => {
+                try {
+                  const res = (await client.request("agent/setDefault", {
+                    name,
+                  } as RpcValue)) as { ok?: boolean; defaultAgent?: string; error?: string };
+                  if (res?.ok) {
+                    const applied = res.defaultAgent ?? name;
+                    dispatch({ type: "setDefaultAgent", name: applied || null });
+                    dispatch({
+                      type: "setAgents",
+                      agents: state.agents.map((a) => ({ ...a, isDefault: a.name === applied })),
+                    });
+                    dispatch({
+                      type: "pushToast",
+                      kind: "ok",
+                      text: `default agent → ${applied}`,
+                    });
+                  } else {
+                    dispatch({
+                      type: "pushToast",
+                      kind: "err",
+                      text: `default agent not changed — ${res?.error ?? "unknown error"}`,
+                    });
+                  }
+                } catch (e) {
+                  dispatch({
+                    type: "pushToast",
+                    kind: "err",
+                    text: `default agent not changed — ${(e as Error).message}`,
+                  });
+                }
+              })();
+            }}
+            onSetDefault={(name) => {
+              // Ctrl+S in the picker — the same write, stated
+              // explicitly. One implementation, two keys.
+              void (async () => {
+                try {
+                  const res = (await client.request("agent/setDefault", {
+                    name,
+                  } as RpcValue)) as { ok?: boolean; defaultAgent?: string; error?: string };
+                  dispatch({
+                    type: "pushToast",
+                    kind: res?.ok ? "ok" : "err",
+                    text: res?.ok
+                      ? `default agent → ${res.defaultAgent ?? name}`
+                      : `default agent not changed — ${res?.error ?? "unknown error"}`,
+                  });
+                } catch (e) {
+                  dispatch({
+                    type: "pushToast",
+                    kind: "err",
+                    text: `default agent not changed — ${(e as Error).message}`,
+                  });
+                }
+              })();
             }}
             onClose={closePanel}
             title=""

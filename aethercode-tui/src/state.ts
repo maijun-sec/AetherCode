@@ -23,6 +23,12 @@ export type { WorkflowRow } from "./workflowRows.js";
 // us about updating".
 import type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
 export type { UpdateVerb, UpdateFacts } from "./updateInfo.js";
+// R379 — the daemon's pending auto-continuation. Non-null while a
+// `todo_continuation_countdown` notification is live. Esc cancels
+// it (the daemon's `setContinuationStopped`, the same RPC `/pause`
+// uses), so the "esc to cancel" the countdown line promises is
+// backed by a real call.
+import type { ContinuationCountdown } from "./continuationCountdown.js";
 
 export type Role =
   "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
@@ -337,6 +343,13 @@ export interface State {
    * but "running", so Continue was permanently greyed out.
    */
   continuationPaused: boolean;
+  /**
+   * R379 — the daemon's pending auto-continuation, or null when no
+   * countdown is live. The countdown line in the transcript promises
+   * "esc to cancel"; this field is what makes the promise
+   * actionable.
+   */
+  continuationCountdown: ContinuationCountdown | null;
   connected: boolean;
   /**
    * detailed daemon-connection state. Distinct from
@@ -1123,6 +1136,8 @@ export type Action =
   | { type: "setCancelSettled" }
   // R375 — the mirror of the daemon's per-session auto-continue flag.
   | { type: "setContinuationPaused"; paused: boolean }
+  // R379 — the pending auto-continuation (null when there is none).
+  | { type: "setContinuationCountdown"; countdown: ContinuationCountdown | null }
   // R364 — the session cwd. Named `setCurrentCwd`, NOT `setCwd`,
   // because `setCwd` is the desktop's Tauri IPC command name and
   // using it here is exactly the confusion that produced R364
@@ -1298,6 +1313,8 @@ export const INITIAL: State = {
   cancelRequested: false,
   // R375 — not paused until the user says so.
   continuationPaused: false,
+  // R379 — no countdown until the daemon announces one.
+  continuationCountdown: null,
   // R364 — seeded from the launch cwd by `tui.tsx` on first render.
   cwd: "",
   connected: false,
@@ -1769,6 +1786,12 @@ export function reducer(state: State, action: Action): State {
       return state.continuationPaused === action.paused
         ? state
         : { ...state, continuationPaused: action.paused };
+    // R379 — the countdown is cleared as soon as it is consumed (the
+    // user cancelled it) or replaced by a newer one. Leaving a stale
+    // one around would make Esc claim a cancel that has nothing to
+    // cancel.
+    case "setContinuationCountdown":
+      return { ...state, continuationCountdown: action.countdown };
     case "setCurrentCwd": {
       // R364 — the daemon normalises to an absolute, `.`-stripped
       // path before echoing it back (`switchProject` does

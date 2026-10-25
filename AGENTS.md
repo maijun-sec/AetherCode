@@ -307,6 +307,31 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   this daemon cannot do.
   **Lesson 1197 — a second copy of a truth drifts, and it drifts
   silently.** Doc: `docs/R378-help-truth.md`.
+- **R379** (three REAL gaps closed, the countdown caught, the panels'
+  key tables generated): the TUI's refusal table carried three entries
+  that were not name mismatches (unlike `effort/set`) — the daemon
+  genuinely lacked the capability. `agent/setDefault` now persists the
+  default AND installs the agent's body into the live system prompt
+  (`QueryEngine.defaultAgentBlock`, appended in BOTH
+  `effectiveSystem()` and `buildSystemForTurn()`) — a marker nobody
+  reads is a fake success; `rewind` rolls the transcript back in memory
+  AND on disk (`target` = 0-based index into the USER messages; the
+  picked one is kept); `session/tokens` reads a PER-SESSION bucket
+  (`CostTracker.sessionSummary`, unknown sessions land in a real
+  `__unknown__` bucket, never dropped and never coerced to 0). All
+  three are registered on stdio AND routed on HTTP. The daemon had been
+  publishing `todo_continuation_countdown` all along — both renderers
+  dropped it, so an automatic turn began with no warning; now the line
+  reads `Continuing automatically at 3:45pm · esc to cancel` and the
+  "esc" half calls the RPC that actually stops it. The panels' key
+  tables live in ONE registry (`src/componentKeys.ts`) and the R379
+  gate ties them to each panel's `useInput` handler in BOTH directions.
+  Two infrastructure bugs bit this round and are fixed structurally:
+  the mutation snapshot could outlive a clean run and silently REVERT
+  the next round's work, and a needle that hit a JSDoc comment
+  reported a hole for the wrong reason.
+  **Lesson 1199 — the same truth twice in ONE file hides bugs just as
+  well as two files.** Doc: `docs/R379-gap-closers-and-countdown.md`.
 
 ## Watch out for (R735 additions)
 
@@ -1713,3 +1738,57 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   "它就是唯一的推导",那是废话,不是证据。R378 删掉了 dev-note 那根针脚,
   并写下了原因。
   文档:`docs/R378-help-truth.md`。
+
+## Watch out for (R379 additions)
+
+- **同一份真相在同一文件里的两份拷贝,同样藏得住 bug。**
+  `EngineContinuationDispatcher` 里方法名出现两次(常量声明 + 调用点写
+  字面量),于是"删掉发送"不等于"删掉名字" —— 门禁查字面量,字面量还在,
+  **一个已经不再倒计时的 daemon 依然是绿的**。
+  现在字面量**只留一份**(调用点用常量),门禁断言"这个字面量在整个文件里
+  **恰好出现 1 次**"且"常量真的被 `notifyCustom` 发出去"。
+  **Lesson 1199 —— 一份真相的第二份拷贝会漂移,而且漂移得毫无声响。**
+- **没人读的标记是假成功。** `agent/setDefault` 必须把 agent 的正文装进
+  **活着的** system prompt(`QueryEngine.defaultAgentBlock`),否则它只是一个
+  写了名字的文件。门禁钉**调用**(`engine.setDefaultAgent(`),不是标识符。
+- **一句承诺必须由一个 RPC 兑现。** 倒计时那行写着 "esc to cancel",所以
+  Esc 真的调 `pauseAutoContinue(true)`(和 `/pause` 同一条
+  `setContinuationStopped` 路径)。**装饰性的承诺比不承诺更糟。**
+- **前缀匹配不是匹配。** `code.includes("COUNTDOWN_METHOD")` 也匹配
+  `COUNTDOWN_METHOD_DISABLED` —— `_` 是词字符,两者之间**没有词边界**。
+  一条变异把 case arm 改名,门禁纹丝不动。
+  **Lesson 1202 —— 词边界不是可选的。**
+- **改到注释里的变异是伪装成失败的 no-op。** "倒计时不再承诺 esc"那条用例
+  的针脚 `s.replace("· esc to cancel", "· continuing")` 命中的是 **JSDoc 里
+  引用 Claude Code 的那句话**,不是模板字面量 —— 文件变了,行为没变。
+  `scripts/test/code-needle.mjs` 的 `mutateInCode()` **要求针脚打在代码上**:
+  注释剥离器把注释涂成空格但**保持长度**,所以偏移一一对应;找不到时分别报
+  "只在注释里出现过"(打偏)和"压根没出现"(形状变了)。
+  **Lesson 1203 —— 文件变了不等于行为变了。**
+- **靠自觉的清理步骤迟早会被漏掉;让漏掉不可能发生。**
+  `scripts/test/mutation-snapshot.mjs` 的快照文件会让下一次运行**恢复**工作树
+  —— 而"上次被杀"和"上次跑完但忘了删快照"**长得一模一样**。R379 的电池是 14 个
+  里唯一没调 `snapshot.clear()` 的,于是它的快照把这一轮的门禁收紧和 daemon
+  的 Java 改动一起revert掉了(日志里还写着 "recovered 12 file(s)")。
+  现在快照在**退出时按内容自证清白**:每个文件都等于记录的原内容 → 树干净 →
+  **删掉自己**;任何文件还不一样 → 电池真死在半路 → 留下,并记下**变异后的
+  内容**,于是下一次恢复**只还原仍然是那个变异的文件**,被人改过的不碰。
+  **Lesson 1204 —— 一个清理步骤如果只有作者记得做,它迟早会被漏。**
+- **数量相同不等于名字相同。** 失败数 43 → 43 不代表"没变化":可能是换了一个
+  失败顶替了另一个。**逐名 diff**(`Compare-Object` 两份 `✖` 列表)。
+  **Lesson 1205 —— 逐名 diff,不要只比计数。**
+- **一条契约在空表上会变空洞。** R379 把拒绝表清空之后,r378 那条"帮助要标出
+  不可用的键"**变成了空气**(两边都标不出东西)。修法是**重定向到推导本身**,
+  不是删掉用例:`bindingUnavailable` 恒为 true → 每个有 method 的键都被标成
+  不可用 → 门禁的 "marked === refused" 比对变红。
+  **Lesson 1206 —— 表空了,契约要从表上移到推导上。**
+- **回归了要先问"是形状变了还是推导坏了"。** R379 改变了拒绝表的形状,于是
+  r366 / r369 / r377 三个电池里写死表项的用例必须**重定向**(改成
+  `insertEntry(...)`),而不是删掉 —— 删掉等于少测一条性质。
+- **面板的键位表只有一份。** `src/componentKeys.ts` 是唯一注册表,面板渲染
+  `hintFor(component)`,门禁从 `useInput` 块(大括号配对,不是全文件扫描)里
+  **重新推导**键集合,和表**双向**比对:handler 绑的都要写,写的都要绑。
+  本轮覆盖 `panelIntents.ts` 宣告的那 10 个面板;实测还有 9 个**可达**组件
+  手写键位表(清单见 `docs/R379-gap-closers-and-countdown.md` 第 4.3 节),
+  用 `node scripts/test/probe-component-keys.mjs` 可复现。
+  文档:`docs/R379-gap-closers-and-countdown.md`。

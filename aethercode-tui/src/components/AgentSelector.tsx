@@ -21,6 +21,7 @@
  * actually wire `agent/setActive` to the daemon.
  */
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
@@ -136,10 +137,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor>
-          {" "}
-          type to filter ↑/↓ (j/k): navigate Enter: select Ctrl+S: set default Esc: close
-        </Text>
+        <Text dimColor> {hintFor("components/AgentSelector.tsx")}</Text>
       </Box>
       <Text> </Text>
       <Box>

@@ -21,6 +21,7 @@
  * supplied by the host (so the test harness can avoid I/O).
  */
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
@@ -118,7 +119,7 @@ export const CwdSwitcher: React.FC<CwdSwitcherProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor> Enter: switch Esc: cancel</Text>
+        <Text dimColor> {hintFor("components/CwdSwitcher.tsx")}</Text>
       </Box>
       <Text> </Text>
       <Text>

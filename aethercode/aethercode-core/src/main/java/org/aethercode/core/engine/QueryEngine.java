@@ -61,6 +61,12 @@ public class QueryEngine {
     /** per-call token usage is also billed here. May be null. */
     private final org.aethercode.core.cost.CostTracker costTracker;
     private volatile String systemPrompt;
+    /** R379: the DEFAULT agent's system-prompt block. When the user
+     *  marks an agent as the default, its body is prepended to every
+     *  subsequent turn — that is what makes "default agent" a
+     *  behaviour rather than a marker nobody reads. Empty when no
+     *  default is set. */
+    private volatile String defaultAgentBlock = "";
     private volatile String planModeSuffix = "";
     /** per-query memory section. The engine sets this before each
      *  {@link #query(String)} call (with the output of {@code MemoryRecall.render(...)})
@@ -491,6 +497,18 @@ public class QueryEngine {
      *  (e.g. {@code AetherCodeMethods.switchSession}). */
     public void setSessionId(String sessionId) {
         this.currentSessionId = sessionId;
+    }
+
+    /** R379: the session id token usage should be attributed to.
+     *  {@code appState} is the live source of truth (it is updated
+     *  by loadSession / createSession); the snapshot store's copy is
+     *  the fallback for the boot window before a session is known.
+     *  May be null — the tracker buckets unknown usage under a
+     *  stable key rather than dropping it. */
+    private String costSessionId() {
+        String s = appState == null ? null : appState.sessionId();
+        if (s == null || s.isBlank()) s = currentSessionId;
+        return s;
     }
 
     /** R284: accessor used by the RPC layer so a
@@ -1565,6 +1583,13 @@ public class QueryEngine {
 
     private String effectiveSystem() {
         StringBuilder sb = new StringBuilder(systemPrompt);
+        // R379: the default agent's block sits right after the base
+        // prompt and BEFORE the memory section, because it is part of
+        // "who you are", not part of "what you know right now".
+        if (defaultAgentBlock != null && !defaultAgentBlock.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(defaultAgentBlock);
+        }
         // append the per-query memory section if the engine set one.
         // The memory section is added BEFORE planModeSuffix so the plan
         // (which is the most recent instruction) is closest to the
@@ -1598,6 +1623,15 @@ public class QueryEngine {
     }
     public String systemPrompt() { return systemPrompt; }
 
+    /** R379: install (or clear) the default agent's system-prompt
+     *  block. Appended to the base prompt on every turn, so setting
+     *  a default agent takes effect for the NEXT message the user
+     *  sends — the same contract Claude Code's agent picker has. */
+    public void setDefaultAgentBlock(String block) {
+        this.defaultAgentBlock = block == null ? "" : block;
+    }
+    public String defaultAgentBlock() { return defaultAgentBlock; }
+
     /** build the system prompt for a specific turn using a
      *  SNAPSHOTTED memory section (not the live field). This is the
      *  per-turn system prompt: identity + environment + tooling +
@@ -1606,6 +1640,13 @@ public class QueryEngine {
      *  pass the snapshot in. */
     private String buildSystemForTurn(String memory, String plan) {
         StringBuilder sb = new StringBuilder(systemPrompt);
+        // R379: the default agent's block sits right after the base
+        // prompt and BEFORE the memory section, because it is part of
+        // "who you are", not part of "what you know right now".
+        if (defaultAgentBlock != null && !defaultAgentBlock.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(defaultAgentBlock);
+        }
         if (memory != null && !memory.isBlank()) {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(memory);
@@ -2342,7 +2383,7 @@ private Stream<StreamEvent> currentLlmStream;
                                 }
                                 if (costTracker != null) {
                                     try {
-                                        costTracker.record(effectiveChatClient.modelId(),
+                                        costTracker.record(costSessionId(), effectiveChatClient.modelId(),
                                                 new org.aethercode.core.cost.CostTracker.Usage(
                                                         u.inputTokens(), u.outputTokens()));
                                     } catch (Throwable t) {
@@ -2437,7 +2478,7 @@ private Stream<StreamEvent> currentLlmStream;
                             metricsCollector.addTokens(estIn, estOut);
                             if (costTracker != null) {
                                 try {
-                                    costTracker.record(effectiveChatClient.modelId(),
+                                    costTracker.record(costSessionId(), effectiveChatClient.modelId(),
                                             new org.aethercode.core.cost.CostTracker.Usage(estIn, estOut));
                                 } catch (Throwable ignored) { }
                             }

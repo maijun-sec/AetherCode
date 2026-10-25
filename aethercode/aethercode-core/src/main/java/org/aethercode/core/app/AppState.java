@@ -127,6 +127,27 @@ public class AppState {
     public String mainLoopModel() { return mainLoopModel; }
     public AppState mainLoopModel(String m) { this.mainLoopModel = m; return this; }
     public List<Message> transcript() { return transcript; }
+
+    /** R379: truncate the transcript to its first {@code keep}
+     *  messages and return how many were dropped. This is the
+     *  primitive behind the {@code rewind} RPC: the daemon can roll
+     *  a conversation back to an earlier point, and the on-disk
+     *  JSONL transcript has to agree with it.
+     *
+     *  <p>The APPEND listeners are NOT fired — a rewind REMOVES
+     *  messages rather than adding them, and the disk-side
+     *  truncation is owned by the caller (which holds the
+     *  {@link org.aethercode.core.transcript.Transcript} handle).
+     *  Returns the number of messages dropped. */
+    public int truncateTranscript(int keep) {
+        int n = transcript.size();
+        if (keep < 0 || keep > n) {
+            throw new IllegalArgumentException(
+                    "keep must be within [0, " + n + "], got " + keep);
+        }
+        for (int i = n - 1; i >= keep; i--) transcript.remove(i);
+        return n - keep;
+    }
     public List<Tool> toolPool() { return toolPool; }
     /** atomic MCP-tool swap. Removes the previously
      *  installed MCP tools (identified by the

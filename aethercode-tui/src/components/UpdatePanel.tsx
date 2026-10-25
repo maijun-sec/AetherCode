@@ -35,6 +35,7 @@
  * because there is nothing to install.
  */
 
+import { hintFor } from "../componentKeys.js";
 import React from "react";
 import { Box, Text, useInput } from "ink";
 import type { UpdatePanelModel } from "../updateInfo.js";
@@ -68,7 +69,7 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({ model, onChangelog, on
         <Text color="cyan" bold>
           ◆ {title ?? model.title}
         </Text>
-        <Text dimColor> Enter: changelog Esc: close</Text>
+        <Text dimColor> {hintFor("components/UpdatePanel.tsx")}</Text>
       </Box>
       <Text dimColor> {model.endpoint}</Text>
       <Text> </Text>

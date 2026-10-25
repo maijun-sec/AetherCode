@@ -697,26 +697,27 @@ test("F3: the line renderer reports failures too", () => {
 
 // --- the inventory ----------------------------------------------------------
 
-test("G1: the refusal table names exactly the gaps that remain", () => {
+test("G1: the refusal table is EMPTY — the daemon serves every method the TUI names", () => {
   // A stale entry is invisible to the R366 gate: that gate asks
   // "is every method the TUI sends registered?", and an entry for a
   // method the TUI no longer sends trips neither question. So the
   // inventory is pinned here.
+  //
+  // R379 closed the last three gaps on the daemon:
+  // `agent/setDefault` (the agent registry owns a default and the
+  // daemon installs its body into the system prompt), `rewind`
+  // (`AppState.truncateTranscript` + `Transcript.truncateTo`) and
+  // `session/tokens` (`CostTracker` keeps a per-session bucket).
+  // A refusal for a method the daemon serves is a LIE — R377's lesson.
   const names = [...capsCode.matchAll(/\[\s*\n?\s*"([a-z][\w/]*)",\s*\n?\s*"([^"]+)"/g)].map(
     (m) => m[1],
   );
-  assert.ok(
-    names.length >= 3,
-    `only ${names.length} entries parsed from rpcCapabilities.ts — the ` +
-      "extraction probably stopped matching",
-  );
   assert.deepEqual(
     names.sort(),
-    ["agent/setDefault", "rewind", "session/tokens"],
-    "the refusal table must name exactly the methods the TUI still wants " +
-      "and cannot have. R375 removed the three task/* entries because the TUI " +
-      "stopped naming those methods at all; R377 removed effort/set because " +
-      "the daemon serves that capability as switchVariant.",
+    [],
+    "the refusal table must be empty: the daemon serves every method the TUI " +
+      "names. A refusal for a method that EXISTS tells the user a working " +
+      "feature is impossible — the exact defect R377 found with effort/set.",
   );
 });
 
@@ -728,16 +729,18 @@ test("G2: the refusal table still refuses what it names", () => {
     /unsupportedReason\(result\?\.rpcMethod\)/,
     "handleSlash must consult the shared table",
   );
-  for (const m of ["rewind", "session/tokens"]) {
-    const res = commandsMod.handleSlash(m === "rewind" ? "/rewind 3" : "/tokens");
-    assert.ok(
-      res?.local && res.local.includes(m),
-      `${m} must still be refused in words, got: ${res?.local}`,
-    );
+  // And the two commands that used to be refused now DISPATCH: the
+  // daemon serves them since R379. A filter that outlived its table
+  // would keep swallowing them.
+  for (const [input, method] of [
+    ["/rewind 3", "rewind"],
+    ["/tokens", "session/tokens"],
+  ]) {
+    const res = commandsMod.handleSlash(input);
     assert.equal(
       res?.rpcMethod,
-      undefined,
-      `${m} must not dispatch — the daemon does not register it`,
+      method,
+      `${input} must dispatch to ${method} — the daemon serves it since R379`,
     );
   }
 });

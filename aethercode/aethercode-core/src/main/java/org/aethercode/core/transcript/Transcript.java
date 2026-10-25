@@ -68,6 +68,31 @@ public final class Transcript {
         }
     }
 
+    /** R379: truncate the transcript — in memory AND on disk —
+     *  to its first {@code keep} messages. The JSONL file is
+     *  rewritten in full: a rewind is rare, and a file that still
+     *  holds the dropped messages would resurrect them on the
+     *  next {@code loadSession}. */
+    public synchronized void truncateTo(int keep) throws IOException {
+        if (keep < 0 || keep > cache.size()) {
+            throw new IllegalArgumentException(
+                    "keep must be within [0, " + cache.size() + "], got " + keep);
+        }
+        List<Message> kept = new ArrayList<>(cache.subList(0, keep));
+        cache.clear();
+        cache.addAll(kept);
+        if (file != null) {
+            Files.createDirectories(file.getParent());
+            StringBuilder sb = new StringBuilder();
+            for (Message m : kept) {
+                sb.append(MAPPER.writeValueAsString(serialize(m))).append('\n');
+            }
+            Files.writeString(file, sb.toString(),
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> serialize(Message m) {
         List<Map<String, Object>> content = new ArrayList<>();

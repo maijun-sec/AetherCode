@@ -1969,6 +1969,33 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     /** the in-memory agent registry, or {@code null} when
      *  the engine was built without agent discovery. */
     public org.aethercode.core.agent.AgentRegistry agentRegistry() { return agentRegistry; }
+
+    /** R379: mark an agent as the DEFAULT agent and make it real.
+     *
+     *  <p>The marker alone would be a fake success — a toast the user
+     *  sees and nothing the model ever hears. So the default agent's
+     *  body is rendered into a system-prompt block and installed on
+     *  the live {@link QueryEngine}: from the next turn on, the model
+     *  is instructed by the agent the user picked.
+     *
+     *  <p>A null / blank name clears the default (and the block).
+     *
+     *  @return the RESOLVED default agent name, or "" when cleared. */
+    public String setDefaultAgent(String name) throws java.io.IOException {
+        var reg = agentRegistry;
+        if (reg == null) {
+            throw new IllegalStateException(
+                    "agentsDir is not wired — start the daemon with --agents-dir");
+        }
+        reg.setDefaultAgent(name);
+        String resolved = reg.defaultAgent().orElse("");
+        String block = resolved.isEmpty() ? "" : reg.renderSystemPromptBlock(resolved).orElse("");
+        if (queryEngine != null) {
+            queryEngine.setDefaultAgentBlock(block);
+        }
+        LOG.info("default agent set to {} (block {} chars)", resolved, block.length());
+        return resolved;
+    }
     /** list available skills, in alphabetical order. Returns
      *  an empty list when no registry is wired (the daemon's
      *  {@code listSkills} RPC translates the empty list to
@@ -2626,6 +2653,75 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             }
         }
         return loaded;
+    }
+
+    /** R379: roll the conversation back to an earlier user
+     *  message. {@code target} is a 0-based index into the
+     *  sequence of USER messages: target 0 keeps the first user
+     *  message and drops everything after it (i.e. the answer to
+     *  that question), target 1 keeps the first two, and so on.
+     *  This mirrors the "restore to this message" semantics of
+     *  Claude Code — the user message the user picked is KEPT, the
+     *  assistant's answer to it is NOT.
+     *
+     *  <p>The in-memory transcript AND the on-disk JSONL are
+     *  truncated together: a file that still held the dropped
+     *  messages would resurrect them on the next
+     *  {@code loadSession}. The renderer is told about the change
+     *  through the same {@code transcript_push} channel
+     *  {@code loadSession} uses, so it rebuilds rather than
+     *  guessing.
+     *
+     *  @throws IllegalArgumentException when no such user message
+     *     exists. */
+    public java.util.Map<String, Object> rewind(int target) throws java.io.IOException {
+        if (target < 0) {
+            throw new IllegalArgumentException("target must be >= 0, got " + target);
+        }
+        java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+        int userIdx = -1;
+        int seen = 0;
+        for (int i = 0; i < t.size(); i++) {
+            if (t.get(i).role() == org.aethercode.core.message.Role.USER) {
+                if (seen == target) { userIdx = i; break; }
+                seen++;
+            }
+        }
+        if (userIdx < 0) {
+            throw new IllegalArgumentException(
+                    "no user message at index " + target + " (transcript has "
+                    + seen + " user message(s))");
+        }
+        int keep = userIdx + 1;
+        java.util.List<org.aethercode.core.message.Message> kept =
+                new java.util.ArrayList<>(t.subList(0, keep));
+        int removed = appState.truncateTranscript(keep);
+        Transcript onDisk = this.currentTranscript;
+        if (onDisk != null) onDisk.truncateTo(keep);
+        // tell the renderer the transcript changed shape
+        var push = transcriptPush;
+        if (push != null) {
+            try {
+                java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
+                payload.put("action", "sync");
+                payload.put("sessionId", appState.sessionId());
+                java.util.List<java.util.Map<String, Object>> msgs =
+                        new java.util.ArrayList<>(kept.size());
+                for (org.aethercode.core.message.Message m : kept) msgs.add(m.toMap());
+                payload.put("messages", msgs);
+                push.accept(payload);
+            } catch (Exception e) {
+                LOG.debug("transcript push (rewind) failed: {}", e.getMessage());
+            }
+        }
+        LOG.info("rewind: target={} kept={} removed={}", target, keep, removed);
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("target", target);
+        out.put("kept", keep);
+        out.put("removed", removed);
+        out.put("transcriptSize", keep);
+        return out;
     }
 
     /** mint a fresh session id and start an empty transcript

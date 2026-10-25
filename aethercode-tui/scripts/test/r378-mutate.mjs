@@ -29,6 +29,7 @@ import { recoverIfInterrupted, writeSnapshot } from "./mutation-snapshot.mjs";
 // case reports "caught" for the wrong reason and the battery measures
 // nothing. See scripts/test/mutation-baseline.mjs.
 import { requireGreenBaseline } from "./mutation-baseline.mjs";
+import { mutateInCode } from "./code-needle.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -195,8 +196,35 @@ const CASES = [
 
   // --- the help promises what this daemon cannot do --------------------
   [
-    "the help stops marking the chord this daemon cannot serve",
-    [["registry", (s) => s.replace('    method: "rewind",\n', "")]],
+    "the help starts apologising for keys the daemon serves",
+    [
+      [
+        "registry",
+        // R379 — RETARGETED, not deleted.
+        //
+        // The old needle deleted the `method: "rewind"` field, which
+        // used to make Ctrl-Z drop out of the "unavailable" set —
+        // because `rewind` was on the refusal table. R379 gave the
+        // daemon that capability, so the table is EMPTY, so both the
+        // original and the mutation mark nothing: the case had become
+        // air, and the battery reported it as a hole.
+        //
+        // The property it protected is still real, and it is R377's
+        // lesson in its worst form: a help that apologises for a
+        // working key tells the user a working feature is dead. So
+        // the needle now breaks the DERIVATION itself —
+        // `bindingUnavailable` always true marks every chord that has
+        // a method, and the gate's "marked === refused" comparison
+        // goes red against an empty refusal table.
+        (s) =>
+          mutateInCode(
+            s,
+            /return\s+!!b\.method\s*&&\s*BACKEND_MISSING\.has\(b\.method\);/,
+            "return true;",
+            "keybindings.ts",
+          ),
+      ],
+    ],
   ],
 
   // R378 DELETED: "GATE: the dev-note check goes blind".

@@ -34,7 +34,7 @@ import { requireGreenBaseline } from "./mutation-baseline.mjs";
 // The refusal table is addressed BY KEY, never by its prose: R377
 // rewrote every reason and the text-based needles went NO-OP on the
 // spot — reporting like a pass while testing nothing.
-import { setReason, replaceInReason } from "./caps-table.mjs";
+import { insertEntry } from "./caps-table.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -152,19 +152,31 @@ const CASES = [
     ],
   ],
 
+  // R379: the table is EMPTY (the daemon serves every method the TUI
+  // names), so `replaceInReason(s, "agent/setDefault", …)` and
+  // `setReason(s, "agent/setDefault", …)` had nothing to rewrite and
+  // went NO-OP. The needles are re-aimed at the only shape the table
+  // can still take — an entry with a reason — and the method name is
+  // one the daemon does NOT register, so the mutation isolates the
+  // GROUNDING check rather than tripping the stale-allowlist check on
+  // the way.
   [
     "a refusal reason quotes something the daemon does not have",
     [
       [
         "caps",
-        (s) => replaceInReason(s, "agent/setDefault", "`AgentRegistry`", "`AgentRegistree`"),
+        (s) =>
+          insertEntry(
+            s,
+            "session/rewindAll",
+            "the daemon cannot roll a transcript back: `AgentRegistree` only appends",
+          ),
       ],
     ],
   ],
-
   [
     "a refusal reason quotes nothing at all",
-    [["caps", (s) => setReason(s, "agent/setDefault", "the daemon does not support that")]],
+    [["caps", (s) => insertEntry(s, "session/rewindAll", "the daemon does not support that")]],
   ],
 
   // --- the TUI stops sending the daemon's contract --------------------------

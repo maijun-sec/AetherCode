@@ -103,11 +103,70 @@ public final class AgentRegistry {
     private final AtomicLong lastReloadAt = new AtomicLong(0);
     private volatile Map<String, Entry> byName = Map.of();
     private volatile long currentGeneration = 0;
+    /** R379: the name of the agent marked as the session DEFAULT,
+     *  or null when none is marked. Persisted next to the agent
+     *  definitions so the choice survives a daemon restart. */
+    private volatile String defaultAgentName;
 
     public AgentRegistry(Path agentsDir, Duration reloadInterval) {
         this.agentsDir = agentsDir;
         this.reloadIntervalMs = reloadInterval == null ? 10_000L : reloadInterval.toMillis();
         try { reload(); } catch (Exception e) { LOG.warn("initial agent load failed: {}", e.getMessage()); }
+    }
+
+    /** R379: the default agent's name, if one is marked. */
+    public Optional<String> defaultAgent() {
+        ensureFresh();
+        return Optional.ofNullable(defaultAgentName);
+    }
+
+    /** R379: mark an agent as the default. A null / blank name
+     *  CLEARS the default. Throws when the agent is not registered
+     *  — a default that points at nothing would be a silent lie. */
+    public synchronized void setDefaultAgent(String name) throws IOException {
+        if (name == null || name.isBlank()) {
+            clearDefaultAgent();
+            return;
+        }
+        validateName(name);
+        ensureFresh();
+        if (!byName.containsKey(name)) {
+            throw new IllegalArgumentException("agent not found: " + name);
+        }
+        if (agentsDir == null) {
+            throw new IllegalStateException("agentsDir is not wired");
+        }
+        Files.createDirectories(agentsDir);
+        Files.writeString(agentsDir.resolve(DEFAULT_AGENT_MARKER), name);
+        this.defaultAgentName = name;
+        LOG.info("default agent set to {}", name);
+    }
+
+    /** R379: clear the default-agent marker. */
+    public synchronized void clearDefaultAgent() throws IOException {
+        this.defaultAgentName = null;
+        if (agentsDir != null) {
+            java.nio.file.Path marker = agentsDir.resolve(DEFAULT_AGENT_MARKER);
+            if (Files.exists(marker)) Files.delete(marker);
+        }
+    }
+
+    /** R379: read the default-agent marker. A marker pointing at
+     *  an agent that no longer exists is STALE — it is reported as
+     *  "no default" rather than advertising a default that cannot
+     *  be resolved. */
+    private String readDefaultMarker() {
+        if (agentsDir == null) return null;
+        try {
+            java.nio.file.Path marker = agentsDir.resolve(DEFAULT_AGENT_MARKER);
+            if (!Files.isRegularFile(marker)) return null;
+            String n = Files.readString(marker).trim();
+            if (n.isEmpty()) return null;
+            return byName.containsKey(n) ? n : null;
+        } catch (IOException e) {
+            LOG.warn("default agent marker unreadable: {}", e.getMessage());
+            return null;
+        }
     }
 
     public List<AgentMeta> list() {
@@ -220,6 +279,12 @@ public final class AgentRegistry {
         return sb.toString();
     }
 
+    /** R379: the file inside {@code agentsDir} that records the
+     *  default agent's name. It is a FILE, not a directory, so the
+     *  agent scan (which only looks at directories) never mistakes
+     *  it for an agent. */
+    public static final String DEFAULT_AGENT_MARKER = ".default-agent";
+
     /** R362 cap on the index block. The legacy skill
      *  registry has no cap (each skill is small); an agent
      *  body can be 5-10 KB so we cap aggressively to keep
@@ -298,6 +363,10 @@ public final class AgentRegistry {
             }
         }
         this.byName = Map.copyOf(next);
+        // R379: re-read the default-agent marker so a daemon
+        // restart (or an edit from another process) is picked up
+        // by the same reload that refreshes the agent list.
+        this.defaultAgentName = readDefaultMarker();
         this.lastReloadAt.set(System.currentTimeMillis());
         this.currentGeneration++;
         LOG.info("agent registry reloaded: {} agent(s) from {}",
@@ -429,6 +498,11 @@ public final class AgentRegistry {
         try (var stream = Files.walk(dir)) {
             stream.sorted(Comparator.reverseOrder())
                     .forEach(p -> { try { Files.delete(p); } catch (IOException e) { /* walk continues */ } });
+        }
+        // R379: deleting the default agent must not leave a marker
+        // pointing at an agent that no longer exists.
+        if (name.equals(this.defaultAgentName)) {
+            clearDefaultAgent();
         }
         reload();
     }

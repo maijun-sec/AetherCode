@@ -225,19 +225,11 @@ test("T-457: every §5.3 slash command has a stable local / rpc dispatch", async
 
   // T-420: /agent-pick
   assert.equal(handleSlash("/agent-pick").local, "__AGENT_PICK__");
-  // R369: `/agent-pick-set-default` maps to a method the TUI's daemon
-  // does not register, so `handleSlash` refuses it in words instead of
-  // dispatching into a -32601. The mapping is still pinned — it appears
-  // in the refusal text — and a returned `rpcMethod` here would be the
-  // pre-R369 behaviour, i.e. the bug.
-  //
-  // R377: `/effort <level>` LEFT this list. The daemon DOES serve the
-  // capability — as `switchVariant`, under the name "variant" — so
-  // refusing it hid a working feature behind a wrong reason.
-  assert.match(
-    handleSlash("/agent-pick-set-default work").local ?? "",
-    /agent\/setDefault is not available on this daemon/,
-  );
+  // R379: `/agent-pick-set-default` now REACHES the daemon. The daemon
+  // owns a default agent, and setting it is real: the agent's body is
+  // installed into the system prompt for every subsequent turn. R369
+  // pinned the refusal; R377 freed `/effort <level>` the same way.
+  assert.equal(handleSlash("/agent-pick-set-default work").rpcMethod, "agent/setDefault");
   // T-421: /effort-pick + /effort <level>
   assert.equal(handleSlash("/effort-pick").local, "__EFFORT_PICK__");
   assert.equal(
@@ -336,25 +328,17 @@ test("T-457: every §5.3 command maps to either a local token or a known RPC", a
   // Each row: [slash, expectedRpcMethod or null]. The
   // local-token rows are checked by the previous test; this
   // one is for the rows that route to JSON-RPC.
-  // R369: the first two rows name methods the TUI's daemon does not
-  // register. `handleSlash` therefore refuses them in words instead
-  // of returning an `rpcMethod` — a returned one here would be the
-  // pre-R369 behaviour. `routeSlash` still pins the mapping exactly,
-  // so the row keeps its meaning while describing what the user now
-  // actually sees.
+  // R379: every row below names a method the daemon SERVES, so every
+  // row dispatches. The "refused in words" branch is gone — a refusal
+  // for a working method is the defect R377 found.
   const cases = [
     ["/agent-pick-set-default myagent", "agent/setDefault"],
     ["/memory-compact", "memory/compact"],
   ];
   for (const [cmd, expected] of cases) {
     const r = handleSlash(cmd);
-    if (expected === "memory/compact") {
-      assert.equal(r.rpcMethod, expected, `${cmd} → wrong RPC`);
-    } else {
-      assert.equal(r.rpcMethod, undefined, `${cmd} must not dispatch to ${expected}`);
-      assert.match(r.local ?? "", new RegExp(`${expected.replace("/", "\\/")} is not available`));
-      assert.equal(routeSlash(cmd).rpcMethod, expected, `${cmd} no longer maps to ${expected}`);
-    }
+    assert.equal(r.rpcMethod, expected, `${cmd} → wrong RPC`);
+    assert.equal(routeSlash(cmd).rpcMethod, expected, `${cmd} no longer maps to ${expected}`);
   }
 });
 

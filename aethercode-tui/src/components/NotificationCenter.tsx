@@ -16,6 +16,7 @@
  * `./NotificationSettings.js`).
  */
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { WARNING_TOGGLES, type Toggle } from "./NotificationSettings.js";
@@ -149,7 +150,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         <Text color="cyan" bold>
           ◆ {title}
         </Text>
-        <Text dimColor> ↑/↓ (j/k): navigate Enter: select Tab: settings Esc: close</Text>
+        <Text dimColor> {hintFor("components/NotificationCenter.tsx")}</Text>
       </Box>
       <Text> </Text>
       {entries.length === 0 ? (
@@ -197,7 +198,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         </Box>
       ) : null}
       <Text> </Text>
-      <Text dimColor> ↑/↓ navigate Enter select Tab expand settings Esc close</Text>
+      <Text dimColor> {hintFor("components/NotificationCenter.tsx")}</Text>
     </Box>
   );
 };

@@ -33,6 +33,7 @@
 // place — this keeps the markdown files the single
 // source of truth and avoids dual-write hazards.
 
+import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { t, icon, formatTokens, formatRelative } from "../theme.js";
@@ -287,7 +288,7 @@ export function MemoryPanel(props: MemoryPanelProps) {
         <Text dimColor>{formatTokens(current.totalTokens)}</Text>
         <Text dimColor>{` tokens, `}</Text>
         <Text dimColor>{current.source ?? "—"}</Text>
-        <Text dimColor>{` — ↑/↓ select, Enter edit, c compact, Esc close)`}</Text>
+        <Text dimColor>{` — ${hintFor("components/MemoryPanel.tsx")})`}</Text>
       </Box>
       <Box>
         {TAB_ORDER.map((scope, idx) => {
