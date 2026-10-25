@@ -2055,4 +2055,22 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   **这个 kind 引擎真的发吗?**(见上面那条检测器 kind 的坑。)
   门禁会数 `const *LABEL*: Record<` 的个数,多一张就红。
   **Lesson 1228。**
+- **出包时 `providers.yaml` 有两份,别拷错。**
+  - `aethercode/aethercode-models/src/main/resources/providers.yaml`(5,133 B)
+    —— **models 注册表**用的那份;
+  - `aethercode/aethercode-core/src/main/resources/providers.yaml.sample`(9,844 B)
+    —— 构建时被改名成 **jar 根目录的 `providers.yaml`**,是**运维真正要的那份**
+    (daemon 首次启动会把它拷到 `<installDir>/providers.yaml`)。
+  发布包里的 `providers.yaml` 和 `desktop/providers.yaml` 都是**第二份**。
+  拷错会被 README 校验的**大小表**当场抓到 —— 这就是那张表存在的理由。
+- **`7z a` 存的是"相对当前目录"的路径。** 在仓库根目录打
+  `7z a release/aethercode-0.2.73.zip release/aethercode-0.2.73` 会多出一层
+  `release/`,顶层目录就不对了(zip 校验 6 项红)。**先 `cd release/` 再打。**
+  另:`.NET Framework` 的 `ZipFile.CreateFromDirectory` 在 Windows 上写**反斜杠**
+  条目名(违反 zip 规范),必须用 `C:\Program Files\7-Zip\7z.exe a -tzip`。
+- **"构建成功"不等于"补丁在包里"。** 0.2.73 出包时,把 jar 从 **zip 里取出来**
+  再打开、grep 它的常量池(`stopKind` / `isError` / `bareKind`),
+  确认 R383 的改动真的在用户拿到手的东西里。
+  见 `D:\tmp\r383-scratch\verify-zip-artifacts-r383.mjs`(一次性脚本)。
+  **Lesson 1224 的邻居:产物本身也有断言。**
 
