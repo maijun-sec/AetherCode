@@ -212,6 +212,43 @@ if (re.isErrorOutcome()) {
 
 ---
 
+## 6.1 发布:0.2.73
+
+0.2.72 的包是 R383 **之前**构建的 —— 里面的 TUI 还带着"死引擎显示绿色 ✓"这个 bug,
+daemon jar 也没有 `stopKind`。所以本轮顺带出了 **0.2.73**。
+
+构建链(每一步都验过,不是"构建成功"就算):
+
+| 步骤 | 结果 |
+|------|------|
+| 全量 reactor `mvn install` | **BUILD SUCCESS in 643.9s**;surefire **5905 tests / 0 failures / 0 errors**(含 R383 的 18 个) |
+| TUI bundle `npm run build` | `dist/ac-tui.js` = 2,610,779 B(比 0.2.72 多 1,113 B —— 新增 `stopKind.js`) |
+| 独立 exe `bun build --compile` | `dist/ac-tui-standalone.exe` = 100,615,680 B |
+| 桌面端 `tauri build` | exe 6,677,504 B;MSI 57,126,912 B;NSIS 55,416,896 B |
+| 发布目录 | `release/aethercode-0.2.73/` + `release/aethercode-0.2.73.zip`(312,558,646 B) |
+
+三条校验(全部通过):
+
+* **README 16/16** —— 目录树与磁盘**双向**一致(23 个条目),8 个大小全部从文件重新推导;
+* **zip 18/18** —— 无反斜杠条目名、单一顶层目录、无 `.aethercode` 泄漏、15 个必需产物齐全、
+  9 个 zip 副本与发布目录同尺寸、zip 里的 README 是干净 UTF-8;
+* **产物内容 9 + 5 项** —— 把 jar 从 zip 里**取出来**再打开,grep 它的常量池:
+  `AetherCodeMethods.class` 带 `stopKind` / `isError` / `bareKind`,
+  `StreamEvent.class` 带 7 个失败 kind,`ac-tui.js` 和 `ac-tui-standalone.exe`
+  带 `classifyRunEnd` 和 `0.2.73`。
+  **"构建成功"不等于"补丁在包里"** —— 这一步是 R735b 的教训。
+
+踩到的两个坑:
+
+* `providers.yaml` 有**两份**。`aethercode-models/src/main/resources/providers.yaml`
+  (5,133 B)是 models 注册表用的;**运维要的那份**是 jar 根目录的
+  `providers.yaml`(9,844 B,来自 `aethercode-core/src/main/resources/providers.yaml.sample`)。
+  第一次拷错了,被 README 校验的**大小表**当场抓到。
+* `7z a` 会把**当前目录**的相对路径存进去。在仓库根目录打就多一层 `release/`
+  —— 顶层目录不对,zip 校验 6 项红。进 `release/` 目录再打才对。
+
+---
+
 ## 7. 遗留与下一轮候选
 
 * **`cancelled` / `awaiting_user_decision` 显示为 "✓ ready"。**
@@ -253,7 +290,7 @@ if (re.isErrorOutcome()) {
   同族的还有 `case` 后面带注释、带 `->` 表达式、跨行的写法。
 * **Lesson 1230 —— "这个键在不在"和"这个键的值被用上了"不是一回事。**
   `isError: undefined` 满足 `/isError\s*:/`,但判决已经被丢掉了。
-  **存在性断言会通过一个被丢掉的价值。**
+  **存在性断言会通过一个"键在、值没了"的写法。**
   (这是 Lesson 1217 的另一种伪装:1217 是"查表能满足检查",
   这里是"键的**存在**就能满足检查"。)
 * **Lesson 1231 —— 循环检测器的 kind 不是 stop reason。**
