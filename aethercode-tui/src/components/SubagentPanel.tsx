@@ -23,6 +23,7 @@
 
 import React from "react";
 import { Box, Text } from "ink";
+import { hintFor } from "../componentKeys.js";
 import {
   type State,
   subagentJobIdsInOrder,
@@ -114,7 +115,7 @@ export function SubagentPanel({
         <Text bold>Subagents</Text>
         <Text
           dimColor
-        >{`  (${ids.length} recent — ↑/↓ select, Enter insert, c cancel, Esc close)`}</Text>
+        >{`  (${ids.length} recent — ${hintFor("components/SubagentPanel.tsx")})`}</Text>
       </Box>
       {ids.map((id) => {
         const j = state.subagentJobs[id];

@@ -293,11 +293,23 @@ test("every help group is actually RENDERED", () => {
     );
   }
   // And the welcome screen's dense grid.
+  //
+  // R381: the check used to be "the file mentions `welcomeBindings(`",
+  // which a LOOKUP satisfies just as well as the grid does — the
+  // welcome screen reads ONE binding's label for a tip, and that
+  // alone made the check pass while the grid rendered nothing. The
+  // check is now "the file MAPS the registry's grid", and the
+  // registry's welcome list must not be empty either (a mapping of
+  // nothing is still nothing).
   const welcome = codeOf(welcomeSrc, "Welcome.tsx");
   assert.match(
     welcome,
-    /welcomeBindings\(/,
+    /welcomeBindings\(\)\.map\(/,
     "the welcome screen never renders the registry's grid",
+  );
+  assert.ok(
+    kbMod.welcomeBindings().length > 0,
+    "the registry has no `welcome` entries — the welcome screen's grid would be empty",
   );
 });
 

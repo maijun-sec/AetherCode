@@ -32,6 +32,7 @@
 
 import React from "react";
 import { Box, Text, useInput } from "ink";
+import { hintFor, proseFor } from "../../componentKeys.js";
 import { t } from "../../theme.js";
 
 // --------------------------------------------------------------------
@@ -175,7 +176,9 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
             </Box>
           );
         })}
-        {onApply ? <Text dimColor>Enter to apply · 1/2/3 quick</Text> : null}
+        {onApply ? (
+          <Text dimColor>{proseFor("components/permissions/PresetSelector.tsx", "compact")}</Text>
+        ) : null}
       </Box>
     );
   }
@@ -219,11 +222,15 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
               <Text> </Text>
               {onApply ? (
                 isActive ? (
-                  <Text dimColor>[ applied ]</Text>
+                  <Text dimColor>
+                    {proseFor("components/permissions/PresetSelector.tsx", "card-applied")}
+                  </Text>
                 ) : (
                   <Text>
                     <Text color={isHi ? color : undefined} bold>
-                      {isHi ? "[ Enter / 1-3 to apply ]" : "[ 1-3 to apply ]"}
+                      {isHi
+                        ? proseFor("components/permissions/PresetSelector.tsx", "card-hi")
+                        : proseFor("components/permissions/PresetSelector.tsx", "card-idle")}
                     </Text>
                   </Text>
                 )
@@ -233,7 +240,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({
         })}
       </Box>
       <Text> </Text>
-      <Text dimColor>←/→ navigate · Enter apply · 1/2/3 quick-select</Text>
+      <Text dimColor>{hintFor("components/permissions/PresetSelector.tsx")}</Text>
     </Box>
   );
 };

@@ -26,21 +26,41 @@
  * closing backtick. Every file this is used on is checked for that
  * case, and a scanner with a silent gap is exactly what this file
  * exists to prevent.
+ *
+ * ## R381: an apostrophe in prose is not a string
+ *
+ * A `'` or `"` with no partner on its own line cannot be a literal —
+ * TypeScript string literals do not span lines — so it is PROSE. The
+ * scanner used to read on until it found the NEXT quote of the same
+ * kind, wherever that was, and `src/tui.tsx`'s "the daemon's estimate"
+ * cost it 47 lines: the render of the whole grants panel, and every
+ * assertion over that region, was reading whitespace.
+ *
+ * The rule now matches `strip-comments.mjs`, the other scanner in this
+ * directory. Two scanners with two rules is two truths, and the one
+ * that disagreed was the one nobody tested.
  */
 
 /**
- * Split a source into CODE regions and STRING LITERALS.
+ * Split a source into CODE regions, STRING LITERALS and COMMENTS.
  *
  * <p>Comments are neither: a commented-out table entry must not be
  * mistaken for a live one, and a reason that lives inside a comment
  * must not be mistaken for the reason.
  *
+ * <p>R381: the scanner also reports COMMENTS, so `blankNonCode` does
+ * not need a second pass with its own idea of where a literal ends.
+ * Two passes with two rules is how the apostrophe bug survived: this
+ * scanner read past a newline and `strip-comments.mjs` stopped at one,
+ * and the two disagreed about the same source.
+ *
  * @param {string} src
- * @returns {{ code: {start: number, end: number}[], strings: {start: number, end: number, quote: string, value: string}[] }}
+ * @returns {{ code: {start: number, end: number}[], strings: {start: number, end: number, quote: string, value: string, terminated: boolean}[], comments: {start: number, end: number, kind: string}[] }}
  */
 export function scan(src) {
   const code = [];
   const strings = [];
+  const comments = [];
   let i = 0;
   const n = src.length;
   let codeStart = 0;
@@ -54,38 +74,72 @@ export function scan(src) {
 
     if (c === "/" && src[i + 1] === "/") {
       flush(i);
+      const start = i;
       while (i < n && src[i] !== "\n") i++;
+      comments.push({ start, end: i, kind: "line" });
       codeStart = i;
       continue;
     }
 
     if (c === "/" && src[i + 1] === "*") {
       flush(i);
+      const start = i;
       const close = src.indexOf("*/", i + 2);
       i = close < 0 ? n : close + 2;
+      comments.push({ start, end: i, kind: "block" });
       codeStart = i;
       continue;
     }
 
     if (c === '"' || c === "'" || c === "`") {
-      flush(i);
       const quote = c;
       const start = i;
-      i++;
+      let j = start + 1;
       let value = "";
-      while (i < n) {
-        if (src[i] === "\\") {
-          value += src[i + 1] ?? "";
-          i += 2;
+      let terminated = false;
+      while (j < n) {
+        if (src[j] === "\\") {
+          value += src[j + 1] ?? "";
+          j += 2;
           continue;
         }
-        if (src[i] === quote) break;
-        value += src[i];
-        i++;
+        if (src[j] === quote) {
+          terminated = true;
+          break;
+        }
+        // R381: a single- or double-quoted literal CANNOT span lines in
+        // TypeScript. So a quote with no partner on its own line is not
+        // a string — it is PROSE (an apostrophe in JSX text).
+        //
+        // This scanner used to read on until it found the NEXT apostrophe,
+        // wherever that was. `src/tui.tsx` says "the daemon's estimate",
+        // and the scanner swallowed 47 lines — including the render of
+        // the whole grants panel. Every gate that scans that file was
+        // reading whitespace past the apostrophe without knowing it.
+        //
+        // The rule now matches `strip-comments.mjs` (the other scanner):
+        // an unterminated quote ends at the newline.
+        if (src[j] === "\n" && quote !== "`") break;
+        value += src[j];
+        j++;
       }
-      i++; // the closing quote
-      strings.push({ start, end: i, quote, value });
-      codeStart = i;
+
+      if (!terminated && quote !== "`") {
+        // Not a literal — an apostrophe in prose. Leave the text ALONE
+        // and carry on from the next character.
+        //
+        // Blanking it would be worse than leaving it: the region is JSX
+        // text, and the gates look for hand-written key hints INSIDE
+        // that text. Blanking it would hide the very thing they hunt.
+        i = start + 1;
+        continue;
+      }
+
+      flush(start);
+      const end = terminated ? j + 1 : Math.min(n, j);
+      strings.push({ start, end, quote, value, terminated });
+      i = end;
+      codeStart = end;
       continue;
     }
 
@@ -93,7 +147,7 @@ export function scan(src) {
   }
 
   flush(n);
-  return { code, strings };
+  return { code, strings, comments };
 }
 
 /**
@@ -109,54 +163,21 @@ export function scan(src) {
  * has such a comment, and the first version of `matchBrace` returned
  * -1 for its handler because of it.
  *
+ * <p>R381: the same trap exists in JSX TEXT, where an apostrophe is
+ * perfectly legal prose ("the daemon's estimate") and no partner quote
+ * is coming. This function now blanks exactly the regions `scan()`
+ * reports — one rule, one scanner.
+ *
  * @param {string} src
  * @returns {string} the same length, with comments and literals blanked
  */
 export function blankNonCode(src) {
   const out = src.split("");
-  for (const s of scan(src).strings) {
-    for (let i = s.start; i < s.end && i < out.length; i++) {
+  const { strings, comments } = scan(src);
+  for (const region of [...strings, ...comments]) {
+    for (let i = region.start; i < region.end && i < out.length; i++) {
       if (out[i] !== "\n") out[i] = " ";
     }
-  }
-  // Blank the comments too: `scan` does not report them, so find them
-  // with the same rules.
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === "/" && src[i + 1] === "/") {
-      while (i < n && src[i] !== "\n") {
-        if (out[i] !== "\n") out[i] = " ";
-        i++;
-      }
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "*") {
-      const close = src.indexOf("*/", i + 2);
-      const end = close < 0 ? n : close + 2;
-      for (let k = i; k < end && k < out.length; k++) {
-        if (out[k] !== "\n") out[k] = " ";
-      }
-      i = end;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      // skip the literal
-      const q = c;
-      i++;
-      while (i < n) {
-        if (src[i] === "\\") {
-          i += 2;
-          continue;
-        }
-        if (src[i] === q) break;
-        i++;
-      }
-      i++;
-      continue;
-    }
-    i++;
   }
   return out.join("");
 }

@@ -41,6 +41,7 @@
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { hintFor } from "../../componentKeys.js";
 import { t, icon } from "../../theme.js";
 
 export type SessionState = "running" | "paused" | "completed" | "failed" | "cancelled";
@@ -185,7 +186,9 @@ export const SessionControl: React.FC<SessionControlProps> = ({
       </Box>
       {showHotkeyHint ? (
         <Box flexDirection="row">
-          <Text dimColor>{icon.arrow} c/p/s to act · Tab/←/→ to focus · Enter to confirm</Text>
+          <Text dimColor>
+            {icon.arrow} {hintFor("components/session/SessionControl.tsx")}
+          </Text>
         </Box>
       ) : null}
     </Box>

@@ -323,47 +323,25 @@ const CASES = [
   ],
 
   // --- the panels' key tables ------------------------------------------------
-  [
-    "a panel's key table loses a key its handler binds",
-    [
-      [
-        "keys",
-        // GrantsManager binds j/k; drop them from the table and the
-        // hint stops mentioning the vim keys the panel really has.
-        (s) =>
-          s.replace(
-            'tokens: ["up", "down", "j", "k"], via: "handler" },\n      { id: "revoke"',
-            'tokens: ["up", "down"], via: "handler" },\n      { id: "revoke"',
-          ),
-      ],
-    ],
-  ],
-  [
-    "a panel's key table claims a key its handler does not bind",
-    [
-      [
-        "keys",
-        (s) =>
-          s.replace(
-            'tokens: ["up", "down", "j", "k"], via: "handler" },\n      { id: "revoke"',
-            'tokens: ["up", "down", "j", "k", "z"], via: "handler" },\n      { id: "revoke"',
-          ),
-      ],
-    ],
-  ],
-  [
-    "a panel goes back to a hand-written key hint",
-    [
-      [
-        "grants",
-        (s) =>
-          s.replace(
-            '{hintFor("components/permissions/GrantsManager.tsx", { presets: PRESETS.length })}',
-            "↑/↓ navigate · r revoke",
-          ),
-      ],
-    ],
-  ],
+  //
+  // R381: these three cases MOVED to `r381-mutate.mjs`.
+  //
+  // The property they check — "the key table matches the handler, and
+  // the panel renders the table instead of a hand-written hint" — was
+  // checked by the R379 gate, and R381 moved that section into the
+  // R381 gate (which is a strict superset: it covers every REACHABLE
+  // component, not just the ones behind the advertised panel intents,
+  // and it resolves constants).
+  //
+  // Leaving the cases here would have been worse than deleting them:
+  // they would mutate `src/componentKeys.ts` and the R379 gate — which
+  // no longer looks at the tables — would stay green, and the battery
+  // would report three holes for a property it no longer owns.
+  //
+  // The R381 battery has the same three cases (plus more).
+  //
+  // (A property, its gate and its mutation cases travel together. A
+  // case whose gate moved away is a case that measures nothing.)
 
   // --- the reports -----------------------------------------------------------
   [

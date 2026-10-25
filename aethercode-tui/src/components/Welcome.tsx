@@ -18,7 +18,7 @@
  * Layout:
  *
  *  ╭─────────────────────────────────────────────────────╮
- *  │  ⌬  AETHERCODE  v0.2.71  ·  Type a prompt to start  │
+ *  │  ⌬  AETHERCODE  v0.2.72  ·  Type a prompt to start  │
  *  │                                                      │
  *  │  ⌬ model: MiniMax-M3   ⚙ mode: DEFAULT             │
  *  │  ⌃ provider: MiniMax   # session: dcffbb65          │
@@ -35,9 +35,11 @@
 
 import React from "react";
 import { Box, Text } from "ink";
+import { proseFor } from "../componentKeys.js";
+import { TUI_VERSION } from "../version.js";
 import { t, icon, wordmark, banner } from "../theme.js";
 // R378: the shortcut grid is the registry's, not a second copy of it.
-import { welcomeBindings } from "../keybindings.js";
+import { KEYBINDINGS, welcomeBindings } from "../keybindings.js";
 
 interface Props {
   model: string;
@@ -78,13 +80,31 @@ const SHORTCUTS: ReadonlyArray<{ key: string; label: string }> = welcomeBindings
   label: b.short ?? b.desc,
 }));
 
+/**
+ * The label the app-level registry gives the sub-agent panel chord.
+ *
+ * <p>R381: the tip below used to hard-code "Ctrl-S", and the tip's
+ * other half named a `/spawn` command that DOES NOT EXIST — the user
+ * would have typed it and got "unknown slash command". The label now
+ * comes from the registry, so it cannot drift from the handler.
+ *
+ * <p>It reads the FULL registry, not `welcomeBindings()` — that one is
+ * the welcome GRID's subset, and a tip is not a grid.
+ */
+const SUBAGENT_PANEL_LABEL =
+  KEYBINDINGS.find((b) => (b.keys ?? []).includes("ctrl+s"))?.label ?? "Ctrl-S";
+
 /** context-sensitive tips. The first matching one wins; the
  *  fallback "no-tip" hint is shown when none match. Tips are
  *  short so the welcome doesn't eat vertical space. */
 const TIPS: ReadonlyArray<{ when: (p: Props) => boolean; text: string }> = [
   {
     when: (p) => p.subagentsAvailable === true,
-    text: "subagents can run in the background — press Ctrl-S to see live jobs, or /spawn <intent> to launch one inline.",
+    // R381: the second half used to say "/spawn <intent> to launch one
+    // inline" — and there is NO /spawn command. Typing it answered
+    // "unknown slash command". The tip now names what the user can
+    // really do.
+    text: `subagents can run in the background — press ${SUBAGENT_PANEL_LABEL} to see live jobs.`,
   },
   {
     when: (p) => (p.bankStatus ?? "").startsWith("down"),
@@ -100,7 +120,12 @@ const TIPS: ReadonlyArray<{ when: (p: Props) => boolean; text: string }> = [
   },
   {
     when: (p) => p.mode?.toUpperCase() === "PLAN",
-    text: "you're in PLAN mode — the model proposes tool calls but doesn't run them until you accept. type a prompt or /plan to proceed.",
+    // R381: this described Claude Code's plan mode, but AetherCode's
+    // PLAN is a PERMISSION mode — the daemon's own wording is "built-in
+    // safe tools run, but mutations prompt" (PermissionMode.PLAN). It
+    // also pointed at "/plan", which is not a command either (the real
+    // one is /lastplan, and it does not "proceed").
+    text: "you're in PLAN mode — built-in safe tools still run, but anything that changes state asks first. /mode DEFAULT turns it off.",
   },
   {
     // fallback
@@ -205,8 +230,8 @@ export const Welcome: React.FC<Props> = ({
           <Text color={t.brand} bold>
             {icon.model} {wordmark}
           </Text>
-          <Text> v0.2.71</Text>
-          <Text dimColor> · type a prompt and press Enter</Text>
+          <Text> v{TUI_VERSION}</Text>
+          <Text dimColor> {proseFor("components/Welcome.tsx", "prompt")}</Text>
         </Text>
       )}
 

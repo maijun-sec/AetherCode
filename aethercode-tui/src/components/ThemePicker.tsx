@@ -23,6 +23,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { hintFor } from "../componentKeys.js";
 
 /** A 9-color palette for swatch rendering. Mirrors `aethercode-themes`'s
  *  `Theme.colors` shape; redefined here so the picker doesn't need
@@ -154,7 +155,7 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
         <Text color="cyan" bold>
           ◆ {title} picker
         </Text>
-        <Text dimColor> ↑/↓ (j/k): navigate Enter: select Esc: close</Text>
+        <Text dimColor> {hintFor("components/ThemePicker.tsx")}</Text>
       </Box>
       <Text> </Text>
       {themes.length === 0 ? (

@@ -31,6 +31,7 @@
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { hintFor } from "../componentKeys.js";
 import { t, icon } from "../theme.js";
 
 export interface LogEntry {
@@ -152,7 +153,6 @@ export const LogViewer: React.FC<Props> = ({
           <Text dimColor> · {grants.length} grants · </Text>
           <Text dimColor>[log]</Text>
           <Text color="cyan"> ▶grants </Text>
-          <Text dimColor>· Esc: close</Text>
         </Box>
         <Text> </Text>
         {shown.length === 0 ? (
@@ -177,7 +177,7 @@ export const LogViewer: React.FC<Props> = ({
         )}
         {hidden > 0 ? <Text dimColor> … {hidden} earlier grants hidden</Text> : null}
         <Text> </Text>
-        <Text dimColor> [/] switch tab · Esc to close.</Text>
+        <Text dimColor> {hintFor("components/LogViewer.tsx", { hasGrants })}</Text>
       </Box>
     );
   }
@@ -197,7 +197,7 @@ export const LogViewer: React.FC<Props> = ({
           {icon.note} ▶log{" "}
         </Text>
         <Text dimColor>[grants]</Text>
-        <Text dimColor> · daemon log · {entries.length} entries · Esc: close</Text>
+        <Text dimColor> · daemon log · {entries.length} entries</Text>
       </Box>
       <Text> </Text>
       {shown.length === 0 ? (
@@ -213,7 +213,7 @@ export const LogViewer: React.FC<Props> = ({
       )}
       {hidden > 0 ? <Text dimColor> … {hidden} earlier entries hidden</Text> : null}
       <Text> </Text>
-      <Text dimColor> {hasGrants ? "[/] switch tab · " : ""}Press Esc to close.</Text>
+      <Text dimColor> {hintFor("components/LogViewer.tsx", { hasGrants })}</Text>
     </Box>
   );
 };

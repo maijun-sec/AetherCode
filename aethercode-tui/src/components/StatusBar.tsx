@@ -27,6 +27,7 @@
 import React from "react";
 import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
+import { hintFor } from "../componentKeys.js";
 import type { State } from "../state.js";
 import { t, formatCost, formatTokens } from "../theme.js";
 // R371: T-441 declared this integration and shipped the component, the
@@ -285,7 +286,7 @@ const StaleBanner: React.FC<{
       <Text color="green">[re-attach]</Text>
       <Text dimColor> </Text>
       <Text color="cyan" underline>
-        (Enter)
+        ({hintFor("components/StatusBar.tsx")})
       </Text>
     </Box>
   );

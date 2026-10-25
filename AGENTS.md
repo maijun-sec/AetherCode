@@ -356,6 +356,43 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   standing. `/help` is byte-identical before and after.
   **Lesson 1207 — one "list" can be several lists, and every one of
   them drifts.** Doc: `docs/R380-one-command-list.md`.
+- **R381** (reachability is MEASURED, prose is a table too, and a scanner
+  that could not see): R379's own "nine reachable components" list was
+  wrong — `NotificationSettings` is imported only for its toggle
+  REGISTRY and `NotificationDetail` by nobody at all, so only SEVEN of
+  the nine can be opened. `scripts/test/reachability.mjs` now walks the
+  import graph from the entry points and resolves every JSX tag to the
+  file it really comes from (`Welcome.tsx` renders a `<Pill>` but
+  defines its OWN `Pill`, so `components/Pill.tsx` is dead). Three real
+  bugs fell out of the rest of the round: (1) `ts-scan.mjs` treated an
+  apostrophe in JSX text as a string opener and **swallowed 47 lines of
+  `src/tui.tsx`** — including a whole panel's render — so every
+  assertion over that region was reading whitespace and none of them
+  knew it; the rule now matches `strip-comments.mjs` (a quote with no
+  partner on its own line is PROSE, and the text around it stays
+  visible). (2) `SubagentSpawnCard` advertised "(Enter expand)" while
+  its `setOpen` was **never called** — the card could never expand, and
+  the description was never shown. (3) The welcome screen taught
+  `/spawn` and `/plan` — **neither command exists** — and described
+  Claude Code's plan mode, while the daemon's `PermissionMode.PLAN` is
+  a permission mode. Twelve components now render their hints from
+  `src/componentKeys.ts`, which grew PROSE sentences (a sentence names
+  its keys and says who binds each one) and a `via: "global"` kind (for
+  the components with no handler of their own); the component
+  vocabulary adopted the app vocabulary's word for Enter (`return`), so
+  a global chord can be checked against `src/keybindings.ts` directly.
+  The R381 gate measures reachability, cross-checks every table against
+  its handler in BOTH directions, resolves CONSTANTS (SessionControl
+  binds `c`/`p`/`s` through `HOTKEY`, and a literal-only scan saw
+  NOTHING), and pins the not-reachable set so wiring a dead panel up
+  turns the gate red.
+  **Lesson 1212 — a scanner with no self-test has its bugs found by
+  whichever gate happens to trip over them, which is not a plan.**
+  **Lesson 1214 — "reachable" is a measurement, not a claim.**
+  **Lesson 1217 — a needle that is not unique lands on the wrong
+  occurrence and pretends to have tested something; a check a LOOKUP can
+  satisfy is no check at all.**
+  Doc: `docs/R381-panel-keys.md`.
 
 ## Watch out for (R735 additions)
 

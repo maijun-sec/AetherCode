@@ -2,23 +2,29 @@
  * TUI parity for the desktop's `SubagentSpawnCard`.
  *
  * <p>Inline card surfaced in the chat transcript when an
- * assistant message declares a sub-agent. The card is collapsed
- * by default and shows the subagent's id + role + status.
- * Pressing {@code Enter} / {@code Space} (or clicking the
- * header) expands the body to show the assigned task
- * description. A "View subagent →" link switches the active
+ * assistant message declares a sub-agent. The card shows the
+ * subagent's id + role + status and the task description it was
+ * given. A "View subagent →" link switches the active
  * transcript to the subagent (the host wires this to
  * {@code loadSession(jobId)} via the {@code onOpen} prop).
  *
- * <p>This is a 1:1 port of the desktop's
+ * <p>R381: the card used to advertise "(Enter expand)" and keep a
+ * `open` state that NOTHING ever set — `setOpen` was never called, so
+ * the body could not be expanded and the description was never shown.
+ * The promise was decorative, which is worse than no promise at all.
+ *
+ * <p>So the card now shows its body. Enter belongs to the prompt, and
+ * a card that swallowed it would break sending a message.
+ *
+ * <p>This is a port of the desktop's
  * {@code aethercode-desktop/src/components/chat/SubagentSpawnCard.tsx}.
- * Behaviour kept identical so the two surfaces feel the same
- * (collapse by default, expand via click/Enter/Space, "View
- * subagent →" link drives {@code onOpen}).
+ * The desktop collapses the card because a mouse can expand it; a
+ * terminal has no mouse, so the body is always visible here.
  */
 
-import React, { useState } from "react";
+import React from "react";
 import { Box, Text, useInput } from "ink";
+import { hintFor } from "../../componentKeys.js";
 
 export interface SubagentSpawnCardData {
   subagentId: string;
@@ -62,7 +68,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function SubagentSpawnCard({ card, onOpen, onDismiss, width = 60 }: SubagentSpawnCardProps) {
-  const [open, setOpen] = useState(false);
   const icon = STATUS_ICON[card.status] ?? "·";
   const color = STATUS_COLOR[card.status] ?? "gray";
   const idShort =
@@ -78,7 +83,7 @@ export function SubagentSpawnCard({ card, onOpen, onDismiss, width = 60 }: Subag
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={open ? "cyan" : "gray"}
+      borderColor={color === "gray" ? "gray" : "cyan"}
       width={width}
       paddingX={1}
     >
@@ -92,25 +97,22 @@ export function SubagentSpawnCard({ card, onOpen, onDismiss, width = 60 }: Subag
           {" "}
           [{card.status}]
         </Text>
-        <Text dimColor> {open ? "▾" : "▸"} (Enter expand)</Text>
       </Box>
-      {open ? (
-        <Box flexDirection="column" marginTop={1}>
-          {card.description ? <Text>{card.description}</Text> : null}
-          {onOpen ? (
-            <Box marginTop={1}>
-              <Text color="cyan" underline>
-                {`▶ View subagent (${idShort}) →`}
-              </Text>
-            </Box>
-          ) : null}
-          {onDismiss ? (
-            <Box marginTop={1}>
-              <Text dimColor> (press x to dismiss)</Text>
-            </Box>
-          ) : null}
-        </Box>
-      ) : null}
+      <Box flexDirection="column" marginTop={1}>
+        {card.description ? <Text>{card.description}</Text> : null}
+        {onOpen ? (
+          <Box marginTop={1}>
+            <Text color="cyan" underline>
+              {`▶ View subagent (${idShort}) →`}
+            </Text>
+          </Box>
+        ) : null}
+        {onDismiss ? (
+          <Box marginTop={1}>
+            <Text dimColor> ({hintFor("components/chat/SubagentSpawnCard.tsx")})</Text>
+          </Box>
+        ) : null}
+      </Box>
     </Box>
   );
 }

@@ -19,9 +19,9 @@ import java.util.concurrent.Callable;
  *
  * <p>Usage:
  * <pre>
- *   java -jar aethercode-0.2.1.jar tui                # interactive Ink TUI
- *   java -jar aethercode-0.2.1.jar tui --print "hi"   # one-shot headless
- *   java -jar aethercode-0.2.1.jar tui --node /path   # explicit node
+ *   java -jar aethercode-0.2.72.jar tui                # interactive Ink TUI
+ *   java -jar aethercode-0.2.72.jar tui --print "hi"   # one-shot headless
+ *   java -jar aethercode-0.2.72.jar tui --node /path   # explicit node
  * </pre>
  *
  * <p>The command finds the TUI bundle by:
@@ -36,7 +36,7 @@ import java.util.concurrent.Callable;
 @Command(
         name = "tui",
         mixinStandardHelpOptions = true,
-        version = "aethercode-tui 0.2.1",
+        version = "aethercode-tui 0.2.72",
         description = "Launch the Node-based Ink TUI that talks to the AetherCode daemon over JSON-RPC 2.0."
 )
 public class TuiCommand implements Callable<Integer> {
@@ -98,7 +98,7 @@ public class TuiCommand implements Callable<Integer> {
         String env = System.getenv("AETHERCODE_TUI");
         if (env != null && !env.isEmpty()) return Path.of(env);
 
-        // The running jar is at <dist>/aethercode-0.2.1.jar; the TUI
+        // The running jar is at <dist>/aethercode-0.2.72.jar; the TUI
         // is at <dist>/ac-tui/ac-tui.js. Both live in the same dir.
         Path ownJar = findOwnJar();
         if (ownJar != null) {

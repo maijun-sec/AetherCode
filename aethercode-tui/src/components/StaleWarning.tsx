@@ -28,6 +28,7 @@
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { hintFor } from "../componentKeys.js";
 import { t, icon } from "../theme.js";
 
 export const STALE_THRESHOLD_MS = 30 * 60 * 1000;
@@ -148,7 +149,7 @@ export const StaleWarning: React.FC<StaleWarningProps> = ({
         </Text>
       </Box>
       <Text> </Text>
-      <Text dimColor>Enter / y to re-attach · n / Esc to cancel · Tab to swap</Text>
+      <Text dimColor>{hintFor("components/StaleWarning.tsx")}</Text>
     </Box>
   );
 };

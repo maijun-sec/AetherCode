@@ -118,7 +118,26 @@ test("R168: InputBox shows a placeholder when the input is empty", () => {
   // R168 inlines the placeholder as a `<Text dimColor>` when
   // the input is empty. The hint mentions shift+Enter so the
   // user knows the multi-line shortcut.
-  assert.match(body, /type a prompt — Enter to send, shift\+Enter for newline/);
+  //
+  // R381: the hint's TEXT moved into the key registry
+  // (`src/componentKeys.ts`) — a hand-written hint is a second copy
+  // of what the component binds, and R381 removed every one of them.
+  // So the assertion is REDIRECTED to where the text now lives, and
+  // the component's own half (it renders the registry's sentence) is
+  // checked too. Re-anchoring an assertion to the new location is
+  // the point; deleting it would throw away the property.
+  assert.match(
+    body,
+    /proseFor\("components\/InputBox\.tsx",\s*"prompt"\)/,
+    "the InputBox must render the registry's placeholder sentence",
+  );
+  const keys = readFileSync(join(root, "src", "componentKeys.ts"), "utf-8");
+  assert.match(
+    keys,
+    /type a prompt — Enter to send, shift\+Enter for newline/,
+    "the registry's placeholder sentence must still mention shift+Enter — the user has to " +
+      "know the multi-line shortcut",
+  );
 });
 
 // ----- 2. Filesystem check ----------------------------------------

@@ -191,7 +191,23 @@ const CASES = [
 
   [
     "the welcome renders an empty grid",
-    [["welcome", (s) => s.replace("welcomeBindings()", "[] as never[]")]],
+    [
+      [
+        "welcome",
+        // R381: the needle is SCOPED to the grid's own call.
+        //
+        // It used to be a bare `welcomeBindings()`, which replaced the
+        // FIRST occurrence in the file — and R381 added a second one
+        // (the sub-agent panel's chord label, read from the same
+        // registry). The mutation then landed on the label, the grid
+        // still rendered, and the case reported a HOLE.
+        //
+        // That is Lesson 1195 one level down: a needle that is not
+        // unique changes the wrong thing and pretends to have tested
+        // something.
+        (s) => s.replace("welcomeBindings().map((b) => ({", "([] as never[]).map((b) => ({"),
+      ],
+    ],
   ],
 
   // --- the help promises what this daemon cannot do --------------------

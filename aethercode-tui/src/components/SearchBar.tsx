@@ -19,6 +19,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Box, Text } from "ink";
 import TextInput from "ink-text-input";
+import { hintFor } from "../componentKeys.js";
 import type { Turn } from "../state.js";
 import { t, icon } from "../theme.js";
 
@@ -90,7 +91,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({ turns, onClose, onCommit, 
             ? "no matches  "
             : `${matches.length} match${matches.length === 1 ? "" : "es"}  `
           : "type to search  "}
-        Esc: close
+        {hintFor("components/SearchBar.tsx")}
       </Text>
     </Box>
   );

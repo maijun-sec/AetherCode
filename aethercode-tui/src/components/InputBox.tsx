@@ -40,6 +40,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
+import { proseFor } from "../componentKeys.js";
 import type { State } from "../state.js";
 import { t, icon } from "../theme.js";
 import { SLASH_COMMANDS_DETAILED } from "../commands.js";
@@ -285,10 +286,7 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
         </Box>
         <Box flexDirection="column" flexGrow={1}>
           {decisionPending ? (
-            <Text dimColor>
-              waiting for permission decision — press A / T / P / U / D / N (or collapse the card
-              with Esc)
-            </Text>
+            <Text dimColor>{proseFor("components/InputBox.tsx", "decision")}</Text>
           ) : state.input.length === 0 ? (
             // Placeholder + a blinking cursor on the SAME
             // line, in the accent colour, so the user can
@@ -297,10 +295,7 @@ export const InputBox: React.FC<Props> = ({ state, onChange, onSubmit, fileListS
             // placeholder reads as a static label and
             // the user has no idea where to type.
             <Text>
-              <Text dimColor>
-                type a prompt — Enter to send, shift+Enter for newline, / for commands, @ for files,
-                ↑/↓ for history, Tab to accept, Ctrl-? for help
-              </Text>
+              <Text dimColor>{proseFor("components/InputBox.tsx", "prompt")}</Text>
               <Text color={promptColor}>{cursorOn ? "▍" : " "}</Text>
             </Text>
           ) : (

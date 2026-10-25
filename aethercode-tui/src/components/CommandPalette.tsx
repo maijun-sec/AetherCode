@@ -22,6 +22,7 @@
 import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
 import TextInput from "ink-text-input";
+import { hintFor } from "../componentKeys.js";
 import { SLASH_COMMANDS } from "../commands.js";
 import { t, icon } from "../theme.js";
 
@@ -107,7 +108,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
         <Text color={t.accent} bold>
           {icon.search} command palette
         </Text>
-        <Text dimColor> Esc: close Enter: select</Text>
+        <Text dimColor> {hintFor("components/CommandPalette.tsx")}</Text>
       </Box>
       <Text> </Text>
       <Text>
