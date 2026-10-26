@@ -37,6 +37,14 @@ import type { ContinuationCountdown } from "./continuationCountdown.js";
 import { classifyRunEnd } from "./stopKind.js";
 import type { StopKind } from "./stopKind.js";
 
+// R385: the permission-mode vocabulary lives in ONE file. The INITIAL
+// mode used to be written here as the literal "DEFAULT" — and the Ink
+// renderer wrote a DIFFERENT one ("ACCEPT_TASK") as its fallback, so
+// the two renderers disagreed about the user's safety net before the
+// daemon had even answered. The daemon's own default is
+// `PermissionMode.DEFAULT` (`AppState.permissionMode`).
+import { MODE } from "./permissionModes.js";
+
 export type Role =
   "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
 export type ToolStatus = "running" | "ok" | "error";
@@ -145,7 +153,8 @@ export type PanelId =
   | "mcp"
   | "context" // R371 — /context, the row R362 shipped as a placeholder
   | "workflows" // R373 — /workflow, the row R365 found line-mode-only
-  | "update"; // R374 — /update and /update-deps, one panel + a verb flag
+  | "update" // R374 — /update and /update-deps, one panel + a verb flag
+  | "mode"; // R385 — /mode, the picker only line mode used to have
 
 /** Loading / error / notice triple shared by every panel. Drives
  *  the shell's pending row and its red error row so a failed RPC is
@@ -1313,7 +1322,7 @@ export const INITIAL: State = {
   model: "—",
   status: "connecting",
   pending: 0,
-  permissionMode: "DEFAULT",
+  permissionMode: MODE.DEFAULT,
   turns: [],
   input: "",
   history: [],

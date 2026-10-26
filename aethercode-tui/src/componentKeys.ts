@@ -320,6 +320,18 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
     ],
   },
   {
+    // R385: the Ink half of `/mode`. Same six keys as every other
+    // picker in the app — the panel is a list, and a list is navigated
+    // and confirmed the same way everywhere.
+    component: "components/ModePicker.tsx",
+    separator: " ",
+    keys: [
+      { id: "nav", label: "↑/↓ (j/k): navigate", tokens: ["up", "down", "j", "k"], via: "handler" },
+      { id: "select", label: "Enter: select", tokens: ["return"], via: "handler" },
+      { id: "close", label: "Esc: close", tokens: ["esc"], via: "handler" },
+    ],
+  },
+  {
     component: "components/NotificationCenter.tsx",
     separator: " ",
     keys: [

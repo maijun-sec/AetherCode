@@ -40,6 +40,10 @@ import { TUI_VERSION } from "../version.js";
 import { t, icon, wordmark, banner } from "../theme.js";
 // R378: the shortcut grid is the registry's, not a second copy of it.
 import { KEYBINDINGS, welcomeBindings } from "../keybindings.js";
+// R385: the mode names come from the ONE vocabulary. This file used to
+// write them out, which is how a list that must match the daemon's
+// enum ends up spread over seven files.
+import { MODE } from "../permissionModes.js";
 
 interface Props {
   model: string;
@@ -115,11 +119,11 @@ const TIPS: ReadonlyArray<{ when: (p: Props) => boolean; text: string }> = [
     text: "memory bank is empty — every successful tool call seeds a unit automatically; /bank-stats shows the live count.",
   },
   {
-    when: (p) => p.mode?.toUpperCase() === "BYPASS_PERMISSIONS",
+    when: (p) => p.mode?.toUpperCase() === MODE.BYPASS_PERMISSIONS,
     text: "you're in BYPASS mode — every tool call runs without confirmation. /mode DEFAULT to require explicit consent.",
   },
   {
-    when: (p) => p.mode?.toUpperCase() === "PLAN",
+    when: (p) => p.mode?.toUpperCase() === MODE.PLAN,
     // R381: this described Claude Code's plan mode, but AetherCode's
     // PLAN is a PERMISSION mode — the daemon's own wording is "built-in
     // safe tools run, but mutations prompt" (PermissionMode.PLAN). It
@@ -247,7 +251,7 @@ export const Welcome: React.FC<Props> = ({
         ) : null}
         <Pill glyph={icon.model} label={model} color={t.accent} />
         <Sep />
-        <Pill glyph={icon.mode} label={mode ?? "DEFAULT"} />
+        <Pill glyph={icon.mode} label={mode ?? MODE.DEFAULT} />
         <Sep />
         <Pill glyph={icon.id} label={shortSession} dim />
         <Sep />

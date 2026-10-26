@@ -524,6 +524,51 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   **Lesson 1238 — a verdict WITHOUT a kind must not discard the
   precision the local list already has; the generic value goes LAST.**
   Doc: `docs/R384-one-run-end-frame.md`.
+- **R385** (the mode surface must speak the daemon's vocabulary):
+  `__PICK_MODE__` — the sentinel bare `/mode` returns — was claimed
+  ONLY by the cmd.exe line mode; on Ink it fell through to the R362
+  fallback and answered "no panel for that command in the TUI yet" for
+  a feature that worked one keystroke away in the other renderer. A
+  **FALSE FAILURE** is worse than an absent feature: the user assumes
+  the capability does not exist, and then works around it by typing
+  `/mode DEFAULT` — which happens to work, so the feature becomes
+  "sometimes there". The permission-mode VOCABULARY was written in
+  **six files / thirty-nine string literals** and the copies had
+  already disagreed: the list was missing `ASK_BEFORE_TOOL` (a mode
+  the daemon has, whose own javadoc says it was named for the TUI);
+  the Ink header showed "TASK" where the cmd.exe header showed "ASK"
+  for the same mode; the Ink fallback claimed `ACCEPT_TASK` while the
+  daemon's default is `DEFAULT` (`AppState.permissionMode`); and the
+  Ink header carried four names the daemon cannot produce (`AUTO`,
+  `ASK`, `DENY`, `BYPASS` — the old `Action` enum). Now ONE
+  vocabulary (`src/permissionModes.ts`) holds the names plus their
+  label / badge / blurb / tone, checked against the daemon's
+  `PermissionMode` enum; `/mode <name>` normalises its argument
+  (the daemon's `valueOf` is case-sensitive and dash-blind, so
+  `/mode default` and the daemon's own documented
+  `/mode ask-before-tool` both used to fail); and a new gate requires
+  EVERY sentinel the command layer emits to have an owner on BOTH
+  renderers.
+  **Lesson 1239 — an allowlist entry may be describing a category that
+  does not exist.** `PICK_MODE` sat in r362's `INLINE_FAMILIES`
+  ("renders inline, so it needs no owner") while it actually opens a
+  PANEL; the excuse is what created the orphan.
+  **Lesson 1240 — the payoff of collapsing a vocabulary is not fewer
+  lines, it is that two renderers start saying the same thing.**
+  **Lesson 1241 — the daemon's enum is the authority; a client's copy
+  is checked against the SOURCE.**
+  **Lesson 1242 — what a constant is CALLED in the other renderer is
+  also a contract.**
+  **Lesson 1243 — a fallback value is an assertion, and it is often a
+  lie.**
+  **Lesson 1244 — scan the COMMENT-STRIPPED text: `ts-scan` bails at
+  an unterminated quote, and one apostrophe in a `line.ts` comment
+  hides thousands of lines from the scan.**
+  **Lesson 1245 — "imported the module" is not "imported the name".**
+  **Lesson 1246 — the SHAPE in which a sentinel is claimed must be a
+  shape the contract can see.**
+  **Lesson 1247 — a false failure is worse than a missing feature.**
+  Doc: `docs/R385-one-mode-vocabulary.md`.
 
 ## Watch out for (R735 additions)
 
@@ -2160,4 +2205,49 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   通用值放中间会吞掉精度:R750d–R382 的 daemon 发 `isError` 但不发 `stopKind`,
   那种帧本来能靠前缀匹配答对 `no_run_end` / `consumer_timeout`。
   **Lesson 1238。**
+
+## Watch out for (R385 additions)
+
+- **权限模式的词表只写在 `aethercode-tui/src/permissionModes.ts`。**
+  `MODE` 对象是名字的唯一来源,`PERMISSION_MODES` 是带 label / badge /
+  blurb / tone 的行。别的文件一律 `MODE.DEFAULT` 这样引用 ——
+  **一个字面量都不许再写**。门禁 `r385-mode-surface.test.mjs` 扫
+  `src/**` 里所有 `.ts`/`.tsx`,任何"整串内容恰好是模式名"的字符串字面量
+  都会红(散文里提到模式名是允许的,比如 `--permission-mode=ACCEPT_TASK`)。
+  改之前实测:**39 个字面量、6 个文件**(`line.ts` 16、`Header.tsx` 11、
+  `tui.tsx` 7、`Welcome.tsx` 3、`commands.ts` 1、`state.ts` 1)。
+  **Lesson 1240。**
+- **词表必须对着 daemon 的枚举核,不是对着注释。**
+  daemon 的 `org.aethercode.core.permission.PermissionMode` 有 **7** 个常量,
+  旧 TS 目录只有 6 个 —— 缺 `ASK_BEFORE_TOOL`,而它自己的 javadoc 写着
+  "more discoverable in the TUI's status bar"。门禁直接读那个 `.java` 文件,
+  双向比较。**Lesson 1241。**
+- **徽章跟词表走,别各写各的。** 改之前 Ink 的 `Header.tsx` 显示
+  `DEFAULT`、cmd.exe 显示 `ASK`,而 Ink 那份 switch 还带着 daemon
+  根本产生不了的 `AUTO` / `ASK` / `DENY` / `BYPASS`(旧的 `Action` 枚举)。
+  两个渲染器都在"正常工作",用户看到的是两个世界。
+  **Lesson 1242。**
+- **兜底值是对用户安全网的承诺,得对着 daemon 的源码写。**
+  daemon 的默认是 `PermissionMode.DEFAULT`(`AppState.permissionMode`),
+  而 Ink 的 `getState` 兜底写的是 `?? "ACCEPT_TASK"` —— 于是头栏把
+  "本任务内全部自动放行"报给一个其实在逐次询问的用户。
+  **Lesson 1243。**
+- **扫源码要扫去注释后的文本。** `ts-scan` 遇到没闭合的引号会停,
+  `line.ts` 注释里的一个撇号("the daemon's estimate")就够让后面几千行
+  从扫描结果里消失 —— **一个看不见的副本和一个不存在的副本,在门禁眼里
+  没有区别**。R385 的门禁第一版就栽在这,被自己的变异电池当场抓出来。
+  一律 `scan(codeOf(file))`。**Lesson 1244。**
+- **"用了就得 import"要查名字,不是查模块。** 只检查"这个文件
+  import 过 permissionModes.js"是不够的:把 `MODE` 从 import 列表里删掉、
+  留下 `permissionModeBlurb`,模块级检查照样绿。**Lesson 1245。**
+- **哨兵被认领的形状,必须是注册表看得见的形状。**
+  cmd.exe 原来用 `if (local === "__PICK_MODE__")` 单独认领它,
+  而注册表的推导找的是 `case "__X__":` —— **认领得对,但认领成了一种
+  没人能核对的形状**,于是等于没被认领。现在它走
+  `renderPanelSentinel` 的 switch。**Lesson 1246。**
+- **豁免名单的每一项都要能回答"它为什么不需要归属"。**
+  r362 的 `INLINE_FAMILIES` 里 `PICK_MODE` 的答案是"恰好没人认领",
+  那不是答案。现在更强的契约在 `r385-mode-surface.test.mjs`:
+  **每一个哨兵,在两个渲染器上都要有归属。**
+  **Lesson 1239。**
 

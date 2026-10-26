@@ -35,6 +35,15 @@ import { describeSentinel, intentForSentinel } from "./panelIntents.js";
 import { partitionByCwd } from "./cwdMatch.js";
 // R372: the messages→turns converter, shared with the Ink renderer.
 import { replayTranscript } from "./transcriptHydrate.js";
+// R385: the ONE permission-mode catalog. The picker, the badge and
+// the toast all read it, so they cannot describe the same mode
+// differently — and the gate checks it against the daemon's enum.
+import {
+  MODE,
+  PERMISSION_MODES,
+  permissionModeEntry,
+  type PermissionModeTone,
+} from "./permissionModes.js";
 // R383: the stop-reason taxonomy, shared with the Ink renderer. This file
 // used to carry a second copy of the rules — and the copy missed the
 // engine's decorated failures ("error: <class>: <msg>"), so an upstream
@@ -309,25 +318,24 @@ function fmtDuration(ms: number): string {
   return `${m}m${rs.toString().padStart(2, "0")}s`;
 }
 
+/** The badge colour for each catalog tone. The TONE lives in the
+ *  shared catalog; only the palette is local to this renderer. */
+const MODE_TONE_COLOR: Record<PermissionModeTone, string> = {
+  ask: C.yellowBright,
+  allow: C.green,
+  read: C.cyan,
+  plan: C.magenta,
+  danger: C.red,
+  unknown: C.gray,
+};
+
 function modeStyle(mode: string): { label: string; bg: string; fg: string } {
   const m = mode.toUpperCase();
-  switch (m) {
-    case "DEFAULT":
-    case "ASK_BEFORE_TOOL":
-      return { label: "ASK", bg: C.yellowBright, fg: C.bold };
-    case "ACCEPT_TASK":
-      return { label: "TASK", bg: C.green, fg: C.bold };
-    case "ACCEPT_EDITS":
-      return { label: "EDITS", bg: C.green, fg: C.bold };
-    case "BYPASS_PERMISSIONS":
-      return { label: "BYPASS", bg: C.red, fg: C.bold };
-    case "PLAN":
-      return { label: "PLAN", bg: C.magenta, fg: C.bold };
-    case "AUTO_READ_ONLY":
-      return { label: "READ", bg: C.cyan, fg: C.bold };
-    default:
-      return { label: m, bg: C.gray, fg: C.bold };
-  }
+  // R385: the badge and the colour come from the ONE catalog, so the
+  // pill and the picker cannot describe the same mode differently.
+  const entry = permissionModeEntry(m);
+  if (!entry) return { label: m, bg: MODE_TONE_COLOR.unknown, fg: C.bold };
+  return { label: entry.badge, bg: MODE_TONE_COLOR[entry.tone], fg: C.bold };
 }
 
 function modePill(mode: string, noColor: boolean): string {
@@ -684,7 +692,7 @@ interface DisplayState {
 const INITIAL_STATE: DisplayState = {
   sessionId: "\u2014",
   model: "\u2014",
-  permissionMode: "DEFAULT",
+  permissionMode: MODE.DEFAULT,
   contextWindow: 0,
   inputTokens: null,
   outputTokens: null,
@@ -1521,14 +1529,15 @@ async function pickMode(
   logAbove: (text: string) => void,
   noColor: boolean,
 ): Promise<void> {
-  const modes = [
-    { label: "DEFAULT              \u2014 ask before each tool call", value: "DEFAULT" },
-    { label: "ACCEPT_TASK          \u2014 auto-allow all tools", value: "ACCEPT_TASK" },
-    { label: "ACCEPT_EDITS         \u2014 auto-allow file edits only", value: "ACCEPT_EDITS" },
-    { label: "BYPASS_PERMISSIONS   \u2014 no prompts, danger!", value: "BYPASS_PERMISSIONS" },
-    { label: "PLAN                 \u2014 plan only, don't execute", value: "PLAN" },
-    { label: "AUTO_READ_ONLY       \u2014 auto-allow read-only tools", value: "AUTO_READ_ONLY" },
-  ];
+  // R385: the rows come from the ONE catalog (`src/permissionModes.ts`),
+  // which is checked against the daemon's `PermissionMode` enum by
+  // `scripts/test/r385-mode-surface.test.mjs`. The list used to be
+  // written here, and it was missing ASK_BEFORE_TOOL — a mode the
+  // daemon has and whose own javadoc says it was named for the TUI.
+  const modes = PERMISSION_MODES.map((m) => ({
+    label: `${m.value.padEnd(21)}\u2014 ${m.label}`,
+    value: m.value,
+  }));
   const initialIdx = modes.findIndex((m) => m.value === currentMode);
   const result = await pickFromList(
     lineInput,
@@ -3529,6 +3538,27 @@ async function renderPanelSentinel(
     case "__EFFORT_PICK__":
       await pickEffort(ctx);
       return true;
+    // R385: bare `/mode` — the permission-mode picker.
+    //
+    // This used to be a special `if` in the CALLER, ahead of this
+    // dispatcher, and that is why the sentinel was invisible to the
+    // registry's "does line mode claim it?" derivation: the
+    // derivation looks for a `case "__X__":` arm, and there was no
+    // `case "__PICK_MODE__":` anywhere in the file. A sentinel that
+    // is claimed in a shape the registry cannot see is a sentinel the
+    // registry cannot vouch for.
+    case "__PICK_MODE__":
+      await pickMode(
+        ctx.lineInput,
+        ctx.state.permissionMode,
+        async (mode: string) => {
+          await ctx.client.request("setPermissionMode", { mode });
+          ctx.state.permissionMode = mode;
+        },
+        ctx.logAbove,
+        ctx.noColor,
+      );
+      return true;
     case "__CWD_PICK__":
       await panelCwdPick(ctx);
       return true;
@@ -3708,7 +3738,7 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       ...displayState,
       sessionId,
       model,
-      permissionMode: String(obj.permissionMode ?? "DEFAULT"),
+      permissionMode: String(obj.permissionMode ?? MODE.DEFAULT),
       contextWindow: Number(obj.contextWindow ?? 0) || 0,
       cwd: opts.cwd || process.cwd(),
     };
@@ -4442,22 +4472,6 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     }
     if (slash?.local && slash.local === SLASH_HELP) {
       logAbove(colorize(SLASH_HELP, C.dim, noColor));
-      return;
-    }
-    if (slash?.local === "__PICK_MODE__") {
-      // R352: bare `/mode` shows the picker. Pass the current mode
-      // so the user lands on the right row.
-      await pickMode(
-        lineInput,
-        displayState.permissionMode,
-        async (mode: string) => {
-          await client.request("setPermissionMode", { mode });
-          displayState.permissionMode = mode;
-        },
-        logAbove,
-        noColor,
-      );
-      if (!rlClosed) lineInput.redraw();
       return;
     }
     if (slash?.local) {

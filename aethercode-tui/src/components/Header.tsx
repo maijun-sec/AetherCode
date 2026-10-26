@@ -17,7 +17,7 @@
  *
  * Pill colors:
  *  - model: accent (cyan) — primary identity
- *  - mode:   yellowBright (DEFAULT) / cyan (AUTO) / red (DENY) / …
+ *  - mode:   by the catalog's tone (ask / allow / read / plan / danger)
  *  - ctx:    fill glyph colours by ratio (green ≤50%, yellow ≤80%, red >80%)
  *  - live:   green dot; offline: red ring
  */
@@ -26,56 +26,52 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { State } from "../state.js";
 import { t, icon, wordmark, formatRelative } from "../theme.js";
+// R385: the mode badge and its colour come from the ONE catalog. This
+// file used to carry TWO hand-written switches over the mode names —
+// and they disagreed with the cmd.exe renderer's own switch about
+// what `DEFAULT` looks like (here: the raw name; there: "ASK"). It
+// also carried four names the daemon cannot produce (`AUTO`, `ASK`,
+// `DENY`, `BYPASS` — the old `Action` enum).
+import { permissionModeEntry, type PermissionModeTone } from "../permissionModes.js";
 
 interface Props {
   state: State;
   cwd: string;
 }
 
+/** The background colour for each catalog tone. Ink's palette names. */
+const TONE_BG: Record<PermissionModeTone, string> = {
+  ask: "yellowBright",
+  allow: "green",
+  read: "cyan",
+  plan: "magenta",
+  danger: "red",
+  unknown: "gray",
+};
+
+/** The foreground that reads against each background. */
+const TONE_FG: Record<PermissionModeTone, string> = {
+  ask: "black",
+  allow: "black",
+  read: "black",
+  plan: "black",
+  danger: "white",
+  unknown: "black",
+};
+
 /** Map a permission mode name to a foreground+background pair. */
 function modeStyle(mode: string): { fg: string; bg: string } {
-  switch (mode.toUpperCase()) {
-    case "DEFAULT":
-      return { fg: "black", bg: "yellowBright" };
-    case "AUTO":
-      return { fg: "black", bg: "cyan" };
-    case "PLAN":
-      return { fg: "black", bg: "magenta" };
-    case "ASK":
-      return { fg: "black", bg: "yellowBright" };
-    case "ASK_BEFORE_TOOL":
-      return { fg: "black", bg: "yellowBright" };
-    case "ACCEPT_EDITS":
-      return { fg: "black", bg: "green" };
-    case "ACCEPT_TASK":
-      return { fg: "black", bg: "green" };
-    case "DENY":
-      return { fg: "white", bg: "red" };
-    case "BYPASS":
-      return { fg: "white", bg: "red" };
-    case "BYPASS_PERMISSIONS":
-      return { fg: "white", bg: "red" };
-    default:
-      return { fg: "black", bg: "gray" };
-  }
+  const entry = permissionModeEntry(mode);
+  const tone = entry?.tone ?? "unknown";
+  return { fg: TONE_FG[tone], bg: TONE_BG[tone] };
 }
 
 /** Map a permission mode name to a short UI label. */
 function modeLabel(mode: string): string {
-  switch (mode.toUpperCase()) {
-    case "ACCEPT_TASK":
-      return "TASK";
-    case "ACCEPT_EDITS":
-      return "EDITS";
-    case "ASK_BEFORE_TOOL":
-      return "ASK";
-    case "BYPASS_PERMISSIONS":
-      return "BYPASS";
-    case "AUTO_READ_ONLY":
-      return "READ";
-    default:
-      return mode.toUpperCase();
-  }
+  const entry = permissionModeEntry(mode);
+  // An unknown mode shows its own name — the catalog has nothing to
+  // call it, and inventing a label would be a claim.
+  return entry ? entry.badge : mode.toUpperCase();
 }
 
 /** 8-step progress bar using block characters. */

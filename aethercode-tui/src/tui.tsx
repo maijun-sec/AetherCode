@@ -150,6 +150,13 @@ import { MemoryPanel, type CompactProgress } from "./components/MemoryPanel.js";
 import { ThreadSelector, type ThreadInfo } from "./components/ThreadSelector.js";
 import { AgentSelector, type AgentEntry } from "./components/AgentSelector.js";
 import { EffortPicker, type EffortEntry } from "./components/EffortPicker.js";
+// R385: the Ink half of `/mode`. Bare `/mode` used to work only in the
+// cmd.exe line mode; on Ink it fell through to the R362 fallback and
+// told the user the command did not exist.
+import { ModePicker } from "./components/ModePicker.js";
+// R385: the one permission-mode catalog — the same list the picker
+// shows, the status pill badges and the toast blurb all read.
+import { MODE, permissionModeBlurb } from "./permissionModes.js";
 import { CwdSwitcher, makeStatValidator } from "./components/CwdSwitcher.js";
 import {
   GrantsManager,
@@ -428,6 +435,11 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   // panel; the verb (a flag, written at openPanel) says which
   // operation the panel is about.
   "update-available": "update",
+  // R385: bare `/mode`. Line mode has had this picker since R352; the
+  // Ink side fell through to the "no panel for that command" fallback
+  // and reported a feature that worked one keystroke away in the
+  // other renderer as missing.
+  "mode-picker": "mode",
 };
 
 /** Intents whose panel row list is scoped to the active cwd. Kept as
@@ -510,6 +522,15 @@ const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string
     title: "Update",
     hint: "Enter: show the changelog URL · Esc close",
     loading: "asking the daemon about updates",
+  },
+  // R385: the permission-mode picker. The hint names the three
+  // actions the panel has — navigate, set, cancel — and the loading
+  // copy is honest: this panel reads the mode the daemon already
+  // reported, so it never has anything to fetch.
+  mode: {
+    title: "Permission mode",
+    hint: "↑/↓ or j/k navigate · Enter set · Esc cancel",
+    loading: "reading the current permission mode",
   },
 };
 
@@ -1300,7 +1321,13 @@ const App: React.FC<{
           type: "init",
           sessionId: String(stObj.sessionId ?? "—"),
           model: String(stObj.model ?? "—"),
-          permissionMode: String(stObj.permissionMode ?? "ACCEPT_TASK"),
+          // R385: the fallback is the daemon's OWN default
+          // (`AppState.permissionMode = PermissionMode.DEFAULT`).
+          // It used to be "ACCEPT_TASK" here while the cmd.exe
+          // renderer and the reducer's INITIAL state said "DEFAULT" —
+          // so the Ink header claimed "everything in this task runs
+          // without asking" while the daemon was still asking.
+          permissionMode: String(stObj.permissionMode ?? MODE.DEFAULT),
           jarPath: client.jarPath,
           // R344: surface the model's context window so the
           // Header can render a fill glyph + percentage. The
@@ -1814,8 +1841,13 @@ const App: React.FC<{
       };
     }
 
-    // "todos", "cwd", "effort" and "notifications" are served from
-    // local state; nothing to fetch, so nothing to await.
+    // "todos", "cwd", "effort", "notifications" and "mode" are served
+    // from local state; nothing to fetch, so nothing to await.
+    //
+    // R385: "mode" (the permission-mode picker) reads the mode the
+    // daemon already reported in `state.permissionMode`, so it has
+    // nothing to ask for either — and inventing a fetch here would
+    // put a spinner over a list that is already on screen.
     return () => {
       cancelled = true;
     };
@@ -2397,10 +2429,13 @@ const App: React.FC<{
     // fallback below without first being given a declared owner.
     //
     // `bareSentinel` strips the `:<arg>` suffix (`__MCP_LOGIN__:gh`)
-    // so the registry's bare-token keys resolve. The only sentinel
-    // with no component left is the `__UPDATE_*__` family (R373
-    // mounted `__WORKFLOW_PICKER__`, R371 `__CONTEXT_METER__`), so
-    // it deliberately falls through to the human-readable fallback.
+    // so the registry's bare-token keys resolve.
+    //
+    // R385: every sentinel the command layer emits now has an owner
+    // on BOTH renderers, and `scripts/test/r385-mode-surface.test.mjs`
+    // requires it — so the fallback below is the LAST resort for a
+    // sentinel the registry does not know, not the normal path for a
+    // feature that happens to live in line mode only.
     const panelLocal = slash?.local;
     if (panelLocal) {
       const bare = bareSentinel(panelLocal);
@@ -2434,8 +2469,8 @@ const App: React.FC<{
       //
       // `describeSentinel` returns its argument UNCHANGED when the
       // token has no registry entry (a sentinel the registry does
-      // not own, e.g. `__PICK_MODE__`). Passing that through would
-      // re-introduce exactly the leak this branch exists to close,
+      // not own). Passing that through would re-introduce exactly
+      // the leak this branch exists to close,
       // so anything still shaped like a token gets a fixed
       // sentence instead.
       const bare = bareSentinel(slash.local);
@@ -2465,37 +2500,22 @@ const App: React.FC<{
         await pauseAutoContinue(p.stopped !== false);
         return;
       }
+      // R385: `/mode <name>`, `/no-confirm` and the picker's Enter are
+      // the SAME operation, so they go through the SAME function — one
+      // request, one toast, one description of what the mode means.
+      //
+      // Before this round the slash path carried its own copy of the
+      // mode→blurb table (six `===` arms), the picker had none, and
+      // the two could not agree about a mode the daemon accepted.
+      if (slash.rpcMethod === "setPermissionMode") {
+        const requested = String((slash.rpcParams as { mode?: unknown } | undefined)?.mode ?? "");
+        if (requested) {
+          await applyPermissionMode(requested);
+          return;
+        }
+      }
       try {
         const result = await client.request<unknown>(slash.rpcMethod, slash.rpcParams as RpcValue);
-        // when the user lands in a new permission mode (via
-        // /mode or /no-confirm) show a confirmation toast so they
-        // can verify the switch took effect — the status bar will
-        // also re-render with the new mode but only on the next
-        // event, and we don't want them to wonder why prompts
-        // stopped / started.
-        if (slash.rpcMethod === "setPermissionMode") {
-          const newMode = String((slash.rpcParams as { mode?: unknown } | undefined)?.mode ?? "");
-          if (newMode) {
-            dispatch({ type: "setPermissionMode", mode: newMode });
-            const blurb =
-              newMode === "BYPASS_PERMISSIONS"
-                ? "no prompts will be shown for any tool call"
-                : newMode === "ACCEPT_TASK"
-                  ? "single task, no mid-task prompts (DEFAULT behaviour unless sub-task boundary)"
-                  : newMode === "ACCEPT_EDITS"
-                    ? "file edits auto-allowed; bash / network still ask"
-                    : newMode === "AUTO_READ_ONLY"
-                      ? "read-only tools auto-allowed; writes still ask"
-                      : newMode === "PLAN"
-                        ? "plan mode — tools ask before running"
-                        : "default — every tool call asks before running";
-            dispatch({
-              type: "pushToast",
-              kind: newMode === "DEFAULT" ? "info" : "ok",
-              text: `mode → ${newMode}: ${blurb}. Run /mode <name> to change again.`,
-            });
-          }
-        }
         // pretty-print the metrics snapshot. For other
         // RPCs we fall back to a plain JSON dump.
         if (slash.rpcMethod === "getMetrics" && result && typeof result === "object") {
@@ -3047,6 +3067,50 @@ const App: React.FC<{
         type: "pushToast",
         kind: "err",
         text: `reasoning effort not changed — ${(e as Error).message}`,
+      });
+    }
+  }
+
+  /**
+   * R385 — set the permission mode for real.
+   *
+   * <p>The daemon's `setPermissionMode` resolves its argument with
+   * `PermissionMode.valueOf(...)`, so it answers with the mode it
+   * actually applied. The toast reports THAT, not the name the user
+   * picked — the same rule `applyEffort` follows, and for the same
+   * reason: an echo of the request would be a claim the daemon never
+   * made.
+   *
+   * <p>Both routes into this function — the picker's Enter and the
+   * `/mode <name>` slash command — go through here, so the picker and
+   * the command cannot describe the same mode differently.
+   */
+  async function applyPermissionMode(mode: string): Promise<void> {
+    try {
+      const r = (await client.request("setPermissionMode", { mode })) as
+        { ok?: boolean; mode?: string; error?: string } | null | undefined;
+      // The daemon answers `{sessionId, mode}`; an `ok: false` with an
+      // `error` is the "no such session" path.
+      if (r && r.ok === false) {
+        dispatch({
+          type: "pushToast",
+          kind: "err",
+          text: `permission mode not changed — ${r.error ?? "the daemon refused it"}`,
+        });
+        return;
+      }
+      const applied = r?.mode ?? mode;
+      dispatch({ type: "setPermissionMode", mode: applied });
+      dispatch({
+        type: "pushToast",
+        kind: applied === MODE.DEFAULT ? "info" : "ok",
+        text: `mode → ${applied}: ${permissionModeBlurb(applied)}. Run /mode to change again.`,
+      });
+    } catch (e) {
+      dispatch({
+        type: "pushToast",
+        kind: "err",
+        text: `permission mode not changed — ${(e as Error).message}`,
       });
     }
   }
@@ -3917,6 +3981,25 @@ const App: React.FC<{
               modelSpec={state.model}
               onSelect={(id) => {
                 void applyEffort(id);
+              }}
+              onClose={closePanel}
+              title=""
+              maxVisible={8}
+            />
+          </Box>
+        );
+
+      case "mode":
+        return (
+          <Box flexDirection="column">
+            {/* R385: bare `/mode`. The rows come from the shared
+                catalog (`src/permissionModes.ts`), which is checked
+                against the daemon's `PermissionMode` enum — the
+                picker cannot offer a mode the daemon does not have. */}
+            <ModePicker
+              current={state.permissionMode}
+              onSelect={(mode) => {
+                void applyPermissionMode(mode);
               }}
               onClose={closePanel}
               title=""

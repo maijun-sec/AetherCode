@@ -20,6 +20,12 @@ export interface SlashResult {
 // table, so the UI and the gate cannot disagree about it.
 import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
 
+// R385: the ONE permission-mode catalog. `/mode <name>` normalises
+// its argument through it (the daemon's `PermissionMode.valueOf` is
+// case-sensitive and dash-blind), and `/no-confirm` reads the bypass
+// mode's name from it — so the mode vocabulary is written once.
+import { MODE, normalisePermissionMode } from "./permissionModes.js";
+
 // R380: the command surface is ONE list.
 //
 // Before this round there were THREE lists of the same command set:
@@ -704,8 +710,18 @@ export function routeSlash(input: string): SlashResult | null {
       // user can arrow-key through modes instead of typing the
       // full enum. With an arg we keep the direct-RPC path for
       // scripts / pipelines.
+      //
+      // R385: the argument is NORMALISED before it goes on the wire.
+      // The daemon resolves it with `PermissionMode.valueOf(...)`,
+      // which is case-sensitive and knows nothing about dashes — so
+      // `/mode default` used to die with "unknown permission mode",
+      // and so did `/mode ask-before-tool`, the spelling the daemon's
+      // OWN javadoc documents as the TUI's.
       if (rest.length === 0) return { local: "__PICK_MODE__" };
-      return { rpcMethod: "setPermissionMode", rpcParams: { mode: rest[0] } };
+      return {
+        rpcMethod: "setPermissionMode",
+        rpcParams: { mode: normalisePermissionMode(String(rest[0])) },
+      };
     case "no-confirm":
     case "noconfirm":
     case "yes-do-it":
@@ -715,7 +731,13 @@ export function routeSlash(input: string): SlashResult | null {
       // RPC the same way `/mode` does so the daemon's setPermissionMode
       // handler is the single source of truth (and the user can flip
       // back with /mode DEFAULT later).
-      return { rpcMethod: "setPermissionMode", rpcParams: { mode: "BYPASS_PERMISSIONS" } };
+      //
+      // R385: the mode name comes from the shared catalog, so the
+      // string is written in ONE place.
+      return {
+        rpcMethod: "setPermissionMode",
+        rpcParams: { mode: MODE.BYPASS_PERMISSIONS },
+      };
     case "skip":
       // per-round skip-confirmation. `/skip 5` arms the next
       // 5 tool calls to be auto-allowed. `/skip 0` (or `/skip

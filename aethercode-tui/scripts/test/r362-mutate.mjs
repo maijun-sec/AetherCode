@@ -93,13 +93,19 @@ const CASES = [
     // An allowlist entry for a sentinel nobody emits is suppression
     // waiting to happen. The `unused families` assertion is the only
     // thing that notices.
+    //
+    // R385: the needle used to pin `"PICK_MODE"` as the last entry.
+    // That entry left the list this round (it is a panel, not an
+    // inline action), so the needle now pins the array's closing
+    // bracket instead — a needle that names a VALUE dies with the
+    // value, and a needle that names a SHAPE survives the round.
     [
       [
         "gate",
         (s) =>
           s.replace(
-            /"SDD",\s*"MEMORY_AUDIT",\s*"PICK_MODE",/,
-            '"SDD", "MEMORY_AUDIT", "PICK_MODE", "NEVER_EMITTED_XYZ",',
+            /"SDD",\s*"MEMORY_AUDIT",\s*\]/,
+            '"SDD", "MEMORY_AUDIT", "NEVER_EMITTED_XYZ",\n  ]',
           ),
       ],
     ],

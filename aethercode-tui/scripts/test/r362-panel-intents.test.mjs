@@ -96,6 +96,17 @@ const commandsSrc = codeOf(readFileSync(join(root, "src", "commands.ts"), "utf-8
  * below) rather than a pattern embedded in one assertion. New families
  * are now visible to the coverage test instead of invisible inside a
  * regex. — Lesson 1120, fourth occurrence.
+ *
+ * <p>R385: "PICK_MODE" was here until this round, and it was a false
+ * description. `__PICK_MODE__` is not an inline action — it opens the
+ * permission-mode picker, and the cmd.exe line mode has had that
+ * picker since R352. The excuse kept the sentinel out of
+ * `panelIntents.ts`, so on Ink nothing claimed it and bare `/mode`
+ * answered "no panel for that command in the TUI yet" — a FALSE
+ * FAILURE for a working feature. It is now a registry row
+ * (`mode-picker`), and the stronger contract lives in
+ * `r385-mode-surface.test.mjs`: EVERY emitted sentinel must have an
+ * owner on BOTH renderers.
  */
 const INLINE_FAMILIES = [
   "EXIT",
@@ -113,7 +124,6 @@ const INLINE_FAMILIES = [
   "BANK",
   "SDD",
   "MEMORY_AUDIT",
-  "PICK_MODE",
 ];
 const INLINE_OK = new RegExp(`__(${INLINE_FAMILIES.join("|")})`);
 
@@ -188,13 +198,20 @@ test("every INLINE_OK sentinel is actually claimed by a renderer", () => {
 
   // Families that produced at least one emitted sentinel, so an unused
   // family cannot pass by matching nothing. The floor is MEASURED, not
-  // guessed: 29 of 44 emitted sentinels match INLINE_OK as of
+  // guessed: 29 of 44 emitted sentinels matched INLINE_OK as of
   // 2026-10-23, after the capture was widened to include the
   // parameterised ones. (Guessing 25 here is exactly how a threshold
   // becomes a lie — Lesson 1117.)
+  //
+  // R385: the floor is 28, not 29. `__PICK_MODE__` left this
+  // allowlist because it is a PANEL, not an inline action — it now has
+  // a registry row, and `r385-mode-surface.test.mjs` holds it to the
+  // STRONGER rule (an owner on BOTH renderers, not merely one).
+  // Measured on 2026-10-26: 28 of 47 emitted sentinels match
+  // INLINE_OK.
   const relevant = [...emittedSentinels()].filter((s) => INLINE_OK.test(s));
   assert.ok(
-    relevant.length >= 29,
+    relevant.length >= 28,
     `only ${relevant.length} sentinels matched INLINE_OK — the family list probably ` +
       "stopped matching, which would make every assertion below vacuous",
   );

@@ -249,6 +249,30 @@ export const PANEL_INTENTS: PanelIntent[] = [
     line: "rendered",
   },
   {
+    id: "mode-picker",
+    sentinels: ["__PICK_MODE__"],
+    command: "/mode",
+    title: "Set the permission mode (ask / auto-allow / plan / bypass)",
+    group: "config",
+    component: "components/ModePicker.tsx",
+    // R385: this sentinel was EXCUSED from the registry — it sat in
+    // r362's `INLINE_FAMILIES` allowlist, which treats a sentinel as
+    // "renders inline, so it needs no owner". That is a false
+    // description: `__PICK_MODE__` opens a PICKER, and the cmd.exe
+    // line mode has had one since R352.
+    //
+    // On Ink nothing claimed it, so bare `/mode` fell through to the
+    // R362 fallback and answered "no panel for that command in the
+    // TUI yet" — a FALSE FAILURE for a feature that worked one
+    // keystroke away in the other renderer.
+    //
+    // The excuse is withdrawn: the sentinel has an owner here, and
+    // `scripts/test/r385-mode-surface.test.mjs` now requires EVERY
+    // emitted sentinel to have an owner on BOTH renderers.
+    ink: "mounted",
+    line: "rendered",
+  },
+  {
     id: "cwd-switcher",
     sentinels: ["__CWD_PICK__"],
     command: "/cwd-pick",
