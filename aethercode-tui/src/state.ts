@@ -45,6 +45,13 @@ import type { StopKind } from "./stopKind.js";
 // `PermissionMode.DEFAULT` (`AppState.permissionMode`).
 import { MODE } from "./permissionModes.js";
 
+// R386: the theme vocabulary lives in ONE file too. `themeName` used to
+// be a three-value union written HERE — while `themes.ts` shipped five
+// palettes — so two of the shipped themes could not be selected and
+// the type system did not know they existed. The name is now the
+// registry's own type, and the default is the registry's own symbol.
+import { DEFAULT_THEME_NAME, type ThemeName } from "./themes.js";
+
 export type Role =
   "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
 export type ToolStatus = "running" | "ok" | "error";
@@ -544,8 +551,8 @@ export interface State {
   /**
    * active theme name. Components read this and pull the
    * matching palette from themes.ts. Switch with /theme NAME.
-   * Default: "default". */
-  themeName: "default" | "solarized" | "monokai";
+   * Default: the registry's default. */
+  themeName: ThemeName;
   /**
    * layout preset.
    *   - "full"     : header + scrollback + input + statusbar (default)
@@ -710,19 +717,9 @@ export interface State {
   subagentPanelOpen: boolean;
   /**
    * T-422 (Phase 5 Round 2): is the ThemePicker modal open?
-   * The picker is driven by aethercode-themes' ThemeStore
-   * (separate from the legacy 5-palette `themeName` field).
-   * Toggle with /theme-pick or Ctrl+Shift+T.
+   * Toggle with /theme, /theme-pick or Ctrl+Shift+T.
    */
   themePickerOpen: boolean;
-  /**
-   * T-422: the last theme name the user picked from the
-   * ThemePicker. Stored so we can highlight the active row
-   * in subsequent picker opens. Doesn't drive the existing
-   * `themeName` (legacy 5-palette) — the two systems are
-   * independent.
-   */
-  themesPickedName: string | null;
   /**
    * T-420: whether the AgentSelector modal is open. The picker
    * is a presentational component; the host feeds it the agent
@@ -1214,10 +1211,9 @@ export type Action =
   | { type: "sddCache.set"; phase: number; lines: string[] } // R700d: /sdd-snapshot N stores on-disk file contents in sddCache[N]
   | { type: "sddCache.clear" } // R700d: /sdd-clear-cache wipes the snapshot map
   | { type: "trimToasts"; now: number } // R41: drop toasts older than 2s
-  | { type: "setTheme"; theme: "default" | "solarized" | "monokai" } // R42
+  | { type: "setTheme"; theme: ThemeName } // R42
   | { type: "setLayout"; layout: "full" | "minimal" | "focus" } // R43
   | { type: "setThemePickerOpen"; open: boolean } // T-422
-  | { type: "setThemesPickedName"; name: string | null } // T-422
   | { type: "setAgentPickerOpen"; open: boolean } // T-420
   | {
       type: "setAgents";
@@ -1365,7 +1361,7 @@ export const INITIAL: State = {
   searchQuery: "",
   searchMatches: [],
   toasts: [],
-  themeName: "default",
+  themeName: DEFAULT_THEME_NAME,
   layout: "full",
   costBudget: 0,
   paletteOpen: false,
@@ -1436,7 +1432,6 @@ export const INITIAL: State = {
   subagentJobs: {},
   subagentPanelOpen: false,
   themePickerOpen: false,
-  themesPickedName: null,
   // T-420: agent picker + catalog + default.
   agentPickerOpen: false,
   agents: [],
@@ -2442,13 +2437,10 @@ export function reducer(state: State, action: Action): State {
       return { ...state, paletteOpen: action.open };
     case "setThemePickerOpen":
       // T-422: open or close the ThemePicker modal. The picker
-      // is driven by aethercode-themes; the legacy 5-palette
-      // `themeName` is unaffected.
+      // lists the TUI's OWN palettes, and picking one writes
+      // `themeName` — so the active theme and the picker are one
+      // system, not two.
       return { ...state, themePickerOpen: action.open };
-    case "setThemesPickedName":
-      // T-422: record the most recent ThemePicker selection so
-      // subsequent picker opens highlight the right row.
-      return { ...state, themesPickedName: action.name };
     case "setAgentPickerOpen":
       // T-420: open or close the AgentSelector modal.
       return { ...state, agentPickerOpen: action.open };

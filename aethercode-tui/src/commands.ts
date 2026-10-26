@@ -26,6 +26,13 @@ import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapab
 // mode's name from it — so the mode vocabulary is written once.
 import { MODE, normalisePermissionMode } from "./permissionModes.js";
 
+// R386: the ONE theme catalog. `/theme <name>` resolves its argument
+// through it — the names used to be spelled out HERE, and this file
+// knew only THREE of the FIVE palettes the product ships, so
+// `/theme kanagawa` and `/theme opencode` were rejected with
+// "unknown theme" while the palettes sat in themes.ts.
+import { THEME_NAMES, resolveThemeName } from "./themes.js";
+
 // R380: the command surface is ONE list.
 //
 // Before this round there were THREE lists of the same command set:
@@ -203,7 +210,12 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
 
   { name: "tool-actions", group: "config", description: "list recent tool actions" },
 
-  { name: "theme", group: "config", args: "<name>", description: "show or set the active theme" },
+  {
+    name: "theme",
+    group: "config",
+    args: "[name]",
+    description: "pick or set the active theme",
+  },
 
   { name: "theme-pick", group: "config", description: "open the interactive theme picker" },
 
@@ -789,24 +801,30 @@ export function routeSlash(input: string): SlashResult | null {
           "last plan: run a multi-step query to populate the plan view; use the IDEA plugin for a fuller view",
       };
     case "theme": {
-      // switch color palette. We don't change the input
-      // here — we surface a side note telling the user to use
-      // the dedicated dispatch in tui.tsx. Actually, simpler:
-      // we emit a special local token that tui.tsx catches.
-      if (rest.length === 0)
-        return { local: "usage: /theme <default|solarized|monokai> | /theme-pick" };
-      const name = String(rest[0]).toLowerCase();
-      if (name === "pick") {
-        // T-422: open the aethercode-themes picker modal.
-        return { local: "__THEMES_PICK__" };
-      }
-      if (name !== "default" && name !== "solarized" && name !== "monokai") {
-        return { local: `unknown theme: ${name}. Try: default, solarized, monokai.` };
+      // Switch the colour palette, or open the picker.
+      //
+      // R386: the theme names used to be spelled out HERE, and this
+      // file knew only THREE of the FIVE palettes the product ships.
+      // `/theme kanagawa` and `/theme opencode` were rejected with
+      // "unknown theme" — the palettes existed, but nobody could
+      // select them. The registry is the only list now, and the error
+      // message is DERIVED from it: it cannot name a theme that does
+      // not exist, and it cannot hide one that does.
+      //
+      // Bare `/theme` opens the picker, the same shape R385 gave
+      // `/mode` — a bare command that could do something should do
+      // it, not print a usage line.
+      if (rest.length === 0) return { local: "__THEMES_PICK__" };
+      const raw = String(rest[0]);
+      if (raw.toLowerCase() === "pick") return { local: "__THEMES_PICK__" };
+      const name = resolveThemeName(raw);
+      if (!name) {
+        return { local: `unknown theme: ${raw.toLowerCase()}. Try: ${THEME_NAMES.join(", ")}.` };
       }
       return { local: "__THEME__:" + name };
     }
     case "theme-pick":
-      // T-422: open the aethercode-themes picker modal directly.
+      // Open the theme picker — the same surface bare `/theme` opens.
       return { local: "__THEMES_PICK__" };
     case "layout": {
       // switch layout preset.

@@ -15,9 +15,15 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "url";
+import { loadTsModule } from "./load-ts-module.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
+
+// R386: the command layer is compiled and imported so the assertion
+// below can ask what `/theme NAME` actually DOES.
+const commandsMod = await loadTsModule(root, "src/commands.ts");
+const { routeSlash } = commandsMod;
 
 // ----- 1. Source-code assertions: themes.ts ---------------------
 
@@ -78,17 +84,27 @@ test("R166: every palette has all 18 required fields (no half-themed TUI)", () =
 // ----- 2. The /theme command should mention the new themes -----
 
 test("R166: /theme command lists kanagawa + opencode as available themes", () => {
-  const src = readFileSync(join(root, "src", "commands.ts"), "utf-8");
-  // The /theme command autocompletes against THEME_NAMES. The
-  // hookup is via rankCommands or similar — we just check the
-  // list of theme-name strings appears in commands.ts.
-  // Pre-R166 had only 3 names; post-R166 has 5.
-  const themeNamesMatches =
-    src.match(/"default"|"solarized"|"monokai"|"kanagawa"|"opencode"/g) || [];
-  assert.ok(
-    themeNamesMatches.length >= 2,
-    `expected at least 2 theme names in commands.ts, got ${themeNamesMatches.length}`,
-  );
+  // R386: this test used to count the theme-name STRINGS in
+  // commands.ts and assert there were at least two of them:
+  //
+  //     src.match(/"default"|"solarized"|"monokai"|"kanagawa"|"opencode"/g)
+  //
+  // and it stayed GREEN the whole time `/theme kanagawa` was
+  // rejected with "unknown theme: kanagawa. Try: default, solarized,
+  // monokai." — the names appeared in a hand-written list in the
+  // command layer, and that list had already fallen behind the
+  // registry.
+  //
+  // "the key is present" is not "the value is used" (R383, Lesson
+  // 1230). The assertion now asks what the command DOES.
+  for (const name of ["kanagawa", "opencode"]) {
+    const r = routeSlash(`/theme ${name}`);
+    assert.equal(
+      r.local,
+      `__THEME__:${name}`,
+      `/theme ${name} is not selectable — the palette ships but the command rejects it`,
+    );
+  }
 });
 
 test("R166: pickPalette returns the new themes when asked", () => {

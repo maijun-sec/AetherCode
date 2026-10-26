@@ -24,6 +24,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { hintFor } from "../componentKeys.js";
+import { useTheme } from "../ThemeContext.js";
 
 /** A 9-color palette for swatch rendering. Mirrors `aethercode-themes`'s
  *  `Theme.colors` shape; redefined here so the picker doesn't need
@@ -50,6 +51,14 @@ export interface PickerTheme {
   origin: "builtin" | "user";
   /** 9-color palette. */
   colors: ThemeSwatches;
+  /**
+   * One-line description of the theme.
+   *
+   * R386: the TUI's registry carries a blurb per theme, and a table
+   * nobody reads is the same defect as a palette nobody renders — so
+   * the row shows it.
+   */
+  description?: string;
   /** Optional font family, rendered as a tiny caption. */
   fontFamily?: string;
 }
@@ -92,6 +101,14 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
     return idx >= 0 ? idx : 0;
   }, [themes, current]);
   const [highlight, setHighlight] = useState(initial);
+
+  // The picker's own chrome follows the ACTIVE palette, so opening it
+  // under a different theme does not flash a foreign colour. This is
+  // the ONE place in the TUI that reads the palette through the
+  // React context: the token table (`t`) carries the chrome roles,
+  // but the picker wants the whole palette — including the surface
+  // colour, which is not a token.
+  const active = useTheme();
 
   // Clamp highlight when the catalog shrinks (e.g. user deleted a
   // theme file while the picker is open).
@@ -150,9 +167,15 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
   const visible = themes.slice(start, end);
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor={active.panel}
+      paddingX={2}
+      paddingY={1}
+    >
       <Box>
-        <Text color="cyan" bold>
+        <Text color={active.brand} bold>
           ◆ {title} picker
         </Text>
         <Text dimColor> {hintFor("components/ThemePicker.tsx")}</Text>
@@ -166,18 +189,28 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
           const isHighlighted = realIndex === highlight;
           const isActive = t.name === current;
           return (
-            <Box key={t.name} flexDirection="row">
-              <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
-              <Text color={isActive ? "yellowBright" : undefined}>{isActive ? "●" : " "} </Text>
-              <Text>
-                <Text bold={isHighlighted}>{t.name.padEnd(18)}</Text>
-                <Text dimColor> </Text>
-                <Text dimColor>{t.origin === "user" ? "(user)  " : "(built-in)"}</Text>
-              </Text>
-              <Text> </Text>
-              <Swatch colors={t.colors} />
-              <Text> </Text>
-              {t.isDark ? <Text color="gray">●</Text> : <Text color="gray">○</Text>}
+            <Box key={t.name} flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={isHighlighted ? active.brand : undefined}>
+                  {isHighlighted ? "▶" : " "}{" "}
+                </Text>
+                <Text color={isActive ? active.brand : undefined}>{isActive ? "●" : " "} </Text>
+                <Text>
+                  <Text bold={isHighlighted}>{t.name.padEnd(18)}</Text>
+                  <Text dimColor> </Text>
+                  <Text dimColor>{t.origin === "user" ? "(user)  " : "(built-in)"}</Text>
+                </Text>
+                <Text> </Text>
+                <Swatch colors={t.colors} />
+                <Text> </Text>
+                {t.isDark ? <Text color="gray">●</Text> : <Text color="gray">○</Text>}
+              </Box>
+              {t.description ? (
+                <Box flexDirection="row">
+                  <Text> </Text>
+                  <Text dimColor>{t.description}</Text>
+                </Box>
+              ) : null}
             </Box>
           );
         })

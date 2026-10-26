@@ -36,20 +36,33 @@ const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ?
     "--rootDir",
     join(root, "src"),
   ];
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${join(root, "src", "state.ts")}"`], {
-    encoding: "utf-8",
-    shell: true,
-  });
+  const r = spawnSync(
+    `"${tscBin}"`,
+    [...tscArgs, `"${join(root, "src", "state.ts")}"`, `"${join(root, "src", "commands.ts")}"`],
+    {
+      encoding: "utf-8",
+      shell: true,
+    },
+  );
   if (r.status !== 0) {
     console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
     process.exit(1);
   }
 }
 const stateMod = await import("file:///" + join(tmp, "state.js").replace(/\\/g, "/"));
+// R386: state.ts imports the theme registry, so tsc compiled it into
+// the same output directory. The registry is the ONE list of theme
+// names, and the assertions below are checked against IT rather than
+// against a copy of it.
+const themesMod = await import("file:///" + join(tmp, "themes.js").replace(/\\/g, "/"));
+const commandsMod = await import("file:///" + join(tmp, "commands.js").replace(/\\/g, "/"));
 const { reducer, INITIAL } = stateMod;
+const { THEME_NAMES, DEFAULT_THEME_NAME } = themesMod;
+const { routeSlash } = commandsMod;
 
-test("R42: INITIAL.themeName is 'default'", () => {
+test("R42: INITIAL.themeName is the registry's default", () => {
   assert.equal(INITIAL.themeName, "default");
+  assert.equal(INITIAL.themeName, DEFAULT_THEME_NAME);
 });
 
 test("R42: setTheme switches themeName", () => {
@@ -57,6 +70,20 @@ test("R42: setTheme switches themeName", () => {
   assert.equal(s.themeName, "solarized");
   s = reducer(s, { type: "setTheme", theme: "monokai" });
   assert.equal(s.themeName, "monokai");
+});
+
+test("R42: setTheme accepts EVERY theme the registry ships", () => {
+  // R386: this is the assertion the old union pin stood in for, and
+  // it is stronger. The union `"default" | "solarized" | "monokai"`
+  // said three; the product ships five — and two of them could not
+  // be selected. Pinning the reducer against the REGISTRY means a
+  // sixth palette is reachable the day it is added, with no edit to
+  // this file.
+  assert.ok(THEME_NAMES.length >= 5, "the registry lost themes — re-anchor this test");
+  for (const name of THEME_NAMES) {
+    const s = reducer(INITIAL, { type: "setTheme", theme: name });
+    assert.equal(s.themeName, name, `setTheme cannot select "${name}"`);
+  }
 });
 
 // ----- 2. Source code assertions -------------------------------------
@@ -81,7 +108,18 @@ test("R42: ThemeContext.tsx exists with ThemeProvider + useTheme", () => {
 
 test("R42: state.ts has themeName + setTheme action", () => {
   const state = readFileSync(join(root, "src", "state.ts"), "utf-8");
-  assert.match(state, /themeName: "default" \| "solarized" \| "monokai"/);
+  // R386: this used to pin `themeName: "default" | "solarized" |
+  // "monokai"` — and that pin was the DEFECT. The product ships five
+  // palettes, the state type knew about three of them, and the two
+  // it did not know about could not be selected. The pin became an
+  // INVERTED invariant: the state must not spell the vocabulary out;
+  // it must take the registry's type. (An inverted invariant survives
+  // a rename and still catches the real defect — R384, Lesson 1237.)
+  assert.doesNotMatch(
+    state,
+    /themeName:\s*"[^"]*"\s*\|/,
+    "state.ts spells the theme vocabulary out — take the registry's ThemeName instead",
+  );
   assert.match(state, /setTheme/);
 });
 
@@ -97,8 +135,22 @@ test("R42: commands.ts has /theme slash command", () => {
   const cmds = readFileSync(join(root, "src", "commands.ts"), "utf-8");
   assert.match(cmds, /case "theme":/);
   assert.match(cmds, /__THEME__:/);
-  assert.match(cmds, /solarized/);
-  assert.match(cmds, /monokai/);
+});
+
+test("R42: /theme <name> routes EVERY theme the registry ships", () => {
+  // R386: this used to assert that the strings "solarized" and
+  // "monokai" APPEARED in commands.ts. That is the shape of the
+  // defect, not the absence of it: the names appeared in a hand-
+  // written list that had already fallen behind the registry, and
+  // the assertion stayed green while `/theme kanagawa` was rejected
+  // with "unknown theme".
+  //
+  // "the key is present" is not "the value is used" (R383, Lesson
+  // 1230). The assertion below asks what the command actually does.
+  for (const name of THEME_NAMES) {
+    const r = routeSlash(`/theme ${name}`);
+    assert.equal(r.local, `__THEME__:${name}`, `/theme ${name} does not reach the renderer`);
+  }
 });
 
 // ----- 3. Build smoke test -------------------------------------------

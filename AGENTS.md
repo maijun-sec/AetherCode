@@ -569,6 +569,49 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   shape the contract can see.**
   **Lesson 1247 — a false failure is worse than a missing feature.**
   Doc: `docs/R385-one-mode-vocabulary.md`.
+- **R386** (the theme the user picks IS the theme they see): `/theme NAME`
+  printed "theme → NAME" and **nothing on the screen moved**. The TUI had
+  **three theme systems that never met**: a STATIC token table `t` that
+  **29 components** import and render with (and which never changed), five
+  palettes in `src/themes.ts`, and a React context whose `useTheme()` had
+  **ZERO call sites** — so the computed palette was discarded on the
+  floor. The theme VOCABULARY was written in **four files** and the
+  copies had already disagreed: `themes.ts` shipped FIVE palettes,
+  `commands.ts` accepted only THREE (`/theme kanagawa` and
+  `/theme opencode` were rejected with "unknown theme" — two shipped
+  palettes NOBODY COULD SELECT), `state.ts` typed `themeName` as a
+  three-value union, and `tui.tsx` cast to the same three. A **second**
+  vocabulary existed too: the `aethercode-themes` package
+  (`light` / `dark` / `solarized-light` / …) drove the picker, its
+  `ThemeStore.setActive()` wrote to `<UserHome>/.aethercode/theme.json`
+  while the screen kept rendering the TUI's own colours, and the picker's
+  selection never touched `state.themeName` — the field the renderer
+  reads. Now `t`'s 22 palette roles are GETTERS over the active palette
+  (the other 20 tokens and the 38 icons stay put — a workbench theme is
+  not a syntax-colour theme), ONE registry (`src/themes.ts`) owns the
+  names, `/theme` resolves through it (case-insensitively) and derives its
+  error message from it, bare `/theme` opens the picker, and the picker
+  writes `themeName` on select AND on preview (with Esc restoring what
+  was there before). The `aethercode-themes` bridge files are deleted.
+  **Lesson 1259 — a command that says it did something must have done
+  it.**
+  **Lesson 1260 — a computed value nobody reads is not a feature: every
+  downstream of a computation must be nameable.**
+  **Lesson 1261 — "one frame late" and "never changes" are the same user
+  story: publish BEFORE any consumer reads, and remember that JSX
+  attributes are evaluated in the PARENT's render body.**
+  **Lesson 1262 — a list that is one short tells the user the feature
+  does not exist; derive the list and the error message from one place.**
+  **Lesson 1263 — two vocabularies are worse than one half-right
+  vocabulary: a selection must be written to the field the renderer
+  READS.**
+  **Lesson 1264 — when mutating the product does not turn the gate red,
+  suspect the GATE: the hole was in the shared `claimedBy()` helper
+  (its `===` branch accepted a sentinel PREFIX).**
+  **Lesson 1265 — one definition written three times is worse than one
+  written once; find the second copy and fold it into a shared module
+  before writing the third.**
+  Doc: `docs/R386-the-theme-you-pick-is-the-theme-you-see.md`.
 
 ## Watch out for (R735 additions)
 
@@ -2250,4 +2293,43 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   那不是答案。现在更强的契约在 `r385-mode-surface.test.mjs`:
   **每一个哨兵,在两个渲染器上都要有归属。**
   **Lesson 1239。**
+
+## Watch out for (R386 additions)
+
+- **主题词表只写在 `aethercode-tui/src/themes.ts`。**
+  `THEME_NAMES` 是名字的唯一来源,`PALETTES` 是调色板,`THEME_LABELS` 是
+  label + blurb。别的文件一律 `resolveThemeName()` / `ThemeName` 类型 ——
+  **一个字面量都不许再写**。门禁 `r386-theme-reach.test.mjs` 分两半扫:
+  四个特征名(`solarized` / `monokai` / `kanagawa` / `opencode`)全局扫,
+  `"default"` 只在"import 了 themes.js 的文件"里扫(它同时是个普通英文单词,
+  高亮器的兜底语言、提示词格式器的颜色名都在用)。
+  改之前实测:**注册表之外 16 个字面量**(`state.ts` 10、`commands.ts` 3、
+  `tui.tsx` 3),改之后 **0**。**Lesson 1262。**
+- **主题名少一个,用户就以为功能不存在。**
+  产品出厂 5 套调色板,命令层只认 3 套,于是 `kanagawa` / `opencode`
+  **谁也选不了**,而错误信息还理直气壮地列了三个。
+  `/theme` 的错误信息现在由 `THEME_NAMES.join(", ")` **派生** ——
+  它不可能列出一个不存在的名字,也不可能漏掉一个存在的名字。
+- **发布点必须早于"任何消费者读它"。**
+  `t` 的 22 个调色板角色是 `getActivePalette()` 上的 getter,
+  发布走 `useActiveTheme(state.themeName)`(`src/tui.tsx:896`),
+  **只有这一处**发布。放在 `ThemeProvider` 里**不够**:
+  App 自己建的元素(`color={t.warn}` 这种)在 **App 的渲染体**里就求值了,
+  而 provider 渲染在 App 之后 —— 那些元素会**晚一帧**才换色。
+  **"晚一帧"和"永远不变"是同一个用户故事。Lesson 1261。**
+- **门禁要能证明"屏幕变了",不只是"token 变了"。**
+  §1 证明 token 表跟着调色板走,§2 用 Ink **真渲染**一棵树,
+  切换主题后从**输出的帧**里读 ANSI 转义码。§1 是绿的而 §2 是红的,
+  在 R386 修法第一版里真的发生过(晚一帧)。
+  渲染的是**真的** provider、**真的** token 表、**真的**发布路径 ——
+  门禁验副本,验的就只是副本。
+- **哨兵"被认领"的判定要收尾引号。**
+  `scripts/test/claimed-by.mjs` 是唯一一份定义(r362 / r385 各有一份逐字节
+  相同的内联副本,R386 收成一份)。它的 `===` 分支**必须**要求收尾引号 ——
+  少了它,`=== "__X__X"` 会被当成认领了 `__X__`,而这是 R386 变异电池
+  实测出来的洞。`startsWith("__X__:")` 是**带参数**的 sentinel,
+  名字本来就是字面量的前缀,那一支故意不收尾。**Lesson 1264 / 1265。**
+- **`aethercode-themes` 包还在,但 TUI 的 `src/` 里已经没人用它。**
+  包本身留在 `package.json` 和磁盘上(`t457-e2e-smoke.test.mjs` 仍断言它
+  存在并导出 `ThemeStore`)。**已知后续项**。
 

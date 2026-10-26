@@ -7,7 +7,20 @@
  * don't reach into chalk directly.
  */
 
-export const t = {
+import { getActivePalette } from "./themes.js";
+
+/**
+ * The FIXED token table: the markdown syntax colours, the tool
+ * category colours and everything else that does not follow the
+ * theme.
+ *
+ * R386: this used to be `export const t = { … }` — a frozen object
+ * literal. The palette roles inside it were therefore CONSTANTS, and
+ * `/theme solarized` printed "theme → solarized" while the screen
+ * did not move: thirty components import `t` and render with it, and
+ * it never changed.
+ */
+const BASE_TOKENS = {
   // Foreground colors (chalk-compatible names; Ink understands them).
   brand: "yellowBright", // AetherCode / brand text
   brandBold: "#FFB347", // bold brand
@@ -75,6 +88,67 @@ export const t = {
   catAgent: "magenta", // agent / task / delegate
   catOther: "gray", // unknown
 } as const;
+
+/**
+ * The roles that follow the ACTIVE palette.
+ *
+ * These are the UI chrome: brand, accent, the ok/warn/err trio, the
+ * panel and header borders, the spinner, and the six tool-category
+ * colours. The markdown syntax colours and the icons are a separate
+ * layer and stay put.
+ *
+ * The list is constrained to the tokens that actually exist, so a
+ * typo here is a COMPILE error rather than a token that silently
+ * renders as `undefined`.
+ */
+const PALETTE_ROLES = [
+  "brand",
+  "brandBold",
+  "accent",
+  "ok",
+  "warn",
+  "err",
+  "dim",
+  "user",
+  "asst",
+  "code",
+  "panel",
+  "panelHot",
+  "panelOk",
+  "panelErr",
+  "header",
+  "spinner",
+  "catRead",
+  "catWrite",
+  "catSearch",
+  "catRun",
+  "catAgent",
+  "catOther",
+] as const satisfies ReadonlyArray<keyof typeof BASE_TOKENS>;
+
+/**
+ * The live token table.
+ *
+ * The palette roles are GETTERS over the active palette, so every
+ * component that reads `t` repaints when the theme changes — with no
+ * change to any component. The rest of the table is the fixed base.
+ *
+ * WHO publishes the palette: the App, at the top of its render body
+ * (`useActiveTheme(state.themeName)`), and NOT the provider. A JSX
+ * attribute is evaluated while the parent builds its tree, so an
+ * element the App creates itself would read the PREVIOUS palette if
+ * the provider published later — one frame late, which is the same
+ * user story as "never changes".
+ */
+export const t: { [K in keyof typeof BASE_TOKENS]: string } = { ...BASE_TOKENS };
+
+for (const role of PALETTE_ROLES) {
+  Object.defineProperty(t, role, {
+    get: () => getActivePalette()[role],
+    enumerable: true,
+    configurable: true,
+  });
+}
 
 export const icon = {
   ok: "✓",

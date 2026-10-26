@@ -132,16 +132,24 @@ import { TodoBoard } from "./components/todo/TodoBoard.js";
 // on demand. Re-enable in T-7 once the supervisor
 // fires the right events.
 import { StaleWarning } from "./components/StaleWarning.js";
-import { ThemeProvider } from "./ThemeContext.js";
+import { ThemeProvider, useActiveTheme } from "./ThemeContext.js";
 import { ThemePicker, type PickerTheme } from "./components/ThemePicker.js";
+// R386: the theme registry IS the picker catalog. The TUI used to
+// drive the picker from the `aethercode-themes` package — a SECOND
+// vocabulary (`light` / `dark` / `solarized-light` / …) that had
+// nothing to do with the palettes the TUI actually renders, and a
+// `ThemeStore` whose `setActive()` wrote to `<UserHome>/.aethercode/
+// theme.json` while the screen kept rendering the TUI's own colours.
+// The package's themes are a light/dark model; the TUI's terminal
+// surface is fixed and dark, so a light theme is not selectable here.
 import {
-  toPickerTheme,
-  useAethercodeThemeList,
-  useAethercodeThemeFromStore,
-} from "./aethercodeThemesBridgeCore.js";
-import { AethercodeThemeProvider } from "./aethercodeThemesBridgeUI.js";
-import { ThemeStore } from "aethercode-themes";
-import * as os from "node:os";
+  PALETTES,
+  THEME_LABELS,
+  THEME_NAMES,
+  paletteIsDark,
+  resolveThemeName,
+  type ThemeName,
+} from "./themes.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { LogViewer } from "./components/LogViewer.js";
 import { Welcome } from "./components/Welcome.js";
@@ -870,6 +878,23 @@ const App: React.FC<{
   // whatever the daemon last reported.
   const [state, dispatch] = useReducer(reducer, INITIAL, (init) => (cwd ? { ...init, cwd } : init));
   stateRef.current = state;
+
+  // R386 — publish the palette for THIS frame, before the tree is
+  // built.
+  //
+  // The App builds the JSX, and an expression like `color={t.warn}`
+  // in that tree READS the token table while the tree is being built
+  // — before any provider inside it has had a chance to publish. If
+  // the palette were published only by `ThemeProvider` (which
+  // renders AFTER this body), those elements would paint with the
+  // PREVIOUS palette and catch up only on the next repaint. That is
+  // the R386 defect wearing a one-frame delay.
+  //
+  // `useActiveTheme` is the ONE publish site — the R386 gate renders
+  // the same function, so the test exercises this path and not a
+  // copy of it.
+  useActiveTheme(state.themeName);
+
   const [h, setH] = useState(20);
 
   // R364 — the ONE place the app reads its working directory from.
@@ -893,27 +918,55 @@ const App: React.FC<{
   // render frame a single RPC. Cleared on every run boundary.
   const cancelSentRef = React.useRef(false);
 
-  // T-422: aethercode-themes bridge. We instantiate a single
-  // ThemeStore per TUI session and wrap the subtree in the
-  // provider. The store reads <UserHome>/.aethercode/theme.json
-  // (or falls back to the surface default). The legacy
-  // 5-palette `state.themeName` is left in place — the two
-  // systems are independent in this round.
-  const themeStoreRef = React.useRef<ThemeStore | null>(null);
-  if (themeStoreRef.current === null) {
-    themeStoreRef.current = new ThemeStore({ userHome: os.homedir() });
-  }
-  const themeStore = themeStoreRef.current;
-  useEffect(() => {
-    const unsub = themeStore.on("change", (e) => {
-      dispatch({ type: "setThemesPickedName", name: e.current.name });
-    });
-    return unsub;
-  }, [themeStore]);
-  const themeList = useAethercodeThemeList(themeStore);
-  const activeTheme = useAethercodeThemeFromStore(themeStore);
-  const pickerThemes: ReadonlyArray<PickerTheme> = themeList.map(toPickerTheme);
-  const pickerCurrent = state.themesPickedName ?? activeTheme?.name ?? pickerThemes[0]?.name ?? "";
+  // R386: the theme picker is driven by the TUI's OWN registry.
+  //
+  // It used to be driven by the `aethercode-themes` package: a
+  // `ThemeStore` per session, a `useSyncExternalStore` subscription,
+  // and a picker whose rows came from the package's `list()`. Two
+  // problems, both fatal to the promise "the theme you pick is the
+  // theme you see":
+  //
+  //   1. The package's vocabulary (`light`, `dark`, `solarized-light`,
+  //      `solarized-dark`, `high-contrast`) is a DIFFERENT set from
+  //      the palettes the TUI renders. Picking one changed a file on
+  //      disk and nothing on screen.
+  //   2. The picker's selection never touched `state.themeName`, so
+  //      the palette the TUI paints with was never the palette the
+  //      user picked.
+  //
+  // Now the rows come from `THEME_NAMES`, and picking one writes
+  // `state.themeName` — the same field `/theme NAME` writes — which
+  // is what `ThemeProvider` publishes to the token table.
+  const pickerThemes: ReadonlyArray<PickerTheme> = THEME_NAMES.map((name) => {
+    const palette = PALETTES[name];
+    const label = THEME_LABELS[name];
+    return {
+      name,
+      isDark: paletteIsDark(palette),
+      origin: "builtin" as const,
+      description: label?.blurb,
+      colors: {
+        background: palette.background,
+        foreground: palette.asst,
+        accent: palette.accent,
+        muted: palette.dim,
+        success: palette.ok,
+        warning: palette.warn,
+        error: palette.err,
+        border: palette.panel,
+        selection: palette.brand,
+      },
+    };
+  });
+  const pickerCurrent = state.themeName;
+  // The theme the picker was opened on. If the user dismisses the
+  // picker without choosing, the screen goes back to it — a live
+  // preview that cannot be taken back is a trap, not a preview.
+  const themeBeforePickRef = React.useRef<ThemeName>(state.themeName);
+  // Whether the picker produced a selection. `onSelect` runs BEFORE
+  // `onClose` (the picker calls both on Enter), so this flag is what
+  // tells "the user picked X" apart from "the user walked away".
+  const themePickedRef = React.useRef(false);
   // wire the JsonRpcClient's onConnectionState into
   // the reducer. The runTui entry point sets up a no-op
   // placeholder (the dispatch is owned by App), so we
@@ -1956,15 +2009,29 @@ const App: React.FC<{
       return;
     }
     if (slash?.local?.startsWith("__THEME__:")) {
-      // /theme NAME — switch the active color palette.
-      const name = slash.local.slice("__THEME__:".length) as "default" | "solarized" | "monokai";
+      // /theme NAME — switch the active colour palette.
+      //
+      // R386: the name used to be CAST to a three-value union, so the
+      // type system could not tell that the registry ships five
+      // palettes. The registry resolves it now, and a name it does
+      // not know is REPORTED rather than painted on.
+      const raw = slash.local.slice("__THEME__:".length);
+      const name = resolveThemeName(raw);
+      if (!name) {
+        dispatch({ type: "pushToast", kind: "err", text: `unknown theme: ${raw}` });
+        return;
+      }
       dispatch({ type: "setTheme", theme: name });
       dispatch({ type: "pushToast", kind: "info", text: `theme → ${name}` });
       return;
     }
     if (slash?.local === "__THEMES_PICK__") {
-      // T-422: /theme-pick — open the aethercode-themes picker
-      // (separate from the legacy 5-palette /theme command).
+      // Bare `/theme` or `/theme-pick` — open the theme picker.
+      // The picker previews by writing `themeName`, so what the user
+      // sees while moving the highlight IS the theme they are about
+      // to pick.
+      themeBeforePickRef.current = state.themeName;
+      themePickedRef.current = false;
       dispatch({ type: "setThemePickerOpen", open: true });
       return;
     }
@@ -3401,8 +3468,14 @@ const App: React.FC<{
       return;
     }
     if (key.ctrl && key.shift && (input === "t" || input === "T")) {
-      // T-422: Ctrl-Shift-T opens the aethercode-themes picker.
-      dispatch({ type: "setThemePickerOpen", open: !state.themePickerOpen });
+      // Ctrl-Shift-T opens the theme picker.
+      if (state.themePickerOpen) {
+        dispatch({ type: "setThemePickerOpen", open: false });
+      } else {
+        themeBeforePickRef.current = state.themeName;
+        themePickedRef.current = false;
+        dispatch({ type: "setThemePickerOpen", open: true });
+      }
       return;
     }
     if (key.ctrl && (input === "l" || input === "L")) {
@@ -4318,56 +4391,67 @@ const App: React.FC<{
   return (
     <Box flexDirection="column" flexGrow={1}>
       <ThemeProvider themeName={state.themeName}>
-        <AethercodeThemeProvider store={themeStore}>
-          {state.themePickerOpen ? (
-            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-              <ThemePicker
-                themes={pickerThemes}
-                current={pickerCurrent}
-                onClose={() => dispatch({ type: "setThemePickerOpen", open: false })}
-                onSelect={(name) => {
-                  void themeStore.setActive(name).then(() => {
-                    dispatch({ type: "setThemesPickedName", name });
-                    dispatch({ type: "setThemePickerOpen", open: false });
-                    dispatch({ type: "pushToast", kind: "info", text: `theme → ${name}` });
-                  });
-                }}
-                onPreview={(name) => {
-                  void themeStore.setActive(name);
-                }}
-              />
-            </Box>
-          ) : state.paletteOpen ? (
-            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-              <CommandPalette
-                onClose={() => dispatch({ type: "setPaletteOpen", open: false })}
-                onSelect={(cmd) => dispatch({ type: "setInput", text: cmd + " " })}
-              />
-            </Box>
-          ) : state.tutorialOpen ? (
-            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-              <Welcome
-                model={state.model}
-                cwd={currentCwd}
-                sessionId={state.sessionId}
-                mode={state.permissionMode}
-                bankStatus={bankStatus ?? undefined}
-              />
-            </Box>
-          ) : state.logViewerOpen ? (
-            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-              <LogViewer
-                entries={state.logBuffer}
-                onClose={() => dispatch({ type: "setLogViewerOpen", open: false })}
-              />
-            </Box>
-          ) : state.helpVisible ? (
-            <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
-              <HelpOverlay />
-            </Box>
-          ) : (
-            <Box flexDirection="row" flexGrow={1}>
-              {/* R362: the sidebar and the right column are suppressed
+        {state.themePickerOpen ? (
+          <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+            <ThemePicker
+              themes={pickerThemes}
+              current={pickerCurrent}
+              onClose={() => {
+                // Dismissing the picker without choosing puts the
+                // screen back where it was: the preview wrote
+                // `themeName` as the user moved, so leaving it
+                // would make "Esc" mean "keep whatever I happened
+                // to hover".
+                if (!themePickedRef.current) {
+                  dispatch({ type: "setTheme", theme: themeBeforePickRef.current });
+                }
+                dispatch({ type: "setThemePickerOpen", open: false });
+              }}
+              onSelect={(name) => {
+                const theme = resolveThemeName(name);
+                if (!theme) return;
+                themePickedRef.current = true;
+                dispatch({ type: "setTheme", theme });
+                dispatch({ type: "pushToast", kind: "info", text: `theme → ${theme}` });
+              }}
+              onPreview={(name) => {
+                const theme = resolveThemeName(name);
+                if (!theme) return;
+                dispatch({ type: "setTheme", theme });
+              }}
+            />
+          </Box>
+        ) : state.paletteOpen ? (
+          <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+            <CommandPalette
+              onClose={() => dispatch({ type: "setPaletteOpen", open: false })}
+              onSelect={(cmd) => dispatch({ type: "setInput", text: cmd + " " })}
+            />
+          </Box>
+        ) : state.tutorialOpen ? (
+          <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+            <Welcome
+              model={state.model}
+              cwd={currentCwd}
+              sessionId={state.sessionId}
+              mode={state.permissionMode}
+              bankStatus={bankStatus ?? undefined}
+            />
+          </Box>
+        ) : state.logViewerOpen ? (
+          <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+            <LogViewer
+              entries={state.logBuffer}
+              onClose={() => dispatch({ type: "setLogViewerOpen", open: false })}
+            />
+          </Box>
+        ) : state.helpVisible ? (
+          <Box flexDirection="column" flexGrow={1} justifyContent="center" alignItems="center">
+            <HelpOverlay />
+          </Box>
+        ) : (
+          <Box flexDirection="row" flexGrow={1}>
+            {/* R362: the sidebar and the right column are suppressed
               while a panel is open. Two reasons, both hard:
               (1) the right column embeds its own TodoBoard, whose
                   `useInput` would receive ↑/↓/j/k a second time and
@@ -4378,89 +4462,88 @@ const App: React.FC<{
               pinned `sidebarVisible ?` / `rightPanelVisible ?`
               ternaries so both remain the single source of truth
               for whether the column is toggled on. */}
-              {state.sidebarVisible ? (
-                state.activePanel ? null : (
-                  <Sidebar
-                    width={26}
-                    cwd={currentCwd}
-                    sessionId={state.sessionId}
-                    recentQueries={state.history}
-                    tasks={state.recentTasks}
-                  />
-                )
-              ) : null}
-              {state.subagentPanelOpen ? (
-                // live list of recent subagent jobs.
-                // Sits to the right of the sidebar (or the
-                // main column when the sidebar is hidden).
-                // Width is capped so the main column keeps
-                // enough horizontal space; on a 120-col
-                // terminal the panel is ~42 cols.
-                // NOTE: do NOT pass `now={Date.now()}` here
-                // — that produces a fresh value every render,
-                // which forces a re-render of the whole
-                // SubagentPanel subtree (and Ink re-paints the
-                // row), which the user perceives as a visible
-                // "jumping" of the layout. The panel reads
-                // `Date.now()` internally for its duration
-                // counters; that only re-runs when something
-                // else (the panel's own setInterval) ticks.
-                <SubagentPanel
-                  state={state}
-                  width={Math.max(
-                    36,
-                    Math.min(
-                      54,
-                      Math.floor(
-                        (typeof process.stdout.columns === "number"
-                          ? process.stdout.columns
-                          : 120) * 0.35,
-                      ),
-                    ),
-                  )}
-                  onCancel={(jobId) => cancelSubagent(jobId, state, client, dispatch)}
-                  onInsert={(jobId) => insertSubagentResult(jobId, state, dispatch)}
-                  onView={(jobId) => {
-                    // R214: 'v' → loadSession + viewSubagent
-                    void client
-                      .request("loadSession", { sessionId: jobId })
-                      .then(() => dispatch({ type: "viewSubagent", jobId }))
-                      .catch((e) =>
-                        dispatch({
-                          type: "pushToast",
-                          kind: "err",
-                          text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
-                        }),
-                      );
-                  }}
+            {state.sidebarVisible ? (
+              state.activePanel ? null : (
+                <Sidebar
+                  width={26}
+                  cwd={currentCwd}
+                  sessionId={state.sessionId}
+                  recentQueries={state.history}
+                  tasks={state.recentTasks}
                 />
-              ) : null}
-              <Box flexDirection="column" flexGrow={1}>
-                {/* toast notifications sit above the header so
+              )
+            ) : null}
+            {state.subagentPanelOpen ? (
+              // live list of recent subagent jobs.
+              // Sits to the right of the sidebar (or the
+              // main column when the sidebar is hidden).
+              // Width is capped so the main column keeps
+              // enough horizontal space; on a 120-col
+              // terminal the panel is ~42 cols.
+              // NOTE: do NOT pass `now={Date.now()}` here
+              // — that produces a fresh value every render,
+              // which forces a re-render of the whole
+              // SubagentPanel subtree (and Ink re-paints the
+              // row), which the user perceives as a visible
+              // "jumping" of the layout. The panel reads
+              // `Date.now()` internally for its duration
+              // counters; that only re-runs when something
+              // else (the panel's own setInterval) ticks.
+              <SubagentPanel
+                state={state}
+                width={Math.max(
+                  36,
+                  Math.min(
+                    54,
+                    Math.floor(
+                      (typeof process.stdout.columns === "number" ? process.stdout.columns : 120) *
+                        0.35,
+                    ),
+                  ),
+                )}
+                onCancel={(jobId) => cancelSubagent(jobId, state, client, dispatch)}
+                onInsert={(jobId) => insertSubagentResult(jobId, state, dispatch)}
+                onView={(jobId) => {
+                  // R214: 'v' → loadSession + viewSubagent
+                  void client
+                    .request("loadSession", { sessionId: jobId })
+                    .then(() => dispatch({ type: "viewSubagent", jobId }))
+                    .catch((e) =>
+                      dispatch({
+                        type: "pushToast",
+                        kind: "err",
+                        text: `view subagent failed: ${(e as any)?.message ?? String(e)}`,
+                      }),
+                    );
+                }}
+              />
+            ) : null}
+            <Box flexDirection="column" flexGrow={1}>
+              {/* toast notifications sit above the header so
                 they don't compete with the scrollback for space. */}
-                <ToastStack toasts={state.toasts} />
-                {/* layout presets control which sub-components are
+              <ToastStack toasts={state.toasts} />
+              {/* layout presets control which sub-components are
                 rendered. "full" = everything; "minimal" = no header
                 / statusbar; "focus" = scrollback + input only. */}
-                {state.layout !== "focus" && state.layout !== "minimal" ? (
-                  <Header state={state} cwd={currentCwd} />
-                ) : null}
-                {/* R700 — SDD mode banner. Renders only when
+              {state.layout !== "focus" && state.layout !== "minimal" ? (
+                <Header state={state} cwd={currentCwd} />
+              ) : null}
+              {/* R700 — SDD mode banner. Renders only when
                 state.sddRun is non-null (i.e. an active SDD run
                 exists). Sits above the scrollback so the user
                 always sees the current phase + chip strip. */}
-                {state.sddRun ? <SddMode run={state.sddRun} cwd={currentCwd} /> : null}
-                {sddReview ? (
-                  <Box flexDirection="column" paddingX={1}>
-                    <SddReview
-                      artefactPath={sddReview.path}
-                      currentLines={sddReview.lines}
-                      previousLines={sddReview.previousLines}
-                      maxLines={60}
-                    />
-                  </Box>
-                ) : null}
-                {/* R362 — the open panel. Deliberately placed HERE,
+              {state.sddRun ? <SddMode run={state.sddRun} cwd={currentCwd} /> : null}
+              {sddReview ? (
+                <Box flexDirection="column" paddingX={1}>
+                  <SddReview
+                    artefactPath={sddReview.path}
+                    currentLines={sddReview.lines}
+                    previousLines={sddReview.previousLines}
+                    maxLines={60}
+                  />
+                </Box>
+              ) : null}
+              {/* R362 — the open panel. Deliberately placed HERE,
                 above the scrollback and NOT as a full-screen
                 replacement: the Header, the scrollback, the input
                 box and the status bar all stay mounted and visible
@@ -4469,97 +4552,97 @@ const App: React.FC<{
                 above). The user can always see their draft and that
                 the session is alive while a panel is open; only the
                 keyboard is handed over. */}
-                {state.activePanel && meta ? (
-                  <Box flexDirection="column" paddingX={1}>
-                    <PanelShell
-                      title={meta.title}
-                      // Only TodoBoard lacks a keymap line of its own;
-                      // for the other eight the component prints it.
-                      hint={state.activePanel === "todos" ? meta.hint : undefined}
-                      width={panelWidth}
-                      status={state.panelStatus}
-                      loadingLabel={meta.loading}
-                      onClose={closePanel}
-                    >
-                      {panelBody()}
-                    </PanelShell>
-                  </Box>
-                ) : null}
-                <Box flexDirection="row" flexGrow={1}>
-                  <Box flexDirection="column" flexGrow={1}>
-                    <Scrollback
-                      turns={state.turns}
-                      height={1000}
-                      showWelcome={showWelcome}
-                      welcomeCtx={{
-                        model: state.model,
-                        cwd: currentCwd,
-                        sessionId: state.sessionId,
-                        mode: state.permissionMode,
-                      }}
-                      collapseAll={state.collapseAll}
-                      onToggleTurn={(id) => dispatch({ type: "toggleTurn", id })}
-                      lastStopReason={state.lastStopReason}
-                      lastStopKind={state.lastStopKind}
-                      lastError={state.lastError}
-                      showThinking={state.showThinking}
-                      permissionAsk={state.permissionAsk}
-                      decisionCardExpanded={state.decisionCardExpanded}
-                    />
-                    {/* inline subagent spawn cards. The host
+              {state.activePanel && meta ? (
+                <Box flexDirection="column" paddingX={1}>
+                  <PanelShell
+                    title={meta.title}
+                    // Only TodoBoard lacks a keymap line of its own;
+                    // for the other eight the component prints it.
+                    hint={state.activePanel === "todos" ? meta.hint : undefined}
+                    width={panelWidth}
+                    status={state.panelStatus}
+                    loadingLabel={meta.loading}
+                    onClose={closePanel}
+                  >
+                    {panelBody()}
+                  </PanelShell>
+                </Box>
+              ) : null}
+              <Box flexDirection="row" flexGrow={1}>
+                <Box flexDirection="column" flexGrow={1}>
+                  <Scrollback
+                    turns={state.turns}
+                    height={1000}
+                    showWelcome={showWelcome}
+                    welcomeCtx={{
+                      model: state.model,
+                      cwd: currentCwd,
+                      sessionId: state.sessionId,
+                      mode: state.permissionMode,
+                    }}
+                    collapseAll={state.collapseAll}
+                    onToggleTurn={(id) => dispatch({ type: "toggleTurn", id })}
+                    lastStopReason={state.lastStopReason}
+                    lastStopKind={state.lastStopKind}
+                    lastError={state.lastError}
+                    showThinking={state.showThinking}
+                    permissionAsk={state.permissionAsk}
+                    decisionCardExpanded={state.decisionCardExpanded}
+                  />
+                  {/* inline subagent spawn cards. The host
                     also calls onOpen to switch the active
                     transcript to the subagent via loadSession
                     + the viewSubagent reducer action. */}
-                    <SubagentSpawnCards
-                      cards={Object.entries(state.subagentSpawnCards).map(([eventId, card]) => ({
-                        eventId,
-                        card,
-                      }))}
-                      onOpen={(subagentId) => {
-                        void client
-                          .request("loadSession", { sessionId: subagentId })
-                          .then(() => dispatch({ type: "viewSubagent", jobId: subagentId }))
-                          .catch((e) =>
-                            dispatch({
-                              type: "pushToast",
-                              kind: "err",
-                              text: `loadSession(${subagentId}) failed: ${e?.message ?? e}`,
-                            }),
-                          );
-                      }}
-                      onDismiss={(subagentId) => {
-                        const eid = Object.entries(state.subagentSpawnCards).find(
-                          ([, c]) => c.subagentId === subagentId,
-                        )?.[0];
-                        if (eid) dispatch({ type: "removeSubagentSpawnCard", eventId: eid });
-                      }}
-                      width={Math.max(
-                        36,
-                        Math.min(
-                          72,
-                          Math.floor(
-                            (typeof process.stdout.columns === "number"
-                              ? process.stdout.columns
-                              : 120) * 0.6,
-                          ),
-                        ),
-                      )}
-                    />
-                    {state.showSearch ? (
-                      <SearchBar
-                        turns={state.turns}
-                        initial={state.searchQuery}
-                        onClose={() => dispatch({ type: "showSearch", show: false })}
-                        onCommit={(matches) =>
+                  <SubagentSpawnCards
+                    cards={Object.entries(state.subagentSpawnCards).map(([eventId, card]) => ({
+                      eventId,
+                      card,
+                    }))}
+                    onOpen={(subagentId) => {
+                      void client
+                        .request("loadSession", { sessionId: subagentId })
+                        .then(() => dispatch({ type: "viewSubagent", jobId: subagentId }))
+                        .catch((e) =>
                           dispatch({
-                            type: "setSearchQuery",
-                            query: state.searchQuery,
-                            matches,
-                          })
-                        }
-                      />
-                    ) : null}
-                    {/*
+                            type: "pushToast",
+                            kind: "err",
+                            text: `loadSession(${subagentId}) failed: ${e?.message ?? e}`,
+                          }),
+                        );
+                    }}
+                    onDismiss={(subagentId) => {
+                      const eid = Object.entries(state.subagentSpawnCards).find(
+                        ([, c]) => c.subagentId === subagentId,
+                      )?.[0];
+                      if (eid) dispatch({ type: "removeSubagentSpawnCard", eventId: eid });
+                    }}
+                    width={Math.max(
+                      36,
+                      Math.min(
+                        72,
+                        Math.floor(
+                          (typeof process.stdout.columns === "number"
+                            ? process.stdout.columns
+                            : 120) * 0.6,
+                        ),
+                      ),
+                    )}
+                  />
+                  {state.showSearch ? (
+                    <SearchBar
+                      turns={state.turns}
+                      initial={state.searchQuery}
+                      onClose={() => dispatch({ type: "showSearch", show: false })}
+                      onCommit={(matches) =>
+                        dispatch({
+                          type: "setSearchQuery",
+                          query: state.searchQuery,
+                          matches,
+                        })
+                      }
+                    />
+                  ) : null}
+                  {/*
                   R362 — the queued-prompt strip.
                   Claude Code's contract is explicit: it "lists the queued
                   entries in the conversation until it sends them". A queue
@@ -4568,7 +4651,7 @@ const App: React.FC<{
                   strip sits directly above the input box, shows position and
                   a truncated preview, and offers a way to drop one.
                 */}
-                    {/*
+                  {/*
                   R363 — the interrupt affordance.
                   Claude Code's contract: "Esc explicitly stops the
                   current response or tool call mid-turn so you can
@@ -4583,130 +4666,127 @@ const App: React.FC<{
                   "esc to interrupt" then would be a lie (Esc is
                   latched) and showing nothing would look broken.
                 */}
-                    {state.submitting && !state.pendingPrompts.length ? (
-                      <Box paddingX={1}>
-                        <Text color={state.cancelRequested ? t.warn : t.dim}>
-                          {state.cancelRequested
-                            ? "stopping... (interrupt sent)"
-                            : "esc to interrupt"}
-                        </Text>
-                      </Box>
-                    ) : null}
-                    {state.submitting && state.pendingPrompts.length > 0 ? (
-                      <Box paddingX={1}>
-                        <Text color={state.cancelRequested ? t.warn : t.dim}>
-                          {state.cancelRequested
-                            ? "stopping... (interrupt sent)"
-                            : "esc to interrupt (press again to drop the queue)"}
-                        </Text>
-                      </Box>
-                    ) : null}
-                    {state.pendingPrompts.length > 0 ? (
-                      <Box flexDirection="column" paddingX={1}>
-                        {state.pendingPrompts.map((p, i) => (
-                          <Box key={`${i}-${p.slice(0, 12)}`} flexDirection="row">
-                            <Text color={t.dim}>
-                              {i === 0 ? "queued next" : `queued ${i + 1}`}
-                              {"  "}
-                            </Text>
-                            <Text color={t.accent} bold>
-                              {truncateForQueue(p)}
-                            </Text>
-                            <Box flexGrow={1} />
-                            {i === 0 ? (
-                              <Text color={t.dim}>{"  (esc drops the queue)"}</Text>
-                            ) : null}
-                          </Box>
-                        ))}
-                      </Box>
-                    ) : null}
-                    <InputBox
+                  {state.submitting && !state.pendingPrompts.length ? (
+                    <Box paddingX={1}>
+                      <Text color={state.cancelRequested ? t.warn : t.dim}>
+                        {state.cancelRequested
+                          ? "stopping... (interrupt sent)"
+                          : "esc to interrupt"}
+                      </Text>
+                    </Box>
+                  ) : null}
+                  {state.submitting && state.pendingPrompts.length > 0 ? (
+                    <Box paddingX={1}>
+                      <Text color={state.cancelRequested ? t.warn : t.dim}>
+                        {state.cancelRequested
+                          ? "stopping... (interrupt sent)"
+                          : "esc to interrupt (press again to drop the queue)"}
+                      </Text>
+                    </Box>
+                  ) : null}
+                  {state.pendingPrompts.length > 0 ? (
+                    <Box flexDirection="column" paddingX={1}>
+                      {state.pendingPrompts.map((p, i) => (
+                        <Box key={`${i}-${p.slice(0, 12)}`} flexDirection="row">
+                          <Text color={t.dim}>
+                            {i === 0 ? "queued next" : `queued ${i + 1}`}
+                            {"  "}
+                          </Text>
+                          <Text color={t.accent} bold>
+                            {truncateForQueue(p)}
+                          </Text>
+                          <Box flexGrow={1} />
+                          {i === 0 ? <Text color={t.dim}>{"  (esc drops the queue)"}</Text> : null}
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : null}
+                  <InputBox
+                    state={state}
+                    onChange={(t) => dispatch({ type: "setInput", text: t })}
+                    onSubmit={handleSubmit}
+                  />
+                  {state.layout === "full" ? (
+                    <StatusBar
                       state={state}
-                      onChange={(t) => dispatch({ type: "setInput", text: t })}
-                      onSubmit={handleSubmit}
+                      onContinue={() => {
+                        // R375: the real thing. Before this, all three
+                        // buttons called `task/resume` / `task/pause` /
+                        // `task/kill` — none of which this daemon
+                        // registers — and the rejection was swallowed, so
+                        // the buttons did nothing.
+                        void pauseAutoContinue(false);
+                      }}
+                      onPause={() => {
+                        void pauseAutoContinue(true);
+                      }}
+                      onStop={() => {
+                        void stopActiveRun();
+                      }}
                     />
-                    {state.layout === "full" ? (
-                      <StatusBar
-                        state={state}
-                        onContinue={() => {
-                          // R375: the real thing. Before this, all three
-                          // buttons called `task/resume` / `task/pause` /
-                          // `task/kill` — none of which this daemon
-                          // registers — and the rejection was swallowed, so
-                          // the buttons did nothing.
-                          void pauseAutoContinue(false);
-                        }}
-                        onPause={() => {
-                          void pauseAutoContinue(true);
-                        }}
-                        onStop={() => {
-                          void stopActiveRun();
-                        }}
-                      />
-                    ) : null}
-                  </Box>
-                  {/* T-6-15: right column with session details +
+                  ) : null}
+                </Box>
+                {/* T-6-15: right column with session details +
                   todo board + tokens. Toggleable with Ctrl+D.
                   R362: hidden while a panel is open — it mounts a
                   second TodoBoard whose keys would fight the panel's. */}
-                  {state.rightPanelVisible ? (
-                    /* R362: the `activePanel` guard is nested inside the
+                {state.rightPanelVisible ? (
+                  /* R362: the `activePanel` guard is nested inside the
                    pinned ternary — see the note on the sidebar. */
-                    state.activePanel ? null : (
-                      <Box
-                        flexDirection="column"
-                        width={Math.max(
-                          28,
-                          Math.min(
-                            46,
-                            Math.floor(
-                              (typeof process.stdout.columns === "number"
-                                ? process.stdout.columns
-                                : 120) * 0.25,
-                            ),
+                  state.activePanel ? null : (
+                    <Box
+                      flexDirection="column"
+                      width={Math.max(
+                        28,
+                        Math.min(
+                          46,
+                          Math.floor(
+                            (typeof process.stdout.columns === "number"
+                              ? process.stdout.columns
+                              : 120) * 0.25,
                           ),
-                        )}
-                        borderStyle="single"
-                        borderColor="gray"
-                      >
-                        <SessionDetailsPanel
-                          details={{
-                            id: state.sessionId,
-                            title: state.sessionId,
-                            cwd: currentCwd,
-                            model: state.model,
-                            // Use 0 as the sentinel for "unknown /
-                            // not started yet" so the panel's
-                            // formatTimeAgo() returns "—"
-                            // instead of chasing Date.now() on
-                            // every parent re-render. The
-                            // startedAt / lastActiveAt fields
-                            // are stamped by the daemon's
-                            // session/show RPC; until that
-                            // lands, the panel shows "—".
-                            startedAt: 0,
-                            lastActiveAt: 0,
-                            state: state.status,
-                            tokensIn: state.inputTokens ?? 0,
-                            tokensOut: state.outputTokens ?? 0,
-                            messageCount: state.turns.length,
-                          }}
-                          todoSummary={null}
-                        />
-                        <Text dimColor>{"─".repeat(20)}</Text>
-                        <TodoBoard
-                          todos={state.todos}
-                          currentTodoId={state.currentTodoId}
-                          maxRows={8}
-                        />
-                      </Box>
-                    )
-                  ) : null}
-                </Box>
+                        ),
+                      )}
+                      borderStyle="single"
+                      borderColor="gray"
+                    >
+                      <SessionDetailsPanel
+                        details={{
+                          id: state.sessionId,
+                          title: state.sessionId,
+                          cwd: currentCwd,
+                          model: state.model,
+                          // Use 0 as the sentinel for "unknown /
+                          // not started yet" so the panel's
+                          // formatTimeAgo() returns "—"
+                          // instead of chasing Date.now() on
+                          // every parent re-render. The
+                          // startedAt / lastActiveAt fields
+                          // are stamped by the daemon's
+                          // session/show RPC; until that
+                          // lands, the panel shows "—".
+                          startedAt: 0,
+                          lastActiveAt: 0,
+                          state: state.status,
+                          tokensIn: state.inputTokens ?? 0,
+                          tokensOut: state.outputTokens ?? 0,
+                          messageCount: state.turns.length,
+                        }}
+                        todoSummary={null}
+                      />
+                      <Text dimColor>{"─".repeat(20)}</Text>
+                      <TodoBoard
+                        todos={state.todos}
+                        currentTodoId={state.currentTodoId}
+                        maxRows={8}
+                      />
+                    </Box>
+                  )
+                ) : null}
               </Box>
             </Box>
-          )}
-        </AethercodeThemeProvider>
+          </Box>
+        )}
       </ThemeProvider>
     </Box>
   );

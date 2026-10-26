@@ -166,14 +166,13 @@ function emittedSentinels() {
  * use to route a sentinel: `case "__X__":`, `=== "__X__"`,
  * `=== '__X__'`, and `startsWith("__X__:")` for the parameterised ones.
  * A bare mention in a comment or a help string no longer counts.
+ *
+ * <p>R386: the definition moved to `claimed-by.mjs`. R362 wrote it,
+ * R385 wrote the same thing again, and R386 would have written a
+ * third — the copies were byte-identical, which is exactly when a
+ * drift goes unnoticed until it matters.
  */
-function claimedBy(src, sentinel) {
-  const esc = sentinel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `(?:case\\s+['"\`]${esc}['"\`]|===\\s*['"\`]${esc}|\\.startsWith\\(\\s*['"\`]${esc})`,
-  ).test(src);
-}
-
+const { claimedBy } = await import("./claimed-by.mjs");
 test("every panel sentinel commands.ts can emit has a registry entry", () => {
   const emitted = emittedSentinels();
 

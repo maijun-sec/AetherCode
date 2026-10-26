@@ -164,19 +164,11 @@ function parsePanelByIntent(src) {
  * Does this renderer CLAIM the sentinel, rather than merely mention
  * it?
  *
- * Verbatim from r362's `claimedBy`: a bare mention in a comment or a
- * help string is not a claim, and a short-circuited branch
- * (`false && local === "__X__"`) is invisible to a source pin by
- * construction. The four forms a renderer actually routes on are
- * `case "__X__":`, `=== "__X__"`, `=== '__X__'` and
- * `startsWith("__X__")`.
+ * The definition lives in `claimed-by.mjs` — R362 wrote it, R385
+ * wrote it again, and R386 would have written a third. The copies
+ * were byte-identical, which is exactly when a drift goes unnoticed.
  */
-function claimedBy(src, sentinel) {
-  const esc = sentinel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `(?:case\\s+['"\`]${esc}['"\`]|===\\s*['"\`]${esc}|\\.startsWith\\(\\s*['"\`]${esc})`,
-  ).test(src);
-}
+const { claimedBy } = await import("./claimed-by.mjs");
 
 const PANEL_BY_INTENT = parsePanelByIntent(tuiCode);
 const PANEL_CASES = caseLabelsIn(blockAfter(tuiCode, "switch (state.activePanel)"));
