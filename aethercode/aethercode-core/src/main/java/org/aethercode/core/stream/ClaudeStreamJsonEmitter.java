@@ -239,6 +239,17 @@ public final class ClaudeStreamJsonEmitter {
         }
         if (stopReason != null) {
             frame.put("aethercode_stop_reason", stopReason);
+            // R384: the CANONICAL kind beside the decorated reason.
+            //
+            // The reason is decorated — "error: <class>: <msg>",
+            // "loop_detected: empty_tool_input (…)" — so a consumer of
+            // this protocol that wanted to know WHAT happened had to
+            // re-parse it, and every parser that did got it wrong (the
+            // TUI matched "error_" and so reported an upstream 500 as a
+            // green success). The JSON-RPC `run_end` frame already
+            // carries the kind (R383/R384); this is the SAME contract on
+            // the OTHER wire.
+            frame.put("aethercode_stop_kind", StreamEvent.bareKindOf(stopReason));
         }
         terminalEmitted = true;
         return write(frame);

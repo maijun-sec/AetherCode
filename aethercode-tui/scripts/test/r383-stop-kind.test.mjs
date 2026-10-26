@@ -62,7 +62,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { javaCode, javaMethod } from "./java-strip.mjs";
+import { javaCode, javaMethod, javaMethodContaining } from "./java-strip.mjs";
 import { codeOf } from "./strip-comments.mjs";
 import { loadTsModule } from "./load-ts-module.mjs";
 
@@ -129,16 +129,22 @@ function engineFailureKinds() {
   return kinds;
 }
 
-/** The daemon's `run_end` wire branch — the frame every client sees. */
-function runEndBranch() {
-  const body = javaMethod(
+/**
+ * The daemon's `run_end` wire frame — read from the ASSEMBLER, not
+ * from a fixed location.
+ *
+ * R384 moved the assembly out of `eventToMap` into a builder, and
+ * this extraction went RED on that change — a refactor that made the
+ * code BETTER. The lesson (R384): a contract pin must FOLLOW the
+ * implementation. So the gate locates the method that builds the
+ * frame by its MARKER, and asserts the contract on whatever that
+ * method turned out to be.
+ */
+function runEndAssembler() {
+  return javaMethodContaining(
     javaCode(readFileSync(methodsPath, "utf-8")),
-    "private static Map<String, Object> eventToMap(StreamEvent ev)",
+    'put("type", "run_end")',
   );
-  const at = body.indexOf('"run_end"');
-  if (at < 0) throw new Error("the run_end branch is gone — re-anchor this extraction");
-  const end = body.indexOf("} else if", at);
-  return body.slice(at, end < 0 ? body.length : end);
 }
 
 // =========================================================================
@@ -167,21 +173,21 @@ const ALL_SOURCES = sourceFiles();
 
 test("the daemon's run_end frame carries the canonical kind AND the verdict", () => {
   assert.ok(hasDaemon, "the daemon's Java sources are missing — the gate cannot check anything");
-  const branch = runEndBranch();
+  const assembler = runEndAssembler();
   assert.match(
-    branch,
-    /r\.put\(\s*"stopKind"\s*,\s*re\.bareKind\(\)\s*\)/,
+    assembler,
+    /r\.put\(\s*"stopKind"\s*,\s*\w+\.bareKind\(\)\s*\)/,
     "the run_end frame does not carry the engine's canonical kind — every client has to " +
       "re-parse the decorated stopReason, and every parser that did got it wrong",
   );
   assert.match(
-    branch,
-    /if\s*\(\s*re\.isErrorOutcome\(\)\s*\)/,
+    assembler,
+    /if\s*\(\s*\w+\.isErrorOutcome\(\)\s*\)/,
     "the run_end frame must take the failure bit from the engine's taxonomy " +
       "(StreamEvent.isErrorOutcome), not from a hand-rolled startsWith",
   );
   assert.match(
-    branch,
+    assembler,
     /r\.put\(\s*"isError"\s*,\s*true\s*\)/,
     "the run_end frame does not carry `isError` — the verdict is not on the wire at all",
   );

@@ -3340,14 +3340,25 @@ export const useStore = create<AppState>((set, get) => {
           typeof (ev as any).stopKind === 'string' && (ev as any).stopKind
             ? ((ev as any).stopKind as string)
             : undefined;
-        const wireFailed =
-          (ev as any).isError === true ? (wireKind ?? 'error') : undefined;
+        // R384: a verdict WITHOUT a kind must not DISCARD the precision
+        // the local list already has.
+        //
+        // R383 wired the daemon's verdict in ahead of the prefix match,
+        // and defaulted it to the generic "error" when the daemon named
+        // no kind. But a R750d..R382 daemon sends `isError` and NO
+        // `stopKind` — so every such frame lost its precise diagnosis
+        // ("no_run_end", "consumer_timeout") and the pill collapsed to
+        // "error". R384 made the daemon always send the kind, so the
+        // generic fallback is only reached when NOTHING named the
+        // failure.
+        const wireIsError = (ev as any).isError === true;
+        const wireFailed = wireIsError ? (wireKind ?? undefined) : undefined;
+        const matchedKind = stopReason
+          ? failedStopKinds.find((k) => stopReason === k
+            || stopReason.startsWith(`${k}:`) || stopReason.startsWith(`${k} `))
+          : undefined;
         const failedKind =
-          wireFailed ??
-          (stopReason
-            ? failedStopKinds.find((k) => stopReason === k
-              || stopReason.startsWith(`${k}:`) || stopReason.startsWith(`${k} `))
-            : undefined);
+          wireFailed ?? matchedKind ?? (wireIsError ? 'error' : undefined);
         if (failedKind) {
           set({
             lastFailedPrompt: get().currentInput || get().lastFailedPrompt,

@@ -123,6 +123,21 @@ describe('store — R735b failed-stopReason prefix classification', () => {
     expect(source).toMatch(/wireFailed\s*\?\?/);
   });
 
+  it('R384: the wire\'s KIND is used verbatim, and the generic "error" is the LAST resort', () => {
+    // The daemon (R384) always sends `stopKind`, so the precise kind
+    // ("no_run_end", "consumer_timeout", "loop_detected") must reach
+    // the pill. The order is: the wire's kind → the local prefix
+    // match → the generic "error".
+    expect(source).toMatch(
+      /failedKind\s*=\s*wireFailed\s*\?\?\s*matchedKind\s*\?\?\s*\(\s*wireIsError\s*\?\s*'error'\s*:\s*undefined\s*\)/,
+    );
+    // The wire's kind is NOT defaulted to "error" — a verdict without
+    // a kind must fall through to the prefix match, which still knows
+    // the precise kind. (A R750d..R382 daemon sends `isError` and no
+    // `stopKind`; defaulting to "error" there hid "no_run_end".)
+    expect(source).not.toMatch(/isError === true \? \(wireKind \?\? 'error'\)/);
+  });
+
   it('does not treat the successful-run branch as a prefix match', () => {
     // The success branch must stay exact-match: a decorated success
     // like `"stop: <something>"` should NOT be classified as failed

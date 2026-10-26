@@ -8,6 +8,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -136,9 +139,27 @@ class AetherCodeMethodsConsumerR745Test {
         assertTrue(c.contains("catch (Throwable th)"),
                 "R745: the outer catch (Throwable) must survive — it is what converts a throw "
                         + "escaping the stream into a terminal event instead of a dead run");
-        assertTrue(c.contains("endEvent.put(\"isError\", true)"),
+        // R384: the synthetic error run_end must still be MARKED as a
+        // failure, so the renderer's failed-pill bucket (R735b) keeps
+        // classifying it as one.
+        //
+        // This used to be a source-pin on the literal
+        // `endEvent.put("isError", true)`. R384 moved the frame
+        // assembly into the ONE builder, so that literal is gone — and
+        // the pin went red on a change that made the code BETTER.
+        // A contract pin must FOLLOW the implementation, so the
+        // contract is now asserted BEHAVIOURALLY, through the same
+        // builder the daemon uses: the reason the catch terminal
+        // reports must produce a frame that is marked as a failure.
+        Map<String, Object> frame = AetherCodeMethods.runEndFrame(
+                "error: java.lang.IllegalStateException: boom",
+                "synthetic");
+        assertEquals(Boolean.TRUE, frame.get("isError"),
                 "R745: the synthetic error run_end must stay marked isError so the renderer's "
                         + "failed-pill bucket (R735b) keeps classifying it as a failure");
+        assertEquals("error", frame.get("stopKind"),
+                "R745: the synthetic run_end must carry the engine's canonical kind, so a client "
+                        + "never has to re-parse the decorated reason");
     }
 
     @Test

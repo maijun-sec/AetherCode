@@ -476,6 +476,54 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   `empty_tool_input` are `ProgressLoopDetector.lastLoopKind()` values
   and travel INSIDE the decoration, never as a bare kind.**
   Doc: `docs/R383-the-verdict-comes-from-the-daemon.md`.
+- **R384** (ONE run_end frame, ONE contract): the `run_end` frame's
+  contract was written down in `AetherCodeMethods.eventToMap`, but
+  **three** code paths assembled the frame — `eventToMap` (the
+  engine's own `RunEnd`), the R745 synthetic terminal (the consumer
+  ran out of events without a `RunEnd`), and the `catch (Throwable)`
+  terminal. The two synthetic ones built the frame BY HAND and
+  **omitted `stopKind`** — the field R383 had just put on the wire.
+  Since R383 made "the verdict comes from the daemon" the RULE, a
+  client reading `isError` and expecting `stopKind` beside it got
+  `undefined` on exactly those two paths, and the desktop's wire-first
+  path collapsed the precise kind (`no_run_end`) into the generic
+  `error` — a diagnosis the user cannot act on, on exactly the paths
+  where the diagnosis matters most. There is now ONE assembler,
+  `AetherCodeMethods.runEndFrame(String, String)`: it ALWAYS carries
+  `stopKind`, and carries `isError` + `error` exactly when
+  `StreamEvent.isErrorOutcome()` says "failure" — both straight from
+  the engine's taxonomy, never a hand-rolled `startsWith`. All three
+  emitters go through it, and the stream-json `result` frame carries
+  `aethercode_stop_kind` too (the same contract on the other wire).
+  The desktop's order became: the wire's kind → the local prefix
+  match → the generic `"error"` LAST, so a R750d–R382 daemon (sends
+  `isError`, no `stopKind`) no longer loses `no_run_end` /
+  `consumer_timeout`.
+  **Lesson 1232 — a contract written down in one place and honoured in
+  three is not a contract.**
+  **Lesson 1233 — a CONTRACT pin must FOLLOW the implementation. A pin
+  that names a method goes red on a RENAME (which is not a defect), and
+  a pin that names a LOCATION goes red on a REFACTOR (which may make
+  the code better). R383's gate went red on R384's improvement for
+  exactly this reason. Pin the INVARIANT, not the spelling.**
+  **Lesson 1234 — a TRUNCATED extraction is the most expensive kind of
+  green: the body is half a method, so every `assert.match` over it
+  passes VACUOUSLY. `javaCode` blanks comments but copies string
+  literals verbatim, so a `}` inside a literal closed the method body
+  early — 978 such literals in `AetherCodeMethods.java`, 5 of 501
+  extracted methods truncated. Brace counting must skip literals.**
+  **Lesson 1235 — a scanner with no self-test has its bugs found by
+  whichever gate happens to trip over them, which is not a plan.**
+  **Lesson 1236 — fail loudly rather than lie: `javaMethodContaining`
+  reports "no enclosing method" instead of quietly returning a block
+  that is not a method.**
+  **Lesson 1237 — an INVERTED invariant is often stronger: "this code
+  must NOT hand-build a run_end frame" tolerates a rename AND catches
+  the real defect, where "this code must call X" only pins the
+  spelling.**
+  **Lesson 1238 — a verdict WITHOUT a kind must not discard the
+  precision the local list already has; the generic value goes LAST.**
+  Doc: `docs/R384-one-run-end-frame.md`.
 
 ## Watch out for (R735 additions)
 
@@ -2073,4 +2121,43 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   确认 R383 的改动真的在用户拿到手的东西里。
   见 `D:\tmp\r383-scratch\verify-zip-artifacts-r383.mjs`(一次性脚本)。
   **Lesson 1224 的邻居:产物本身也有断言。**
+
+## Watch out for (R384 additions)
+
+- **`run_end` 帧只能有一处装配。** 全 daemon 只有
+  `AetherCodeMethods.runEndFrame(String, String)` 可以写
+  `put("type", "run_end")`;三个终态(引擎自己的 `RunEnd`、R745 合成终态、
+  `catch (Throwable)`)全部走它。想加第四个终态?**调用它,别手搭帧** ——
+  手搭的帧正是当初漏掉 `stopKind` 的原因。
+  门禁 `r384-run-end-frame.test.mjs` 扫全部 main Java 源码,数这个 put 的总数。
+  **Lesson 1232。**
+- **契约钉子要跟着实现走,别钉名字、别钉位置。**
+  `javaMethodContaining(code, marker)` 按**标记**定位包含它的方法;
+  `javaMethodInfoContaining` 还能顺带把**方法名**推出来(名字从实现里推导,
+  不写死)。R383 的门禁就是把契约钉在 `eventToMap` 的 `run_end` 分支上,
+  R384 把装配挪进 builder 之后**那个门禁变红了** —— 红在一次让代码变好的
+  重构上。要钉就钉**不变量**:"这里不能手搭帧"比"这里必须调用 X"更强 ——
+  前者容忍改名,后者只钉住了写法。
+  **Lesson 1233 / 1237。**
+- **`javaMethod` 数括号时会跳过字符串字面量 —— 以前不会。**
+  `javaCode` 清注释但**原样保留字符串字面量**(门禁要靠它找 `"sessionId"`),
+  所以字面量里的 `}` 在剥离后的文本里**仍是一个右括号**。老实现天真地数,
+  会**提前关掉方法体**:方法体少一半,上面每条 `assert.match` 都**空洞地通过**
+  —— 门禁报绿,而它只读了一半方法。实测 `AetherCodeMethods.java` 有 978 处
+  含括号的字面量,全仓库 501 个方法里 5 处提取被截断。
+  现在用 `javaLiteralMask` 掩掉字面量区间。**Lesson 1234。**
+- **共享的提取原语要配自己的自测。** `scripts/test/java-strip.test.mjs`
+  钉三件事:清注释留字面量且**长度不变**、括号计数跳过字面量、
+  `javaMethodContaining` 找的是**方法**而不是最内层 block
+  (lambda、匿名类、静态初始化块都做不了它的对手)。
+  没有自测的 scanner,它的 bug 会被碰巧绊倒它的门禁发现,那不叫计划。
+  **Lesson 1235。**
+- **宁可报错,不要撒谎。** `javaMethodContaining` 找不到方法时抛
+  `no enclosing method`,而不是悄悄返回一个不是方法的块 ——
+  名字叫 `javaMethod` 却返回 block,调用方会以为自己读到了方法。
+  **Lesson 1236。**
+- **桌面的 kind 优先级:线上的 → 前缀匹配 → 通用 `"error"`(最后)。**
+  通用值放中间会吞掉精度:R750d–R382 的 daemon 发 `isError` 但不发 `stopKind`,
+  那种帧本来能靠前缀匹配答对 `no_run_end` / `consumer_timeout`。
+  **Lesson 1238。**
 

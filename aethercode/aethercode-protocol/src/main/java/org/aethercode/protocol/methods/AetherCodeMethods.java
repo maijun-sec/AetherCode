@@ -3947,14 +3947,15 @@ public class AetherCodeMethods {
                         Map<String, Object> endWrap = new LinkedHashMap<>();
                         endWrap.put("runId", runId);
                         if (_targetSid != null) endWrap.put("sessionId", _targetSid);
-                        Map<String, Object> endEvent = new LinkedHashMap<>();
-                        endEvent.put("type", "run_end");
-                        endEvent.put("stopReason",
-                                "no_run_end: consumer exited without terminal event");
-                        endEvent.put("error",
-                                "stream exhausted without a RunEnd event (R745)");
-                        endEvent.put("isError", true);
-                        endWrap.put("event", endEvent);
+                        // R384: built by the ONE frame builder, so this
+                        // synthetic terminal carries the SAME contract as
+                        // the engine's own RunEnd — `stopKind` included.
+                        // Before R384 it was assembled by hand and omitted
+                        // the kind, so a client that trusts the wire lost
+                        // the precise diagnosis on exactly this path.
+                        endWrap.put("event", runEndFrame(
+                                "no_run_end: consumer exited without terminal event",
+                                "stream exhausted without a RunEnd event (R745)"));
                         try {
                             notifier.accept(new JsonRpcNotification(
                                     org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
@@ -4027,10 +4028,6 @@ public class AetherCodeMethods {
                             org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
                             NOTIFY_LOG, errWrap));
                 }
-                // synthetic run_end so the renderer
-                // un-sticks its input box. The shape mirrors
-                // eventToMap(StreamEvent.RunEnd) plus an
-                // `error` field the renderer can surface.
                 Map<String, Object> endWrap = new LinkedHashMap<>();
                 endWrap.put("runId", runId);
                 // tag with sessionId so the desktop drops this
@@ -4038,14 +4035,15 @@ public class AetherCodeMethods {
                 // (same reasoning as the main stream_event loop
                 // above). Null-safe for legacy single-engine.
                 if (_targetSid != null) endWrap.put("sessionId", _targetSid);
-                Map<String, Object> endEvent = new LinkedHashMap<>();
-                endEvent.put("type", "run_end");
-                endEvent.put("stopReason", th.getMessage() != null && !th.getMessage().isBlank()
-                        ? "error: " + th.getMessage()
-                        : "error");
-                endEvent.put("error", th.getMessage() != null ? th.getMessage() : th.getClass().getName());
-                endEvent.put("isError", true);
-                endWrap.put("event", endEvent);
+                // R384: the ONE frame builder — the same contract as every
+                // other run_end, `stopKind` included. The shape mirrors
+                // eventToMap(StreamEvent.RunEnd) plus an `error` field the
+                // renderer can surface.
+                endWrap.put("event", runEndFrame(
+                        th.getMessage() != null && !th.getMessage().isBlank()
+                                ? "error: " + th.getMessage()
+                                : "error",
+                        th.getMessage() != null ? th.getMessage() : th.getClass().getName()));
                 notifier.accept(new JsonRpcNotification(
                         org.aethercode.protocol.jsonrpc.JsonRpcMessage.VERSION,
                         NOTIFY_STREAM_EVENT, endWrap));
@@ -8102,6 +8100,61 @@ public class AetherCodeMethods {
         return new JsonRpcProtocolException("invalid params", JsonRpcError.invalidParams(detail));
     }
 
+    /**
+     * R384: THE ONE builder for a {@code run_end} wire frame.
+     *
+     * <p>A {@code run_end} frame has a CONTRACT, and it used to be
+     * written down in {@code eventToMap} while <b>three</b> different
+     * code paths assembled the frame:
+     *
+     * <ol>
+     *   <li>{@code eventToMap} — the engine's own {@code RunEnd};</li>
+     *   <li>the R745 synthetic terminal (the consumer ran out of events
+     *       without a {@code RunEnd});</li>
+     *   <li>the {@code catch (Throwable)} terminal.</li>
+     * </ol>
+     *
+     * <p>The two synthetic ones assembled the frame by hand and
+     * <b>omitted {@code stopKind}</b> — the very field R383 put on the
+     * wire. That is not cosmetic. R383 made "the verdict comes from the
+     * daemon" the RULE, so a client that reads {@code isError} and
+     * expects a {@code stopKind} beside it gets {@code undefined} on
+     * exactly those two paths — and the desktop's wire-first path then
+     * collapses the precise kind ({@code no_run_end}) into the generic
+     * one ({@code error}), which is a diagnosis the user cannot act on.
+     *
+     * <p>So the contract is stated ONCE, here:
+     * <ul>
+     *   <li>{@code type} = {@code "run_end"};</li>
+     *   <li>{@code stopReason} — the raw, possibly decorated reason;</li>
+     *   <li>{@code stopKind} — the engine's canonical bare kind,
+     *       <b>always</b> present, so a client never has to re-parse;</li>
+     *   <li>{@code isError} + {@code error} — present exactly when the
+     *       engine's taxonomy says "failure"
+     *       ({@link StreamEvent.RunEnd#isErrorOutcome()}).</li>
+     * </ul>
+     *
+     * <p>Both the kind and the verdict come from the engine's own
+     * taxonomy — never a hand-rolled {@code startsWith} (R743's lesson).
+     *
+     * @param stopReason the raw stop reason (may be decorated)
+     * @param errorDetail a human-readable cause for the {@code error}
+     *        field; {@code null} means "use the stop reason"
+     * @return the wire frame
+     */
+    static Map<String, Object> runEndFrame(String stopReason, String errorDetail) {
+        StreamEvent.RunEnd re = new StreamEvent.RunEnd(stopReason, List.of());
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("type", "run_end");
+        r.put("stopReason", stopReason);
+        r.put("stopKind", re.bareKind());
+        if (re.isErrorOutcome()) {
+            r.put("isError", true);
+            r.put("error", errorDetail != null ? errorDetail : stopReason);
+        }
+        return r;
+    }
+
     /** Render a {@link StreamEvent} as a plain Map for the wire. */
     private static Map<String, Object> eventToMap(StreamEvent ev) {
         Map<String, Object> r = new LinkedHashMap<>();
@@ -8133,49 +8186,18 @@ public class AetherCodeMethods {
             r.put("id",   tod.id());
             r.put("text", tod.text());
         } else if (ev instanceof StreamEvent.RunEnd re) {
-            r.put("type",       "run_end");
-            r.put("stopReason", re.stopReason());
-            // R383: carry the CANONICAL kind on the wire, always.
-            //
-            // The stopReason is DECORATED — "error:
-            // WebClientResponseException$…: 500 from POST https://…",
-            // "loop_detected: empty_tool_input (4 consecutive …)" — so a
-            // client that wants to know WHAT HAPPENED has to re-parse it.
-            // Every client that did wrote its own parser, and every one of
-            // them got it wrong: the TUI matched "error_" / "_error" and
-            // so reported an upstream 500 as a green "✓ ready", while the
-            // desktop's list carried the display kinds "loop" and
-            // "max_turns" (which the engine never emits) and missed
-            // "loop_detected" entirely.
-            //
-            // The kind is already computed by the engine's own taxonomy
-            // (StreamEvent.bareKind). Put it on the wire so no client has
-            // to re-derive it — and keep the field ADDITIVE, so a client
-            // that predates it keeps working.
-            r.put("stopKind", re.bareKind());
-            // R750d: carry the failure bit on the wire.
-            //
-            // Pre-R750d this branch emitted type + stopReason and nothing
-            // else, so `isError` existed on the wire ONLY on the synthetic
-            // event that AetherCodeMethods' catch(Throwable) builds. That
-            // catch is unreachable for any throw raised INSIDE the engine:
-            // QueryEngine.tryAdvance catches it first (R735a) and returns a
-            // normal terminal RunEnd. So the single most common failure — an
-            // upstream 4xx/5xx mid-stream — arrived with no error flag at
-            // all.
-            //
-            // The desktop survived it only because its run_end handler also
-            // prefix-matches the stopReason (R735b). A third-party consumer
-            // of the stream-json protocol has no such fallback: Multica
-            // classifies success from `is_error` alone, so an upstream 500
-            // was reported as a completed run.
-            //
-            // Derived from StreamEvent's own taxonomy, not a hand-rolled
-            // startsWith — R743's lesson, applied to a fifth layer.
-            if (re.isErrorOutcome()) {
-                r.put("isError", true);
-                r.put("error", re.stopReason());
-            }
+            // R384: the run_end frame is assembled in ONE place — see
+            // {@link #runEndFrame(String, String)}. This branch used to
+            // build the frame by hand, which let the two SYNTHETIC
+            // terminals (the R745 no_run_end frame and the
+            // catch(Throwable) frame) drift away from it — and they did:
+            // they omitted `stopKind`, the very field R383 put on the
+            // wire. R383 also made "the verdict comes from the daemon"
+            // the RULE, so a client that reads `isError` and expects a
+            // `stopKind` beside it got `undefined` on exactly those two
+            // paths — and the desktop's wire-first path collapsed the
+            // precise kind ("no_run_end") into the generic one.
+            r.putAll(runEndFrame(re.stopReason(), null));
         } else if (ev instanceof StreamEvent.SideNote sn) {
             r.put("type",    "side_note");
             r.put("kind",    sn.kind());
