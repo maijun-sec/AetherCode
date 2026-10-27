@@ -81,7 +81,16 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
 
   { name: "?", group: "session", aliasOf: "help", description: "alias for /help" },
 
-  { name: "clear", group: "session", description: "clear the scrollback" },
+  {
+    name: "clear",
+    group: "session",
+    // R387: the description has to name BOTH halves. The scrollback is
+    // what the user sees; the new session is what the MODEL sees — the
+    // clear empties the view AND starts a fresh conversation on the
+    // daemon, because the view alone is a mirror (R372's replay) and a
+    // view-only clear would bring the history straight back.
+    description: "clear the scrollback and start a new session",
+  },
 
   { name: "exit", group: "session", description: "exit the TUI" },
 

@@ -107,6 +107,12 @@ import {
   runNothingInFlight,
   type RunAction,
 } from "./runControl.js";
+// R387: what `/clear` does — the daemon method that starts a fresh
+// conversation, the params it takes, and the sentence the user reads
+// afterwards. Shared with the line renderer, so the two cannot drift:
+// `/clear` used to really clear in line mode and print a no-op notice in
+// Ink mode, and the two answers for one command is the defect.
+import { runClear } from "./clearConversation.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
 import { Header } from "./components/Header.js";
@@ -1994,9 +2000,27 @@ const App: React.FC<{
       return;
     }
     if (slash?.local === "__CLEAR__") {
-      dispatch({
-        type: "log",
-        message: "(clear is a no-op in this build; restart for a fresh scrollback)",
+      // R387 — `/clear` is a REAL clear now.
+      //
+      // It used to print "(clear is a no-op in this build; restart for a
+      // fresh scrollback)" while the catalogue promised "clear the
+      // scrollback" and the LINE renderer really did clear the screen.
+      // The daemon already had the primitive (`createSession`, on both
+      // transports), so the capability was never missing — only the
+      // wiring was. This is R385's defect class: a command that works
+      // in line mode and shows a FALSE FAILURE in Ink mode.
+      //
+      // The clear is ATOMIC. The daemon has to confirm a new session
+      // BEFORE the scrollback is replaced: a view-only clear would hide
+      // a conversation the model still remembers, and the next session
+      // switch would bring the whole history back.
+      void runClear((method, params) => client.request(method, params), {
+        cwd: state.cwd,
+      }).then((r) => {
+        if (r.ok && r.sessionId) {
+          dispatch({ type: "adoptSession", sessionId: r.sessionId, turns: [] });
+        }
+        dispatch({ type: "pushToast", kind: r.ok ? "ok" : "err", text: r.message });
       });
       return;
     }

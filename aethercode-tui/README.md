@@ -108,7 +108,7 @@ The TUI auto-detects the jar in any of:
 | Command           | Action                                          |
 |-------------------|-------------------------------------------------|
 | `/help`           | show the command list                           |
-| `/clear`          | clear the scrollback (Ink: redraw; line: `\x1b[2J`) |
+| `/clear`          | clear the scrollback and start a new session (RPC: `createSession`) |
 | `/exit`           | exit the TUI                                    |
 | `/tools`          | list available tools (RPC)                      |
 | `/state`          | show engine state (RPC)                         |

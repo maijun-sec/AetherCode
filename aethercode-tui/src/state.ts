@@ -2585,6 +2585,14 @@ export function reducer(state: State, action: Action): State {
         viewHistory: [],
         lastStopReason: null,
         lastStopKind: null,
+        // R387 — the error card belongs to the conversation we just
+        // left. It describes the LAST RUN of the PREVIOUS session, and
+        // the Scrollback renders it as a dedicated card — so after a
+        // session switch (or a `/clear`) the user was looking at an
+        // error from a conversation that is no longer on screen. The
+        // card says "the run failed"; after the switch there is no run
+        // to have failed.
+        lastError: null,
         // R375 — the auto-continue flag belongs to a SESSION, so the
         // mirror must not survive a session switch. Carrying it over
         // would make the status bar say "paused" about a session whose

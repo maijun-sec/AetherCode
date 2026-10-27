@@ -6,7 +6,7 @@ Type `/` to start a command. **Tab** completes the current partial
 | Command | Round | What it does |
 |---|---|---|
 | `/help` | R31 | Show the categorised help overlay |
-| `/clear` | R31 | Clear the scrollback (note: currently a no-op in Ink TUI; restart for a fresh scrollback) |
+| `/clear` | R31 | Clear the scrollback and start a new session (RPC: `createSession`). R387: this used to be a no-op in the Ink TUI; it now really clears — in BOTH renderers, and the daemon's transcript is cleared with it, so the model does not keep the old conversation. |
 | `/exit`, `/quit`, `/q` | R31 | Exit the TUI |
 | `/tools` | R31 | List registered tools (RPC: `listTools`) |
 | `/state` | R31 | Engine state snapshot (RPC: `getState`) |

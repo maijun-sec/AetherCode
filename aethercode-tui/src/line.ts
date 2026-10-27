@@ -29,6 +29,11 @@ import { formatRewind, formatSessionTokens } from "./rpcReports.js";
 // describe the same preset differently.
 import { EFFORT_EFFECT, EFFORT_LEVELS, variantLine, type VariantInfo } from "./effort.js";
 import { describeSentinel, intentForSentinel } from "./panelIntents.js";
+// R387 — what `/clear` does: the daemon method that starts a fresh
+// conversation, its params, and the sentence the user reads afterwards.
+// Shared with the Ink renderer, so one command cannot get two different
+// answers from the two renderers.
+import { runClear } from "./clearConversation.js";
 // R370 — `/sessions` filters rows by cwd with the same comparator
 // Ink uses. See src/cwdMatch.ts for the four ways string equality
 // gets a path wrong.
@@ -4385,13 +4390,42 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       return;
     }
     if (slash?.local === "__CLEAR__") {
-      process.stdout.write("\x1b[2J\x1b[H");
-      process.stdout.write(renderSplash(displayState, noColor) + "\n");
-      // R353: hard-clear wipes the screen, so the input area's
-      // anchor row resets to right after the re-printed splash.
-      const splashLines = Math.max(1, renderSplash(displayState, noColor).split("\n").length - 1);
-      lineInput.setInputTopRow(splashLines + 1);
-      if (!rlClosed) lineInput.redraw();
+      // R387 — `/clear` really clears, in BOTH renderers.
+      //
+      // It used to wipe the screen HERE while the Ink renderer printed
+      // "(clear is a no-op in this build; restart for a fresh scrollback)".
+      // Two answers for one command is the defect (R385's class), and
+      // NEITHER of them cleared the conversation the MODEL has: the
+      // daemon's transcript was untouched, so the history came back at
+      // the next session switch. The daemon already had the primitive
+      // (`createSession`, registered on both transports), so the clear
+      // now happens where the conversation actually lives.
+      //
+      // ATOMIC: the screen is wiped only after the daemon CONFIRMS a new
+      // session. Wiping first and failing afterwards would leave the user
+      // with an empty screen and a model that still remembers everything —
+      // a clear that did not clear.
+      void runClear((method, params) => client.request(method, params), {
+        cwd: displayState.cwd,
+      }).then((r) => {
+        if (r.ok && r.sessionId) {
+          // The conversation moved to a new session: adopt its id, drop
+          // the turns of the one we left, and wipe the screen.
+          displayState = { ...displayState, sessionId: r.sessionId };
+          turnsBuffer.length = 0;
+          process.stdout.write("\x1b[2J\x1b[H");
+          process.stdout.write(renderSplash(displayState, noColor) + "\n");
+          // R353: hard-clear wipes the screen, so the input area's
+          // anchor row resets to right after the re-printed splash.
+          const splashLines = Math.max(
+            1,
+            renderSplash(displayState, noColor).split("\n").length - 1,
+          );
+          lineInput.setInputTopRow(splashLines + 1);
+        }
+        logAbove(colorize(r.message, r.ok ? C.green : C.red, noColor));
+        if (!rlClosed) lineInput.redraw();
+      });
       return;
     }
     if (slash?.local === "__HISTORY__") {

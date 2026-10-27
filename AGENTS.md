@@ -612,6 +612,48 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   written once; find the second copy and fold it into a shared module
   before writing the third.**
   Doc: `docs/R386-the-theme-you-pick-is-the-theme-you-see.md`.
+- **R387** (`/clear` must really clear, and both renderers must say the
+  same thing): `/clear` was the only command whose CATALOGUE entry
+  ("clear the scrollback"), whose LINE renderer (a real `\x1b[2J` wipe)
+  and whose INK renderer (`"(clear is a no-op in this build; restart for
+  a fresh scrollback)"`) said three different things. The Ink half was
+  HONEST — R378 deferred it as "another honest gap" — and it was still
+  broken, because the capability was never missing: the daemon already
+  had `createSession` registered on BOTH transports. And clearing the
+  VIEW alone would have been a FALSE CLEAR: `state.turns` is a MIRROR of
+  the daemon's transcript (R372 replays `getTranscript` into it), so the
+  model would still remember the conversation, the user could not see it,
+  and the next session switch would bring the whole history back. Now ONE
+  module (`src/clearConversation.ts`) owns the method, the params, the
+  session-id extraction and the outcome sentence; BOTH renderers call
+  `runClear`, the clear is ATOMIC (the daemon confirms a new session
+  BEFORE the scrollback is replaced — otherwise a failure leaves an empty
+  screen with a model that still remembers everything), and a refused or
+  malformed answer is a FAILURE that never invents a session id. The
+  daemon was NOT changed: `createSession` is non-destructive, so the old
+  conversation is still recoverable from `/sessions` — a new
+  `clearTranscript` RPC would have been MORE direct and strictly WORSE.
+  `adoptSession` now also drops the PREVIOUS conversation's error card.
+  **Lesson 1266 — an honest "I did not do it" is not the same as "it may
+  not be done": when the capability already exists, a refusal only
+  repackages the defect.**
+  **Lesson 1267 — the view is not the session: clearing the mirror brings
+  the history back.**
+  **Lesson 1268 — a "clear" must be atomic: confirm first, replace
+  second.**
+  **Lesson 1269 — changing the code is not changing the behaviour: one
+  mutation needle hit the wrong line and the gate stayed green by
+  luck.**
+  **Lesson 1270 — a behaviour description in a document is an assertion
+  too: the TUI README claimed "Ink: redraw" for a path that never
+  redrew.**
+  **Lesson 1271 — naming a daemon method is a contract; naming a LOCAL
+  function is not: pin the MODULE, not the symbol (a pin on a name goes
+  red on a rename).**
+  **Lesson 1272 — do not touch the daemon when an existing RPC already has
+  the right semantics: `createSession` is non-destructive, a new
+  `clearTranscript` would have destroyed the conversation.**
+  Doc: `docs/R387-clear-starts-a-fresh-conversation.md`.
 
 ## Watch out for (R735 additions)
 
@@ -2332,4 +2374,44 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
 - **`aethercode-themes` 包还在,但 TUI 的 `src/` 里已经没人用它。**
   包本身留在 `package.json` 和磁盘上(`t457-e2e-smoke.test.mjs` 仍断言它
   存在并导出 `ThemeStore`)。**已知后续项**。
+
+## Watch out for (R387 additions)
+
+- **`/clear` 的语义只写在 `aethercode-tui/src/clearConversation.ts`。**
+  `CLEAR_METHOD`(`createSession`)、`clearParams(cwd)`、`newSessionIdOf(result)`、
+  `clearOutcome(ok, ctx)`、`runClear(request, ctx)` —— 方法名和**措辞**都只在这
+  一个文件里。`tui.tsx` 和 `line.ts` 都**从它导入**再调用,不许各自写一份。
+  门禁 `r387-clear-conversation.test.mjs` §4 查三件事:两个渲染器都从共享模块
+  导入**并调用**它;旧的 no-op 文案在**整棵树**里消失(反向不变量);
+  方法名和措辞各自**只有一个写点**。
+- **门禁按"模块" pin,不按"函数名" pin。**
+  §4 解析出渲染器**导入的那个绑定**再检查它被调用。按名字 pin 会在**改名**时
+  变红,而改名不是缺陷(R384, Lesson 1233)。**Lesson 1271。**
+- **"清空"必须原子:daemon 确认 → 才换视图。**
+  反过来(先清屏再发 RPC)失败了就得到**假清空**:屏幕空的,模型还记得一切,
+  而且这次连"清过"都没成功。失败时**什么都不清**,只说原因。
+  `runClear` 只在 `newSessionIdOf` 拿到**真的** id 时才返回 `ok:true` ——
+  被拒绝的、畸形的结果都算失败,**绝不编一个 id**。**Lesson 1268。**
+- **只清视图 = 假清空。**
+  `state.turns` 是 daemon transcript 的**镜像**(R372 用 `getTranscript` 重放),
+  所以清镜像会让模型还记得、用户看不见、下次切会话整段回来。
+  **Lesson 1267。**
+- **诚实的"没做"不等于"可以不做"。**
+  Ink 侧那句 "(clear is a no-op in this build…)" 是**诚实的**,R378 也正因为它
+  诚实才把这条记成"另一个诚实的缺口"推迟了 —— 但能力**一直都在**
+  (`createSession` 两条传输上都有)。诚实的降级是给**真没有**的能力用的。
+  **Lesson 1266。**
+- **能不动 daemon 就不动。**
+  `createSession` 语义正好而且**非破坏性**(旧对话还能从 `/sessions` 捡回来);
+  自己加一个 `clearTranscript` 会更"直接",但它会**销毁**对话。
+  **Lesson 1272。**
+- **文档里的"行为描述"也是断言。**
+  `aethercode-tui/README.md` 写 "Ink: redraw",而 Ink **从来没有** redraw 过;
+  用户手册写 "currently a no-op",现在也不准了(而且"restart" 也不管用 ——
+  重启会**重放** transcript)。三份都按真相对齐了。**Lesson 1270。**
+- **变异 needle 打错行 = 门禁的假绿。**
+  R387 电池第一版有个 HOLE:needle 打在 `id.trim()` 上,可真正拦下畸形 id 的
+  是**上一行**的 `typeof id !== "string"` —— 代码变了,**行为没变**。
+  改掉 needle(拆掉 id 的类型收窄)才真的被抓。
+  **改了代码不等于改了行为,门禁保持绿可能是运气。Lesson 1269。**
 

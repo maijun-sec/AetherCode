@@ -316,7 +316,7 @@ compact/{status,run}
 | 命令 | 行为 |
 |------|------|
 | `/help` / `/?` | 列出所有命令 (还显示 50+ 命令) |
-| `/clear` | 清 scrollback |
+| `/clear` | 清 scrollback，并开一个新 session（RPC: `createSession`）——模型的上下文也一起清掉 |
 | `/exit` / `/quit` / `/q` | 退出 TUI |
 | `/history` | 弹输入历史 |
 | `/stats` | 当前 session 的 token / cost |
