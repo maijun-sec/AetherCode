@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Mutation harness for r374-update-panel.test.mjs — NOT part of npm test.
 // Run:  node scripts/test/r374-mutate.mjs
 //
@@ -546,8 +551,17 @@ const CASES = [
     [
       [
         "version",
+        // The needle used to hard-code `TUI_VERSION = "0.2.1"`. The
+        // moment the version was bumped the pattern stopped matching, the
+        // mutation became a NO-OP, and the case reported itself as
+        // "tests nothing" while still looking like a test. Derive the
+        // CURRENT value from the source instead -- only the REPLACEMENT
+        // is a fixed string, and it must differ from package.json's.
         (s) =>
-          s.replace('export const TUI_VERSION = "0.2.1";', 'export const TUI_VERSION = "0.2.0";'),
+          s.replace(
+            /(export const TUI_VERSION = ")([^"]+)(";)/,
+            (_m, head, version, tail) => `${head}${version}-drift${tail}`,
+          ),
       ],
     ],
   ],
