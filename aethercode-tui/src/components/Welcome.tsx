@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * welcome banner — R344 redesign.
  *
@@ -18,7 +23,7 @@
  * Layout:
  *
  *  ╭─────────────────────────────────────────────────────╮
- *  │  ⌬  AETHERCODE  v0.2.73  ·  Type a prompt to start  │
+ *  │  ⌬  AETHERCODE  v0.2.74  ·  Type a prompt to start  │
  *  │                                                      │
  *  │  ⌬ model: MiniMax-M3   ⚙ mode: DEFAULT             │
  *  │  ⌃ provider: MiniMax   # session: dcffbb65          │

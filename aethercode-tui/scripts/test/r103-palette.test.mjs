@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R103: TUI command palette exposes the new R99 / R100 commands.
 //
 // R103 closes a discoverability gap: R99 added `/skip` and R100
@@ -19,6 +24,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadTsModule } from "./load-ts-module.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -79,19 +85,34 @@ test("R103: /help output mentions /skip and /tool-actions", () => {
   );
 });
 
-test("R103: CommandPalette.tsx describeCommand covers skip + tool-actions", () => {
-  const src = readFileSync(join(root, "src", "components", "CommandPalette.tsx"), "utf-8");
-  // The describeCommand function must return a non-empty string
-  // for the two new commands so the user sees the description
-  // in the palette preview, not a blank line.
-  assert.match(src, /case "skip":/);
-  assert.match(src, /case "tool-actions":/);
-  // Sanity: the descriptions contain "R99" and "R100" tags so
-  // it's obvious which round the command comes from. Tweak
-  // these tags freely; the test just guards against accidental
-  // removal of the descriptions.
-  assert.match(src, /R99/);
-  assert.match(src, /R100/);
+test("R103: the command palette shows a non-empty description for skip + tool-actions", async () => {
+  // R388: this assertion used to pin the SPELLING of the palette's own
+  // hand-written `describeCommand` table (`case "skip":` / `case
+  // "tool-actions":` in CommandPalette.tsx). That table is gone — it
+  // covered only 23 of the catalogue's 88 commands, so 65 palette rows
+  // rendered an EMPTY hint, and the ones it did cover could disagree
+  // with the catalogue (`/budget` said "set cost budget" in the palette
+  // and "set a phase's tool-call / cost cap" in the catalogue).
+  //
+  // The INTENT of this test was never the spelling — it was "the user
+  // sees a description, not a blank line" (see the comment above). So
+  // the assertion now asks the REAL question: does the palette's
+  // description function return something for these two commands?
+  //
+  // A CONTRACT pin must FOLLOW the implementation (R384, Lesson 1233):
+  // pinning the table's shape would have gone red on the very fix that
+  // made 65 rows non-empty.
+  const { describeCommand } = await loadTsModule(root, "src/commands.ts");
+  for (const name of ["skip", "tool-actions"]) {
+    assert.ok(
+      describeCommand(name).trim().length > 0,
+      `the palette would show an empty hint for /${name}`,
+    );
+  }
+  // And the palette really takes them from there.
+  const palette = readFileSync(join(root, "src", "components", "CommandPalette.tsx"), "utf-8");
+  assert.match(palette, /describeCommand/);
+  assert.match(palette, /from "\.\.\/commands\.js"/);
 });
 
 test("R103: state.ts has the skip-confirmation counter wired", () => {

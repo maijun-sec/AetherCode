@@ -1,4 +1,9 @@
-﻿// R362 鈥?/help is derived, so it cannot drift from the autocomplete catalog.
+﻿// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
+// R362 鈥?/help is derived, so it cannot drift from the autocomplete catalog.
 //
 // Before R362, `SLASH_HELP` was a hand-maintained 88-line string literal that
 // had drifted from `SLASH_COMMANDS` (76). `/help` advertised commands the
@@ -299,9 +304,16 @@ test("SLASH_COMMANDS (the flat array) is unchanged in size", () => {
   // The number moved on purpose. The "did not drift" property is now
   // structural, not a count: SLASH_COMMANDS is the catalog's
   // projection, so the two cannot disagree.
+  //
+  // R388: 88. The catalogue gained `/phase-budget` — the phase cap that
+  // `/budget`'s description used to advertise while the only code that
+  // could reach the daemon's `setPhaseBudget` sat behind a DUPLICATE
+  // `case` label and was therefore dead code. Giving it its own name
+  // made an already-registered daemon capability reachable, so the
+  // count went up by one on purpose.
   assert.equal(
     SLASH_COMMANDS.length,
-    87,
+    88,
     "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident",
   );
   assert.ok(

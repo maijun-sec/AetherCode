@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * command palette.
  *
@@ -23,7 +28,7 @@ import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
 import TextInput from "ink-text-input";
 import { hintFor } from "../componentKeys.js";
-import { SLASH_COMMANDS } from "../commands.js";
+import { SLASH_COMMANDS, describeCommand } from "../commands.js";
 import { t, icon } from "../theme.js";
 
 export interface PaletteEntry {
@@ -158,54 +163,4 @@ function renderHighlighted(name: string, indices: number[]): React.ReactNode {
       <Text key={i}>{c}</Text>
     ),
   );
-}
-
-function describeCommand(name: string): string {
-  switch (name) {
-    case "help":
-    case "?":
-      return "show help";
-    case "clear":
-      return "clear scrollback";
-    case "exit":
-    case "quit":
-    case "q":
-      return "exit TUI";
-    case "tools":
-      return "list available tools";
-    case "state":
-      return "show engine state";
-    case "ping":
-      return "liveness check";
-    case "model":
-      return "switch model";
-    case "mode":
-      return "switch permission mode";
-    case "sessions":
-      return "list saved sessions";
-    case "tasks":
-      return "list recent tool invocations";
-    case "projects":
-      return "list known projects";
-    case "cwd":
-      return "switch project";
-    case "stats":
-      return "session stats";
-    case "history":
-      return "show input history";
-    case "lastplan":
-      return "show last plan";
-    case "theme":
-      return "switch color theme";
-    case "layout":
-      return "switch layout preset";
-    case "budget":
-      return "set cost budget";
-    case "skip":
-      return "R99: arm/clear skip-confirmation (N rounds)";
-    case "tool-actions":
-      return "R100: per-tool permission action (safe / ask / deny)";
-    default:
-      return "";
-  }
 }

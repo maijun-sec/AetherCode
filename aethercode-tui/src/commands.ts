@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * slash command dispatcher.
  *
@@ -238,8 +243,26 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
   {
     name: "budget",
     group: "config",
-    args: "<usd> [calls]",
-    description: "set a phase's tool-call / cost cap",
+    args: "<usd|off>",
+    // R388: this description described the DEAD `case "budget"` arm —
+    // the phase-cap one, which the switch never reached. What `/budget`
+    // actually does is set the LOCAL cost bar: `state.costBudget`, the
+    // USD figure the StatusBar's progress bar fills towards. It is a
+    // display threshold, not a limit on the model, and it is Ink-only
+    // (line mode has no StatusBar).
+    description: "show a cost bar against a USD budget (Ink only)",
+  },
+
+  {
+    name: "phase-budget",
+    group: "config",
+    args: "<phase> <maxToolCalls> <maxCostUsd>",
+    // R388: the phase cap the old `/budget` description advertised.
+    // It was unreachable — the only caller of the daemon's
+    // `setPhaseBudget` sat behind a duplicate `case` label — and it now
+    // has its own name. All three arguments are required because the
+    // daemon requires all three; 0 means unlimited on both caps.
+    description: "set a phase's tool-call / cost cap (0 = unlimited)",
   },
 
   { name: "agent-pick", group: "config", description: "open the agent picker (type to filter)" },
@@ -480,6 +503,35 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
  * that `tsc` does NOT catch.
  */
 export const SLASH_COMMANDS: string[] = SLASH_COMMANDS_DETAILED.map((c) => c.name);
+
+/**
+ * The description a command-palette row shows, DERIVED from the catalog.
+ *
+ * R388: the palette used to carry its OWN hand-written table
+ * (`CommandPalette.describeCommand`) of about TWENTY-FIVE descriptions.
+ * Two things were wrong with it, and both were silent:
+ *
+ *   1. every command OUTSIDE that table rendered an **EMPTY** hint —
+ *      the palette is the discovery surface, so the rows a user
+ *      actually opens it for were the ones with nothing to say;
+ *   2. the ones inside it could disagree with the catalog. `/budget`
+ *      said "set cost budget" in the palette and "set a phase's
+ *      tool-call / cost cap" in the catalog — and the catalog was
+ *      describing a DEAD branch (R388's other half).
+ *
+ * R380 made the catalog the only list for `/help` and the tab
+ * completion. The palette was the one consumer left behind, which is
+ * exactly R378's Lesson 1197: a second copy of a truth drifts, and it
+ * drifts silently.
+ *
+ * So the descriptions are now PROJECTED from the catalog, and a
+ * command with no catalog entry has no description to show. The R388
+ * gate checks that EVERY command in the list gets a non-empty one.
+ */
+export function describeCommand(name: string): string {
+  const entry = SLASH_COMMANDS_DETAILED.find((c) => c.name === name);
+  return entry ? entry.description : "";
+}
 
 /**
  * Which command each alias stands for.
@@ -1009,35 +1061,48 @@ export function routeSlash(input: string): SlashResult | null {
       const name = String(rest[0]);
       return { rpcMethod: "setPhase", rpcParams: { name } };
     }
-    case "budget": {
-      // reconfigure a phase's cap. Usage:
-      //   /budget <phase> <maxToolCalls> [maxCostUsd]
-      //   /budget implement 80           // raise tool-call cap to 80 (USD stays 0.20)
-      //   /budget verify 15 0.10         // raise both
-      //   /budget explore 0              // unlimited tool calls (USD stays)
-      if (rest.length < 2) {
-        return { local: "usage: /budget <phase> <maxToolCalls> [maxCostUsd]" };
+    case "phase-budget": {
+      // R388: this arm used to be a SECOND `case "budget"` — DEAD CODE.
+      // The switch above already had a `case "budget"` (the local cost
+      // bar), so this one was never evaluated: esbuild had been
+      // warning about it on every build ("This case clause will never
+      // be evaluated because it duplicates an earlier case clause"),
+      // and the daemon's `setPhaseBudget` was UNREACHABLE from the TUI
+      // — while the catalogue advertised exactly this capability.
+      //
+      // It also carried a second lie: the old comment said an omitted
+      // third argument meant "the USD cap stays". It does not. The
+      // daemon's own convention is 0 = UNLIMITED
+      // (`PhaseTracker.Bucket.remainingCostUsd()`: `cap <= 0` ->
+      // POSITIVE_INFINITY), and `setBudget` OVERWRITES the cap. So
+      // omitting it silently REMOVED a cost cap.
+      //
+      // The daemon requires all three fields (`setPhaseBudget` answers
+      // "missing required field" without `maxCostUsd`), and it has no
+      // encoding for "leave it unchanged". So the third argument is
+      // REQUIRED here too: a required argument is honest, a default
+      // that means "unlimited" is a trap.
+      //
+      //   /phase-budget implement 80 0.20   // 80 tool calls, $0.20
+      //   /phase-budget explore 0 0         // unlimited both
+      if (rest.length < 3) {
+        return {
+          local: "usage: /phase-budget <phase> <maxToolCalls> <maxCostUsd>  (0 = unlimited)",
+        };
       }
       const phase = String(rest[0]);
       const maxCalls = Number(rest[1]);
       if (!Number.isInteger(maxCalls) || maxCalls < 0) {
         return { local: "maxToolCalls must be a non-negative integer (0 = unlimited)" };
       }
-      const params: Record<string, unknown> = { phase, maxToolCalls: maxCalls };
-      if (rest.length >= 3) {
-        const maxCost = Number(rest[2]);
-        if (!Number.isFinite(maxCost) || maxCost < 0) {
-          return { local: "maxCostUsd must be a non-negative number (0 = unlimited)" };
-        }
-        params.maxCostUsd = maxCost;
-      } else {
-        // 0 = "keep current cap unchanged" — the
-        // server treats an explicit 0 as "unlimited",
-        // so we leave the field out when the user
-        // didn't supply it.
-        params.maxCostUsd = 0;
+      const maxCost = Number(rest[2]);
+      if (!Number.isFinite(maxCost) || maxCost < 0) {
+        return { local: "maxCostUsd must be a non-negative number (0 = unlimited)" };
       }
-      return { rpcMethod: "setPhaseBudget", rpcParams: params };
+      return {
+        rpcMethod: "setPhaseBudget",
+        rpcParams: { phase, maxToolCalls: maxCalls, maxCostUsd: maxCost },
+      };
     }
     case "sessions-list": {
       // list every engine the daemon knows

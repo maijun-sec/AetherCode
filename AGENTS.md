@@ -1,3 +1,10 @@
+<!--
+  Copyright (c) 2026 maijun
+
+  Licensed under the MIT License.
+  See the LICENSE file in the project root for the full license text.
+-->
+
 # AGENTS.md — AetherCode project-level memory
 
 This file is the project-level companion to Mavis's user-level
@@ -654,6 +661,36 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   the right semantics: `createSession` is non-destructive, a new
   `clearTranscript` would have destroyed the conversation.**
   Doc: `docs/R387-clear-starts-a-fresh-conversation.md`.
+- **R388** (one name, one handler; one list, one description): building
+  0.2.74, esbuild warned on **every** build — *"This case clause will
+  never be evaluated because it duplicates an earlier case clause"* —
+  `/budget` had **TWO `case` arms in the same switch**. The second was
+  DEAD CODE, so the daemon's `setPhaseBudget` was **UNREACHABLE** from
+  the TUI, and the CATALOGUE described **that dead arm** ("set a phase's
+  tool-call / cost cap") while the LIVE arm set the local cost bar. The
+  dead arm carried a SECOND lie: an omitted third argument was
+  documented as "the USD cap stays", but the daemon's convention is
+  **0 = unlimited** and `setBudget` OVERWRITES — so omitting it silently
+  removed a cap. And the command PALETTE carried its own hand-written
+  description table: **65 of the catalogue's 88** commands rendered an
+  EMPTY hint (the palette is the DISCOVERY surface), and the 23 that had
+  one could disagree with the catalogue. R380 had made the catalogue the
+  only list for `/help` and the tab completion and had **left the palette
+  behind** — R378's Lesson 1197. Now the phase cap has its own name
+  (`/phase-budget`, with the daemon's three required fields, the cost cap
+  now REQUIRED rather than defaulting to "unlimited"), the palette's
+  descriptions are DERIVED from the catalogue, and the hand-written table
+  is deleted.
+  **Lesson 1273 — one name, one handler: a duplicate `case` label is not
+  an error, it is dead code.**
+  **Lesson 1274 — the catalogue can describe a branch nobody can reach.**
+  **Lesson 1275 — if "leave it unchanged" has no encoding, do not write
+  it: a required argument is honest, a default that means "unlimited" is
+  a trap.**
+  **Lesson 1276 — after you fix one consumer, ask how many consumers
+  there are.**
+  **Lesson 1277 — an empty description is worse than no row at all.**
+  Doc: `docs/R388-one-name-one-handler.md`.
 
 ## Watch out for (R735 additions)
 
@@ -2414,4 +2451,31 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   是**上一行**的 `typeof id !== "string"` —— 代码变了,**行为没变**。
   改掉 needle(拆掉 id 的类型收窄)才真的被抓。
   **改了代码不等于改了行为,门禁保持绿可能是运气。Lesson 1269。**
+
+## Watch out for (R388 additions)
+
+- **一个 `case` 标签只能出现一次。**
+  重复的标签**不是编译错误,也不是测试失败** —— 第二个分支只是永远匹配不上。
+  esbuild 会在构建日志里喊 `duplicate-case`,而没人看构建日志。
+  门禁 `r388-command-truth.test.mjs` §1 从两个角度查唯一性
+  (router 的 `case` 列表 + 源码里的标签计数),再加一个同名分支就红。
+  **Lesson 1273。**
+- **目录描述的必须是"能调到的那一个"。**
+  `/budget` 的目录写着"阶段的工具调用/成本上限",而真正能调到的是那个
+  **死分支**。阶段上限现在有自己的名字 `/phase-budget`。
+  **Lesson 1274。**
+- **daemon 要求三个字段,就别留一个"省略=保持不变"的默认值。**
+  `setPhaseBudget` 缺 `maxCostUsd` 就回 "missing required field",
+  而 **0 的含义是"无限"**(`PhaseTracker.Bucket.remainingCostUsd()`:
+  `cap <= 0` → `POSITIVE_INFINITY`),`setBudget` 是**覆盖**。
+  省略参数会**悄悄拆掉一个成本上限**。现在第三个参数**必填**。
+  **Lesson 1275。**
+- **命令面板的描述必须从目录派生,不许再长出第二张表。**
+  旧的手写表覆盖 23 条命令,目录里 **88 条**中 **65 条**在面板上
+  **描述为空** —— 而面板正是用户"记不住命令名"时才打开的发现界面。
+  门禁 §2/§3 双向查:每条命令都有非空描述,面板显示的**就是**目录那句,
+  且 `CommandPalette.tsx` 里**不能**再定义 `describeCommand`。
+  **Lesson 1276 / 1277。**
+- **修好一个消费者之后,数一数还有几个消费者。**
+  R380 把目录变成了 `/help` 和 Tab 补全的唯一来源,**唯独漏了面板**。
 

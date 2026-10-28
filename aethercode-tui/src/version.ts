@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * The TUI's own version, in ONE place.
  *
@@ -25,4 +30,4 @@
  * a release bumps the version. The Java one lives in another module
  * and is not reachable from the TUI's test scope.
  */
-export const TUI_VERSION = "0.2.73";
+export const TUI_VERSION = "0.2.74";
