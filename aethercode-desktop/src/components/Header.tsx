@@ -102,6 +102,9 @@ export function Header({
     engineState, currentTaskId, tasks,
     isStreaming, isConnected, currentQuery,
     lastChunkTs,
+    // R390: the stable elapsed-timer anchor. Set once per
+    // streaming burst; NOT refreshed per chunk.
+    streamingStartedAt,
     // R735 (2026-10-20): read the failed-run fields so the
     // status pill can show "● Failed (same_error_hard_stop)"
     // instead of a generic green ● Idle when the engine dies
@@ -173,8 +176,30 @@ export function Header({
     if (elapsedSinceChunk > STALE_THRESHOLD_MS) return 'stale';
     return 'streaming';
   })();
-  // The current run's elapsed time: prefer the query's startedAt, otherwise fall back to the timestamp of the first chunk; if neither is available, treat as 0.
-  const runStartedAt = currentQuery?.startedAt ?? lastChunkTs;
+  // The current run's elapsed time.
+  //
+  // R390 (2026-10-29): this used to be
+  //   `currentQuery?.startedAt ?? lastChunkTs`
+  // and that fallback was the bug. `lastChunkTs` is refreshed on
+  // EVERY chunk (it is the "has the stream gone quiet?" signal),
+  // so using it as the elapsed-timer anchor made the display reset
+  // to ~0 on each event: the pill bounced between "● Streaming 0.0s"
+  // and "● Streaming 0.1s" (the 100ms ticker crossing the
+  // tenth-second boundary between two chunks).
+  //
+  // The state that exposed it is real: `run_end` clears
+  // `currentQuery` while a SUB-TASK keeps streaming, so
+  // `currentQuery` is null while `isStreaming` is true — and the
+  // `?? lastChunkTs` fallback is exactly what took over.
+  //
+  // The anchor now lives in the store as `streamingStartedAt`: it
+  // is stamped once when streaming transitions false→true and is
+  // never touched by individual chunks.
+  //
+  // `lastChunkTs` is still used below — for the "no response for
+  // 60s" (stale) check and the sub-task-stuck detector. That is
+  // what it measures; it just cannot measure elapsed run time.
+  const runStartedAt = currentQuery?.startedAt ?? streamingStartedAt;
   const runElapsedMs = runStartedAt ? now - runStartedAt : 0;
 
   const statusText = (() => {

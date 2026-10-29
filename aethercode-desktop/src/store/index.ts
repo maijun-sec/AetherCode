@@ -1595,6 +1595,25 @@ interface AppState {
   cwd: string | null;
   reconnectAttempts: number;
   lastChunkTs: number;
+  /** wall-clock ms of when the CURRENT streaming burst began.
+   *
+   *  R390 (2026-10-29): the Header's "● Streaming N.Ns" timer used to be
+   *  computed as `currentQuery?.startedAt ?? lastChunkTs`. That fallback is
+   *  wrong: `lastChunkTs` is refreshed on EVERY chunk, so the elapsed time
+   *  reset to ~0 on each event and the display bounced between "0.0s" and
+   *  "0.1s" (the 100ms ticker crossing the tenth-second boundary between
+   *  two chunks).
+   *
+   *  The state that triggers it is real: `run_end` clears `currentQuery`
+   *  while a SUB-TASK keeps streaming, so `currentQuery` is null while
+   *  `isStreaming` is true. The sub-task's own chunks then re-arm
+   *  `isStreaming` (see the `text_delta` reducer) with no query to time.
+   *
+   *  So the elapsed time needs its own anchor: the moment streaming
+   *  (re)started. It is set when streaming transitions from false to true
+   *  and is NOT touched by individual chunks — that is the whole point.
+   */
+  streamingStartedAt: number;
   /** wall-clock ms of the last hydrateTranscript
    *  call (success OR failure). The disconnect handler
    *  uses this to decide whether to force a re-hydrate
@@ -2912,6 +2931,12 @@ export const useStore = create<AppState>((set, get) => {
               );
               return {
                 isStreaming: true, lastChunkTs: Date.now(),
+                // R390: anchor the elapsed timer. A run_start
+                // opens a NEW streaming burst, so the anchor
+                // is (re)stamped here. Guarded by `!s.isStreaming`
+                // so a duplicate/replayed run_start cannot
+                // reset the timer mid-burst.
+                streamingStartedAt: s.isStreaming ? s.streamingStartedAt : Date.now(),
                 currentActivity: { kind: 'thinking', label: '💭 Thinking…', ts: Date.now() },
                 steps, currentStepId, subTasks,
                 // a new query starts fresh — clear any
@@ -2922,6 +2947,10 @@ export const useStore = create<AppState>((set, get) => {
           }
           return {
             isStreaming: true, lastChunkTs: Date.now(),
+            // R390: same guard as the parentSubTaskId branch
+            // above — the anchor is stamped only when the
+            // burst actually starts.
+            streamingStartedAt: s.isStreaming ? s.streamingStartedAt : Date.now(),
             currentActivity: { kind: 'thinking', label: '💭 Thinking…', ts: Date.now() },
             steps, currentStepId,
             // same as the parentSubTaskId branch — a new
@@ -3074,7 +3103,21 @@ export const useStore = create<AppState>((set, get) => {
               : st);
           }
           prevEventWasText = true;
-          return { messages: msgs, isStreaming: true, lastChunkTs: Date.now(), currentActivity: activity, steps, currentStepId };
+          // R390: `lastChunkTs` is refreshed on EVERY chunk (it
+          // is the "did the stream just go quiet?" signal), so it
+          // CANNOT double as the elapsed-timer anchor — using it
+          // made the Header bounce between "0.0s" and "0.1s".
+          // The anchor is stamped only on the false→true
+          // transition; a chunk never moves it.
+          return {
+            messages: msgs,
+            isStreaming: true,
+            lastChunkTs: Date.now(),
+            streamingStartedAt: s.isStreaming ? s.streamingStartedAt : Date.now(),
+            currentActivity: activity,
+            steps,
+            currentStepId,
+          };
         });
         // R330: inline scan during streaming. Throttled to "only
         // scan when no chip is currently pending-confirm" — once
@@ -3406,6 +3449,12 @@ export const useStore = create<AppState>((set, get) => {
           const updates: Partial<AppState> = {
             messages: msgs,
             isStreaming: false,
+            // R390: the burst is over, so the elapsed-timer
+            // anchor has no meaning any more. Clearing it means
+            // a LATER burst (e.g. a sub-task that keeps
+            // streaming) stamps a fresh one instead of reusing
+            // this run's start.
+            streamingStartedAt: 0,
             currentActivity: { kind: 'done', label: '✓Done', ts: Date.now() },
             steps,
             currentStepId: null,
@@ -4383,6 +4432,11 @@ export const useStore = create<AppState>((set, get) => {
     alwaysAllowedTools: new Set<string>(),
     cwd: null,
     reconnectAttempts: 0, lastChunkTs: 0,
+    // wall-clock ms of when the current streaming burst
+    // began. 0 = no burst in flight. See the type doc
+    // above — the Header's elapsed timer needs an anchor
+    // that is NOT refreshed per chunk.
+    streamingStartedAt: 0,
     // wall-clock ms of the last successful (or
     // attempted) hydrateTranscript call. Lets the
     // disconnect handler tell whether a re-hydrate is
@@ -5263,6 +5317,12 @@ export const useStore = create<AppState>((set, get) => {
       set((s) => ({
         messages: [...s.messages, { id: newId('user'), role: 'user', content: input, timestamp: Date.now() }],
         currentInput: '', isStreaming: true,
+        // R390: sending flips streaming on optimistically, BEFORE
+        // the daemon's run_start arrives. Stamp the anchor here so
+        // the Header has a stable start from the very first frame;
+        // the later run_start (which sees isStreaming already true)
+        // deliberately leaves it alone.
+        streamingStartedAt: s.isStreaming ? s.streamingStartedAt : Date.now(),
         awaitingUserDecision: null,
         currentQuery: { id: qid, prompt: summary, startedAt: Date.now(), stepCount: 0, toolCount: 0 },
       }));
@@ -8455,6 +8515,33 @@ export const useStore = create<AppState>((set, get) => {
     viewingSubagentId: null as string | null,
     viewHistory: [] as Array<{ kind: 'primary' } | { kind: 'subagent'; jobId: string }>,
   } as AppState;
+});
+
+/* R390 (2026-10-29): the streaming-burst anchor invariant.
+ *
+ * The Header's "● Streaming N.Ns" elapsed timer needs an anchor
+ * that is NOT refreshed per chunk. There are ~16 places in this
+ * store that end a stream (`isStreaming: false`): run_end, the
+ * error path, the disconnect handler, the stale watchdog, session
+ * switches, cwd switches, resets… Patching each one with
+ * `streamingStartedAt: 0` would be 16 chances to forget one, and
+ * a forgotten site leaves a STALE anchor behind — the next burst
+ * would inherit the previous run's start time and the timer would
+ * show a nonsense (possibly huge) elapsed value.
+ *
+ * So the invariant lives in ONE place instead: whenever streaming
+ * is no longer in flight, the anchor is meaningless, so it is
+ * cleared. A later burst stamps a fresh one on the false→true
+ * transition (see the `run_start` / `text_delta` reducers).
+ *
+ * This is a SUBSCRIPTION rather than a `set()` inside the store
+ * creator because `set()` inside a subscriber is re-entrant; the
+ * guard below makes it a no-op after the first pass.
+ */
+useStore.subscribe((state, prev) => {
+  if (prev.isStreaming && !state.isStreaming && state.streamingStartedAt !== 0) {
+    useStore.setState({ streamingStartedAt: 0 });
+  }
 });
 /* eslint-disable @typescript-eslint/no-unused-vars */
 // R700 — keep source-pin regression targets around. The functions
