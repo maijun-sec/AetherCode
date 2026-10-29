@@ -12,6 +12,11 @@ Includes:
   - desktop exe copy in install/ + bundled daemon jar copy next to it
   - README explaining what's inside + smoke-test recipes
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import shutil
 import sys
 from pathlib import Path

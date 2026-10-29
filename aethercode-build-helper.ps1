@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # aethercode-build-helper.ps1
 # Intelligent build entry point for AetherCode + downstream Java projects.
 # Replaces the 9-13 minute "stuck build" pattern that the RAG Day 2

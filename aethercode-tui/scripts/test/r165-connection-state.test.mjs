@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R165: tests for the daemon-connection state machine.
 //
 // The user explicitly asked for "后端 java 仍然有很大优化, 比如

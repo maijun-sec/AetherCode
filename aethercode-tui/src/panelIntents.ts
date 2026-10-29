@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * R362 panel-intent registry - the single source of truth for
  * "what does this slash command actually open, and on which

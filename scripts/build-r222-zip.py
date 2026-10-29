@@ -6,6 +6,11 @@ R222: build release zip excluding _trash_r221/ backup.
 Usage:
   python scripts/build-r222-zip.py
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import os
 import sys
 import zipfile

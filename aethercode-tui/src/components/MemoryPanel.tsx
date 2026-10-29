@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-080 ~ T-085 (Phase 1 §1.8, design.md §1): the TUI
 // memory panel. Renders the three memory layers
 // (Global / Project / Session) side-by-side as tabs.

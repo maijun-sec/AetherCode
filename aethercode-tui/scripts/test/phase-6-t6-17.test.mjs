@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-6-17 (Phase 6.3): the 9 new slash commands.
 //
 // 6 tests:

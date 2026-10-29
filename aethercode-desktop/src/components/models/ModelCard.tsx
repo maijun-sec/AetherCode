@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 5: ModelCard (T-5-11) — single model card.
 
 import type { ModelInfo } from '../../rpc/types';

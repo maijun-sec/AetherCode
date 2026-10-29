@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R365 — the panel registry must agree with the renderers.
 //
 // R362 introduced `src/panelIntents.ts` as "the single source of truth"

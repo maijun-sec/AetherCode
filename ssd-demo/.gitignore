@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # ssd-demo local state — do NOT commit.
 # Mirrors the patterns the host repo's top-level .gitignore would
 # add once we wire this package into the parent .gitignore (T-NNN).

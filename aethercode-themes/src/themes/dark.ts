@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * dark — the previous default look. Borrowed from the existing
  * AetherCode TUI (prior round): warm amber primary on a near-black

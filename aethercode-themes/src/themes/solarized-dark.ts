@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * solarized-dark — Ethan Schoonover's classic dark palette.
  * design.md §5.1.2: ships with the app.

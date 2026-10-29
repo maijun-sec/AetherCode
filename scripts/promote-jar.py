@@ -53,6 +53,31 @@ Idempotent: re-running the script does nothing if the new version
 already exists.
 Usage:  python scripts/promote-jar.py R{N} [--force] [--marker=<path>]
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import argparse
 import hashlib
 import json

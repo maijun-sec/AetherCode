@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # AetherCode top-level workspace (T-502).
 #
 # The Java core lives in ./aethercode/ as a Maven multi-module

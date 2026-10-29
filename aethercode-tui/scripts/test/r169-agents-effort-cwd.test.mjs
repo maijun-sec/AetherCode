@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R169 (Phase 5 R3): tests for AgentSelector, EffortPicker, CwdSwitcher,
 // ThemePicker enhancements, and the corresponding /agent-pick,
 // /effort-pick, /cwd-pick slash commands.

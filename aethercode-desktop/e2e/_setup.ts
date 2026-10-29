@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * E2E bootstrap: inject a mock {@code __TAURI_INTERNALS__}
  * before the React app boots.

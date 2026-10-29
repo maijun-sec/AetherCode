@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 4.2 (T-4-14): PlanCard.
 //
 // Inline plan / TODO card. The assistant emits a structured

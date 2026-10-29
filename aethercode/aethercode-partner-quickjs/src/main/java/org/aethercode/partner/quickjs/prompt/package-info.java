@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Prompt / rendering helpers for the REPL and PTC system prompts. 1:1
  * port of the Python
  * <code>langchain_quickjs._prompt</code> module. The single

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-254 / T-450 / spec.md §3.8 / design.md §5.3:
  * the desktop (Tauri/Web) drop-down consent dialog.

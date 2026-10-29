@@ -12,4 +12,9 @@ Public modules (filled in across subsequent tasks):
     __main__    — argparse CLI                                        (FR-8)
 """
 
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 __version__ = "0.1.0"

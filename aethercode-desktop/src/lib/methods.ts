@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Typed wrapper for the 17 R80 daemon RPC methods.
 // All calls go through the Rust backend (rpc_call Tauri command) which owns
 // the WebSocket — the renderer never opens a raw WebSocket itself.

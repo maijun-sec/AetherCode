@@ -5,6 +5,11 @@ release/ directory, NOT inside it). Only the desktop/aethercode.jar
 inside changes (R279 -> R280 bytecode). The exe and the TUI bundle
 are unchanged from R279 — only the jar is refreshed.
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import hashlib
 import os
 import zipfile

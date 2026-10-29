@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # push_aethercode.ps1
 # 一键 push AetherCode 到 GitHub (使用 fine-grained token)
 # 用法: 在 PowerShell 里执行 .\push_aethercode.ps1

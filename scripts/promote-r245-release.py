@@ -9,6 +9,11 @@ Contents (mirroring rmem6 release):
      ship the engine + desktop)
   - RELEASE-NOTES-r245.md
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import os
 import shutil
 import sys

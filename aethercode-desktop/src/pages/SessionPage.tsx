@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: SessionPage (T-3-11) — deep-linkable at /sessions/:id.
 //
 // The full-page variant of the main chat surface. The header shows

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: React hook for live event subscription.
 //
 // The hook owns a bounded RingBuffer (default 200 entries), a

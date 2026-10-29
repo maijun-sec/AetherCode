@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # ============================================================
 # AetherCode .gitignore
 # ============================================================
@@ -30,6 +35,17 @@ bin/
 *.obj
 *.pyc
 *.pyo
+
+# The google-java-format build the licence-header tooling uses.
+#
+# It IS committed on purpose: the whole point of pinning a formatter version
+# is that every developer and every CI run produces the BYTE-IDENTICAL header.
+# Without it, `resolveGjf()` falls back to "whatever is on the machine" (or to
+# nothing), and the header shape can differ between two checkouts of the same
+# commit — which is exactly the drift this tooling exists to prevent.
+#
+# 1.37.0 is the version that works on JDK 25; 1.22.0 does not.
+!scripts/tools/google-java-format-all-deps.jar
 *.pdb
 
 # Node / TypeScript

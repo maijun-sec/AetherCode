@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: in-process mock of the supervisor's JSON-RPC surface.
 //
 // The mock is the test contract for the desktop's RPC layer.

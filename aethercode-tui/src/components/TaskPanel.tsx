@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R321 (T-370..T-373 / §4.7 design.md): the long-running
 // task panel. Lists every supervised child (the supervisor
 // is the owner; we call `task/list` to enumerate), lets the

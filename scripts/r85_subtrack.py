@@ -1,4 +1,9 @@
 """R85 sub-task workflow: print all tool events + sub-task events."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json
 import time
 from websockets.sync.client import connect

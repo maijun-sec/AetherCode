@@ -8,6 +8,11 @@ Three groups of tests:
 
 No torchvision dependency — fake model outputs are constructed in-memory.
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 from __future__ import annotations
 
 import pytest

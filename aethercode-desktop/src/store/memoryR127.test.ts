@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // contract tests for the 3-layer memory facade
 // (USER / PROJECT / SESSION) + session-bound cwd switch.
 //

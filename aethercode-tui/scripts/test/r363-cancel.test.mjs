@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R363 — Esc interrupts the run in flight.
 //
 // The 2026-10-21 benchmark found (report section 0.3 / R750a):

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: top-level app state (T-3-07).
 //
 // The brief specifies four pieces of state:

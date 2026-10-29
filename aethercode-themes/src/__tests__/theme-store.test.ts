@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-406: ThemeStore behavior.
  *  - list() / get() / has() / load() / setActive() / on() lifecycle

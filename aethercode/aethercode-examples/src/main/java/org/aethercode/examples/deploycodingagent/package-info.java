@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Java port of {@code deepagents-main/examples/deploy-coding-agent/skills/code-review/lint_check.py}.
  *
  * <p>Single file:

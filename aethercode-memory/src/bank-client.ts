@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * R244.3 (O-10): TypeScript client for the Java
  * {@code BankServer} exposed by

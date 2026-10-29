@@ -1,9 +1,3 @@
-<!--
-  Copyright (c) 2026 maijun
-
-  Licensed under the MIT License.
-  See the LICENSE file in the project root for the full license text.
--->
 
 # AGENTS.md — AetherCode project-level memory
 
@@ -2451,6 +2445,60 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   是**上一行**的 `typeof id !== "string"` —— 代码变了,**行为没变**。
   改掉 needle(拆掉 id 的类型收窄)才真的被抓。
   **改了代码不等于改了行为,门禁保持绿可能是运气。Lesson 1269。**
+
+## Licence headers (R389)
+
+The MIT licence header lives in `scripts/` and is applied to every
+first-party source file. The header TEXT and the header SHAPE both live in
+`scripts/license-header-common.mjs` — the inserter, the remover and the
+auditor all import from it, so a shape can never drift between them.
+
+- **Java uses a file-level Javadoc block, not a `//` run:**
+
+      /**
+       * Copyright (c) 2026 maijun
+       *
+       * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+       */
+      package org.example;
+
+  The two sentences are ONE `<p>` paragraph because that is what
+  google-java-format produces; the blank line inside is ` *`, not empty.
+  `scripts/tools/google-java-format-all-deps.jar` (gjf 1.37.0) is the
+  formatter of record, and the header is verified against it.
+
+- **The licence block is a SEPARATE Javadoc block above the file's own.**
+  Never merge them: gjf re-flows the old prose, which makes removing the
+  licence IRREVERSIBLE. Two blocks keep add → remove byte-exact.
+
+- **Exempt (no header):** `md`, `xml`, `sh`, `bash`, `zsh`, `css`, `cmd`,
+  `bat`, and `json` (JSON has no comment syntax at all).
+
+- **Gates:**
+  - `node scripts/add-license-headers.mjs --check` — every in-scope file
+    carries the header (exit 1 otherwise).
+  - `python -B scripts/audit_license_headers.py` — proves the change is
+    header-only by removing the header and comparing to the blob.
+  - `python -B scripts/check_mixed_eol.py` — no file may mix CRLF and LF.
+  - `node scripts/check-jsdoc-in-comments.mjs <files>` — no doc comment may
+    contain a block-comment terminator.
+
+- **BOM: detect it from the BYTES, never from the decoded string.**
+  `new TextDecoder("utf-8")` silently strips a leading BOM, so
+  `raw.charCodeAt(0) === 0xFEFF` is always false. Checking the decoded
+  string caused 11 files to lose a character (`//` → `/`). Python's
+  `open(..., encoding="utf-8")` does the OPPOSITE (keeps `\ufeff`) — the two
+  languages disagree, so normalise explicitly on both sides.
+
+- **Line ending: measure the BODY, not the whole text.**
+  `text.includes("\r\n")` asks "does a CRLF appear ANYWHERE", and a stale
+  CRLF header makes that answer "yes" forever — so the next run writes
+  another CRLF header onto an LF body. 108 files ended up mixed. See
+  `detectEol` in `license-header-common.mjs`.
+
+- **gjf is run ONCE, not once per file.** The header is identical for every
+  file, so the probe uses a fixed `package probe;` and the result is
+  cached. 2012 files went from ~30 minutes to 57 seconds.
 
 ## Watch out for (R388 additions)
 

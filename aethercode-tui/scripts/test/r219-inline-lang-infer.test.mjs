@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R219: TUI inline-code language inference.
 //
 // R218 introduced `highlightInlineCode` with a "universal"

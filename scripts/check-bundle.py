@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """Check if .minimax strings are in the bundled desktop JS."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import re
 import sys
 from pathlib import Path

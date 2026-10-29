@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R713 (2026-10-18): tests for the centralized LLM content
 // defense helpers in lib/llmContent.ts. These are the
 // regression tests for the lesson behind R712: a 286 KB

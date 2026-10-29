@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """Compare two sessions: working vs failing."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json
 import sys
 from pathlib import Path

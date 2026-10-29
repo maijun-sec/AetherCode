@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R169-b (Phase 5 R3): pure-function tests for the new component helpers.
 //
 // We use `node --test` with a runtime compile of just the helper files

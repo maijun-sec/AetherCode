@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 4.2 (T-4-17) + Phase 7 (T-7-02): TranscriptEnricher.
 //
 // The brief: every assistant turn must end with a `## Summary`

@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Talon runtime host.
  *
  * <p>Java-native port of the Python

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Mutation harness for r365-panel-truth.test.mjs — NOT part of npm test.
 // Run:  node scripts/test/r365-mutate.mjs
 //

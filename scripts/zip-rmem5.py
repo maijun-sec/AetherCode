@@ -1,4 +1,9 @@
 """R-MEM-5 combined release: zip the new release dir."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import hashlib
 import os
 import zipfile

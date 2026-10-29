@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * End-to-end test that the SqliteHistoryStore can drive the
  * real better-sqlite3 binding (T-193 + final integration).

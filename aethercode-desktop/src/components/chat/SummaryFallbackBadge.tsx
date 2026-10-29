@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 7: SummaryFallbackBadge (T-7-04).
 //
 // When the post-turn auto-summary hook fails to produce a `##

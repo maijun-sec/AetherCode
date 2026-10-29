@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Docs structure sanity check.
 //
 // The R33+ docs-update workflow requires that the docs/ tree

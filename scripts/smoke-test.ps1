@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # AetherCode end-to-end smoke test (T-500~T-510) — PowerShell wrapper.
 #
 # Cross-platform wrapper around scripts/smoke-test.mjs.

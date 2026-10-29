@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /** Slash commands. Mirrors the Claude Code `TUI SlashCommand`
  *  concept: typing `/` in the input box opens a dropdown of
  *  available commands. The user can filter, navigate, and

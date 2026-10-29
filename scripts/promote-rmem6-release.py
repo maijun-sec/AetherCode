@@ -1,4 +1,9 @@
 """R-MEM-6 combined release: copy new exe + resources/ to release dir, re-zip."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import os
 import shutil
 

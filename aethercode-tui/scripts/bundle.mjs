@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * Bundle the TypeScript sources into a single self-contained
  * ESM file (dist/ac-tui.js). The bundle includes Ink, React,

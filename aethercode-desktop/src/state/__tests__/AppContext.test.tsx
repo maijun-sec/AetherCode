@@ -1,4 +1,9 @@
-﻿// @vitest-environment jsdom
+﻿// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { AppProvider, appReducer, INITIAL_STATE, useApp, useAppSelector } from '../AppContext';

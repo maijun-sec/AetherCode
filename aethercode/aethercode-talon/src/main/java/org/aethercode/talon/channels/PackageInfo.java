@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Channel integrations for Talon.
  *
  * <p>Java-native port of the Python

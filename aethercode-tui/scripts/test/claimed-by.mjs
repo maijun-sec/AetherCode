@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Does a renderer CLAIM a sentinel, rather than merely mention it?
 //
 // ## Why this is shared

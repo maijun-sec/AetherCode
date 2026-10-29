@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # Phase 2.2 / T-2-14 (design.md §3.7, spec.md §10.1): default shipped
 # provider catalogue. Users can override any model (or add their own)
 # in <userHome>/.aethercode/providers.yaml or <cwd>/.aethercode/providers.yaml.

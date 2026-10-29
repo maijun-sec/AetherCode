@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Thread-keyed QuickJS REPL registry, console bridge, and result
  * formatter. 1:1 port of the Python
  * <code>langchain_quickjs._repl</code> module. The

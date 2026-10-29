@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Shared Java comment stripper for source-pin gates.
 //
 // Extracted in R370 because a second gate needed it. The lesson

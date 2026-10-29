@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-6-04: exponential backoff reconnect.
 //
 // The `ReconnectManager` listens to the client's

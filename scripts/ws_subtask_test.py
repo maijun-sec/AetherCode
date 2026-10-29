@@ -1,4 +1,9 @@
 """Send a query that exercises sub-task workflow."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json, time, sys
 from websockets.sync.client import connect
 

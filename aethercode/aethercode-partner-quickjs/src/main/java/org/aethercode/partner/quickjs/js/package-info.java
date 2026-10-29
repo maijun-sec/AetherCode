@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * JavaScript engine binding for the QuickJS REPL. 1:1 port of the
  * <code>quickjs_rs</code> surface the Python <code>_repl.py</code>
  * uses. A concrete {@link org.aethercode.partner.quickjs.js.JsExecutor}

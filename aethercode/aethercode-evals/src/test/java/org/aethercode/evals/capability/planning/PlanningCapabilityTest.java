@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
 package org.aethercode.evals.capability.planning;
 
 import org.junit.jupiter.api.Test;

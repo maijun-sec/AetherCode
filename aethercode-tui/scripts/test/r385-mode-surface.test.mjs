@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R385 — the mode surface must speak the daemon's vocabulary, and
 // every sentinel must have an owner on BOTH renderers.
 //

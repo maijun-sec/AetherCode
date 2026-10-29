@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R713 (2026-10-18): React error boundary. Catches a render-
 // time exception anywhere in the wrapped tree and shows a
 // recoverable fallback instead of letting the exception

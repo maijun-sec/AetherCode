@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R364 — the cwd switch actually switches.
 //
 // The 2026-10-21 benchmark and the R362 panel audit both concluded

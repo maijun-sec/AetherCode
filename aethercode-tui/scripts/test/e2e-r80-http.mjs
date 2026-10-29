@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R80 E2E: prove the HTTP+WebSocket daemon is reachable end-to-end
 // from a real WebSocket client, and that the engine state is
 // observable via HTTP routes.

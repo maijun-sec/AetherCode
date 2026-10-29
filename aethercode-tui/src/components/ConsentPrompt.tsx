@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-250..T-253 / T-255 / spec.md §3.3 / design.md §3.4:
  * the in-TUI consent prompt.

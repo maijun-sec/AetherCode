@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Hooks v2 plumbing for the {@code deepagents-code} Java port.
  *
  * <p>This package is the Java 21 native translation of the Python

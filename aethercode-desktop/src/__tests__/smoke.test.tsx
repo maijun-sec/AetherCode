@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 7 (T-7-09): Desktop smoke — 38 checks.
 //
 // A "does the app boot?" sweep. We don't render the full

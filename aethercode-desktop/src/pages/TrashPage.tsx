@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3 + Phase 4.1: TrashPage (T-3-10 + T-4-08).
 //
 // The full-page trash view. The brief originally called for a basic

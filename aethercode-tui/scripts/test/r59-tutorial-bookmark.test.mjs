@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R59 (tutorial) + R60 (bookmark) — combined test since both
 // touch the same set of state and tui.tsx paths.
 

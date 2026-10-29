@@ -1,4 +1,9 @@
-﻿import { useEffect, useState, useMemo } from 'react';
+﻿// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
+import { useEffect, useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { rpc } from '../lib/methods';
 import './MemoryPanel.css';

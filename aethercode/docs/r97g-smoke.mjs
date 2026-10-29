@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R97-G E2E smoke test: verify per-RPC sessionId
 // routing for getState / listTools / setModel /
 // setPermissionMode. Sends RPCs without a sessionId

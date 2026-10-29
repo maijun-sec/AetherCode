@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-6-14 (Phase 6.2): Scrollback collapsed-by-default +
 // SummaryFooter integration.
 //

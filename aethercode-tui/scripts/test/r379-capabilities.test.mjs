@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R379 — the three gaps the TUI used to REFUSE are closed, the
 // auto-continuation countdown is surfaced, and the panels' key tables
 // are GENERATED instead of hand-written.

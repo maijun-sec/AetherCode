@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-194 + finalize: end-to-end integration test for the compact
 // flow. The test wires together:
 //

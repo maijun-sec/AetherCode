@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * QuickJS adapter for the Deep Agents <code>task</code> subagent tool.
  * 1:1 port of the Python
  * <code>langchain_quickjs._subagent</code> module. The single

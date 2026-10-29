@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R362 — real prompt queue.
 //
 // The 2026-10-21 benchmark found (report section 0.2):

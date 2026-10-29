@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 5: PresetSelector (T-5-07) — three-card picker for the
 // permission preset. Click a card to apply the preset; the active
 // preset is highlighted.

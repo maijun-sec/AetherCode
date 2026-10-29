@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // prior round-C: Intelligent Loop Guard banner.
 //
 // The engine's ProgressLoopDetector used to hard-stop the run

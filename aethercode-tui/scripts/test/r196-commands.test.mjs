@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R196 (Phase 5 R4): handleSlash tests for the new R4 commands.
 //
 // We exercise the dispatcher with the new R4 commands:

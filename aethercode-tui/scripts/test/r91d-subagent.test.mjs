@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R91-D: tests for the subagent lifecycle reducer + helpers.
 //
 // The test setup mirrors state.test.mjs — we compile state.ts

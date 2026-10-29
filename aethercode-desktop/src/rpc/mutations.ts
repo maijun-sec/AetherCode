@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: TanStack Query write-side hooks.
 //
 // All session/task lifecycle mutations live here. The hook return

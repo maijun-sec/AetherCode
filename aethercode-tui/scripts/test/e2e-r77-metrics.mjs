@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R77 E2E: prove the metrics RPC reflects real engine activity.
 //
 // We spawn the TUI in line mode, send a real query (the model

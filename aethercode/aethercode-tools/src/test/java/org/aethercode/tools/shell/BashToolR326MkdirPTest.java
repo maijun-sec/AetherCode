@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
 /*
  * R326 — `mkdir -p` on Windows cmd.exe creates a literal
  * "-p" folder instead of recursive mkdir. The bash tool now

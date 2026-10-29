@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 5 (T-5-09): GrantsFilter.
 //
 // Filter controls for the GrantsList. Three axes:

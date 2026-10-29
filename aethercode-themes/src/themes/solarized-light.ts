@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * solarized-light — Ethan Schoonover's classic warm-light palette.
  * design.md §5.1.2: ships with the app.

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * high-contrast — accessibility theme. Maximum contrast between
  * foreground and background, bright saturated accents, thick

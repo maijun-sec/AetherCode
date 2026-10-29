@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """Inspect the model's <think> blocks in a session jsonl."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json
 import re
 import sys

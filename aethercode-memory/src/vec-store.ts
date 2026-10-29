@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * R-MEM-1: vector store — SQLite BLOB persistence + brute-force
  * cosine search.

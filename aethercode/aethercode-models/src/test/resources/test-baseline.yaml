@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # Test baseline shipped in src/test/resources. Mirrors the real
 # providers.yaml's shape but with a minimal catalogue so the
 # ModelRegistryTest can assert specific merge behaviour without

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-433 (Phase 5 R6 — Final Integration): comprehensive test
 // suite for the §5.3 components added in T-420..T-432.
 //

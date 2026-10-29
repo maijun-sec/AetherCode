@@ -3,6 +3,11 @@
 - Replace run_start case with R85 subTaskId support
 - Insert sub_task_start and sub_task_end cases
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import re
 path = r'D:\work\workspace\idea\engine\AetherCode\aethercode-desktop\src\store\index.ts'
 with open(path, 'r', encoding='utf-8') as f:

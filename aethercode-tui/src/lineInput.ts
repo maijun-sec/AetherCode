@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * Custom line-mode input handler. Replaces Node's built-in
  * `readline.Interface` for the `--line` renderer.

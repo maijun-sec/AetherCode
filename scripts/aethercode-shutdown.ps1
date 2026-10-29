@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # R135.4: Windows PowerShell wrapper for aethercode-shutdown.
 # Mirrors the bash version. Windows-native curl (Invoke-WebRequest).
 #

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // tests for the pure subagent reducer + formatters.
 //
 // Mirrors the TUI's r91d-subagent.test.mjs. Pure functions,

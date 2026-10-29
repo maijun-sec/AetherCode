@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-194: compact-rpc.ts (typed RPC surface for the TUI).
 //
 // The compact-rpc module has three concrete classes and a small

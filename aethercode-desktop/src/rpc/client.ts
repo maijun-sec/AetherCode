@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: JSON-RPC client.
 //
 // Wraps `fetch` for one-shot calls and `EventSource` for live

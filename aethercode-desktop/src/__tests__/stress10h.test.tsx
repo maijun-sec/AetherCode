@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 7 (T-7-07): 10-hour simulated session (1000 events).
 //
 // This is a stress test, not a wall-clock 10-hour test.

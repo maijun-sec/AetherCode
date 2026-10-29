@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * R697: minimal Eval panel — shows the latest baseline result path and
  * category breakdown. Fetches via eval.listCategories (catalog metadata)

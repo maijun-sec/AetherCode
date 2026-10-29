@@ -1,4 +1,9 @@
 """Count event types from a query."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json, time, sys
 from collections import Counter
 from websockets.sync.client import connect

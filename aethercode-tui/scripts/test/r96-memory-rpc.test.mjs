@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-096 / T-097: memory-rpc.ts (typed RPC surface for the TUI) +
 // end-to-end memory flow.
 //

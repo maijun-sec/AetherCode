@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R79: trace tree (parent linkage + /trace <id> + tree render).
 
 import { test } from "node:test";

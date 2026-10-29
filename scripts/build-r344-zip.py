@@ -4,6 +4,11 @@ Mirrors scripts/build-r250-zip.py — compresses release/aethercode-0.2.71/
 into release/aethercode-0.2.71.zip with a consistent aethercode-0.2.71/
 archive root. Excludes OS / trash metadata.
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import sys
 import zipfile
 from pathlib import Path

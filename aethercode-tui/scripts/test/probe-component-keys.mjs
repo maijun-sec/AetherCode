@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Measure: which components have a useInput handler AND render a
 // hand-written key hint? That pair is the drift risk (R378's lesson,
 // one level down).

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 5: ModelPicker (T-5-10) — modal that lists every available
 // model, grouped by provider. Each card surfaces the model's name,
 // tier, context window, max output, capability badges, pricing

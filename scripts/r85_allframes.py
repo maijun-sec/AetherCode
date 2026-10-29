@@ -1,4 +1,9 @@
 """R85 trace: dump ALL frames (including ping/pong) to see what's coming."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json
 import time
 from websockets.sync.client import connect

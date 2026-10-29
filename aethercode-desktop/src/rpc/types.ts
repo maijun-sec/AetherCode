@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: shared types for the JSON-RPC surface.
 //
 // The desktop talks to a long-running supervisor over JSON-RPC. For

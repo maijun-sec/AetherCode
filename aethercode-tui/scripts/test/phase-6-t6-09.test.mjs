@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-6-09 (Phase 6.2): ConsentModal — 10-option modal with
 // category-aware wildcard pair.
 //

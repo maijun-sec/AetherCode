@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
 package org.aethercode.evals.clbench.system;
 
 import org.aethercode.evals.clbench.system.ClbenchTypes.ContinualLearningSystem;

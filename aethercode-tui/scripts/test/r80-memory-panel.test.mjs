@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-080 ~ T-086: MemoryPanel.tsx source-level tests.
 //
 // The aethercode-tui test infrastructure uses node --test on

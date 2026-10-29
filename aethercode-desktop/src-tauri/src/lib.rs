@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // AetherCode Desktop — Tauri 2 backend.
 //
 // The renderer NEVER opens a WebSocket directly (WebView2's secure-context
@@ -1181,25 +1186,40 @@ fn find_jar_path(app: &AppHandle) -> Result<PathBuf, String> {
     // aethercode/dist/).
     if let Ok(resource_dir) = app.path().resource_dir() {
         eprintln!("[prior round] find_jar_path: resource_dir = {}", resource_dir.display());
-        let exact = resource_dir.join("aethercode.jar");
-        if exact.is_file() {
-            eprintln!("[prior round] find_jar_path: Tauri resource (exact) {}", exact.display());
-            return Ok(exact);
-        }
-        // R298: log a hit so a packaged App can be diagnosed.
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true).append(true).open(
-                std::env::temp_dir().join("aethercode-desktop-find-jar.log"))
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "[R298] find_jar_path hit: resource (exact) {}", exact.display());
-        }
-        if let Ok(entries) = std::fs::read_dir(&resource_dir) {
-            for e in entries.flatten() {
-                let p = e.path();
-                if is_aethercode_jar(&p) && p.is_file() {
-                    eprintln!("[prior round] find_jar_path: Tauri resource (scan) {}", p.display());
-                    return Ok(p);
+        // THE INSTALLED LAYOUT IS `<install>/resources/aethercode.jar`.
+        //
+        // Tauri v2's `resource_dir()` resolves to the INSTALL ROOT, and a
+        // bundled resource declared as "resources/aethercode.jar" lands in a
+        // `resources/` SUBDIRECTORY of it. So the jar is NOT at
+        // `resource_dir/aethercode.jar` — it is at
+        // `resource_dir/resources/aethercode.jar`.
+        //
+        // Checking only the flat path made a freshly-installed desktop fail
+        // with "jar not found: no aethercode-*.jar found", even though the
+        // installer had shipped the jar. The flat check is kept because the
+        // dev layout (`target/release/`) does put a jar there.
+        let resource_subdir = resource_dir.join("resources");
+        for dir in [resource_dir.as_path(), resource_subdir.as_path()] {
+            let exact = dir.join("aethercode.jar");
+            if exact.is_file() {
+                eprintln!("[R389] find_jar_path: Tauri resource (exact) {}", exact.display());
+                return Ok(exact);
+            }
+            // R298: log a hit so a packaged App can be diagnosed.
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true).append(true).open(
+                    std::env::temp_dir().join("aethercode-desktop-find-jar.log"))
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "[R298] find_jar_path hit: resource (exact) {}", exact.display());
+            }
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if is_aethercode_jar(&p) && p.is_file() {
+                        eprintln!("[R389] find_jar_path: Tauri resource (scan) {}", p.display());
+                        return Ok(p);
+                    }
                 }
             }
         }

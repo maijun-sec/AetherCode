@@ -1,4 +1,9 @@
 """R250 release: build aethercode-0.2.63.zip."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import sys
 import zipfile
 from pathlib import Path

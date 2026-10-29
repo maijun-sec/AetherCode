@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R167: tests for the StatusBar visual upgrade.
 //
 // The user asked: "tui 需要参考 opencode, 不输于 opencode".

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R713 (2026-10-18): centralized defense against runaway
 // LLM content. Every piece of text that an LLM can produce
 // (think blocks, tool output, tool input, user message

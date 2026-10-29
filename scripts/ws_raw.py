@@ -1,4 +1,9 @@
 """Raw debug — read all frames, no filtering."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import asyncio, sys, time
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 17889
 async def t():

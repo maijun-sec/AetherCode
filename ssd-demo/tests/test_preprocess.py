@@ -6,6 +6,11 @@ construct images programmatically with ``PIL.Image.new`` so there are
 no binary fixtures to commit; the only on-disk I/O uses pytest's
 ``tmp_path`` fixture for the ``load_image`` tests.
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 from __future__ import annotations
 
 import math

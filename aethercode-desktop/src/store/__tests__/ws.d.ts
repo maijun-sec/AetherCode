@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Minimal type stub for the `ws` library used by the
 // R341 ProviderRegistryContractR341 test. The `ws`
 // package ships its own types in newer versions but the

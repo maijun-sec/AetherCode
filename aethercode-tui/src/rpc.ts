@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-6 RPC typed surface — phase 6.2 / 6.3 / 7 additions.
  *

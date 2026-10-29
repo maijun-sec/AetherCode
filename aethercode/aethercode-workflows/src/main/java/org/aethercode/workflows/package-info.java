@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Phase 2.1 of the AetherCode APP spec (design.md §3.6, spec.md §11):
  * the workflow engine. A workflow is a reusable, named prompt template
  * authored in YAML. The engine loads, validates, and runs it; it

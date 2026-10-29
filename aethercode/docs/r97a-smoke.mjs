@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R97-A E2E smoke test: connect to the daemon, run the
 // multi-session surface, verify createEngine actually
 // builds a fresh engine (not the pre-registered default).

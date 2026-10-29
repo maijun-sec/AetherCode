@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Java 21 native port of the <code>langchain_quickjs</code> partner
  * package &mdash; a sandboxed JavaScript REPL exposed to a deepagents
  * agent as the <code>eval</code> tool.

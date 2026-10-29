@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // debug R79 render output
 function renderTraceTree(r) {
   const spans = Array.isArray(r?.spans) ? r.spans : [];

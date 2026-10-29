@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // contract test for the medium+high-risk
 // auto-approve toggle. Mirrors
 // autoApproveR120.test.ts: same fake-store

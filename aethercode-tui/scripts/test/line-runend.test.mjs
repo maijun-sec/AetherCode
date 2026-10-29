@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Mock-daemon E2E for R32-G run-end visibility.
 //
 // Spins up a tiny "fake daemon" that speaks the JSON-RPC 2.0 protocol

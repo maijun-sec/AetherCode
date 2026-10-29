@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # Security audit workflow (Phase 2.1 / spec.md §11.1).
 # Walks the project looking for common vulnerability classes and
 # reports each finding with a CWE id, file:line, and a fix recipe.

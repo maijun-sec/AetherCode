@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Java port of the Python {@code deepagents-acp} module.
  *
  * <p>Provides an Agent Client Protocol (ACP) server that bridges

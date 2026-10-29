@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Probe: which files have a literal that SPANS LINES? A single- or
 // double-quoted literal cannot span lines in TypeScript, so a multi-line
 // "literal" is the scanner swallowing real code — almost always an

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // E2E proof: the daemon really does emit a run_end with a stop
 // reason when forced to stop. We spawn the daemon with --max-turns 1
 // so the very first multi-step query hits the turn cap. The daemon

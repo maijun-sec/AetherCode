@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-6-02 / T-7-06 / T-7-12: in-memory JSON-RPC + event peer
  * for tests.

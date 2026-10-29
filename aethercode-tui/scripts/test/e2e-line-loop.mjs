@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // E2E for the TUI line mode receiving a real run_end event.
 // We keep stdin open so the line mode's 5s in-flight timeout
 // doesn't fire prematurely. The model has time to make 3+ tool

@@ -1,5 +1,10 @@
 """Force a sub-task workflow via direct tool_use.
 Sends a multi-step query that should exercise todo_write + sub_todo_write."""
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import json
 import time
 import sys

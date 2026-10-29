@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R220: TUI link preview.
 //
 // R215-R219 polished markdown rendering (titles, code

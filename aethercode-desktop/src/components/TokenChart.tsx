@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 5 (T-5-04): TokenChart.
 //
 // A small line + area chart showing token usage over the

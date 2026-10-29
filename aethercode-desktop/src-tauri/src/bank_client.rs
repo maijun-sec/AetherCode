@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 //! R249 (O-10): Rust HTTP client for the strategy-bank
 //! surface (R244.2 endpoints). Symmetric with the TypeScript
 //! `BankClient` shipped in `aethercode-memory@0.1.0` (R244.3)

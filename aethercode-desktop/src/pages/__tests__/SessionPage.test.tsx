@@ -1,4 +1,9 @@
-﻿// @vitest-environment jsdom
+﻿// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
+// @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { createFixture, flush } from '../../test/testUtils';

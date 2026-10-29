@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: TanStack Query read-side hooks.
 //
 // The desktop's TanStack Query v5 layer wraps the JsonRpcClient so

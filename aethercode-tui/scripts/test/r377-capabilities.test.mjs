@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R377 — a refusal must be GROUNDED, and a naming gap must not be
 // shipped as a missing feature.
 //

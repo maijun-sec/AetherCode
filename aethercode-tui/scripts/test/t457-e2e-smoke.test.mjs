@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-457+ (Phase 5 R6 — Final Integration): end-to-end smoke
 // test for the TUI.
 //

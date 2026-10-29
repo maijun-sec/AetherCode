@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R97-B E2E smoke test: verify per-RPC sessionId
 // routing for query + cancel. We send a query
 // to a non-default session and confirm:

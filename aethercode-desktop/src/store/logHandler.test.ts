@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // the renderer's "log" notification handler
 // must surface daemon errors as a system message
 // in the chat AND un-stick the input box. Before

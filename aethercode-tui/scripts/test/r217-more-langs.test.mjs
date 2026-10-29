@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R217: TUI code-block syntax highlighting — more languages.
 //
 // R216 shipped the tokenizer for bash / json / javascript.

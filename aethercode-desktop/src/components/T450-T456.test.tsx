@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-450 / T-451 / T-452 / T-453 / T-454 / T-456 (Phase 5 R5):
  * desktop additions.

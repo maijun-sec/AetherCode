@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 import { useState, useEffect, useRef } from 'react';
 import type { SessionInfo } from '../lib/methods';
 import { useStore } from '../store';

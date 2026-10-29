@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // E2E for the line-mode run-end visualization.
 //
 // Spawns the ac-tui line mode with stdin kept open. After a short

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 4.2: SubagentSpawnCard (T-4-15).
 //
 // Inline card surfaced in the chat when an assistant message

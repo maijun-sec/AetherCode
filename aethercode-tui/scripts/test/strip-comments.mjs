@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Shared comment stripper for the source-pin gates.
 //
 // WHY THIS EXISTS INSTEAD OF A REGEX

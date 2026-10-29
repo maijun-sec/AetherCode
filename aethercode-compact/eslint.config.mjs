@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Minimal ESLint flat config for aethercode-compact.
 // To use: `npm i -D eslint typescript-eslint` and run `npx eslint .`
 // Not required for build/test — tsc strict mode is the primary gate.

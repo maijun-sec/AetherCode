@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * R375: what "stop", "pause" and "continue" actually mean — and which
  * daemon method carries each one.

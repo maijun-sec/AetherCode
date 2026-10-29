@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // SessionControl action group.
 //
 // Three buttons — Continue / Pause / Stop — read task state via AppContext

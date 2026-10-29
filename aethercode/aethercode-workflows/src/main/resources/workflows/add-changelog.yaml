@@ -1,3 +1,8 @@
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 # Add changelog workflow (Phase 2.1 / spec.md §11.1).
 # Reads the recent git log, groups commits by area / kind, and
 # appends a "Unreleased" section to the project's CHANGELOG.md.

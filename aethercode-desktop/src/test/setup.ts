@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Vitest setup file. Runs once before any test file in the
 // project. Used to declare a few globals that the page /
 // e2e tests reference without an explicit import (a

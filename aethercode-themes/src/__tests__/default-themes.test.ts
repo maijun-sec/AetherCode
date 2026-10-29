@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-406: default themes ship with the expected 5 names, every
  * required color/font key is present, and the catalog is in display

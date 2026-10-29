@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R371 — `/context`: the row R362 shipped as a placeholder.
 //
 // ## Three half-rounds, one dead feature

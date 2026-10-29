@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // Phase 3: TanStack Query client + Provider wrapper.
 //
 // The brief mandates TanStack Query v5 for server state. We

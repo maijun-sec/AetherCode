@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 /**
  * T-6-13 / spec.md §12.3 / design.md §5: the mandatory summary
  * footer for every assistant turn.

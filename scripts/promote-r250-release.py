@@ -5,6 +5,11 @@ The engine / desktop / TUI bundle are unchanged from 0.2.62;
 the only difference is the new daemon features in the canonical
 jar (BankServer now supports both bearer auth and HTTPS).
 """
+# Copyright (c) 2026 maijun
+
+# Licensed under the MIT License.
+# See the LICENSE file in the project root for the full license text.
+
 import os
 import shutil
 import sys

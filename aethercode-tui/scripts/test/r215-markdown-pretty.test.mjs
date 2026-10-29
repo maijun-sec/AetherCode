@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // R215: TUI markdown 漂亮化 — source-pin tests.
 //
 // The user said: "tui 现在渲染 markdown 吗？我们希望 tui 显示非常漂亮，方便查看"

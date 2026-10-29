@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // pure helper that computes the
 // `modelEntries`-compatible option id for a given
 // `model` field. Extracted from MessageInput so the

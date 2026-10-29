@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-6-01: JsonRpcClient (Unix socket / Windows named pipe).
 //
 // The TUI's JSON-RPC client uses Node's `net` module to

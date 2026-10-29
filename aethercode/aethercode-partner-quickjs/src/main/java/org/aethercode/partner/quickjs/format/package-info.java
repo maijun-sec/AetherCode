@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) 2026 maijun
+ *
+ * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+ */
+/**
  * Formatting and output-coercion helpers for the QuickJS REPL.
  * 1:1 port of the Python
  * <code>langchain_quickjs._format</code> module. The single

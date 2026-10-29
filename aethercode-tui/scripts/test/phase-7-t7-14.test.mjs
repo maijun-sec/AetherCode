@@ -1,3 +1,8 @@
+// Copyright (c) 2026 maijun
+
+// Licensed under the MIT License.
+// See the LICENSE file in the project root for the full license text.
+
 // T-7-14 (Phase 7): the other 5 of 10 consent flow tests.
 // TS-T1 wrote 5; we (TS-T2) write 5 more focused on:
 //   - 10-option flow paths (wildcard options 9/10)
