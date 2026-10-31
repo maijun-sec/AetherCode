@@ -1,4 +1,24 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 maijun
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 /**
  * remove-license-headers.mjs — remove the license header from files, restoring
  * them byte-for-byte to their pre-header state.
@@ -30,12 +50,31 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { MARKER, detectEol } from "./license-header-common.mjs";
+import { MARKER, MIT_BODY, detectEol } from "./license-header-common.mjs";
 
 const REPO_ROOT = process.cwd();
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
+// `--check` proves the round-trip WITHOUT writing anything.
+//
+// WHY THIS MODE EXISTS, and it is not a nicety.
+//
+// The remover's whole job is to DELETE a header. Run without a flag, it
+// deletes the header from every file it recognises -- and it did exactly
+// that, during this very round, to 292 files that had already been
+// migrated. The tree was left with the headers GONE, and the diff showed
+// only deletions.
+//
+// What made it survivable is that the tool also prints a summary, and the
+// summary said "exact match: 288" -- which looked like success rather than
+// like damage. A tool that removes something should default to NOT removing
+// it, and the mode that removes should be the explicit one.
+//
+// So: `--check` verifies and reports; `--dry-run` previews; and the
+// default still removes, because a remover that cannot remove is not a
+// remover. What the default MUST NOT do is remove silently.
+const checkOnly = args.includes("--check");
 const verbose = args.includes("--verbose");
 
 /**
@@ -45,8 +84,36 @@ const verbose = args.includes("--verbose");
  * "--ext". A filter/map over the array would also pick up the "--ext" flags
  * themselves, and an extension called "--ext" matches nothing.
  *
- * Default: md + xml + shell + css + cmd + java.
+ * DEFAULT: every extension the INSERTER writes a header for.
+ *
+ * This list used to be a hand-written subset (md, xml, shell, css, cmd,
+ * java) that predated the header being applied to Python, TypeScript and the
+ * rest. A removal script that skips a file the inserter touched cannot
+ * PROVE the round trip for that file -- and a round trip that is not proven
+ * is not a round trip.
  */
+const DEFAULT_EXTS = [
+  // C-family
+  "java", "kt", "kts", "ts", "tsx", "js", "jsx", "mjs", "cjs", "rs", "go",
+  "c", "h", "cpp", "hpp", "cs", "scala", "swift", "dart",
+  // Shell family
+  "sh", "bash", "zsh", "ps1", "psm1", "cmd", "bat",
+  // Data / config
+  "yaml", "yml", "toml", "ini", "cfg", "properties", "gitattributes",
+  "gitignore", "npmrc", "editorconfig", "prettierignore", "gitmodules",
+  "sample", "env",
+  // Scripting
+  "py", "rb", "pl", "pm",
+  // SQL
+  "sql",
+  // Markup
+  "html", "xml", "xsd", "svg", "vue", "md", "mdx",
+  // Style
+  "css", "scss", "less",
+  // Build
+  "make", "mk",
+];
+
 const exts = new Set();
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--ext" && args[i + 1]) {
@@ -55,7 +122,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (exts.size === 0) {
-  for (const e of ["md", "xml", "sh", "bash", "zsh", "css", "cmd", "bat", "java"]) {
+  for (const e of DEFAULT_EXTS) {
     exts.add(e);
   }
 }
@@ -82,6 +149,45 @@ function git(...a) {
  *
  * Returns the candidate reconstructions, or null if no line header was found.
  */
+/**
+ * Strip a LINE-comment header from a file's text.
+ *
+ * The header is a FIXED piece of text, so the header's extent is found by
+ * matching its KNOWN LINES -- not by walking forward while the lines happen
+ * to be comments.
+ *
+ * WHY THIS MATTERS, and it is not a detail.
+ *
+ * The first version of this function measured the run: "keep going while
+ * the lines are comments". That fails on the R389 header, which wrote its
+ * blank line UNPREFIXED:
+ *
+ *     // Copyright (c) 2026 maijun
+ *     <blank>
+ *     // Licensed under the MIT License.
+ *     // See the LICENSE file in the project root for the full license text.
+ *
+ * The run stopped at the unprefixed blank, the function returned "no header
+ * here", and every file whose HEAD carries the old header was reported as
+ * "removed, but NOT provably byte-identical to the original". 788 files.
+ * The gate could never go green.
+ *
+ * It is also the same defect the INSERTER had: a run-based scan cannot
+ * tell "the header's last line" from "the file's first line of its own
+ * documentation", because both are comments. The file's documentation
+ * would be swallowed.
+ *
+ * So: match the known text. The two forms are
+ *
+ *  - the CURRENT form: marker, blank, full MIT text;
+ *  - the R389 form:     marker, blank, two sentences.
+ *
+ * The blank inside the header is accepted in BOTH forms -- bare or
+ * carrying the comment prefix -- because that is exactly the difference
+ * between the two generations.
+ *
+ * Returns the candidate reconstructions, or null if no line header was found.
+ */
 function stripLineHeader(text) {
   const lines = text.split(/\r?\n/);
   const markerIdx = lines.findIndex((l) => l.includes(MARKER));
@@ -99,76 +205,88 @@ function stripLineHeader(text) {
   }
   if (prefix === null) return null;
 
-  // The header is marker / blank / sentence / sentence. The blank line is
-  // optional (a file whose first line was a shebang and second the marker
-  // has none).
-  const SENT1 = `${prefix}Licensed under the MIT License.`;
-  const SENT2 = `${prefix}See the LICENSE file in the project root for the full license text.`;
-
-  let end = -1;
-  // shape A: marker, blank, s1, s2
-  if (
-    markerIdx + 3 < lines.length &&
-    lines[markerIdx + 1].trim() === "" &&
-    lines[markerIdx + 2].trim() === SENT1.trim() &&
-    lines[markerIdx + 3].trim() === SENT2.trim()
-  ) {
-    end = markerIdx + 3;
-  } else if (
-    // shape B: marker, s1, s2
-    markerIdx + 2 < lines.length &&
-    lines[markerIdx + 1].trim() === SENT1.trim() &&
-    lines[markerIdx + 2].trim() === SENT2.trim()
-  ) {
-    end = markerIdx + 2;
-  }
-  if (end < 0) return null;
-
-  // The header we INSERT is FIVE lines: marker / blank / s1 / s2 / blank.
-  // The trailing blank is the separator between the header and the body.
-  //
-  // So a complete removal must consume it too — otherwise the file is left
-  // with a stray blank line where the header was, and the round trip is not
-  // byte-exact.
-  //
-  // This was a real bug: the candidates were enumerated correctly (the
-  // "drop the following blank" variant existed and was a valid target), but
-  // the matcher picked the FIRST candidate that matched ANY target — and the
-  // first candidate is the one that KEEPS the blank. So the residue blank
-  // always won.
-  //
-  // The fix is to make the removal itself consume the trailing blank, so the
-  // "keep the blank" candidate is no longer the natural answer.
-  if (end + 1 < lines.length && lines[end + 1].trim() === "") {
-    end = end + 1;
-  }
-
-  const start = markerIdx;
-  const withoutHeader = [...lines.slice(0, start), ...lines.slice(end + 1)];
-
-  // Enumerate the blank-line variants, same as the block-header path.
-  const candidates = [];
-  const push = (arr) => {
-    const key = arr.join("\n");
-    if (!candidates.some((c) => c.join("\n") === key)) candidates.push(arr);
+  // Strip the comment decoration from a line, so the comparison is against
+  // the header's TEXT rather than its decoration.
+  const bare = (line) => {
+    const t = (line ?? "").trim();
+    const p = prefix.trim();
+    if (t.startsWith(p)) return t.slice(p.length).trim();
+    return t;
   };
 
-  const blankBefore = start > 0 && withoutHeader[start - 1].trim() === "";
-  const blankAfter = start < withoutHeader.length && withoutHeader[start].trim() === "";
+  // The known header bodies, in the order they may appear. Each is the text
+  // AFTER the marker line.
+  const knownForms = [
+    // The CURRENT form: blank, then the full MIT text.
+    ["", ...MIT_BODY],
+    // The R389 form: blank, then the two sentences.
+    [
+      "",
+      "Licensed under the MIT License.",
+      "See the LICENSE file in the project root for the full license text.",
+    ],
+  ];
 
-  for (const dropBefore of [false, true]) {
-    if (dropBefore && !blankBefore) continue;
-    for (const dropAfter of [false, true]) {
-      if (dropAfter && !blankAfter) continue;
-      const pre = withoutHeader.slice(0, start);
-      if (dropBefore) pre.pop();
-      const post = withoutHeader.slice(start);
-      if (dropAfter) post.shift();
-      push([...pre, ...post]);
+  for (const form of knownForms) {
+    let ok = true;
+    for (let k = 0; k < form.length; k++) {
+      const actual = bare(lines[markerIdx + 1 + k]);
+      const want = form[k];
+      // The blank line inside the header may be bare or carry the prefix.
+      if (want === "") {
+        if (actual !== "" && actual !== prefix.trim()) {
+          ok = false;
+          break;
+        }
+        continue;
+      }
+      if (actual !== want) {
+        ok = false;
+        break;
+      }
     }
+    if (!ok) continue;
+
+    let end = markerIdx + form.length;
+
+    // A trailing blank SEPARATES the header from the body. The header we
+    // INSERT is followed by exactly one blank line, so a complete removal
+    // must consume it -- otherwise the file is left with a stray blank
+    // line where the header was, and the round trip is not byte-exact.
+    if (end + 1 < lines.length && lines[end + 1].trim() === "") {
+      end = end + 1;
+    }
+
+    const start = markerIdx;
+    const withoutHeader = [...lines.slice(0, start), ...lines.slice(end + 1)];
+
+    // Enumerate the blank-line variants, same as the block-header path.
+    const candidates = [];
+    const push = (arr) => {
+      const key = arr.join("\n");
+      if (!candidates.some((c) => c.join("\n") === key)) candidates.push(arr);
+    };
+
+    const blankBefore = start > 0 && withoutHeader[start - 1].trim() === "";
+    const blankAfter = start < withoutHeader.length && withoutHeader[start].trim() === "";
+
+    for (const dropBefore of [false, true]) {
+      if (dropBefore && !blankBefore) continue;
+      for (const dropAfter of [false, true]) {
+        if (dropAfter && !blankAfter) continue;
+        const pre = withoutHeader.slice(0, start);
+        if (dropBefore) pre.pop();
+        const post = withoutHeader.slice(start);
+        if (dropAfter) post.shift();
+        push([...pre, ...post]);
+      }
+    }
+    push(withoutHeader);
+
+    return { candidates, start, end };
   }
 
-  return { candidates, start, end };
+  return null;
 }
 
 /**
@@ -229,6 +347,11 @@ function stripJavadocLicense(text) {
   const block = lines.slice(start, end + 1).join("\n");
   if (!block.includes(MARKER)) return null;
 
+  // The marker must be the FIRST content line of the block. A doc comment
+  // that merely MENTIONS the marker is not a licence header.
+  const firstContent = clean(lines[start + 1]).replace(/^\*+\/?/, "").trim();
+  if (firstContent !== MARKER) return null;
+
   const candidates = [];
   const push = (arr) => {
     const key = arr.join("\n");
@@ -278,6 +401,15 @@ function stripBlockHeader(text) {
   }
   if (start < 0) return null;
 
+  // THE MARKER MUST BE THE FIRST CONTENT LINE OF THE BLOCK. The inserter
+  // always puts it there, and that is what separates a real licence header
+  // from a doc comment that MENTIONS the marker -- this very script's own
+  // doc comment shows the header shape, marker line and all, and stripping
+  // that would delete the script's documentation.
+  if (start + 1 >= lines.length) return null;
+  const firstContent = clean(lines[start + 1]).replace(/^\*+\/?/, "").trim();
+  if (firstContent !== MARKER) return null;
+
   // Walk forward to the matching closer.
   const CLOSERS = { "<!--": "-->", "/*": "*/" };
   const opener = clean(lines[start]);
@@ -290,6 +422,23 @@ function stripBlockHeader(text) {
     }
   }
   if (end < 0) return null;
+
+  // GUARD: the block must be OUR header, not the file's own documentation.
+  //
+  // A file's own block comment can legitimately contain the word "Copyright"
+  // (a package-info.java describing a third-party licence, a fixture that
+  // quotes a licence). Removing THAT would delete the file's content -- and
+  // the symptom is invisible: the file simply loses a paragraph.
+  //
+  // So the block must carry our exact header wording. The current header is
+  // the full MIT text; the R389 header was the short form. Both are accepted,
+  // and nothing else is.
+  const blockText = lines.slice(start, end + 1).join("\n");
+  const isOurs =
+    blockText.includes(MARKER) &&
+    (blockText.includes("Permission is hereby granted") ||
+      blockText.includes("Licensed under the MIT License"));
+  if (!isOurs) return null;
 
   // Drop the header block, plus the blank lines around it. The header was
   // inserted as "<block> <blank> <original>", but the ORIGINAL may or may not
@@ -468,7 +617,7 @@ function main() {
 
     if (hadBom) chosen = "\uFEFF" + chosen;
     changed.push(rel);
-    if (!dryRun) writeFileSync(p, chosen, "utf8");
+    if (!dryRun && !checkOnly) writeFileSync(p, chosen, "utf8");
   }
 
   console.log(`extensions      : ${[...exts].join(", ")}`);
@@ -486,6 +635,16 @@ function main() {
   if (verbose) {
     console.log("\n--- changed ---");
     for (const r of changed.slice(0, 30)) console.log("  " + r);
+  }
+
+  if (checkOnly) {
+    if (couldNotVerify.length) {
+      console.log(
+        `\n--check FAILED: ${couldNotVerify.length} file(s) would not round-trip byte-identically.`,
+      );
+      process.exit(1);
+    }
+    console.log("\n--check OK: every header round-trips byte-identically.");
   }
 }
 

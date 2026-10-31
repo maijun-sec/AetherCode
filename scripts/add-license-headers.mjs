@@ -1,4 +1,24 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 maijun
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 /**
  * add-license-headers.mjs — insert an MIT copyright header into every
  * first-party source file.
@@ -42,14 +62,17 @@
  *   node scripts/add-license-headers.mjs --dry-run  # report what would change
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, relative } from "node:path";
 import {
   AUTHOR,
   YEAR,
   MARKER,
-  JAVADOC_LINES,
+  MIT_BODY,
+  HEADER_LINES,
+  renderBlockHeader,
+  renderLineHeader,
   detectEol,
   alreadyHasHeader,
 } from "./license-header-common.mjs";
@@ -63,19 +86,12 @@ const ORGANIZATION = "AetherCode";
  * This is the ONE source of truth for the header text. Every language style
  * renders from these lines, so the wording can never drift between languages.
  */
-const HEADER_LINES = [
-  `Copyright (c) ${YEAR} ${AUTHOR}`,
-  "",
-  "Licensed under the MIT License.",
-  "See the LICENSE file in the project root for the full license text.",
-];
-
 /**
- * The Javadoc form, for Java.
+ * The canonical header body lives in `license-header-common.mjs` — ONE
+ * source of truth, shared with the removal script and the LICENSE file.
  *
- * The text and its google-java-format rationale live in
- * `license-header-common.mjs` — ONE source of truth, shared with the removal
- * script. See JAVADOC_LINES there.
+ * It carries the FULL MIT permission text, not a paraphrase. See MIT_BODY
+ * there for why that matters legally.
  */
 
 /**
@@ -86,7 +102,7 @@ const HEADER_LINES = [
  */
 const STYLE_BY_EXT = {
   // ---- C-family: // line comments, /* */ blocks ----
-  java: { javadoc: true },
+  java: { block: ["/*", "*/"] },
   kt: { line: "// " },
   kts: { line: "// " },
   ts: { line: "// " },
@@ -313,40 +329,336 @@ function styleFor(relPath) {
 }
 
 /**
- * Detect the LEGACY line-comment licence header in a Java file.
+ * The index of the line where the licence header may start.
  *
- * The very first version of this script wrote the Java header as a `//` run:
+ * The inserter writes the header as the FIRST thing in the file, after
+ * the language DIRECTIVES (a shebang, an encoding declaration, an XML
+ * declaration, a Rust inner attribute) and after a Python MODULE
+ * DOCSTRING (which must stay the first statement).
  *
- *     // Copyright (c) 2026 maijun
- *     //
- *     // Licensed under the MIT License.
- *     // See the LICENSE file in the project root for the full license text.
- *
- * The header is now a Javadoc block (see JAVADOC_LINES), so a file carrying the
- * legacy form must be MIGRATED, not skipped. `alreadyHasHeader` would happily
- * report "already has a header" for such a file and leave the old form in
- * place — so the two forms have to be told apart explicitly.
- *
- * Returns { start, end } line indices of the legacy run, or null.
+ * Anchoring here is what makes the migration safe. Without it, a file
+ * whose OWN doc comment merely MENTIONS the marker is mistaken for a
+ * header — and the migration then deletes that doc comment. This very
+ * script is such a file: its doc comment shows the header shape.
  */
-function findLegacyJavaLineHeader(lines) {
-  // The legacy run is a contiguous `//` comment block starting at the very
-  // top of the file (line 0), interrupted by at most blank `//` lines.
+function headerStartIndex(lines) {
   let i = 0;
-  // Allow a leading blank line? No — the legacy header was always first.
-  if (i >= lines.length) return null;
-  if (!/^\s*\/\/ Copyright \(c\) \d{4} \S/.test(lines[i])) return null;
-
-  let end = i;
-  while (end + 1 < lines.length) {
-    const next = lines[end + 1];
-    if (/^\s*\/\/ /.test(next) || /^\s*\/\/$/.test(next)) {
-      end++;
+  for (;;) {
+    if (i >= lines.length) return -1;
+    const line = lines[i];
+    const t = line.trim();
+    if (t === "") {
+      i++;
       continue;
     }
-    break;
+    if (t.startsWith("#!")) {
+      i++;
+      continue;
+    }
+    if (t.startsWith("<?xml")) {
+      i++;
+      continue;
+    }
+    if (/^#!\[/.test(t)) {
+      i++;
+      continue;
+    }
+    if (/^[ \t\f]*#.*coding[:=][ \t]*[-\w.]+/.test(line)) {
+      i++;
+      continue;
+    }
+    // A Python MODULE DOCSTRING comes before the header.
+    const doc = t.match(/^[rRbBuUfF]{0,2}("""|\'\'\')/);
+    if (doc) {
+      const quote = doc[1];
+      if (t.length >= quote.length * 2 && t.endsWith(quote)) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < lines.length) {
+        const from = j === i ? t.indexOf(quote) + quote.length : 0;
+        const idx = lines[j].indexOf(quote, from);
+        if (idx >= 0) {
+          i = j + 1;
+          break;
+        }
+        j++;
+      }
+      if (j >= lines.length) return -1;
+      continue;
+    }
+    return i;
   }
-  return { start: i, end };
+}
+
+/**
+ * True when the file already carries OUR header, at the TOP.
+ *
+ * `alreadyHasHeader` only asks whether the marker appears ANYWHERE, and
+ * a file's own doc comment can MENTION it — the licence tooling scripts
+ * all show the header shape in their documentation. A marker found in
+ * prose is not a header.
+ *
+ * So the header must be where the inserter puts one: the first content
+ * line of a comment block that starts at the top of the file.
+ */
+/**
+ * True when the file already carries EXACTLY the canonical header.
+ *
+ * This is the IDEMPOTENCY test, and it has to be an exact comparison rather
+ * than "does the marker appear?".
+ *
+ * A weaker test -- "is there a marker at the top?" -- cannot tell a
+ * canonical header from an obsolete one, because both carry the marker. So
+ * the tool would keep rewriting files whose header was already correct: not
+ * wrong, but it means every run reports thousands of changes and the
+ * `--check` gate can never be green. A gate that is red on a correct tree
+ * is a gate nobody trusts.
+ *
+ * So the comparison is LINE BY LINE against what `renderHeader(style)` would
+ * produce for this file's language. Same lines, in the same order, with the
+ * same decoration.
+ *
+ * The anchoring rule is unchanged and is what makes this safe: the header
+ * must be the FIRST content line of a comment block that starts at the top
+ * of the file. A file's own doc comment may mention the marker in prose --
+ * the licence tooling scripts all do, since they show the header shape in
+ * their documentation -- and a marker found in prose is not a header.
+ *
+ * @param {string[]} lines the file's lines, after the directives are split off
+ * @param {object} style the language style, for rendering the canonical form
+ * @returns {boolean}
+ */
+function alreadyHasHeaderAtTop(lines, style) {
+  const start = headerStartIndex(lines);
+  if (start < 0) return false;
+
+  const canonical = renderHeader(style);
+  if (!canonical) return false; // JSON: no header is possible
+
+  const t = (lines[start] ?? "").trim();
+  // A LINE-comment run.
+  if (/^(\/\/|#|REM |--)/.test(t)) {
+    const rendered = renderLineHeader(style.line);
+    for (let k = 0; k < rendered.length; k++) {
+      if ((lines[start + k] ?? "").trim() !== rendered[k].trim()) return false;
+    }
+    return true;
+  }
+
+  // A BLOCK comment: the slash-star form AND the HTML-comment form.
+  //
+  // BOTH forms count. The HTML form was missing, and that is exactly why
+  // `index.html` was reported as "missing the header" by `--check` even
+  // though it carried one -- the detector did not recognise the shape it
+  // had written.
+  //
+  // That is the failure mode to be wary of: the inserter and the detector
+  // must agree on the shape, or the tool argues with itself.
+  if (t.startsWith("/*") || t.startsWith("<!--")) {
+    for (let k = 0; k < canonical.length; k++) {
+      const actual = (lines[start + k] ?? "").trim();
+      const want = canonical[k].trim();
+      if (actual === want) continue;
+      // The blank line inside the block may be written bare or with the
+      // block's decoration -- both are the same block.
+      if (want === "" && (actual === "" || actual === "*" || actual === " *")) {
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Detect a licence header of a shape we NO LONGER emit.
+ *
+ * The R389 header named the licence but carried NO permission text:
+ *
+ *     Copyright (c) 2026 maijun
+ *     <blank>
+ *     Licensed under the MIT License.
+ *     See the LICENSE file in the project root for the full license text.
+ *
+ * rendered as a Javadoc block in Java and as a line-comment run everywhere
+ * else. The header is now a plain block comment carrying the full MIT text,
+ * so a file carrying the old form must be MIGRATED, not skipped:
+ * `alreadyHasHeader` would happily report "already has a header" and leave
+ * the obsolete form in place.
+ *
+ * Returns { start, end } line indices of the legacy block, or null.
+ */
+/**
+ * Find an existing licence header block at the top of a file.
+ *
+ * Returns { start, end } line indices of the block, or null.
+ *
+ * WHY THIS IS ONE FUNCTION AND NOT TWO
+ *
+ * There used to be a "does the file have a current header?" test and a
+ * separate "does the file have a LEGACY header?" test. Two tests, two
+ * shape sets, and they did not agree:
+ *
+ *  - The "current header" test knew the slash-star block only. An
+ *    HTML-comment header was invisible to it.
+ *  - The "legacy header" test knew the slash-star block only, for the same
+ *    reason.
+ *
+ * So for an HTML file the first test said "no header here" and the second
+ * said "no legacy header here" -- and the inserter took the INSERT path,
+ * prepending a fresh header WITHOUT removing the obsolete one. The file
+ * ended up carrying two copyright notices and two different licence
+ * statements, and `--check` could not make sense of it.
+ *
+ * One function, one shape set, and the removal is driven by the SAME
+ * detection that decides whether to write a header. If they can disagree,
+ * they will.
+ *
+ * WHAT COUNTS AS A HEADER
+ *
+ * A comment block that starts at the TOP of the file (after the language
+ * directives) and whose FIRST content line is exactly the marker.
+ *
+ * The "first content line" rule is what keeps a file's own doc comment from
+ * being mistaken for a header -- the licence tooling scripts all mention the
+ * marker in prose, because they show the header shape in their documentation.
+ * Mistaking such a comment for a header would DELETE it.
+ *
+ * Both the current form and the obsolete R389 form are returned, because
+ * both must be REMOVED before the fresh header is written. The caller does
+ * not care which it was.
+ */
+function findExistingHeaderBlock(lines) {
+  const headStart = headerStartIndex(lines);
+  if (headStart < 0) return null;
+
+  const blockForms = [
+    { open: "/*", close: "*/" },
+    { open: "<!--", close: "-->" },
+  ];
+
+  /**
+   * If a comment block starts at `from` and its first content line is the
+   * marker, return the block's span.
+   */
+  const blockAt = (from) => {
+    if (from < 0 || from >= lines.length) return null;
+    const opener = (lines[from] ?? "").trim();
+    const form = blockForms.find((f) => opener.startsWith(f.open));
+    if (!form) return null;
+
+    let end = -1;
+    for (let i = from + 1; i < Math.min(lines.length, from + 60); i++) {
+      if (lines[i].trim().endsWith(form.close)) {
+        end = i;
+        break;
+      }
+    }
+    if (end < 0) return null;
+
+    const firstContent = (lines[from + 1] ?? "")
+      .trim()
+      .replace(/^\*+/, "")
+      .trim();
+    if (firstContent !== MARKER) return null;
+    return { start: from, end, form: "block" };
+  };
+
+  const top = blockAt(headStart);
+  if (top) return top;
+
+  // A LINE-comment form at the top: the marker must be AT the header start.
+  //
+  // THE HEADER'S EXTENT IS DETERMINED BY ITS CONTENT, NOT BY WHERE THE
+  // COMMENT RUN ENDS.
+  //
+  // This is the fix for a bug that destroyed real documentation in hundreds
+  // of files, and the reasoning is worth stating.
+  //
+  // The first version of this scanner asked "how far does the comment run
+  // go?" and answered by walking forward while the lines were comments.
+  // That is the wrong question. A licence header is a FIXED piece of text:
+  //
+  //     Copyright (c) 2026 maijun
+  //     <blank>
+  //     Licensed under the MIT License.
+  //     See the LICENSE file in the project root for the full license text.
+  //
+  // Five lines, known in advance. The file's own documentation often
+  // FOLLOWS it as more `//` comment lines -- and a run-based scanner cannot
+  // tell "the header's last line" from "the file's first line of
+  // documentation", because both are comments.
+  //
+  // So the scanner swallowed the file's documentation. Concretely:
+  // `aethercode-desktop/src/components/ErrorBoundary.tsx` lost its whole
+  // R713 rationale and its R180 source contract -- and the diff showed only
+  // DELETIONS, which is exactly what a destructive bug looks like.
+  //
+  // A Rust `//!` inner doc block and a TypeScript `/// <reference>` directive
+  // were lost the same way: both start with `//`, so an "is this a comment?"
+  // test says yes.
+  //
+  // THE RULE: match the header's KNOWN LINES. The run ends where the known
+  // text ends. A comment line that is not part of the known text ends the
+  // header, and the file's own documentation survives.
+  //
+  // Two forms are recognised:
+  //
+  //  - The R389 short form: the marker, a blank, and the two sentences.
+  //    The blank is UNPREFIXED in that form -- which is why the run used to
+  //    be measured by scanning rather than by content.
+  //  - The current form: the marker followed by the full MIT text.
+  const markerRe = /Copyright \(c\) \d{4} \S/;
+  if (markerRe.test(lines[headStart] ?? "")) {
+    const strip = (l) => {
+      const m = (l ?? "").match(/^\s*(?:\/\/[!/]*|#|REM\b|--)\s?/);
+      return m ? l.slice(m[0].length).trim() : (l ?? "").trim();
+    };
+
+    const knownForms = [
+      // The CURRENT form: marker, blank, full MIT text.
+      ["", ...MIT_BODY],
+      // The R389 short form: marker, blank, two sentences.
+      [
+        "",
+        "Licensed under the MIT License.",
+        "See the LICENSE file in the project root for the full license text.",
+      ],
+    ];
+
+    for (const form of knownForms) {
+      let ok = true;
+      for (let k = 0; k < form.length; k++) {
+        if (strip(lines[headStart + 1 + k]) !== form[k]) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      // The header spans the marker line plus the matched form. A trailing
+      // blank line that SEPARATES the header from the body is not part of
+      // the header -- the caller already drops exactly one blank after the
+      // block it removes.
+      return { start: headStart, end: headStart + form.length, form: "line" };
+    }
+
+    // NO KNOWN FORM MATCHED.
+    //
+    // The file has a marker line at the top that is not a header we
+    // recognise. That is a file whose own comment merely MENTIONS the
+    // marker -- the licence tooling scripts all do, because they show the
+    // header shape in their documentation.
+    //
+    // So we must NOT touch it. Guessing would delete the file's own
+    // documentation -- which is precisely the failure this whole rework
+    // exists to prevent.
+    return null;
+  }
+
+  return null;
 }
 
 /**
@@ -358,198 +670,15 @@ function renderHeader(style) {
 
   if (style.block) {
     const [open, close] = style.block;
+    // The C-family block form shares ONE renderer with the shared module, so
+    // the Java header and any other slash-star language produce
+    // byte-identical text.
+    if (open === "/*" && close === "*/") return renderBlockHeader();
     return [`${open}`, ...HEADER_LINES.map((l) => (l === "" ? "" : `  ${l}`)), close];
   }
 
-  // Line style: a stable, greppable 4-line shape.
-  const prefix = style.line;
-  return HEADER_LINES.map((l) => (l === "" ? "" : `${prefix}${l}`));
-}
-
-/**
- * The google-java-format executable, if one is available.
- *
- * Resolution order:
- *   1. $GJF_JAR                     — an explicit jar path
- *   2. $GJF_HOME / google-java-format-all-deps.jar
- *   3. google-java-format on PATH
- *   4. the Maven local repository (com/google/googlejavaformat)
- *
- * If none of those yield a working tool, the header is still inserted (in the
- * hand-rolled canonical form) and the script says so — a missing formatter
- * must not block the licence work.
- */
-function resolveGjf() {
-  const envJar = process.env.GJF_JAR;
-  if (envJar && existsSync(envJar)) return { kind: "jar", cmd: envJar };
-
-  // The jar checked into the repo, so every developer and CI run has the
-  // same formatter version.
-  const local = join(REPO_ROOT, "scripts", "tools", "google-java-format-all-deps.jar");
-  if (existsSync(local)) return { kind: "jar", cmd: local };
-
-  const home = process.env.GJF_HOME;
-  if (home) {
-    const p = join(home, "google-java-format-all-deps.jar");
-    if (existsSync(p)) return { kind: "jar", cmd: p };
-  }
-
-  // Maven local repository
-  const repo = process.env.MAVEN_REPO_LOCAL ?? join(process.env.USERPROFILE ?? "", ".m2", "repository");
-  const gjfDir = join(repo, "com", "google", "googlejavaformat", "google-java-format");
-  if (existsSync(gjfDir)) {
-    const versions = readdirSync(gjfDir).sort().reverse();
-    for (const v of versions) {
-      const p = join(gjfDir, v, `google-java-format-${v}-all-deps.jar`);
-      if (existsSync(p)) return { kind: "jar", cmd: p };
-    }
-  }
-
-  return null;
-}
-
-let GJF = null;
-let gjfAvailable = false;
-let gjfError = null;
-try {
-  GJF = resolveGjf();
-  gjfAvailable = GJF !== null;
-} catch (e) {
-  gjfAvailable = false;
-  gjfError = e instanceof Error ? e.message : String(e);
-}
-
-/**
- * Format a Java file with google-java-format and return ONLY the header
- * block (the Javadoc above the package declaration), as an array of lines.
- *
- * Returns null when gjf cannot be run or produces nothing usable — the caller
- * then keeps the hand-rolled header.
- *
- * CACHE: gjf is a JVM launch, and this function used to run once per Java
- * file — 2012 JVM launches for a 2012-file repo, which took ~30 minutes.
- * But the licence header is IDENTICAL for every file: the package name does
- * not appear in it, and gjf's Javadoc layout does not depend on the package
- * declaration. So one run tells us the canonical shape for ALL files.
- *
- * The cache key is the source text of the probe. If two files really did need
- * different shapes, the key would differ and gjf would run again — the cache
- * is an optimisation, never a shortcut that changes the output.
- */
-const gjfHeaderCache = new Map();
-
-function formatJavadocWithGjf(source, eol) {
-  if (!GJF) return null;
-  const cached = gjfHeaderCache.get(source);
-  if (cached) return cached.map((l) => l);
-  try {
-    const stdout = execFileSync(
-      "java",
-      GJF.kind === "jar" ? ["-jar", GJF.cmd, "-"] : [GJF.cmd, "-"],
-      { input: source, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd: REPO_ROOT },
-    );
-    const lines = stdout.split(/\r?\n/);
-    // The header block is everything from the opening delimiter up to and
-    // including the closing one, at the very top of the file.
-    let start = -1;
-    for (let i = 0; i < Math.min(10, lines.length); i++) {
-      if (lines[i].trim().startsWith("/**")) {
-        start = i;
-        break;
-      }
-    }
-    if (start < 0) return null;
-    let end = -1;
-    for (let i = start + 1; i < lines.length; i++) {
-      if (lines[i].trim() === "*/") {
-        end = i;
-        break;
-      }
-    }
-    if (end < 0) return null;
-    const result = lines.slice(start, end + 1);
-    gjfHeaderCache.set(source, result);
-    return result.map((l) => l);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Build the file-level Javadoc header for a Java source file.
- *
- * Returns the lines to emit immediately above the `package` declaration.
- *
- * If the file ALREADY has a file-level Javadoc (this repo's package-info.java
- * files do), the license block is placed ABOVE it as a SEPARATE block rather
- * than merged into it.
- *
- * Why separate and not merged:
- *
- *  - Merging makes the operation IRREVERSIBLE. google-java-format re-wraps the
- *    old prose to fill 100 columns, so removing the merged licence afterwards
- *    cannot restore the original wrapping — the text differs from HEAD for a
- *    reason that has nothing to do with the licence. Keeping the two blocks
- *    separate means the old prose is never touched, so adding and removing the
- *    licence is a perfect round trip.
- *
- *  - Two blocks read fine here: a file-level licence comment followed by the
- *    file's own documentation comment, both above `package`. This is a
- *    common shape in Apache-licensed Java codebases.
- *
- * When there is no existing Javadoc, the licence block stands alone.
- */
-function renderJavaHeader(existingDocLines) {
-  const lic = JAVADOC_LINES.map((l) => (l === "*" ? " *" : ` * ${l}`));
-  return ["/**", ...lic, " */"];
-}
-
-/** Index of the `package` declaration in an array of lines, or -1. */
-function pkgIndexOf(lines) {
-  return lines.findIndex((l) => /^\s*package\s+[\w.]+\s*;/.test(l));
-}
-
-/**
- * Find the file-level comment block immediately above the `package` declaration.
- * Returns its lines (including the open and close delimiters), or null.
- *
- * TWO forms are recognised, and both must be:
- *
- *  a) A real Javadoc block — opener is slash-star-star.
- *  b) A plain block comment — opener is slash-star. This repo has files whose
- *     "file-level doc" is a plain block comment rather than a Javadoc (e.g.
- *     `BashToolR326MkdirPTest.java` opens with a plain block and an
- *     "R326 — ..." note).
- *
- * Why (b) matters: the caller slices the body from this block down to the
- * `package` declaration. If a plain block comment is not recognised, the
- * lines between it and `package` — including that block — are silently
- * DROPPED. The file then loses its own documentation, and no amount of
- * licence-header logic is involved; it is a plain "we cut the wrong lines" bug.
- *
- * The opener must be the LAST opener before the closer — scanning upwards
- * from the closer and stopping at the first opener found is what makes this
- * pick the INNERMOST block, which is the one that actually ends at that
- * closer.
- */
-function findFileJavadoc(lines) {
-  const pkgIdx = pkgIndexOf(lines);
-  if (pkgIdx < 0) return null;
-  if (pkgIdx === 0 || lines[pkgIdx - 1].trim() !== "*/") return null;
-
-  let start = -1;
-  for (let i = pkgIdx - 1; i >= 0; i--) {
-    const t = lines[i].trim();
-    if (t.startsWith("/**") || t === "/*") {
-      start = i;
-      break;
-    }
-    // Any other content between the opener and the closer means the closer
-    // does not belong to a file-level comment block.
-    if (t !== "" && !t.startsWith("*")) break;
-  }
-  if (start < 0) return null;
-  return { doc: lines.slice(start, pkgIdx), start, pkgIdx };
+  // Line style.
+  return renderLineHeader(style.line);
 }
 
 /**
@@ -559,7 +688,17 @@ function findFileJavadoc(lines) {
  * See the header comment (points 3, 3a, 3b) for why each rule exists.
  */
 function splitLeadingDirectives(content, style) {
-  const lines = content.split(/\r?\n/);
+  // SPLIT ON "\n" ALONE.
+  //
+  // The carriage return STAYS at the end of each line, so a CRLF file's
+  // lines are "...\r" and every later join reproduces the CRLF exactly.
+  //
+  // The old `split(/\r?\n/)` DISCARDED the carriage return, and the
+  // rejoin used a hardcoded "\n" -- so a CRLF file's body was silently
+  // rewritten with LF endings. Seven Java files here ended up MIXED: a
+  // CRLF header on an LF body, and a diff of thousands of changed lines
+  // for a five-line header edit.
+  const lines = content.split("\n");
   const prefix = [];
 
   // --- shebang (any language) ---
@@ -609,7 +748,7 @@ function splitLeadingDirectives(content, style) {
     if (m && m.index === 0) {
       // The docstring may span multiple lines. Slice it out line-wise.
       const docText = m[1];
-      const docLines = docText.split(/\r?\n/);
+      const docLines = docText.split("\n");
       prefix.push(...docLines);
       lines.splice(0, docLines.length);
     }
@@ -712,23 +851,6 @@ function main() {
     const body = raw;
     const eol = detectEol(body);
 
-    let migratedJava = null;
-    if (alreadyHasHeader(raw)) {
-      // A file may carry the LEGACY `//` licence header. For Java that form
-      // is now obsolete — the header is a Javadoc block — so such a file is
-      // MIGRATED rather than skipped. For every other language the legacy
-      // form IS the current form, so it is left alone.
-      const legacy = style.javadoc
-        ? findLegacyJavaLineHeader(body.split(/\r?\n/))
-        : null;
-      if (!legacy) {
-        report.untouched.push(relPosix);
-        continue;
-      }
-      report.migrated.push(relPosix);
-      migratedJava = legacy;
-    }
-
     if (style.none) {
       // JSON has no comment syntax. A JSON file cannot legally carry a
       // // comment, so adding one would make it unparseable. Report these
@@ -738,8 +860,70 @@ function main() {
       continue;
     }
 
-    // Detect BOM and line ending so we preserve both.
+    // Split the file into the leading DIRECTIVES (shebang, encoding
+    // declaration, XML declaration, Rust inner attributes, module docstring)
+    // and the rest.
+    //
+    // This must happen BEFORE the legacy-header test, because the header is
+    // not always at line 0: a Python file opens with a shebang and a PEP 263
+    // encoding declaration, and its header sits BELOW them. A test that only
+    // looked at line 0 would see "no header here", decide the file was
+    // already current, and leave the obsolete form in place.
     const { prefixLines, rest } = splitLeadingDirectives(body, style);
+
+    // Does the file already carry a header -- at the TOP, where the
+    // inserter puts one?
+    //
+    // "alreadyHasHeader" alone is not enough: it only asks whether the
+    // marker appears ANYWHERE, and a file's own doc comment can MENTION
+    // the marker. The licence tooling scripts all do -- they show the
+    // header shape in their documentation -- so a marker-anywhere test
+    // reported "already licensed" and left the tooling itself unlicensed.
+    //
+    // So the test is the SAME rule the remover and the auditor use: the
+    // marker must be the first content line of a comment block that starts
+    // at the top of the file.
+    const restLines = rest.split("\n");
+    const alreadyHas = alreadyHasHeaderAtTop(restLines, style);
+
+    // EXISTING HEADER BLOCKS, OF ANY AGE.
+    //
+    // The header this tool writes is the full MIT text. A file may carry an
+    // OLDER one -- the R389 short form -- and it must be REPLACED, not
+    // left in place and not merely detected.
+    //
+    // THE ONE RULE THAT MAKES BOTH PATHS THE SAME PATH: an existing header
+    // block is stripped, whatever its age, and exactly one fresh header is
+    // written. There is no separate "insert" path and "migrate" path,
+    // because two paths are two chances to get it wrong -- and they were:
+    //
+    //  - `index.html` carried an HTML-comment legacy header. The "already
+    //    has a header" test only knew the slash-star shape, so it said "no
+    //    header here", took the INSERT path, and PREPENDED a new header
+    //    without removing the old one. The file ended up with TWO copyright
+    //    notices and TWO different licence statements.
+    //
+    // So the detection and the removal use the SAME shape set, and both
+    // happen on every run.
+    const existing = findExistingHeaderBlock(restLines);
+
+    if (alreadyHas) {
+      // The file carries EXACTLY the canonical header at the top. It is
+      // already correct, so there is nothing to write and nothing to
+      // remove -- leave it alone.
+      //
+      // This is the idempotency guarantee: running the tool twice must not
+      // change anything the second time. A tool that rewrites 2800 correct
+      // files on every run is not idempotent, and its `--check` gate can
+      // never be green -- which means the gate stops being a signal.
+      report.untouched.push(relPosix);
+      continue;
+    }
+    if (existing) {
+      // An OBSOLETE header: strip it and write the canonical one in its
+      // place.
+      report.migrated.push(relPosix);
+    }
 
     // Assemble: directives, header, blank line, original content.
     //
@@ -755,114 +939,97 @@ function main() {
     //     line that was already separated from the directive block by a blank
     //     line — in that case the original's own blank line is reused rather
     //     than adding a second one.
+    // THE DIRECTIVES.
+    //
+    // A shebang, a Rust inner attribute, an XML declaration, a Python
+    // encoding declaration and a module docstring must ALL stay at the top
+    // of the file, in this order, ahead of everything else.
+    //
+    // They were dropped once already. The CRLF fix rewrote this whole
+    // region and left the directives out of the result -- so
+    // `aethercode-desktop/src-tauri/src/main.rs` lost
+    // `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
+    // (the attribute that stops a release build from opening a console
+    // window) and `aethercode-memory/src/cli.ts` lost its
+    // `#!/usr/bin/env node`.
+    //
+    // So the directives are part of the assembly, not a side effect of it.
     const out = [];
     if (prefixLines.length) {
       out.push(...prefixLines);
       // Did the original have a blank line between the directives and the body?
-      const hadBlankAfterDirectives = /^\n/.test(rest);
+      const hadBlankAfterDirectives = /^[\r\n]/.test(rest);
       if (hadBlankAfterDirectives) out.push("");
     }
 
-    if (style.javadoc) {
-      // Java: the file-level Javadoc sits IMMEDIATELY above the package
-      // declaration, with NO blank line between them. That is what
-      // google-java-format produces, and what this repo's existing
-      // package-info.java files already look like:
-      //
-      //     /**
-      //      * ... text ...
-      //      */
-      //     package org.example;
-      //
-      // A blank line there would make gjf re-flow the comment away from the
-      // package declaration, so it must not be there.
-      //
-      // If the file already has a file-level Javadoc, the licence block goes
-      // ABOVE it as a separate block (see renderJavaHeader) — the file's own
-      // documentation is never touched, so adding and removing the licence is
-      // a perfect round trip.
-      const restLines = rest.split(/\r?\n/);
-
-      // MIGRATION: drop the legacy `//` licence run before doing anything
-      // else. Leaving it in place would put TWO licence headers in the file
-      // (the old `//` run and the new Javadoc block), and the file would then
-      // no longer match what the removal script expects.
-      //
-      // The legacy run is always at the very top of the file, so removing it
-      // shifts every later line up — but that is precisely the change we want:
-      // the file's own content stays byte-identical, only the obsolete header
-      // goes away.
-      let effectiveLines = restLines;
-      if (migratedJava) {
-        effectiveLines = [
-          ...restLines.slice(0, migratedJava.start),
-          ...restLines.slice(migratedJava.end + 1),
+    // MIGRATION: an obsolete header must be stripped before the new one is
+    // written. Leaving it in place would put TWO licence headers in the file
+    // (the old one and the new one), and the file would then no longer match
+    // what the removal script expects.
+    //
+    // The legacy block is always at the very top of the file, so removing it
+    // shifts every later line up -- but that is precisely the change we want:
+    // the file's own content stays byte-identical, only the obsolete header
+    // goes away.
+    let effectiveRest = rest;
+    if (existing) {
+      const restLines = rest.split("\n");
+      let kept = [
+        ...restLines.slice(0, existing.start),
+        ...restLines.slice(existing.end + 1),
+      ];
+      // The legacy block was followed by a blank line separating it from the
+      // rest of the file; drop exactly one so the file does not end up with a
+      // stray blank line.
+      if (
+        kept[existing.start] !== undefined &&
+        kept[existing.start].trim() === ""
+      ) {
+        kept = [
+          ...kept.slice(0, existing.start),
+          ...kept.slice(existing.start + 1),
         ];
-        // The legacy block was followed by a blank line separating it from
-        // the package declaration; drop exactly one so the file does not end
-        // up with a stray blank line.
-        if (
-          effectiveLines.length &&
-          effectiveLines[migratedJava.start] !== undefined &&
-          effectiveLines[migratedJava.start].trim() === ""
-        ) {
-          effectiveLines = [
-            ...effectiveLines.slice(0, migratedJava.start),
-            ...effectiveLines.slice(migratedJava.start + 1),
-          ];
-        }
       }
-
-      const existing = findFileJavadoc(effectiveLines);
-      const doc = renderJavaHeader(existing ? existing.doc : null);
-
-      // The body is everything from the existing Javadoc (if any) down to the
-      // package declaration.
-      const pkgIdx = pkgIndexOf(effectiveLines);
-      const body = existing
-        ? effectiveLines.slice(existing.start)
-        : effectiveLines.slice(pkgIdx >= 0 ? pkgIdx : 0);
-
-      // Let google-java-format decide the FINAL shape of the licence block.
-      //
-      // gjf has opinions about Javadoc layout (the empty line inside a block
-      // is " *", not "  "; the paragraph needs a "<p>" tag). Rather than
-      // re-implement those rules, we run gjf on the assembled file and take
-      // ITS version of the licence block.
-      //
-      // Only the LICENCE BLOCK is taken from gjf's output — the rest of the
-      // file is left exactly as it was, because this repo is not
-      // gjf-formatted (running gjf over a whole file would rewrite 2000
-      // files).
-      //
-      // gjf needs a PARSEABLE file, so it gets the header PLUS the package
-      // declaration — a header on its own is not valid Java and gjf would
-      // reject it.
-      out.push(...doc);
-      if (gjfAvailable) {
-        // The probe must be PARSEABLE Java: the licence block plus a package
-        // declaration. A licence block on its own is not valid Java.
-        //
-        // The package name is deliberately a FIXED placeholder, not the file's
-        // real package: the licence header does not mention the package, and
-        // gjf's Javadoc layout does not depend on it. Using a constant keeps
-        // the probe identical for every file, which lets formatJavadocWithGjf
-        // hit its cache — one gjf run for the whole repo instead of 2012.
-        const probe = [...out, "package probe;"].join("\n");
-        const formatted = formatJavadocWithGjf(probe, eol);
-        if (formatted) {
-          out.length = 0;
-          out.push(...formatted);
-        }
-      }
-      out.push(...body);
-    } else {
-      out.push(...renderHeader(style));
-      out.push("");
-      out.push(rest.replace(/^\n+/, ""));
+      effectiveRest = kept.join("\n");
     }
 
-    let next = out.join(eol);
+    // THE ASSEMBLY, and where the two line-ending conventions meet.
+    //
+    // The RENDERED header lines carry no carriage return -- they are new
+    // text -- so they are joined with the file's detected `eol`.
+    //
+    // The BODY lines already carry their own carriage return if the file is
+    // a CRLF file (because the split kept it), so they are joined with
+    // "\n" and the `\r` rides along.
+    //
+    // Joining EVERYTHING with `eol` would double the carriage return on a
+    // CRLF file ("...\r\r\n"); joining everything with "\n" would strip
+    // the endings from a CRLF file. So the two halves are joined
+    // differently, and that difference IS the point.
+    const headerLines = renderHeader(style);
+    const bodyText = effectiveRest.replace(/^[\n\r]+/, "");
+
+    // THE JOIN.
+    //
+    // Three parts, and each is joined with the ending it needs:
+    //
+    //  - the directives and the header are NEW text, so they are joined
+    //    with the file's detected `eol`;
+    //  - the BODY already carries its own carriage returns (the split kept
+    //    them), so it is joined with "\n" and the "\r" rides along.
+    //
+    // Joining everything with `eol` would DOUBLE the carriage return on a
+    // CRLF file ("...\r\r\n"); joining everything with "\n" would strip
+    // the endings from a CRLF file. So the two halves are joined
+    // differently, and that difference IS the point.
+    const parts = [];
+    if (out.length) parts.push(out.join(eol));
+    parts.push(headerLines.join(eol));
+    if (bodyText !== "") {
+      parts.push("");
+      parts.push(bodyText);
+    }
+    let next = parts.join(eol);
     if (hadBom) next = "\uFEFF" + next;
 
     report.changed.push(relPosix);
@@ -877,13 +1044,11 @@ function main() {
   console.log(`files scanned      : ${files.length}`);
   console.log(`skipped (out of scope): ${report.skipped.length}`);
   console.log(`already had header : ${report.untouched.length}`);
-  console.log(`migrated (legacy // -> Javadoc): ${report.migrated.length}`);
+  console.log(`migrated (old header -> full MIT text): ${report.migrated.length}`);
   console.log(`${checkOnly || dryRun ? "would change" : "changed"}       : ${report.changed.length}`);
   console.log(`JSON (no comment syntax, exempt): ${report.jsonBlocked.length}`);
   console.log(`not valid UTF-8 (skipped, untouched): ${report.nonUtf8.length}`);
-  console.log(
-    `google-java-format: ${gjfAvailable ? "available (Java headers are gjf-canonical)" : "NOT FOUND" + (gjfError ? ` (${gjfError})` : "")}`,
-  );
+
 
   if (report.nonUtf8.length) {
     console.log("\n--- files that are NOT valid UTF-8 (left untouched on purpose) ---");

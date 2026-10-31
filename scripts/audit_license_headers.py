@@ -14,13 +14,20 @@ This is the check that matters. "The diff looks like a header" is a claim;
 The header block we insert is ALWAYS this exact shape:
 
     <prefix> Copyright (c) 2026 maijun
-    <blank>
-    <prefix> Licensed under the MIT License.
-    <prefix> See the LICENSE file in the project root for the full license text.
+    <prefix>
+    <prefix> Permission is hereby granted, free of charge, to any person ...
+    ... the full MIT permission text ...
+    <prefix>
 
 so the auditor matches that shape rather than guessing at comment runs. A file
 whose header does not match the expected shape is reported as a MISMATCH, not
 silently passed.
+
+The canonical text is NOT written here. It is read out of
+scripts/license_header.py, which in turn reads it out of the JavaScript
+module the INSERTER uses. One source of truth: if the wording changes in
+one place, the gate follows automatically, and it can never demand a
+header the inserter does not write.
 
 Block-comment languages (HTML/XML/Markdown/CSS) use the block form instead:
 
@@ -29,9 +36,37 @@ Block-comment languages (HTML/XML/Markdown/CSS) use the block form instead:
     ...
     -->
 """
+# Copyright (c) 2026 maijun
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from license_header import (  # noqa: E402
+    block_header_lines,
+    header_lines,
+    line_header_lines,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 AUTHOR = "maijun"
@@ -42,6 +77,14 @@ BLOCK_FORMS = {
     "<!--": ("<!--", "-->"),
     "/*": ("/*", "*/"),
 }
+
+# The canonical header, in the two forms the inserter writes.
+#
+# These come from license_header.py, which READS them out of the JavaScript
+# module the INSERTER uses. One source of truth: the gate can never demand
+# a header the inserter does not write.
+_CANONICAL_BODY = header_lines()
+_CANONICAL_BLOCK = block_header_lines()
 
 # File types that DELIBERATELY carry no licence header.
 #
@@ -92,11 +135,10 @@ def norm(text):
 def match_line_header(lines, start):
     """Try to match the LINE-style header at `start`. Return end index or None.
 
-    Two shapes are accepted:
-      (a) marker / blank / sentence / sentence      <- the normal insertion
-      (b) marker / sentence / sentence               <- no blank separator
+    The expected run is the canonical header, one line per entry, with the
+    comment prefix on every line -- including the blank ones inside the MIT
+    text, because an unprefixed blank would END the comment run.
     """
-    marker = f"Copyright (c) {YEAR} {AUTHOR}"
     if start >= len(lines):
         return None
     m = lines[start]
@@ -107,102 +149,60 @@ def match_line_header(lines, start):
             break
     if prefix is None:
         return None
-    # The marker line is "<prefix> Copyright (c) YEAR AUTHOR" — the comment
-    # prefix is part of the line, so compare against the prefixed form.
-    if m != f"{prefix}{marker}":
-        return None
-    if start + 2 >= len(lines):
-        return None
-    s2 = lines[start + 2].strip()
-    s3 = lines[start + 3].strip() if start + 3 < len(lines) else ""
-    if s2 != f"{prefix}Licensed under the MIT License.":
-        return None
-    if s3 != f"{prefix}See the LICENSE file in the project root for the full license text.":
-        return None
-    return start + 3
 
-
-def match_line_header_anywhere(lines, start):
-    """Match the LINE-style header allowing the sentences to be separated by
-    EITHER a blank line or nothing at all.
-
-    Shape (a): marker / blank / sentence / sentence
-    Shape (b): marker / sentence / sentence
-    """
-    marker = f"Copyright (c) {YEAR} {AUTHOR}"
-    if start >= len(lines):
-        return None
-    m = lines[start]
-    prefix = None
-    for p in LINE_PREFIXES:
-        if m.startswith(p):
-            prefix = p
-            break
-    if prefix is None:
-        return None
-    if m != f"{prefix}{marker}":
-        return None
-    s2i = start + 1
-    if s2i < len(lines) and lines[s2i].strip() == "":
-        s2i += 1
-    if s2i + 1 >= len(lines):
-        return None
-    if lines[s2i].strip() != f"{prefix}Licensed under the MIT License.":
-        return None
-    if lines[s2i + 1].strip() != f"{prefix}See the LICENSE file in the project root for the full license text.":
-        return None
-    return s2i + 1
-
-def match_javadoc_header(lines, start):
-    """Try to match the JAVA Javadoc-style header at `start`. Return end index or None.
-
-    Java carries the licence as a FILE-LEVEL Javadoc block:
-
-        /**
-         * Copyright (c) 2026 maijun
-         *
-         * <p>Licensed under the MIT License. See the LICENSE file in the project root.
-         */
-        package org.example;
-
-    Two things make it a DIFFERENT shape from the generic block form:
-
-      1. the opener is slash-star-STAR, not slash-star;
-      2. the two licence sentences are JOINED into one `<p>` paragraph — that is
-         google-java-format's canonical Javadoc layout, and a two-sentence form
-         gets re-wrapped by gjf.
-
-    So this cannot reuse match_block_header: that one looks for the literal
-    "Licensed under the MIT License." and "See the LICENSE file in the project
-    root" as SEPARATE lines, which the Javadoc form does not have.
-
-    The block is matched EXACTLY, line by line. A header that merely mentions
-    the marker in some other shape must not be accepted — the whole point of
-    this auditor is to prove that removing OUR header reproduces the original.
-    """
-    marker = f"Copyright (c) {YEAR} {AUTHOR}"
-    expected = [
-        "/**",
-        f" * {marker}",
-        " *",
-        " * <p>Licensed under the MIT License. See the LICENSE file in the project root.",
-        " */",
-    ]
+    expected = line_header_lines(prefix)
     if start + len(expected) > len(lines):
         return None
     for k, want in enumerate(expected):
-        # Compare the TRIMMED forms of both sides. The expected block contains
-        # lines like " *" and " */", whose trimmed forms are "*" and "*/" —
-        # comparing the raw expected string against a trimmed actual line would
-        # never match.
-        if lines[start + k].strip() != want.strip():
+        if lines[start + k].rstrip() != want.rstrip():
             return None
     return start + len(expected) - 1
 
 
+def match_line_header_anywhere(lines, start):
+    """Match the LINE-style header.
+
+    The header itself is matched exactly (see match_line_header); this
+    variant differs only in what it does with the line AFTER it.
+    """
+    return match_line_header(lines, start)
+
+def match_javadoc_header(lines, start):
+    """Try to match the JAVA header at `start`. Return end index or None.
+
+    Java used to carry the licence as a FILE-LEVEL Javadoc block. It now
+    carries a PLAIN block comment:
+
+        /*
+         * Copyright (c) 2026 maijun
+         *
+         * Permission is hereby granted, free of charge, ...
+         */
+        package org.example;
+
+    The plain block was chosen because google-java-format REFLOWS Javadoc
+    prose to fill 100 columns, which made the licence header a moving
+    target for the formatter, and because a Javadoc block is
+    DOCUMENTATION -- the licence is not part of a class's API docs.
+
+    So this is the same shape as match_block_header, and the generic
+    matcher covers it.
+    """
+    return match_block_header(lines, start)
 def match_block_header(lines, start):
-    """Try to match the BLOCK-style header at `start`. Return end index or None."""
-    marker = f"Copyright (c) {YEAR} {AUTHOR}"
+    """Try to match the BLOCK-style header at `start`. Return end index or None.
+
+    The expected block is the canonical one -- the copyright line, a blank,
+    and the full MIT permission text -- wrapped in the language's block
+    delimiter. For the slash-star form the expected lines come straight
+    from license_header.block_header_lines(); for the HTML-comment form
+    the same body is re-indented under the different delimiter.
+
+    The block is matched EXACTLY, line by line. A header that merely
+    mentions the marker in some other shape must not be accepted -- the
+    whole point of this auditor is to prove that removing OUR header
+    reproduces the original.
+    """
     if start >= len(lines):
         return None
     opener = lines[start].strip()
@@ -213,21 +213,82 @@ def match_block_header(lines, start):
             break
     if closer_tok is None:
         return None
-    # scan forward for the closer
-    for k in range(start + 1, len(lines)):
-        if lines[k].strip() == closer_tok:
-            end = k
-            break
-    else:
+
+    # How many lines the canonical body occupies.
+    body_len = len(_CANONICAL_BODY)
+    if start + 1 + body_len > len(lines):
         return None
-    body = "\n".join(lines[start + 1:end])
-    if marker not in body:
+
+    for k, want in enumerate(_CANONICAL_BODY):
+        actual = lines[start + 1 + k].strip()
+        if want == "":
+            # The blank line inside the block carries the block's own
+            # decoration: " *" for a slash-star block, "" for an
+            # HTML comment.
+            if actual not in ("", "*", " *"):
+                return None
+            continue
+        # The body line, with the block's decoration stripped.
+        bare = actual
+        for prefix in ("*", "#", "!"):
+            if bare.startswith(prefix):
+                bare = bare[len(prefix):]
+                break
+        bare = bare.strip()
+        if bare != want:
+            return None
+
+    # The closer must follow the body.
+    close_idx = start + 1 + body_len
+    if close_idx >= len(lines):
         return None
-    if "Licensed under the MIT License." not in body:
+    if lines[close_idx].strip() != closer_tok:
         return None
-    if "See the LICENSE file in the project root" not in body:
-        return None
-    return end
+    return close_idx
+def header_start_index(lines):
+    """The index of the line where the licence header may start.
+
+    The inserter writes the header as the FIRST thing in the file, after
+    the language DIRECTIVES and after a Python MODULE DOCSTRING. So the
+    header starts at the first line that is none of those.
+
+    Returns -1 when the file has no such line.
+    """
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        t = line.strip()
+        if t == "":
+            i += 1
+            continue
+        if t.startswith("#!") or t.startswith("<?xml") or t.startswith("#!["):
+            i += 1
+            continue
+        if re.match(r"^[ \t\f]*#.*coding[:=][ \t]*[-\w.]+", line):
+            i += 1
+            continue
+        # A Python MODULE DOCSTRING comes before the header.
+        m = re.match(r'^[rRbBuUfF]{0,2}("""|\'\'\')', t)
+        if m:
+            quote = m.group(1)
+            if len(t) >= 2 * len(quote) and t.endswith(quote):
+                i += 1
+                continue
+            j = i
+            closed = False
+            while j < len(lines):
+                src_from = t.index(quote) + len(quote) if j == i else 0
+                idx = lines[j].find(quote, src_from)
+                if idx >= 0:
+                    i = j + 1
+                    closed = True
+                    break
+                j += 1
+            if not closed:
+                return -1
+            continue
+        return i
+    return -1
 
 
 def strip_header(text):
@@ -240,11 +301,22 @@ def strip_header(text):
     directive block the language requires to stay at the top.
     """
     lines = text.split("\n")
-    # The header may sit AFTER a shebang / XML declaration / Rust inner attribute /
-    # Python module docstring, so we try every plausible start position rather than
-    # assuming it is line 0. Whatever precedes the header is KEPT — that is the
-    # directive block the language requires to stay at the top.
-    for start in range(0, min(400, len(lines))):
+    # The header sits at ONE place: the first line that is not a language
+    # DIRECTIVE (a shebang, an encoding declaration, an XML declaration, a
+    # Rust inner attribute) and not a Python MODULE DOCSTRING.
+    #
+    # The auditor used to try EVERY start position, which made it find the
+    # marker inside a file's OWN documentation -- the licence tooling scripts
+    # all SHOW the header shape in their doc comments -- and then report
+    # "header shape not recognised" for files whose header is perfectly
+    # fine.
+    #
+    # Whatever precedes the header is KEPT: that is the directive block the
+    # language requires to stay at the top.
+    start = header_start_index(lines)
+    if start < 0:
+        return None, []
+    for start in [start]:
         end = match_javadoc_header(lines, start)
         if end is None:
             end = match_line_header_anywhere(lines, start)

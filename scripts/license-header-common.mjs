@@ -1,8 +1,23 @@
-/**
- * Copyright (c) 2026 maijun
- *
- * <p>Licensed under the MIT License. See the LICENSE file in the project root.
- */
+// Copyright (c) 2026 maijun
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 /**
  * license-header-common.mjs — the shared logic of the licence-header tools.
  *
@@ -32,31 +47,104 @@ export const YEAR = "2026";
 export const MARKER = `Copyright (c) ${YEAR} ${AUTHOR}`;
 
 /**
- * The Javadoc form of the header, for Java.
+ * The MIT permission text — the standard SPDX "MIT" wording, verbatim.
  *
- * Two differences from the generic form, and both of them are forced by
- * google-java-format:
+ * This is the FULL grant, not a paraphrase of it. The reason is legal, not
+ * stylistic: MIT's own condition is "The above copyright notice and this
+ * permission notice shall be included in all copies or substantial
+ * portions of the Software." A header that says only "Licensed under the MIT
+ * License" carries the copyright notice but NOT the permission notice — so a
+ * file copied out of this repository on its own would carry no grant at all.
  *
- *  1. The second paragraph is ONE sentence with a `<p>` tag, not two lines.
- *     google-java-format reflows Javadoc prose to fill 100 columns, so a
- *     two-line sentence gets JOINED into one long line and re-wrapped. A
- *     single short sentence stays exactly as written.
+ * SPDX's own guidance is explicit on this point: "ensure the LICENSE file
+ * and any header comments use the standard license text." A shortened
+ * paraphrase ("<p>Licensed under the MIT License. See the LICENSE file...")
+ * is not the standard text.
  *
- *  2. The sentence is short enough not to wrap. The generic wording ("See the
- *     LICENSE file in the project root for the full license text.") is 84
- *     characters, which gjf wraps at column 100 once the ` * <p>` prefix is
- *     counted — and a wrapped license line looks like a mistake.
- *
- * The blank line inside the block is written as ` *` (star, then nothing) —
- * that is google-java-format's canonical spelling for an empty Javadoc line,
- * and it is the one thing that would otherwise make gjf want to reformat
- * every single Java file in the repo.
+ * The line breaks are the canonical MIT wrapping (79-column body) so the
+ * header reads identically in every file and in the LICENSE file itself.
  */
-export const JAVADOC_LINES = [
-  `Copyright (c) ${YEAR} ${AUTHOR}`,
-  "*",
-  "<p>Licensed under the MIT License. See the LICENSE file in the project root.",
+export const MIT_BODY = [
+  "Permission is hereby granted, free of charge, to any person obtaining a copy",
+  'of this software and associated documentation files (the "Software"), to deal',
+  "in the Software without restriction, including without limitation the rights",
+  "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell",
+  "copies of the Software, and to permit persons to whom the Software is",
+  "furnished to do so, subject to the following conditions:",
+  "",
+  "The above copyright notice and this permission notice shall be included in all",
+  "copies or substantial portions of the Software.",
+  "",
+  'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+  "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,",
+  "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE",
+  "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER",
+  "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,",
+  "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE",
+  "SOFTWARE.",
 ];
+
+/**
+ * The canonical header body: the copyright line, a blank line, then the MIT
+ * permission text.
+ *
+ * This is the ONE source of truth for the wording. Every language style
+ * renders from these lines, so the wording can never drift between languages
+ * — and the LICENSE file is generated from the same array.
+ */
+export const HEADER_LINES = [
+  `Copyright (c) ${YEAR} ${AUTHOR}`,
+  "",
+  ...MIT_BODY,
+];
+
+/**
+ * Render the header as a plain block comment.
+ *
+ * WHY A PLAIN BLOCK COMMENT AND NOT JAVADOC.
+ *
+ * The previous form was a Javadoc block (slash-star-star ... slash-star) with
+ * a `<p>` tag. That had two costs that a plain block does not:
+ *
+ *  - google-java-format REFLOWS Javadoc prose to fill 100 columns. A licence
+ *    header is not prose, so every line had to be written to survive the
+ *    reflow — and `package-info.java` files, which have their OWN Javadoc,
+ *    needed the licence and the file's documentation split into two blocks
+ *    so the original text was never re-wrapped.
+ *
+ *  - A Javadoc block is DOCUMENTATION. Attaching the licence to it makes the
+ *    licence part of the class's API documentation, which is not what a
+ *    licence header is.
+ *
+ * A plain block comment is preserved byte-for-byte by google-java-format
+ * (it does not reflow non-Javadoc block comments), so:
+ *
+ *  - the header needs no formatter to be canonical, and
+ *  - it does not collide with a file's own Javadoc.
+ *
+ * The lines are prefixed with " * " so the block reads as a comment, and the
+ * body lines stay at or under 79 columns.
+ */
+export function renderBlockHeader() {
+  return ["/*", ...HEADER_LINES.map((l) => (l === "" ? " *" : ` * ${l}`)), " */"];
+}
+
+/**
+ * Render the header as a run of line comments.
+ *
+ * EVERY line carries the prefix, including the blank ones inside the MIT
+ * text. A blank line written as a truly empty line would END the comment
+ * run: in Python, in shell, and in YAML an unprefixed blank line is not
+ * part of the comment, and a reader (or the removal script) scanning for
+ * the end of the run would stop there. Writing the blank as the bare prefix
+ * keeps the whole header one contiguous comment block, which is also how
+ * every hand-written MIT header in the wild looks.
+ *
+ * @param {string} prefix the comment prefix, e.g. "// " or "# "
+ */
+export function renderLineHeader(prefix) {
+  return HEADER_LINES.map((l) => (l === "" ? prefix.trimEnd() : `${prefix}${l}`));
+}
 
 /**
  * Detect the line ending a file's CONTENT uses.
@@ -91,6 +179,24 @@ export function detectEol(text) {
 }
 
 /**
+ * True when a line is one of the DIRECTIVES that may precede the header.
+ *
+ * These are language constructs, not licence text:
+ *   - a shebang (`#!`)
+ *   - an XML declaration (`<?xml ... ?>`)
+ *   - a Rust inner attribute (`#![...]`)
+ *   - a Python encoding declaration (`# -*- coding: utf-8 -*-`)
+ */
+function isDirectiveLine(line) {
+  const t = line.trim();
+  if (t.startsWith("#!")) return true;
+  if (t.startsWith("<?xml")) return true;
+  if (/^#!\[/.test(t)) return true;
+  if (/^[ \t\f]*#.*coding[:=][ \t]*[-\w.]+/.test(line)) return true;
+  return false;
+}
+
+/**
  * Remove a leading licence header from `text`, for the sole purpose of
  * measuring the body's line ending.
  *
@@ -104,17 +210,33 @@ export function stripLeadingHeaderForEol(text) {
   if (lines.length < 2) return text;
 
   const markerRe = /Copyright \(c\) \d{4} \S/;
+  // Skip the leading DIRECTIVES: a shebang, an XML declaration, a Rust inner
+  // attribute, a Python encoding declaration, or a module docstring. The
+  // header lands AFTER them, and the EOL of the header must not be confused
+  // with the EOL of a directive.
+  //
+  // The loop runs until it stops making progress, so a Python file with a
+  // shebang AND an encoding declaration AND a docstring is handled.
   let i = 0;
-  // Skip a shebang / XML declaration / Rust inner attribute.
-  if (lines[i] && lines[i].trim() !== "" && !markerRe.test(lines[i])) {
-    const first = lines[i];
-    if (
-      first.startsWith("#!") ||
-      first.startsWith("<?xml") ||
-      first.startsWith("#![")
-    ) {
-      i++;
+  for (;;) {
+    if (i >= lines.length) break;
+    const line = lines[i];
+    if (line.trim() === "") {
+      // A blank line: it may separate the directives from the header.
+      // Look ahead — if the next non-blank is a directive, keep going.
+      let j = i;
+      while (j < lines.length && lines[j].trim() === "") j++;
+      if (j < lines.length && isDirectiveLine(lines[j])) {
+        i = j;
+        continue;
+      }
+      break;
     }
+    if (isDirectiveLine(line)) {
+      i++;
+      continue;
+    }
+    break;
   }
 
   // A block-comment header.
@@ -129,8 +251,24 @@ export function stripLeadingHeaderForEol(text) {
 
   // A line-comment header.
   if (lines[i] && markerRe.test(lines[i])) {
+    const isComment = (l) => /^\s*(\/\/|#|REM |--)/.test(l);
     let j = i;
-    while (j < lines.length && /^\s*(\/\/|#|REM |--)/.test(lines[j])) j++;
+    while (j < lines.length) {
+      if (isComment(lines[j])) {
+        j++;
+        continue;
+      }
+      if (lines[j].trim() === "") {
+        // A blank line: it belongs to the run only if a comment follows.
+        let k = j;
+        while (k < lines.length && lines[k].trim() === "") k++;
+        if (k < lines.length && isComment(lines[k])) {
+          j = k;
+          continue;
+        }
+      }
+      break;
+    }
     return lines.slice(j).join("\n");
   }
 
