@@ -2446,47 +2446,94 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   改掉 needle(拆掉 id 的类型收窄)才真的被抓。
   **改了代码不等于改了行为,门禁保持绿可能是运气。Lesson 1269。**
 
-## Licence headers (R389)
+## Licence headers (R389 → R391)
 
 The MIT licence header lives in `scripts/` and is applied to every
 first-party source file. The header TEXT and the header SHAPE both live in
 `scripts/license-header-common.mjs` — the inserter, the remover and the
 auditor all import from it, so a shape can never drift between them.
+The Python auditor reads the same source through `scripts/license_header.py`.
 
-- **Java uses a file-level Javadoc block, not a `//` run:**
+- **The header carries the FULL MIT TEXT, verbatim.** Not a paraphrase.
+  MIT's own condition is "the above copyright notice **and this permission
+  notice** shall be included"; "Licensed under the MIT License" carries the
+  first and not the second, so a file copied out of this repository on its
+  own would carry no grant at all. The wording lives in `MIT_BODY`.
 
-      /**
+- **Java uses a plain `/* ... */` block comment, not Javadoc.**
+
+      /*
        * Copyright (c) 2026 maijun
        *
-       * <p>Licensed under the MIT License. See the LICENSE file in the project root.
+       * Permission is hereby granted, free of charge, to any person obtaining a copy
+       ...
        */
-      package org.example;
 
-  The two sentences are ONE `<p>` paragraph because that is what
-  google-java-format produces; the blank line inside is ` *`, not empty.
-  `scripts/tools/google-java-format-all-deps.jar` (gjf 1.37.0) is the
-  formatter of record, and the header is verified against it.
-
-- **The licence block is a SEPARATE Javadoc block above the file's own.**
-  Never merge them: gjf re-flows the old prose, which makes removing the
-  licence IRREVERSIBLE. Two blocks keep add → remove byte-exact.
+  google-java-format does NOT reflow a non-Javadoc block comment, so the
+  header is no longer a moving target for the formatter — and it stops
+  colliding with a file's own Javadoc or `package-info.java` documentation.
+  2012 Java files carry this form.
 
 - **Exempt (no header):** `md`, `xml`, `sh`, `bash`, `zsh`, `css`, `cmd`,
-  `bat`, and `json` (JSON has no comment syntax at all).
+  `bat`, `yaml`, `toml`, `ini`, and `json` (JSON has no comment syntax at
+  all). Empty files are skipped.
 
 - **Gates:**
   - `node scripts/add-license-headers.mjs --check` — every in-scope file
-    carries the header (exit 1 otherwise).
+    carries the header, AND a second run changes nothing (exit 1 otherwise).
+  - `node scripts/remove-license-headers.mjs --check` — every header
+    round-trips byte-identically. **Never run the remover without
+    `--check`/`--dry-run`**: its default writes, and it did once, stripping
+    the header from 292 already-migrated files.
   - `python -B scripts/audit_license_headers.py` — proves the change is
     header-only by removing the header and comparing to the blob.
   - `python -B scripts/check_mixed_eol.py` — no file may mix CRLF and LF.
+  - `python -B scripts/test_license_headers.py` — the regression tests.
   - `node scripts/check-jsdoc-in-comments.mjs <files>` — no doc comment may
     contain a block-comment terminator.
 
+### The three rules the tools obey (R391)
+
+These are the invariants. Each one was a bug first.
+
+1. **A header's extent is determined by its KNOWN TEXT, never by scanning
+   for where the comment run ends.** A licence header is a fixed piece of
+   text; the file's own documentation often follows it as more `//` lines,
+   and a run-based scanner cannot tell them apart. Scanning swallowed real
+   documentation: `ErrorBoundary.tsx` lost its R713 rationale and its R180
+   source contract, and a Rust `//!` doc block and a TypeScript
+   `/// <reference>` directive were lost the same way (both start with
+   `//`). The diff showed only DELETIONS.
+
+2. **One shape set, one path.** The inserter detects ANY existing header
+   (current or obsolete) and strips it before writing exactly one canonical
+   header. There is no separate "insert" and "migrate" path — two paths are
+   two chances to disagree, and they did: an HTML-comment header was
+   invisible to both detectors, so `index.html` ended up with two
+   copyright notices and two different licence statements.
+
+3. **The tools must be IDEMPOTENT, and the gate must be able to go green.**
+   A tool that rewrites every correct file on every run makes `--check`
+   permanently red, and a gate that is red on a correct tree is a gate
+   nobody trusts.
+
+### Byte-level details that bite (R391)
+
+- **Split on `"\n"` alone, never `/\r?\n/`.** `split(/\r?\n/)` discards the
+  carriage return; rejoining with `"\n"` silently rewrote seven CRLF Java
+  files with LF endings, leaving them MIXED (a CRLF header on an LF body).
+  Split on `"\n"` (each line keeps its `\r`), join the RENDERED header with
+  the detected `eol` and the BODY with `"\n"`.
+
+- **The assembly must keep the language DIRECTIVES** — the shebang, the
+  Rust inner attributes, the XML declaration, the Python encoding
+  declaration, the module docstring. Rewriting the assembly once dropped
+  them, and `main.rs` lost
+  `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`.
+
 - **BOM: detect it from the BYTES, never from the decoded string.**
   `new TextDecoder("utf-8")` silently strips a leading BOM, so
-  `raw.charCodeAt(0) === 0xFEFF` is always false. Checking the decoded
-  string caused 11 files to lose a character (`//` → `/`). Python's
+  `raw.charCodeAt(0) === 0xFEFF` is always false. Python's
   `open(..., encoding="utf-8")` does the OPPOSITE (keeps `\ufeff`) — the two
   languages disagree, so normalise explicitly on both sides.
 
@@ -2496,9 +2543,21 @@ auditor all import from it, so a shape can never drift between them.
   another CRLF header onto an LF body. 108 files ended up mixed. See
   `detectEol` in `license-header-common.mjs`.
 
-- **gjf is run ONCE, not once per file.** The header is identical for every
-  file, so the probe uses a fixed `package probe;` and the result is
-  cached. 2012 files went from ~30 minutes to 57 seconds.
+- **Python byte comparisons need `newline=""`.** The default text mode
+  applies universal newlines and turns `\r\n` into `\n`, so a CRLF file
+  and an LF file become indistinguishable — the audit script read seven
+  CRLF Java files as "content changed" when they were byte-identical.
+
+### The regression tests are byte-level, and they are mutation-tested
+
+`scripts/test_license_headers.py` pins all six defects. "The header looks
+right" is NOT the invariant — **"everything below the header is unchanged"
+is**. So the tests compare bytes, and each defect is proved caught by
+re-introducing it (six mutations, six reds).
+
+A test that cannot fail is not a test; a gate that cannot go green is not
+a gate. Both of those cost this round real time.
+
 
 ## Watch out for (R388 additions)
 
