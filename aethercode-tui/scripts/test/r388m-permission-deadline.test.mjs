@@ -316,9 +316,19 @@ test("R388m: the autocomplete dropdown width follows the TERMINAL, not a constan
     /CompletionDropdown suggestions=\{suggestions\} width=\{48\}/,
     "the dropdown width must not be a hard-coded constant — it must follow the terminal",
   );
+  // ★ THE INVARIANT, NOT THE SPELLING ★ R388o moved the terminal's
+  // width into `terminalGeometry.terminalSize()`, so the old pin
+  // (`process.stdout.columns` must appear here) went RED on a
+  // REFACTOR that made the code better — exactly what Lesson 1233
+  // warns about. The invariant is "the width comes from the
+  // terminal", and there are now TWO ways to ask the terminal.
+  //
+  // A pin that names a METHOD goes red on a rename (not a defect); a
+  // pin that names a LOCATION goes red on a refactor (may be better).
+  // So the pin accepts either source.
   assert.match(
     inputBox,
-    /process\.stdout\.columns/,
+    /process\.stdout\.columns|terminalSize\(\)/,
     "the dropdown width must be derived from the terminal width",
   );
 });

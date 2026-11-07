@@ -68,6 +68,8 @@ import { SLASH_COMMANDS_DETAILED, isCompleteSlashCommand } from "../commands.js"
 // labels). It lives in a plain `.ts` module so a gate script can
 // import it — a `.tsx` component cannot be imported by a Node gate.
 import { armedLabel } from "../permissionComment.js";
+// R388o: the terminal's width, from ONE source.
+import { INPUT_MAX_LINES, terminalSize } from "../terminalGeometry.js";
 import {
   MultiCompletionManager,
   SlashCommandController,
@@ -92,6 +94,18 @@ interface Props {
    *  editing lives here while the App owns the
    *  control keys (arm / submit / cancel). */
   onCommentChange?: (text: string) => void;
+  /** R388o: the terminal's width, in cells.
+   *
+   *  The pill and the dropdown are laid out for it. It is a PROP and
+   *  not a question to the terminal because the terminal is not
+   *  always `process.stdout`: a test harness renders into its own
+   *  stream, and a component that asks `process.stdout` gets the
+   *  WRONG width — 100 cells of pill in a 40-column terminal, which
+   *  overflows and wraps the row.
+   *
+   *  Defaults to the terminal's own size, so a caller that does not
+   *  know the width still gets a sane one. */
+  width?: number;
 }
 
 export const InputBox: React.FC<Props> = ({
@@ -100,6 +114,7 @@ export const InputBox: React.FC<Props> = ({
   onSubmit,
   fileListSupplier,
   onCommentChange,
+  width,
 }) => {
   // while a permission ask is pending, typing is disabled
   // (the decision keys are handled by the App). The existing
@@ -394,8 +409,18 @@ export const InputBox: React.FC<Props> = ({
   // R388m: the dropdown is a child of the input pill, so it gets
   // the SAME width the pill has — the terminal's chat column, minus
   // the pill's own padding and borders.
-  const terminalCols = typeof process.stdout.columns === "number" ? process.stdout.columns : 120;
+  // R388o: the terminal's width, from ONE source. This used to
+  // fall back to 120 when the terminal did not say — and 120 is wider
+  // than most terminals, so on an 80-column terminal the dropdown was
+  // 48 cells wider than the input it belongs to.
+  const terminalCols = width ?? terminalSize().cols;
   const completionWidth = Math.max(24, Math.min(72, Math.floor(terminalCols * 0.6)));
+
+  // R388o: the text column's width. The pill's own chrome is: the
+  // outer paddingX={1} (2 cells) + the border (2 cells) + the
+  // pill's paddingX={1} (2 cells) + the prompt marker ("▌ > ", 4
+  // cells) + the send affordance (1 cell). The rest is the text.
+  const inputTextWidth = Math.max(8, terminalCols - 2 - 2 - 2 - 4 - 1);
 
   return (
     <Box flexDirection="column">
@@ -438,9 +463,26 @@ export const InputBox: React.FC<Props> = ({
         </Box>
       ) : null}
       <Box flexDirection="row" paddingX={1} marginTop={1}>
+        {/* R388o: THE PILL IS FITTED. */}
+        {/*
+          Two things used to make the pill grow:
+
+          1. the text column had no width, so a long line WRAPPED
+             inside the pill and the pill grew a row;
+          2. a multi-line input (shift+Enter) grew the pill by a row
+             per line.
+
+          Both grow the FRAME, and a frame that outgrows the terminal
+          is what made the page "move" (see the root Box in tui.tsx).
+          So the text column gets an explicit width — the text wraps
+          WITHIN it — and the pill's height is capped: the input shows
+          at most `INPUT_MAX_LINES` lines and the rest scrolls.
+        */}
         <Box
           flexDirection="row"
-          flexGrow={1}
+          flexShrink={0}
+          height={INPUT_MAX_LINES + 2}
+          overflow="hidden"
           borderStyle="round"
           borderColor={commentBox ? t.brand : decisionPending ? t.warn : t.dim}
           paddingX={1}
@@ -460,7 +502,9 @@ export const InputBox: React.FC<Props> = ({
                 ))
               : null}
           </Box>
-          <Box flexDirection="column" flexGrow={1}>
+          {/* R388o: the text column has an EXPLICIT width, so the
+              text wraps WITHIN the pill instead of widening it. */}
+          <Box flexDirection="column" flexGrow={1} width={inputTextWidth}>
             {commentBox ? (
               // The comment field. An empty comment shows a
               // placeholder (the user needs to know this box

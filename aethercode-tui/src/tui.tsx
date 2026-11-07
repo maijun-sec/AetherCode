@@ -139,6 +139,9 @@ import {
 import { runClear } from "./clearConversation.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
+// R388o: the terminal's size, from ONE source. Every surface lays out
+// for the SAME width, and the frame is pinned to the terminal's rows.
+import { INPUT_PILL_ROWS, terminalSize, transcriptRows } from "./terminalGeometry.js";
 // R388m: ONE width rule — columns are laid out in terminal CELLS,
 // not characters. A CJK glyph is twice as wide as its length.
 import { maxCells, padCells } from "./cellWidth.js";
@@ -4489,7 +4492,25 @@ const App: React.FC<{
   const showWelcome = state.connected && state.turns.length === 0;
 
   // R362 — panel geometry + the shared close handler.
-  const cols = typeof process.stdout.columns === "number" ? process.stdout.columns : 120;
+  //
+  // R388o: the terminal's size comes from ONE source
+  // (`terminalGeometry`), so the header, the scrollback, the input and
+  // the status bar all lay out for the SAME width. Before this the
+  // TUI asked the terminal in four places with four different
+  // fallbacks (120, 80, the raw `process.stdout.columns`, and
+  // "whatever the caller passed"), and a component that guessed 120
+  // on an 80-column terminal is exactly how the frame overflowed.
+  const { cols, rows } = terminalSize();
+  // R388o: the transcript gets the rows the CHROME leaves. The
+  // chrome's height depends on which surfaces are mounted (the header
+  // and the status bar are optional), so it is computed HERE, where
+  // that knowledge lives — and the same number is used for the
+  // transcript's budget and for the root's height.
+  const chromeHeight =
+    (state.layout !== "focus" && state.layout !== "minimal" ? 4 : 0) +
+    (state.layout === "full" ? 2 : 0) +
+    INPUT_PILL_ROWS;
+  const transcriptBudget = transcriptRows(rows, chromeHeight);
   const panelWidth = panelWidthFor(cols);
   // R388j: the CONTENT width — the cells between the shell's border
   // columns, after the shell's own padding. This is the number
@@ -5617,7 +5638,25 @@ const App: React.FC<{
                 }}
               />
             ) : null}
-            <Box flexDirection="column" flexGrow={1}>
+            {/* R388o: THE ROOT IS THE TERMINAL. */}
+            {/*
+              The root Box used to carry `flexGrow={1}` and nothing
+              else. Ink's root has NO height constraint (it only sets
+              the WIDTH), so `flexGrow` distributed nothing: the frame
+              was exactly as tall as its content. A long transcript
+              therefore made the frame TALLER THAN THE TERMINAL, and
+              Ink responds to that by switching to its
+              `clearTerminal` path (`ESC[2J ESC[3J ESC[H`) instead of
+              redrawing in place. On a console that does not honour
+              `ESC[2J` — the classic Windows console host — every
+              render then APPENDS a frame instead of replacing one,
+              which is the band of repeated headers the user saw.
+
+              Fixing the root's HEIGHT is what makes the frame fit.
+              With the root pinned to the terminal's rows, Ink always
+              takes the in-place redraw path.
+            */}
+            <Box flexDirection="column" flexGrow={1} height={rows}>
               {/* toast notifications sit above the header so
                 they don't compete with the scrollback for space. */}
               <ToastStack toasts={state.toasts} />
@@ -5625,7 +5664,7 @@ const App: React.FC<{
                 rendered. "full" = everything; "minimal" = no header
                 / statusbar; "focus" = scrollback + input only. */}
               {state.layout !== "focus" && state.layout !== "minimal" ? (
-                <Header state={state} cwd={currentCwd} />
+                <Header state={state} cwd={currentCwd} width={cols} />
               ) : null}
               {/* R700 — SDD mode banner. Renders only when
                 state.sddRun is non-null (i.e. an active SDD run
@@ -5667,15 +5706,37 @@ const App: React.FC<{
                   </PanelShell>
                 </Box>
               ) : null}
-              <Box flexDirection="row" flexGrow={1}>
-                <Box flexDirection="column" flexGrow={1}>
+              <Box flexDirection="row" flexGrow={1} flexBasis={0} minHeight={0}>
+                <Box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
                   {/* R388h: the transcript is a flat, narrow, CENTRED
                    *column — the desktop's centre panel shape. The
                    *frame around it is gone; the markdown IS the UI.
                    *See `components/Scrollback.tsx`. */}
+                  {/* R388o: THE COLUMN IS THE FLEX ONE. */}
+                  {/*
+                    The Scrollback is `flexGrow={1}`: it takes the rows
+                    the chrome leaves. The chrome below it (the input
+                    pill, the status bar) is `flexShrink={0}`: it keeps
+                    its rows no matter what.
+
+                    Before this the Scrollback carried a FIXED height
+                    AND `flexGrow={1}`. A fixed height inside a growing
+                    column is a contradiction: the column grew to the
+                    terminal's rows, the Scrollback claimed all of
+                    them, and the input pill and the status bar were
+                    pushed off the bottom of the frame. The user saw a
+                    header, a rule, an empty middle — and no input box.
+                  */}
                   <Scrollback
                     turns={state.turns}
-                    height={1000}
+                    /* R388o: the transcript's ROW budget — the rows the
+                       chrome leaves in the terminal. It used to be
+                       1000, a TURN count used as a row count: one
+                       turn can be forty rows of markdown, so a long
+                       conversation made the frame taller than the
+                       terminal, and Ink then wiped and redrew the
+                       whole screen on every frame. */
+                    height={transcriptBudget}
                     showWelcome={showWelcome}
                     welcomeCtx={{
                       model: state.model,
@@ -5807,6 +5868,9 @@ const App: React.FC<{
                   ) : null}
                   <InputBox
                     state={state}
+                    /* R388o: the pill is laid out for the SAME width the
+                       rest of the frame uses. */
+                    width={cols}
                     onChange={(t) => dispatch({ type: "setInput", text: t })}
                     onSubmit={handleSubmit}
                     // R388l: while the permission comment box is open
@@ -5826,6 +5890,9 @@ const App: React.FC<{
                   {state.layout === "full" ? (
                     <StatusBar
                       state={state}
+                      /* R388o: the bar lays out for the SAME width the rest
+                         of the frame uses. */
+                      width={cols}
                       onContinue={() => {
                         // R375: the real thing. Before this, all three
                         // buttons called `task/resume` / `task/pause` /

@@ -57,9 +57,23 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * Reconstruct a screen from a raw terminal byte stream.
  *
  * @param {string} raw the bytes the program wrote to the terminal
+ * @param {number} [cols] the terminal's width. When given, a row that
+ *   is WIDER than the terminal WRAPS onto the next row — which is
+ *   what a real terminal does, and what makes an over-wide frame
+ *   visible.
+ *
+ *   ★ WITHOUT THE WIDTH, THE MODEL DELETES THE OVERFLOW ★ An
+ *   unbounded row swallows the characters past the terminal's edge, so
+ *   an over-wide frame looks FINE in the model and is broken in the
+ *   terminal. That is a measurement that deletes the thing it
+ *   measures (Lesson 1311), and it hid a real defect for three
+ *   rounds: the status bar's 60-cell rule overflowed a 40-column
+ *   terminal, the terminal wrapped it into an extra row, and the
+ *   model quietly clipped it back.
+ *
  * @returns {string[]} one string per screen row
  */
-export function reconstructScreen(raw) {
+export function reconstructScreen(raw, cols = 0) {
   const rows = [];
   let cy = 0;
   let cx = 0;
@@ -69,6 +83,13 @@ export function reconstructScreen(raw) {
     return rows[y];
   };
   const put = (ch) => {
+    // ★ A REAL TERMINAL WRAPS ★
+    // Writing past the last column moves to the next row and
+    // continues there. Without this the overflow vanishes.
+    if (cols > 0 && cx >= cols) {
+      cx = 0;
+      cy += 1;
+    }
     rowAt(cy)[cx] = ch;
     cx += 1;
   };

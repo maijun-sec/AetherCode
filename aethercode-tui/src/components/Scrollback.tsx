@@ -86,6 +86,8 @@ import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/Summa
 import type { StopKind } from "../stopKind.js";
 // R388m: the permission deadline contract — one countdown, one wording.
 import { countdownLine } from "../permissionDeadline.js";
+// R388o: the terminal's width, from ONE source.
+import { terminalSize } from "../terminalGeometry.js";
 
 /**
  * The reading column's width.
@@ -509,7 +511,28 @@ export const Scrollback: React.FC<Props> = ({
   decisionCardExpanded,
   terminalWidth,
 }) => {
-  const start = Math.max(0, turns.length - height);
+  // R388o: `height` is a ROW budget now, not a turn count. The
+  // slice below keeps the LAST `height` TURNS as a first approximation
+  // (a turn is at least one row), and the rendered column is then
+  // clipped to the row budget by `overflow="hidden"`.
+  //
+  // ★ THE SLICE IS A BOUND, NOT A TRUNCATION ★ Rendering a
+  // thousand turns and clipping the RESULT is what made the frame
+  // enormous: Yoga laid out every turn, and only the visible ones
+  // survived. The slice keeps the layout cost proportional to what
+  // the user can see.
+  //
+  // ★ THE SLICE IS AN APPROXIMATION, AND THAT IS FINE ★ A turn is
+  // not a row — a turn can be one row or forty. The slice therefore
+  // keeps MORE turns than the budget has rows, and the surplus is
+  // clipped by `overflow="hidden"` on the column below. What the slice
+  // must guarantee is only that the LAYOUT COST is bounded: without it
+  // Yoga lays out every turn ever written.
+  //
+  // The frame's height is not this component's job. It is the flex
+  // chain's (see the `flexBasis={0}` note on the column below).
+  const maxRows = Math.max(1, height);
+  const start = Math.max(0, turns.length - maxRows);
   // filter out "thinking" turns when the toggle is off. The
   // turn is still in state (so re-toggling brings it back) — we
   // just don't render it. Also drop the (unused) "permission" role
@@ -534,10 +557,26 @@ export const Scrollback: React.FC<Props> = ({
   // R388h: the reading column. Never wider than the viewport, never
   // wider than CHAT_COLUMN_WIDTH, and always centred — the desktop
   // centres its 820px transcript the same way.
-  const cols =
-    terminalWidth ?? (typeof process.stdout.columns === "number" ? process.stdout.columns : 120);
+  // R388o: the width comes from ONE source (`terminalGeometry`).
+  // This used to guess 120 when the terminal did not say — and 120 is
+  // wider than most terminals, so the "safe" fallback was the one
+  // that produced the overflow.
+  const cols = terminalWidth ?? terminalSize().cols;
   const columnWidth = Math.max(24, Math.min(CHAT_COLUMN_WIDTH, cols - COLUMN_INSET * 2));
   const leftPad = Math.max(0, Math.floor((cols - columnWidth) / 2));
+
+  // R388o: the transcript is BOUNDED BY ROWS, not by turns.
+  //
+  // `height` used to be 1000 — a turn COUNT, used as if it were a
+  // row count. A single turn can be forty rows of markdown, so a
+  // thousand turns is tens of thousands of rows: the frame grew
+  // without bound, the frame outgrew the terminal, and Ink switched
+  // to its `clearTerminal` path. On a console that ignores `ESC[2J`
+  // every render then APPENDED a frame — which is the stack of
+  // repeated headers the user saw.
+  //
+  // The transcript gets the rows the CHROME leaves. The caller
+  // computes that from the terminal's height.
 
   // Nothing to show at all: the centred empty state, and nothing
   // else. No box, no banner row, no gutter.
@@ -549,9 +588,59 @@ export const Scrollback: React.FC<Props> = ({
     );
   }
 
+  // R388o: THE TRANSCRIPT IS BOUNDED BY ROWS.
+  //
+  // The column is `flexGrow={1}` with `overflow="hidden"`: it takes
+  // the rows the chrome leaves and clips whatever does not fit. That
+  // is what makes the frame's height a function of the TERMINAL, not
+  // of the conversation's length.
+  //
+  // ★ AND THE BASIS MUST BE ZERO ★
+  //
+  // `flexGrow={1}` alone is NOT enough. Yoga gives a flex item a BASE
+  // SIZE equal to its CONTENT, and it only shrinks when the container
+  // overflows — so a transcript whose content is taller than the
+  // terminal does not clip itself: it takes the rows and SQUEEZES the
+  // chrome.
+  //
+  // Measured (a Yoga tree dump, 100×30, a 12-turn transcript): the
+  // header's outer box computed to ONE row — the brand row and the cwd
+  // caption both computed to height 0 — and the input pill showed only
+  // its top border. The user saw a bare rule where the header should
+  // be, and a half-drawn input box.
+  //
+  // `flexBasis={0}` makes the base size zero, so the transcript grows
+  // INTO the rows the chrome leaves. `minHeight={0}` lets it shrink
+  // below its content, which is what makes `overflow="hidden"` clip
+  // rather than push.
+  //
+  // ★ A FIXED `height` ON THE CONTENT COLUMN IS A CONTRADICTION ★
+  // The column is a flex child; a fixed height inside a growing
+  // column claims rows the sibling chrome also needs, and the chrome
+  // is pushed off the bottom of the frame. Measured: with a fixed
+  // Scrollback height of 20 in a 30-row terminal the input pill and
+  // the status row vanished; without it they sit at the bottom,
+  // exactly where they belong.
+  //
+  // So the height is NOT set here. The clipping comes from
+  // `overflow="hidden"` on the column, which is what the flex
+  // layout already sized.
+  //
+  // `overflow="hidden"` keeps the MOST RECENT content visible: the
+  // transcript is laid out top-down and the clip takes the bottom.
+  // The newest turn is at the bottom, so the newest turn survives.
+
   return (
-    <Box flexDirection="column" flexGrow={1} paddingLeft={leftPad} paddingRight={leftPad}>
-      <Box flexDirection="column" width={columnWidth}>
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      flexBasis={0}
+      minHeight={0}
+      overflow="hidden"
+      paddingLeft={leftPad}
+      paddingRight={leftPad}
+    >
+      <Box flexDirection="column" width={columnWidth} overflow="hidden">
         {errorCard ? <Box marginBottom={1}>{errorCard}</Box> : null}
         {banner ? <Box marginBottom={1}>{banner}</Box> : null}
         {permCard ? <Box marginBottom={1}>{permCard}</Box> : null}

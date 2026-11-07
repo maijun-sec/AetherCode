@@ -57,10 +57,16 @@ import {
   permissionModeIndicator,
   type PermissionModeTone,
 } from "../permissionModes.js";
+// R388o: the terminal's width, from ONE source.
+import { cellWidth, terminalSize } from "../terminalGeometry.js";
 
 interface Props {
   state: State;
   cwd: string;
+  /** R388o: the terminal width to lay out for. When omitted the header
+   *  asks the terminal itself. The caller passes it so the header and
+   *  the rest of the frame agree on ONE width. */
+  width?: number;
 }
 
 /** The background colour for each catalog tone. Ink's palette names. */
@@ -122,9 +128,15 @@ function shortCwd(p: string, maxLen: number = 28): string {
   return tail.length > maxLen ? `.../${tail.slice(-(maxLen - 4))}` : `.../${tail}`;
 }
 
-export const Header: React.FC<Props> = ({ state, cwd }) => {
+export const Header: React.FC<Props> = ({ state, cwd, width }) => {
+  // R388o: the header asks the terminal ONCE for its width, and every
+  // row it draws is fitted to it. The rule used to be a hard-coded
+  // `Math.max(60, cwd.length + 12)` — which overflowed every terminal
+  // narrower than 60 cells and left a gap on every wider one.
+  const cols = Math.max(20, width ?? terminalSize().cols);
   // Connection pill (filled green when live, red ring when offline).
-  const connPill = state.connected ? <Text color={t.ok}>●</Text> : <Text color={t.err}>○</Text>;
+  const connPillText = state.connected ? "●" : "○";
+  const connPill = <Text color={state.connected ? t.ok : t.err}>{connPillText}</Text>;
 
   // Mode pill (filled coloured badge — bg gives the pill look).
   const ms = modeStyle(state.permissionMode);
@@ -148,8 +160,51 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
   // we display "—" until that becomes a real daemon field.
   const elapsed = state.uptimeStartedAt ? formatRelative(state.uptimeStartedAt) : "—";
 
+  // R388o: THE HEADER MUST FIT TOO.
+  //
+  // The status strip carries a lot: the model, the provider, the mode
+  // badge, the mode PHRASE, the context meter, the session id, the
+  // connection dot and the elapsed time. On a narrow terminal that is
+  // more than the terminal has, and the row WRAPS — which adds a row
+  // to the frame, which is what made the page "move".
+  //
+  // So the right half's items are dropped IN PRIORITY ORDER when the
+  // width runs out: first the elapsed time, then the session id, then
+  // the context meter. The LEFT half (the model and the mode) is never
+  // dropped — that is the identity of the session.
+  //
+  // ★ DROPPING IS NOT HIDING ★ An item that is dropped is not shown
+  // at all; an item that is squeezed is shown WRONG (the measured
+  // result of a shrunk box was "⌬MiniM · AS⏸ manual", the model name
+  // cut in half and overlapping the badge).
+  const stripWidth = Math.max(10, cols - 2);
+  // The left half's natural width: the model, the badge, the phrase.
+  const leftCells =
+    cellWidth(`${icon.model} ${state.model}`) +
+    (state.provider ? cellWidth(` · ${icon.provider} ${state.provider}`) : 0) +
+    cellWidth(` · ${modeShort} `) +
+    cellWidth(modeIndicator);
+  // The right half's items, most-droppable first.
+  const rightItems: { key: string; cells: number }[] = [];
+  if (ctx)
+    rightItems.push({
+      key: "ctx",
+      cells: cellWidth(ctx.glyph) + cellWidth(` ${Math.round(ratio * 100)}% · `),
+    });
+  rightItems.push({ key: "session", cells: cellWidth(shortSession) + cellWidth(" · ") });
+  rightItems.push({ key: "conn", cells: cellWidth(connPillText) + cellWidth(" · ") });
+  rightItems.push({ key: "elapsed", cells: cellWidth(elapsed) });
+  // Drop from the END (elapsed first) until the rest fits.
+  let rightCells = rightItems.reduce((n, it) => n + it.cells, 0);
+  const dropped = new Set<string>();
+  for (let i = rightItems.length - 1; i >= 0; i--) {
+    if (leftCells + rightCells <= stripWidth) break;
+    rightCells -= rightItems[i].cells;
+    dropped.add(rightItems[i].key);
+  }
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" flexShrink={0}>
       {/* brand row: wordmark + version. only when viewport is wide enough. */}
       <Box paddingX={1}>
         <Text color={t.brand} bold>
@@ -189,9 +244,11 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
           </Text>
           <Text color={ms.fg}>{modeIndicator}</Text>
         </Box>
+        {/* R388o: the right half drops its items in priority order
+            when the terminal is too narrow. See the note above. */}
         <Box flexDirection="row">
           {/* ctx fill (only when known) */}
-          {ctx ? (
+          {ctx && !dropped.has("ctx") ? (
             <>
               <Text color={ctx.color}>{ctx.glyph}</Text>
               <Text dimColor> {Math.round(ratio * 100)}%</Text>
@@ -199,17 +256,29 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
             </>
           ) : null}
           {/* session id */}
-          <Text dimColor>{shortSession}</Text>
-          <Text dimColor> · </Text>
+          {!dropped.has("session") ? (
+            <>
+              <Text dimColor>{shortSession}</Text>
+              <Text dimColor> · </Text>
+            </>
+          ) : null}
           {/* connection dot */}
-          {connPill}
-          <Text dimColor> · </Text>
+          {!dropped.has("conn") ? (
+            <>
+              {connPill}
+              <Text dimColor> · </Text>
+            </>
+          ) : null}
           {/* elapsed */}
-          <Text dimColor>{elapsed}</Text>
+          {!dropped.has("elapsed") ? <Text dimColor>{elapsed}</Text> : null}
         </Box>
       </Box>
       {/* thin separator under the header — matches the StatusBar's rule. */}
-      <Text dimColor>{"─".repeat(Math.max(60, (cwd?.length ?? 0) + 12))}</Text>
+      {/* R388o: the rule is the TERMINAL's width. A fixed 60 was a
+          guess that overflowed narrow terminals and under-filled wide
+          ones — and an over-wide row is WRAPPED by the terminal, which
+          adds a row to the frame and makes the page "move". */}
+      <Text dimColor>{"─".repeat(cols)}</Text>
       {/* cwd as a small caption below the rule (dim, max ~28 chars). */}
       <Box paddingX={1}>
         <Text dimColor>

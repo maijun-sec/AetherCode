@@ -67,6 +67,16 @@ import { SessionControl } from "./session/SessionControl.js";
 // this round exists to remove.
 import { runControlState } from "../runControl.js";
 import { isStale, staleLabel } from "./session/SessionDetailsPanel.js";
+// R388o: the bar must FIT the terminal. Before this, the right-hand
+// box carried `flexShrink={0}` and never shrank, so on an 80-column
+// terminal it overflowed by 13 cells; the terminal wrapped the row,
+// the frame grew a row, and that is what made the page "move".
+//
+// The width comes from ONE source (`terminalGeometry`), and the jar
+// name is truncated to whatever is left. Truncating the jar name is
+// the right trade: it is the least informative item in the bar, and a
+// bar that does not fit is a bar that breaks the whole layout.
+import { cellWidth, fitCells, terminalSize } from "../terminalGeometry.js";
 
 interface Props {
   state: State;
@@ -75,6 +85,10 @@ interface Props {
   onStop?: () => void;
   staleSession?: { id: string; lastActiveAt: number } | null;
   onReattach?: (id: string) => void;
+  /** R388o: the terminal width to lay out for. When omitted the bar
+   *  asks the terminal itself. The caller passes it so the bar and the
+   *  rest of the frame agree on ONE width. */
+  width?: number;
 }
 
 /** Display kind → user-facing label. THE ONE label table.
@@ -157,6 +171,7 @@ export const StatusBar: React.FC<Props> = ({
   onStop,
   staleSession,
   onReattach,
+  width,
 }) => {
   const color = state.submitting ? t.warn : colorForKind(state.lastStopKind);
   // R383: the label comes from the DISPLAY KIND, which the daemon's own
@@ -256,8 +271,120 @@ export const StatusBar: React.FC<Props> = ({
   // re-render nobody asked for. 1e6 ms parks it until the bar unmounts.
   const ctxPaused = state.submitting;
 
+  // R388o: THE BAR MUST FIT.
+  //
+  // Two things made it not fit:
+  //
+  //   1. the rule above the bar was a hard-coded 60 characters, so
+  //      on a 40-column terminal it overflowed by 20 cells;
+  //   2. the right-hand box carried `flexShrink={0}` and never
+  //      shrank, so on an 80-column terminal the whole row was 93
+  //      cells wide — 13 over. The terminal WRAPS an over-wide row,
+  //      which adds a row to the frame, which is what made the page
+  //      "change size" and "move".
+  //
+  // ★ DO NOT FIX IT WITH `flexShrink` ★ Letting the right-hand box
+  // shrink does NOT truncate its text: Ink shrinks the BOX, and the
+  // Text nodes inside it overlap each other instead of being cut
+  // (measured: "jaaethercode-cli-0.1.0-SNAP"). A mangled row is
+  // worse than a truncated one.
+  //
+  // So the jar name is TRUNCATED UP FRONT, to a budget computed from
+  // the bar's own width, and the box keeps its natural size. The jar
+  // path is diagnostic detail; the token counters are the number the
+  // user reads — so the jar yields first.
+  const barWidth = Math.max(20, width ?? terminalSize().cols);
+  // The bar's own horizontal padding (paddingX={1} on the wrapper).
+  const innerWidth = Math.max(10, barWidth - 2);
+  // ★ THE JAR BUDGET IS MEASURED, NOT ESTIMATED ★
+  //
+  // An estimate of the right side's fixed width was WRONG by eight
+  // cells (the row came out 88 cells wide in an 80-column terminal),
+  // and an estimate that is wrong is worse than no estimate: the row
+  // still overflowed, and it did so silently.
+  //
+  // So the fixed part is MEASURED, with the same cell rule the
+  // renderer uses (`cellWidth`), and the jar gets what is left.
+  //
+  // The left half ("▌ ● ✓ ready") is measured too — it is the other
+  // thing on this row.
+  const leftFixedCells = cellWidth(
+    `▌ ${state.connected ? "●" : "○"} ${label}` +
+      (state.pending > 0 && state.submitting
+        ? ` · ${state.pending} tool call${state.pending === 1 ? "" : "s"} in flight`
+        : ""),
+  );
+  const rightFixedCells =
+    cellWidth(" · ") +
+    cellWidth("ctx ") +
+    12 + // the meter's bar, in brackets
+    cellWidth(" · in ") +
+    cellWidth(formatTokens(state.inputTokens)) +
+    cellWidth(" · out ") +
+    cellWidth(formatTokens(state.outputTokens)) +
+    cellWidth(" · ") +
+    cellWidth(formatCost(state.totalCostUsd)) +
+    cellWidth(` · ${elapsedLabel}`) +
+    cellWidth(" · jar ");
+  // ★ NARROW TERMINALS DROP ITEMS, THEY DO NOT SQUEEZE THEM ★
+  //
+  // At 40 columns the fixed part of the right side alone was 64
+  // cells — 24 over. The jar was already dropped, and the row STILL
+  // overflowed, because the fixed part was never measured against the
+  // bar's width; it was only measured against the jar's budget.
+  //
+  // So the right side's items are dropped IN PRIORITY ORDER, exactly
+  // like the header's: the cost first, then the token counters, then
+  // the context meter. What is left is the state label and the
+  // connection dot — the two things that say "is this session alive".
+  //
+  // The order is: jar → cost → output tokens → input tokens → the
+  // context meter. The jar is diagnostic detail; the counters are the
+  // numbers the user reads; the meter is a gauge. The connection dot
+  // and the state label are never dropped.
+  const ctxCells = cellWidth("ctx ") + 12;
+  const inCells = cellWidth(" · in ") + cellWidth(formatTokens(state.inputTokens));
+  const outCells = cellWidth(" · out ") + cellWidth(formatTokens(state.outputTokens));
+  const costCells = cellWidth(" · ") + cellWidth(formatCost(state.totalCostUsd));
+  const elapsedCells = cellWidth(` · ${elapsedLabel}`);
+  const jarLabelCells = cellWidth(" · jar ");
+
+  // The right side's items, most-droppable first.
+  const rightParts: { key: string; cells: number }[] = [
+    { key: "jar", cells: jarLabelCells },
+    { key: "cost", cells: costCells },
+    { key: "out", cells: outCells },
+    { key: "in", cells: inCells },
+    { key: "ctx", cells: ctxCells },
+    { key: "elapsed", cells: elapsedCells },
+  ];
+  // Drop from the front (the jar first) until the rest fits. The
+  // separator before the meter (" · ") is only rendered when the
+  // meter survives.
+  const drop = new Set<string>();
+  let used = leftFixedCells;
+  for (const part of rightParts) {
+    if (used + part.cells <= innerWidth) {
+      used += part.cells;
+      continue;
+    }
+    drop.add(part.key);
+  }
+  const showMeter = !drop.has("ctx");
+  // The jar NAME gets whatever is left AFTER everything else — and the
+  // budget covers the NAME only, because the " · jar " label is
+  // already counted in `jarLabelCells`.
+  //
+  // ★ THE LABEL IS PART OF THE JAR ★ The label and the name are
+  // rendered together, so they must be budgeted together. Budgeting
+  // the name alone left the row 2 cells over at EVERY width (the
+  // " · jar " separator is 6 cells and the name was budgeted as if
+  // the separator were not there).
+  const jarBudget = innerWidth - used - jarLabelCells;
+  const jar = !drop.has("jar") && jarBudget >= 4 ? fitCells(jarName(state.jarPath), jarBudget) : "";
+
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} flexShrink={0}>
       {showControl ? (
         <SessionControl
           state={runControlState(state.status, state.continuationPaused)}
@@ -274,7 +401,10 @@ export const StatusBar: React.FC<Props> = ({
           onReattach={onReattach!}
         />
       ) : null}
-      <Text color={color}>{"─".repeat(60)}</Text>
+      {/* R388o: the rule is the TERMINAL's width, not a fixed 60.
+          A fixed 60 overflowed every terminal narrower than 60 and
+          left a gap on every wider one. */}
+      <Text color={color}>{"─".repeat(innerWidth)}</Text>
       {/* R388h: ONE status row. The context meter used to be a whole
           second line under the strip (and a THIRD line for the
           "no usage reported yet" note). It is now a compact
@@ -283,7 +413,11 @@ export const StatusBar: React.FC<Props> = ({
           different numbers, so they can share a line without
           competing. */}
       <Box flexDirection="row" justifyContent="space-between">
-        <Box flexDirection="row" flexShrink={1}>
+        {/* R388o: the LEFT half keeps its natural size too. It carries
+            the state label — "ready", "stopped: loop" — which is the
+            one thing in the bar the user reads at a glance. A shrunk
+            box overlapped the glyph and the label ("●✓ ·"). */}
+        <Box flexDirection="row" flexShrink={0}>
           <Text color={color}>▌ </Text>
           {connGlyph}
           <Text> </Text>
@@ -302,23 +436,49 @@ export const StatusBar: React.FC<Props> = ({
             the two boxes butted up against each other and read as
             "in flightctx[…]". A separator can never be squeezed
             out. */}
+        {/* R388o: `flexShrink={0}` is what made this row overflow.
+            The right-hand side keeps its NATURAL size, and the one item
+            that can be shortened without losing a NUMBER — the jar
+            name — is truncated UP FRONT (see `jarBudget` above). A
+            shrunk box makes Ink overlap the Text nodes inside it,
+            which mangles the row instead of shortening it. */}
         <Box flexDirection="row" flexShrink={0}>
-          <Text dimColor> · </Text>
-          <ContextMeter
-            info={ctxInfo}
-            width={10}
-            sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000}
-            showLabel={false}
-          />
-          <Text dimColor> · in </Text>
-          <Text>{formatTokens(state.inputTokens)}</Text>
-          <Text dimColor> · out </Text>
-          <Text>{formatTokens(state.outputTokens)}</Text>
-          <Text dimColor> · </Text>
-          <Text>{formatCost(state.totalCostUsd)}</Text>
-          <Text dimColor> · {elapsedLabel}</Text>
-          <Text dimColor> · jar </Text>
-          <Text>{jarName(state.jarPath)}</Text>
+          {showMeter ? (
+            <>
+              <Text dimColor> · </Text>
+              <ContextMeter
+                info={ctxInfo}
+                width={10}
+                sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000}
+                showLabel={false}
+              />
+            </>
+          ) : null}
+          {!drop.has("in") ? (
+            <>
+              <Text dimColor> · in </Text>
+              <Text>{formatTokens(state.inputTokens)}</Text>
+            </>
+          ) : null}
+          {!drop.has("out") ? (
+            <>
+              <Text dimColor> · out </Text>
+              <Text>{formatTokens(state.outputTokens)}</Text>
+            </>
+          ) : null}
+          {!drop.has("cost") ? (
+            <>
+              <Text dimColor> · </Text>
+              <Text>{formatCost(state.totalCostUsd)}</Text>
+            </>
+          ) : null}
+          {!drop.has("elapsed") ? <Text dimColor> · {elapsedLabel}</Text> : null}
+          {jar ? (
+            <>
+              <Text dimColor> · jar </Text>
+              <Text>{jar}</Text>
+            </>
+          ) : null}
         </Box>
       </Box>
     </Box>
