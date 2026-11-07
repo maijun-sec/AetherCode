@@ -89,6 +89,11 @@ const threadSelSrc = codeOf(
   readFileSync(join(root, "src", "components", "ThreadSelector.tsx"), "utf-8"),
   "ThreadSelector.tsx",
 );
+// R388j: the shared panel body owns the subtitle's conditional now.
+const panelBodySrc = codeOf(
+  readFileSync(join(root, "src", "components", "PanelBody.tsx"), "utf-8"),
+  "PanelBody.tsx",
+);
 
 const methodsJava = join(
   repo,
@@ -618,8 +623,18 @@ test("ThreadSelector renders what it was always handed", () => {
       "sessions would print /threads' sentence",
   );
   assert.ok(
-    /subtitle\?:/.test(threadSelSrc) && /\{subtitle \?/.test(threadSelSrc),
-    "no subtitle — /sessions shows a leaf name with no path, and two checkouts can share one",
+    /subtitle\?:/.test(threadSelSrc),
+    "no subtitle prop — /sessions shows a leaf name with no path, and two checkouts can share one",
+  );
+  // R388j: the conditional moved. The panel body now renders the
+  // subtitle (`{subtitle ? ... : null}`), so the COMPONENT no longer
+  // carries the `subtitle ?` ternary itself. The INTENT is
+  // unchanged — an absent subtitle must render nothing — so the
+  // pin follows the implementation instead of the location
+  // (Lesson 1233).
+  assert.ok(
+    /subtitle=\{subtitle\}/.test(threadSelSrc) && /subtitle \?/.test(panelBodySrc),
+    "the subtitle must be passed through AND rendered conditionally — an absent subtitle must render nothing",
   );
   assert.ok(
     /t\.updatedAt \?/.test(threadSelSrc),

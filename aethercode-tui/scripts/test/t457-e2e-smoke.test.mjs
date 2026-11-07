@@ -1,4 +1,4 @@
-// Copyright (c) 2026 maijun
+﻿// Copyright (c) 2026 maijun
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -43,7 +43,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,13 +56,20 @@ const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ?
 const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 const tmpTsc = join(root, "tmp-t457-tsc");
-const shimPath = join(root, "src", "_t457_smoke_shim.ts");
 
 function tscShim(label, shimBody) {
   if (existsSync(tmpTsc)) {
     rmSync(tmpTsc, { recursive: true, force: true });
   }
   mkdirSync(tmpTsc, { recursive: true });
+  // R388d: the shim is written into a TEMP MIRROR of `src/`, not
+  // into the checked-in tree. See `./shim-compile.mjs` — this gate
+  // used to overwrite a TRACKED source file with a generated
+  // one-liner and never restored it, so every run of the suite
+  // silently stripped the licence header from it.
+  const mirrorSrc = join(tmpTsc, "src");
+  cpSync(join(root, "src"), mirrorSrc, { recursive: true });
+  const shimPath = join(mirrorSrc, "_t457_smoke_shim.ts");
   writeFileSync(shimPath, shimBody, "utf-8");
   const args = [
     "--outDir",
@@ -80,7 +87,7 @@ function tscShim(label, shimBody) {
     "--skipLibCheck",
     "true",
     "--rootDir",
-    join(root, "src"),
+    mirrorSrc,
   ];
   const r = spawnSync(`"${tscBin}"`, [...args, `"${shimPath}"`], {
     encoding: "utf-8",
@@ -461,11 +468,20 @@ test("T-457: tsc --noEmit on the full TUI source runs (succeeds or fails with di
 // 7. Cleanup
 // =====================================================================
 
-test("T-457: removes the smoke shim file", () => {
-  if (existsSync(shimPath)) {
-    rmSync(shimPath, { force: true });
-  }
-  assert.ok(!existsSync(shimPath), "smoke shim not cleaned up");
+test("T-457: the smoke shim never touches the checked-in tree", () => {
+  // R388d: the shim is compiled in a TEMP MIRROR of `src/`, so there
+  // is no shim file in the checked-in tree to clean up — and there
+  // never was a reason to create one there.
+  //
+  // This assertion is now a REGRESSION GUARD: if someone moves the
+  // shim back into `src/`, this goes red immediately, instead of the
+  // suite quietly stripping the licence header from a tracked file
+  // (which is what used to happen, every run).
+  assert.ok(
+    !existsSync(join(root, "src", "_t457_smoke_shim.ts")),
+    "a shim file was created in the checked-in src/ tree — the compile must " +
+      "use a temp mirror (see ./shim-compile.mjs)",
+  );
   if (existsSync(tmpTsc)) {
     rmSync(tmpTsc, { recursive: true, force: true });
   }

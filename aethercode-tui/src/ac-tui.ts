@@ -43,6 +43,12 @@ import { existsSync, statSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "./cellWidth.js";
+// R388m: the permission deadline contract — one wording for "nobody can
+// approve", shared by every surface.
+import { nobodyCanApproveNotice, nobodyCanApproveReason } from "./permissionDeadline.js";
 import { runTui } from "./tui.js";
 // R374: the version lives in a leaf module so the `--version` banner
 // and the `/update` panel cannot drift apart.
@@ -126,7 +132,9 @@ function inkShortcuts(): string {
   const rows: string[] = [];
   for (const group of ["session", "display", "editing"] as const) {
     for (const b of bindingsIn(group)) {
-      const pad = b.label.padEnd(16, " ");
+      // R388m: pad in CELLS, so a non-ASCII key label does not push
+      // the description column right.
+      const pad = padCells(b.label, 16);
       rows.push(`  ${pad}${b.desc}${b.when ? ` (${b.when})` : ""}`);
     }
   }
@@ -240,19 +248,25 @@ async function runHeadless(
               `  [A]llow  [Y]always  [D]eny  [N]never\n`,
           );
           if (!process.stdin.isTTY) {
-            // piped / CI: refuse to run unverified writes. The
-            // caller should know about this — surface a clear
-            // log line and deny so the model gets a useful error.
-            process.stderr.write(
-              `  (stdin is not a TTY; defaulting to deny. Re-run with\n` +
-                `   --permission-mode=ACCEPT_TASK or BYPASS_PERMISSIONS,\n` +
-                `   or pipe from a TTY-aware driver.)\n`,
-            );
+            // piped / CI: refuse to run unverified writes.
+            //
+            // R388m: the deny REASON is a CONTRACT, not a courtesy. The
+            // old reason said "stdin not a TTY, defaulting to deny" —
+            // true, but it never said the two things the model needs:
+            // (1) NOBODY can approve, and (2) DO NOT retry. Without
+            // them the model's default reaction to a denial is to try
+            // again, and the retry fails identically, forever.
+            //
+            // The wording comes from the ONE contract
+            // (`permissionDeadline.ts`), so the headless path, the line
+            // path and the daemon's timeout all tell the model the same
+            // thing.
+            process.stderr.write(`  ${nobodyCanApproveNotice(tool, "headless --print mode")}\n`);
             void client
               .request("permissionResponse", {
                 requestId,
                 decision: "deny",
-                reason: "headless --print mode: stdin not a TTY, defaulting to deny",
+                reason: nobodyCanApproveReason(tool, "headless --print mode"),
               })
               .catch((e: Error) => {
                 process.stderr.write(`  permission reply failed: ${e.message}\n`);
@@ -480,19 +494,41 @@ async function main(): Promise<number> {
   // produces a frozen UI (useInput throws, TUI renders but
   // can't accept keystrokes).
   const useLine = wantLine || !haveTty || !inkSupportsRaw;
-  if (wantTui && !inkSupportsRaw && process.stderr.isTTY) {
-    process.stderr.write(
-      "note: --tui was requested but Ink raw mode is not supported in this terminal.\n" +
-        "      falling back to line mode (--line). The full-screen UI requires a\n" +
-        "      ConPTY-capable host (Windows Terminal, PowerShell 7 + Windows Terminal,\n" +
-        "      or any modern SSH / tmux host with raw-mode support).\n",
-    );
-  } else if (!useLine && !inkSupportsRaw && process.stderr.isTTY) {
-    process.stderr.write(
-      "note: Ink raw mode is not supported in this terminal — falling back to line mode.\n" +
-        "      pass --tui to force the full-screen UI (may fail on this host),\n" +
-        "      or run inside Windows Terminal / a ConPTY-capable host for the Ink TUI.\n",
-    );
+  // R388e: the fallback must never be SILENT.
+  //
+  // The second branch used to be
+  //   `else if (!useLine && !inkSupportsRaw && ...)`
+  // which is DEAD CODE: `useLine` is true whenever
+  // `!inkSupportsRaw`, so `!useLine && !inkSupportsRaw` can never
+  // hold. The result was that the commonest case — the user did NOT
+  // pass `--tui`, their terminal has no raw mode, and they got line
+  // mode instead of the full-screen UI — printed NOTHING.
+  //
+  // A silent downgrade is the R383 failure in a new place: the
+  // renderer looked like it worked, and the user had no way to learn
+  // that a whole surface (the panels, the key bindings, the
+  // markdown renderer) was not what they were looking at.
+  //
+  // So: the reason is always reported, and it says WHICH condition
+  // failed and WHAT to do about it.
+  if (wantLine) {
+    // The user asked for line mode. Not a fallback — say nothing.
+  } else if (!inkSupportsRaw) {
+    if (process.stderr.isTTY) {
+      process.stderr.write(
+        "note: Ink raw mode is not supported in this terminal — falling back to line mode.\n" +
+          "      The full-screen UI (panels, key bindings, markdown rendering) needs a\n" +
+          "      ConPTY-capable host: Windows Terminal, PowerShell 7 + Windows Terminal,\n" +
+          "      or any modern SSH / tmux host with raw-mode support.\n",
+      );
+    }
+  } else if (!haveTty) {
+    if (process.stderr.isTTY) {
+      process.stderr.write(
+        "note: stdin/stdout is not a terminal — falling back to line mode.\n" +
+          "      Run this from an interactive terminal for the full-screen UI.\n",
+      );
+    }
   }
 
   const model = v.model as string | undefined;

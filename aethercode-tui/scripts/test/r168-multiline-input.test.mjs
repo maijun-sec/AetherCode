@@ -52,18 +52,24 @@ function inputBoxBody(src) {
   return src.slice(fnStart, fnEnd);
 }
 
-test("R168: InputBox no longer uses borderStyle (no box border)", () => {
+test("R388h: InputBox is a rounded PILL (the desktop's centre-panel input)", () => {
   const src = readFileSync(join(root, "src", "components", "InputBox.tsx"), "utf-8");
-  // R168 strips the box border around the input, matching
-  // the R167 StatusBar treatment. The pre-R168 implementation
-  // rendered the input inside a <Box borderStyle="round"
-  // borderColor={...}> ... </Box>.
   const body = inputBoxBody(src);
-  assert.doesNotMatch(
-    body,
-    /borderStyle=/,
-    "InputBox body still uses borderStyle — R168 should remove it",
-  );
+  // R168 removed the box border ("OpenCode style"). R388h put a
+  // border BACK — as a `round` pill — because the user asked for the
+  // TUI to look like the DESKTOP's centre panel, and there the input
+  // is the one framed element on the screen
+  // (`.message-input-wrap`, a rounded textarea with a send button
+  // anchored bottom-right). A pill is what makes the panel read as a
+  // conversation: the transcript is flat, the input is the shape.
+  //
+  // The pill must be `round` — the OLD input box used `round` too,
+  // so a plain `borderStyle=` grep cannot tell them apart; the
+  // distinguishing fact is that it EXISTS again, and that it is
+  // round rather than `single`.
+  assert.match(body, /borderStyle="round"/);
+  // …and the send affordance rides on its right edge.
+  assert.match(body, /↵/);
 });
 
 test("R168: InputBox no longer uses ink-text-input (replaced with useInput)", () => {
@@ -98,9 +104,16 @@ test("R168: InputBox handles plain Enter by submitting", () => {
   const body = inputBoxBody(src);
   // Plain Enter (no shift) calls onSubmit, but only if the
   // input is non-empty. Empty Enter is a no-op.
-  assert.match(body, /onSubmit\(state\.input\)/);
+  //
+  // R388j: the text that is submitted is `submitText ?? state.input`.
+  // `submitText` carries the CANONICAL command when the autocomplete
+  // dropdown just completed one — the store's `state.input` is still
+  // the pre-completion value inside the same handler. So the pin
+  // follows the INVARIANT (plain Enter submits the current input)
+  // rather than the spelling (Lesson 1233).
+  assert.match(body, /onSubmit\((text|submitText|state\.input)\)/);
   // The empty-input guard prevents accidental submits.
-  assert.match(body, /state\.input\.length > 0/);
+  assert.match(body, /(text|state\.input)\.length > 0/);
 });
 
 test("R168: InputBox handles backspace / delete", () => {
@@ -122,13 +135,20 @@ test('R168: InputBox renders multi-line input as flexDirection="column"', () => 
   assert.match(body, /flexDirection="column"/);
 });
 
-test("R168: InputBox uses a left-edge ▌ accent + thin ─ rule (OpenCode style)", () => {
+test("R388h: InputBox uses a left-edge ▌ accent (OpenCode style)", () => {
   const src = readFileSync(join(root, "src", "components", "InputBox.tsx"), "utf-8");
   const body = inputBoxBody(src);
   // The ▌ accent matches the R167 StatusBar's left-edge ribbon.
   assert.match(body, /▌/);
-  // The horizontal rule above the input matches R167's StatusBar.
-  assert.match(body, /["']─["']\.repeat\(/);
+  // R388h: the thin ─ rule that used to sit above the input is
+  // GONE — the pill's own border is the separator now. A rule AND a
+  // pill would draw two horizontal lines where the user expects one
+  // shape. The status bar's own rule is the panel's bottom edge.
+  assert.doesNotMatch(
+    body,
+    /["']─["']\.repeat\(/,
+    "the ─ rule is redundant once the input is a bordered pill",
+  );
 });
 
 test("R168: InputBox shows a placeholder when the input is empty", () => {

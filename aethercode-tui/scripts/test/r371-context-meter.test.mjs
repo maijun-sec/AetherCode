@@ -523,9 +523,20 @@ test("StatusBar embeds the meter with the width the terminal can afford", () => 
     "StatusBar does not import ContextMeter — the T-441 integration is gone again",
   );
   assert.ok(/<ContextMeter/.test(sbSrc), "StatusBar renders no ContextMeter");
+  // R388h: the meter moved ONTO the status row (it used to have its
+  // own line, and the bottom of the screen was three rows of chrome).
+  // So the width shrank from 24 to 10 — but the gate is about the
+  // INTENT ("the 200-char default would push the token counters off
+  // an 80-column terminal"), not about the exact number. So the
+  // assertion is: whatever width is used, it is small enough to leave
+  // room for the counters on an 80-column terminal.
+  const widthMatch = sbSrc.match(/<ContextMeter[\s\S]{0,200}?width=\{(\d+)\}/);
+  assert.ok(widthMatch, "the meter's width must be explicit — the default is 200");
+  const meterWidth = Number(widthMatch[1]);
   assert.ok(
-    /width=\{24\}/.test(sbSrc),
-    "the 200-char default would push the token counters off an 80-column terminal",
+    meterWidth <= 24,
+    `the meter is ${meterWidth} chars wide — it would push the token counters ` +
+      "off an 80-column terminal",
   );
 
   // The nullable pass-through. `?? 0` here is the invented

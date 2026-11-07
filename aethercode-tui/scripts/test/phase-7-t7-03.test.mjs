@@ -32,7 +32,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -44,6 +44,21 @@ const read = (rel) => readFileSync(join(root, rel), "utf-8");
 
 // ----- 1. Build a tiny shim so we can import the helpers --------
 
+// R388d: the compile happens in a TEMP MIRROR of `src/`, not in the
+// checked-in tree. See `./shim-compile.mjs` — this gate used to
+// overwrite a TRACKED source file (`_t7_03_shim.ts`) with a
+// generated one-liner and never restored it, so every run of the
+// suite silently stripped the licence header from it.
+const shimRel = ["components", "chat", "_t7_03_shim.ts"];
+const shim = `export {
+  extractSummary,
+  hasSummaryBlock,
+  enrichmentRequired,
+  buildAutoSummaryPrompt,
+  isSummaryInjectedEvent,
+  summaryFromEvent,
+} from "./TranscriptEnricher.js";\n`;
+
 const tmp = join(root, "tmp-t7-03-tsc");
 if (existsSync(tmp)) {
   spawnSync(
@@ -53,15 +68,11 @@ if (existsSync(tmp)) {
   );
 }
 mkdirSync(tmp, { recursive: true });
-const shimPath = join(root, "src", "components", "chat", "_t7_03_shim.ts");
-const shim = `export {
-  extractSummary,
-  hasSummaryBlock,
-  enrichmentRequired,
-  buildAutoSummaryPrompt,
-  isSummaryInjectedEvent,
-  summaryFromEvent,
-} from "./TranscriptEnricher.js";\n`;
+
+const mirrorSrc = join(tmp, "src");
+cpSync(join(root, "src"), mirrorSrc, { recursive: true });
+const shimPath = join(mirrorSrc, ...shimRel);
+mkdirSync(dirname(shimPath), { recursive: true });
 writeFileSync(shimPath, shim, "utf-8");
 
 const r = spawnSync(
@@ -84,8 +95,8 @@ const r = spawnSync(
     "--strict",
     "true",
     "--rootDir",
-    join(root, "src"),
-    join(root, "src", "components", "chat", "TranscriptEnricher.ts"),
+    mirrorSrc,
+    join(mirrorSrc, "components", "chat", "TranscriptEnricher.ts"),
   ],
   { encoding: "utf-8", shell: true },
 );

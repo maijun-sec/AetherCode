@@ -201,6 +201,31 @@ export interface SkillMeta {
 }
 
 /**
+ * R388c — one worktree as the daemon reports it.
+ *
+ * <p>{@code isolated} is the VERDICT and it comes from the
+ * daemon, never from the renderer. A worktree with
+ * {@code isolated: false} is a plain directory that only
+ * LOOKS like isolation — the daemon could not create a real
+ * git worktree (no source repo, git missing, or the path is
+ * not a repo), and {@code reason} says which.
+ *
+ * <p>A renderer that inferred isolation from
+ * {@code branch === null} would be wrong in both
+ * directions: a detached-HEAD worktree has a null branch but
+ * IS isolated, and a stub worktree has a null branch and is
+ * NOT.
+ */
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string | null;
+  sourceRepo: string | null;
+  isolated: boolean;
+  reason: string | null;
+}
+
+/**
  * R700 — SDD run state returned by every {@code sdd.*} RPC. Shape
  * matches {@code org.aethercode.sdd.SddPhaseState} →
  * {@code AetherCodeMethods.sddStateToMap} on the daemon side.
@@ -760,6 +785,104 @@ export class AetherCodeRpc {
       cwd: opts?.cwd ?? null,
       worktree: opts?.worktree ?? null,
       firstPrompt: opts?.firstPrompt ?? null,
+    });
+  }
+
+  // ---- R388c: the worktree lifecycle -------------------------------
+  //
+  // The desktop is the client that makes worktree
+  // isolation usable: it is the UI where the user picks
+  // "work in an isolated branch" and later merges it
+  // back. The daemon owns the verdict (`isolated`), and
+  // these bindings carry it verbatim — the renderer must
+  // NOT re-derive isolation from the absence of a branch
+  // (R383's lesson: the verdict comes from the daemon).
+
+  /** the daemon's worktree configuration. `available`
+   *  says whether REAL git isolation is possible at all;
+   *  `reason` says why not when it is not. */
+  worktreeStatus(): Promise<{
+    ok: boolean;
+    sourceRepo: string | null;
+    root: string;
+    available: boolean;
+    reason?: string;
+  }> {
+    return this.call('worktreeStatus', {});
+  }
+
+  /** every worktree the daemon knows about — both the
+   *  ones it created and the ones git already had. Each
+   *  entry carries `isolated` (the verdict) and `reason`
+   *  (a degradation explanation). */
+  listWorktrees(): Promise<{
+    ok: boolean;
+    worktrees: Array<{
+      name: string;
+      path: string;
+      branch: string | null;
+      sourceRepo: string | null;
+      isolated: boolean;
+      reason: string | null;
+    }>;
+  }> {
+    return this.call('listWorktrees', {});
+  }
+
+  /** create a git worktree and bind it to a branch
+   *  (`aethercode/<name>`). Returns the verdict: a stub
+   *  worktree comes back with `ok: true` AND
+   *  `isolated: false` — the directory was created, but
+   *  it is not git isolation. */
+  addWorktree(opts: { name: string; baseBranch?: string | null }): Promise<{
+    ok: boolean;
+    name?: string;
+    path?: string;
+    branch?: string | null;
+    isolated?: boolean;
+    reason?: string | null;
+    error?: string;
+  }> {
+    return this.call('addWorktree', {
+      name: opts.name,
+      baseBranch: opts.baseBranch ?? null,
+    });
+  }
+
+  /** remove a worktree. `deleteBranch` defaults to true
+   *  on the daemon side; pass false to keep the branch. */
+  removeWorktree(opts: { name: string; deleteBranch?: boolean }): Promise<{
+    ok: boolean;
+    name?: string;
+    error?: string;
+  }> {
+    return this.call('removeWorktree', {
+      name: opts.name,
+      deleteBranch: opts.deleteBranch ?? true,
+    });
+  }
+
+  /** merge a worktree's branch back into a target
+   *  branch. The daemon REFUSES a dirty worktree and
+   *  returns `ok: false` with a reason — the renderer
+   *  shows that reason rather than pretending it
+   *  worked. */
+  mergeWorktree(opts: { name: string; targetBranch?: string | null; removeWorktree?: boolean; deleteBranch?: boolean }): Promise<{
+    ok: boolean;
+    merged?: boolean;
+    targetBranch?: string | null;
+    sourceBranch?: string | null;
+    commit?: string | null;
+    message?: string;
+    worktreeRemoved?: boolean;
+    branchDeleted?: boolean;
+    error?: string;
+  }> {
+    return this.call('mergeWorktree', {
+      name: opts.name,
+      targetBranch: opts.targetBranch ?? null,
+      removeWorktree: opts.removeWorktree ?? true,
+      deleteBranch: opts.deleteBranch ?? false,
     });
   }
   /** R361: create a fresh engine in the daemon's

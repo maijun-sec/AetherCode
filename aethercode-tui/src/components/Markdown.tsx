@@ -91,6 +91,9 @@
 import React from "react";
 import { Text, Box } from "ink";
 import { t } from "../theme.js";
+// R388m: ONE width rule. Table columns are laid out in terminal CELLS,
+// not characters — a CJK cell is twice as wide as its character count.
+import { cellWidth, padCells } from "../cellWidth.js";
 import {
   highlightCode,
   highlightInlineCode,
@@ -268,10 +271,15 @@ function renderTable(
   for (const row of rows) {
     for (let c = 0; c < cols; c++) {
       const cell = (row[c] ?? "").replace(/[`*_~]/g, "");
-      if (cell.length > widths[c]) widths[c] = cell.length;
+      // R388m: measure in CELLS, not characters. A Chinese table cell
+      // is twice as wide as its character count, so a character count
+      // makes the column narrower than its content and the divider
+      // drifts right by one cell per CJK row.
+      const w = cellWidth(cell);
+      if (w > widths[c]) widths[c] = w;
     }
   }
-  // Cap each column at 40 chars to avoid terminal blowup.
+  // Cap each column at 40 cells to avoid terminal blowup.
   for (let c = 0; c < cols; c++) widths[c] = Math.min(widths[c], 40);
   const totalWidth = widths.reduce((a, b) => a + b + 3, -3);
   const lines: React.ReactNode[] = [];
@@ -284,7 +292,8 @@ function renderTable(
       const w = widths[c];
       // Pad cell to column width. Right/center alignment is rare
       // for our model output, so we keep left + dim header.
-      const padded = cell.padEnd(w, " ");
+      // R388m: pad in CELLS — `padEnd` pads by character count.
+      const padded = padCells(cell, w);
       // header cells get a brand colour (so they read as
       // labels). Data cells keep the default `asst` colour so
       // the contrast against the header is clear.

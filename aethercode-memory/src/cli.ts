@@ -57,7 +57,7 @@
  */
 
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -1032,11 +1032,48 @@ export async function main(argv: ReadonlyArray<string> = process.argv.slice(2)):
 
 /** Detect whether this file is being run as a bin. We do
  *  not import the bin's expected path so the test wiring
- *  can override `process.argv[1]`. */
+ *  can override `process.argv[1]`.
+ *
+ *  R388g — BUNDLE SAFETY.
+ *
+ *  The TUI ships as ONE esbuild bundle (`aethercode-tui/dist/ac-tui.js`)
+ *  and it imports this package's LIBRARY surface
+ *  (`aethercode-memory` → `index.ts` → re-exports `./cli.js`).
+ *  esbuild inlines `cli.ts` into the bundle, so inside the bundle
+ *  `import.meta.url` is the BUNDLE's URL — which is exactly
+ *  `process.argv[1]` when the user runs `node ac-tui.js`.
+ *
+ *  The old check therefore returned TRUE inside the TUI bundle,
+ *  the memory CLI's `main()` ran with the TUI's argv (no
+ *  recognised subcommand), and it called `process.exit(2)` —
+ *  killing the TUI a second after it painted its first frame.
+ *  The symptom was "the TUI opens and immediately disappears"
+ *  (the status bar showed `connecting…` and the process was gone).
+ *
+ *  The discriminator has to be "am I the CLI ENTRY POINT", not
+ *  "is my module URL equal to argv[1]". In a bundle those two
+ *  are the same file for EVERY module, so the comparison cannot
+ *  tell them apart.
+ *
+ *  We use the file's own NAME: the bin is `cli.js` (see
+ *  package.json → `bin.ac-mem`). A bundle named `ac-tui.js` is
+ *  not the CLI, whatever its argv says. The basename check is
+ *  what distinguishes "the user ran `ac-mem`" from "some other
+ *  program imported this module".
+ */
 function isDirectInvocation(): boolean {
   try {
     const invoked = fileURLToPath(import.meta.url);
     if (process.argv[1] === undefined) return false;
+    // R388g: refuse to auto-run when this module was inlined into
+    // a bundle. `import.meta.url` is then the bundle's URL, whose
+    // basename is the BUNDLE's name (e.g. `ac-tui.js`), not
+    // `cli.js`. Comparing basenames is bundle-safe; comparing
+    // full paths is not.
+    const invokedName = basename(invoked).toLowerCase();
+    const isCliEntry =
+      invokedName === 'cli.js' || invokedName === 'cli.mjs' || invokedName === 'ac-mem';
+    if (!isCliEntry) return false;
     if (process.argv[1] === invoked) return true;
     try {
       return realpathSync(process.argv[1]) === realpathSync(invoked);

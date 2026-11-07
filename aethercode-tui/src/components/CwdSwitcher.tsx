@@ -42,6 +42,8 @@
  */
 
 import { hintFor } from "../componentKeys.js";
+// R388j — the shell owns the frame; the body owns the content.
+import { PanelBody, fitRow, blank, filterInputWidth } from "./PanelBody.js";
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
@@ -81,6 +83,18 @@ export interface CwdSwitcherProps {
   noticeReload?: boolean;
   /** Optional title override. */
   title?: string;
+  /**
+   * R388j: the CONTENT width — the cells available between the
+   * shell's border columns. Every row is laid out to this number,
+   * so nothing can overflow the frame.
+   */
+  width?: number;
+}
+
+/** R388j: the path input's rendered width — the value plus the
+ *  cursor, or the placeholder when the field is empty. */
+function pathInputWidth(value: string): number {
+  return filterInputWidth(value, "absolute path…");
 }
 
 export const CwdSwitcher: React.FC<CwdSwitcherProps> = ({
@@ -91,6 +105,7 @@ export const CwdSwitcher: React.FC<CwdSwitcherProps> = ({
   onClose,
   noticeReload = true,
   title = "Switch CWD",
+  width = 76,
 }) => {
   const [path, setPath] = useState(initialPath ?? "");
   const [err, setErr] = useState<string | null>(null);
@@ -134,37 +149,41 @@ export const CwdSwitcher: React.FC<CwdSwitcherProps> = ({
   };
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
-      <Box>
-        <Text color="cyan" bold>
-          ◆ {title}
-        </Text>
-        <Text dimColor> {hintFor("components/CwdSwitcher.tsx")}</Text>
-      </Box>
-      <Text> </Text>
+    <PanelBody width={width} title={title}>
+      <Text>{blank(width)}</Text>
       <Text>
         <Text dimColor>current: </Text>
-        <Text color="gray">{currentCwd}</Text>
+        <Text color="gray">{fitRow(currentCwd, Math.max(12, width - 9))}</Text>
       </Text>
-      <Text> </Text>
-      <Box>
+      <Text>{blank(width)}</Text>
+      {/* R388j: the path row pads itself to the panel width. */}
+      <Box width={width}>
         <Text color="yellow">{">"}</Text>
         <Text> </Text>
-        <TextInput
-          value={path}
-          onChange={setPath}
-          onSubmit={submit}
-          placeholder="absolute path…  (e.g. /work/my-project)"
-        />
+        <TextInput value={path} onChange={setPath} onSubmit={submit} placeholder="absolute path…" />
+        <Text>{blank(Math.max(0, width - 3 - pathInputWidth(path)))}</Text>
       </Box>
-      {err ? <Text color="red"> ✗ {err}</Text> : null}
+      {err ? (
+        <Text color="red" wrap="truncate-end">
+          {" "}
+          ✗ {fitRow(err, Math.max(12, width - 3))}
+        </Text>
+      ) : null}
       {noticeReload ? (
         <Box marginTop={1} flexDirection="column">
-          <Text dimColor> Switching reloads project-specific config (rules, MCP,</Text>
-          <Text dimColor> skills, .env, AGENTS.md).</Text>
+          <Text dimColor wrap="truncate-end">
+            {fitRow(
+              "Switching reloads project-specific config (rules, MCP, skills, .env, AGENTS.md).",
+              width,
+            )}
+          </Text>
         </Box>
       ) : null}
-    </Box>
+      <Text>{blank(width)}</Text>
+      <Text dimColor wrap="truncate-end">
+        {fitRow(hintFor("components/CwdSwitcher.tsx"), width)}
+      </Text>
+    </PanelBody>
   );
 };
 

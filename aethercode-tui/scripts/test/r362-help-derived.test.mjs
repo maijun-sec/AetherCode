@@ -326,9 +326,16 @@ test("SLASH_COMMANDS (the flat array) is unchanged in size", () => {
   // `case` label and was therefore dead code. Giving it its own name
   // made an already-registered daemon capability reachable, so the
   // count went up by one on purpose.
+  //
+  // R388c: 89. The catalogue gained `/worktree` — the git worktree
+  // lifecycle (create an isolated checkout, bind the next session to
+  // it, merge it back, remove it). The daemon has always had the
+  // `addWorktree` / `listWorktrees` / `removeWorktree` RPCs; what was
+  // missing was a NAME the user could type, which is what makes a
+  // capability reachable at all (the R371 lesson, one layer up).
   assert.equal(
     SLASH_COMMANDS.length,
-    88,
+    89,
     "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident",
   );
   assert.ok(

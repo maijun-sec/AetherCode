@@ -52,6 +52,10 @@
 import React from "react";
 import { Box, Text } from "ink";
 
+// R388m: ONE width rule — a terminal is a grid of CELLS. A CJK
+// glyph is twice as wide as its character count.
+import { cellWidth, fitCells } from "../cellWidth.js";
+
 /** Result of handling a key event in the completion system. */
 export type CompletionResult = "ignored" | "handled" | "submit";
 
@@ -335,13 +339,19 @@ export const CompletionDropdown: React.FC<DropdownProps> = ({ suggestions, width
         const marker = isSelected ? "▶" : " ";
         const labelColor = isSelected ? "black" : "cyan";
         const bg = isSelected ? "cyan" : undefined;
-        const label = s.label.length > width - 4 ? s.label.slice(0, width - 5) + "…" : s.label;
+        // R388m: truncate in CELLS, not characters. A Chinese file
+        // path is twice as wide as its length — a character-count
+        // slice kept HALF the visible text and still overflowed the
+        // row, so the dropdown ran past its own edge.
+        const label = fitCells(s.label, Math.max(1, width - 4));
+        // The description shares the row with the label, so it gets
+        // whatever cells are LEFT — measured in cells too.
+        const labelCells = cellWidth(label);
+        const descRoom = Math.max(0, width - labelCells - 6);
         return (
           <Text key={i} backgroundColor={bg} color={labelColor}>
             {marker} {label}
-            {s.description ? (
-              <Text dimColor> {s.description.slice(0, width - label.length - 6)}</Text>
-            ) : null}
+            {s.description ? <Text dimColor> {fitCells(s.description, descRoom)}</Text> : null}
           </Text>
         );
       })}

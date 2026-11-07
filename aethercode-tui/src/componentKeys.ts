@@ -233,6 +233,20 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
     ],
   },
   {
+    // R388k: `/help` as a LIST. The filter is a text field, so the
+    // letters belong to it and the ARROWS navigate — one key cannot mean
+    // two things, and the earlier pickers' `j`/`k` would have been
+    // swallowed by the filter box.
+    component: "components/CommandHelpPanel.tsx",
+    separator: " ",
+    keys: [
+      { id: "filter", label: "type to filter", tokens: [], via: "input" },
+      { id: "nav", label: "↑/↓: navigate", tokens: ["up", "down"], via: "handler" },
+      { id: "select", label: "Enter: run", tokens: ["return"], via: "handler" },
+      { id: "close", label: "Esc: close", tokens: ["esc"], via: "handler" },
+    ],
+  },
+  {
     component: "components/CwdSwitcher.tsx",
     separator: " ",
     keys: [
@@ -277,7 +291,7 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       },
       {
         id: "decision",
-        text: "waiting for permission decision — press A / T / P / U / D / N (or collapse the card with Esc)",
+        text: "waiting for permission decision — press A / T / P / U / D / N, Tab to attach a comment (or collapse the card with Esc)",
         tokens: [
           { token: "esc", via: "handler" },
           // The decision keys are answered by the APPLICATION's
@@ -288,6 +302,27 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
           { token: "u", via: "global" },
           { token: "d", via: "global" },
           { token: "n", via: "global" },
+          // R388l: Tab opens the permission COMMENT BOX. It is
+          // bound by the APPLICATION's handler (the same one that
+          // owns the decision keys), so it is a global token —
+          // but it is NOT bound by this component's own
+          // useInput, because while the comment box is open the
+          // plain keys are text.
+          { token: "tab", via: "global" },
+        ],
+      },
+      {
+        id: "comment",
+        text: "comment to the model — Ctrl+A/T/P/U/D/N to change what it is sent with, Enter to send, Esc to cancel",
+        tokens: [
+          { token: "return", via: "global" },
+          { token: "esc", via: "global" },
+          { token: "ctrl+a", via: "global" },
+          { token: "ctrl+t", via: "global" },
+          { token: "ctrl+p", via: "global" },
+          { token: "ctrl+u", via: "global" },
+          { token: "ctrl+d", via: "global" },
+          { token: "ctrl+n", via: "global" },
         ],
       },
     ],
@@ -403,6 +438,11 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       { id: "nav", label: "↑/↓ (j/k): navigate", tokens: ["up", "down", "j", "k"], via: "handler" },
       { id: "select", label: "Enter: select", tokens: ["return"], via: "handler" },
       { id: "cancel", label: "Esc: cancel", tokens: ["esc"], via: "handler" },
+      // R388j: `a` widens the scope from "this cwd" to "every session".
+      // It is bound by the panel's OWN handler, so it belongs in this
+      // table — the hint must not promise keys the panel does not
+      // bind, nor hide the ones it does.
+      { id: "widen", label: "a: every session", tokens: ["a"], via: "handler" },
     ],
   },
   {
@@ -434,6 +474,60 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       { id: "nav", label: "↑/↓ (j/k): navigate", tokens: ["up", "down", "j", "k"], via: "handler" },
       { id: "run", label: "Enter: run", tokens: ["return"], via: "handler" },
       { id: "cancel", label: "Esc: cancel", tokens: ["esc"], via: "handler" },
+    ],
+  },
+  {
+    // R388c: the git worktree lifecycle.
+    //
+    // The panel's OWN `useInput` binds Esc (close) and Enter
+    // (merge the selected row); its two TEXT FIELDS bind Enter
+    // (submit the name / the merge target). The letters — n, m, d
+    // — are the panel's action keys.
+    //
+    // This table exists because the panel used to hand-write its
+    // hint, which the R381 gate flagged as "a second copy of the
+    // truth" — and it had already drifted: the hand-written line
+    // promised "↑/↓ select", and the handler bound no arrow keys
+    // at all.
+    component: "components/WorktreePanel.tsx",
+    separator: " · ",
+    keys: [
+      { id: "create", label: "n: new", tokens: ["n"], via: "handler" },
+      { id: "merge-target", label: "m: merge target", tokens: ["m"], via: "handler" },
+      { id: "remove", label: "d: remove", tokens: ["d"], via: "handler" },
+      { id: "merge", label: "Enter: merge", tokens: ["return"], via: "handler" },
+      { id: "close", label: "Esc: close", tokens: ["esc"], via: "handler" },
+    ],
+    prose: [
+      // The create form's Enter is SUBMITTED by the text field, and
+      // the panel's own `useInput` also binds Enter (it merges the
+      // selected row). Both are "handler" for this table's
+      // vocabulary: the panel DOES branch on `key.return`.
+      {
+        id: "create-form",
+        text: "Enter to create · Esc to cancel",
+        tokens: [
+          { token: "return", via: "handler" },
+          { token: "esc", via: "handler" },
+        ],
+      },
+      // The merge-target form is the same shape.
+      {
+        id: "merge-form",
+        text: "Enter to merge · Esc to cancel",
+        tokens: [
+          { token: "return", via: "handler" },
+          { token: "esc", via: "handler" },
+        ],
+      },
+      {
+        // The panel says WHICH worktree the next session binds to.
+        // That sentence names Enter, and Enter merges — it is the
+        // panel's own handler.
+        id: "selected",
+        text: "the next session binds to it. Enter merges it.",
+        tokens: [{ token: "return", via: "handler" }],
+      },
     ],
   },
   {

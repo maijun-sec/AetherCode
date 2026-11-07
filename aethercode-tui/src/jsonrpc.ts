@@ -120,6 +120,58 @@ export class JsonRpcClient {
   // callback.
   private lastState: ConnectionState = "connecting";
 
+  /**
+   * R388f: the CURRENT connection state, for a listener that
+   * attaches LATE.
+   *
+   * <p>Why this exists: the client emits its lifecycle events
+   * ("connecting", then "connected") over an out-of-band
+   * `process` event, and the renderer attaches its listener in a
+   * React `useEffect`. But the client is started BEFORE React
+   * mounts — `runTui` does `await client.request("ping")` (which
+   * spawns the daemon) and only THEN calls `render(...)`.
+   *
+   * <p>So both the "connecting" and the "connected" events were
+   * emitted BEFORE anybody was listening, and the renderer kept
+   * the reducer's INITIAL state — `"connecting"` — FOREVER. The
+   * symptom was a status bar stuck on "connecting…" with an empty
+   * jar name, on a daemon that was actually up and answering RPCs
+   * (verified: `ping`, `getState`, `listSessions` all reply).
+   *
+   * <p>The fix is a REPLAY: a late listener asks for the current
+   * state and gets it, instead of waiting for the next event that
+   * may never come. This is the same shape as R383's "the verdict
+   * comes from the daemon" — the state is owned by the client, and
+   * the renderer reads it rather than inferring it from silence.
+   */
+  connectionState(): { state: ConnectionState; attempt: number; lastError: string | null } {
+    return {
+      state: this.lastState,
+      attempt: this.reconnectAttempt,
+      lastError: this.lastStderrTail,
+    };
+  }
+
+  private lastStderrTail: string | null = null;
+
+  /**
+   * R388f: the ONE place the connection state changes.
+   *
+   * <p>It records the state (so a late listener can replay it) and
+   * THEN notifies. Recording first matters: a listener that
+   * attaches between the record and the notify would otherwise see
+   * a state it never heard about.
+   */
+  private setConnectionState(
+    state: ConnectionState,
+    attempt: number,
+    lastError: string | null,
+  ): void {
+    this.lastState = state;
+    this.lastStderrTail = lastError;
+    this.onConnectionState(state, { attempt, lastError });
+  }
+
   private child: ChildProcess | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
@@ -185,11 +237,7 @@ export class JsonRpcClient {
   start(): void {
     if (this.child) return;
     const initialState: ConnectionState = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
-    this.lastState = initialState;
-    this.onConnectionState(initialState, {
-      attempt: this.reconnectAttempt,
-      lastError: null,
-    });
+    this.setConnectionState(initialState, this.reconnectAttempt, null);
     // pass the cwd BOTH as the process working directory
     // (so subprocesses inherit it) AND as a JVM system property
     // (so the engine's FileWriteTool, FileEditTool, etc. can
@@ -261,11 +309,11 @@ export class JsonRpcClient {
       if (this.autoReconnect && !this.stopped) {
         this.scheduleReconnect(stderrTail || `exit code ${code}`);
       } else {
-        this.lastState = "disconnected";
-        this.onConnectionState("disconnected", {
-          attempt: this.reconnectAttempt,
-          lastError: stderrTail || (code != null ? `exit code ${code}` : null),
-        });
+        this.setConnectionState(
+          "disconnected",
+          this.reconnectAttempt,
+          stderrTail || (code != null ? `exit code ${code}` : null),
+        );
       }
       // Mark that we've had at least one cycle.
       void wasConnected;
@@ -276,11 +324,7 @@ export class JsonRpcClient {
       if (this.autoReconnect && !this.stopped) {
         this.scheduleReconnect(err.message);
       } else {
-        this.lastState = "disconnected";
-        this.onConnectionState("disconnected", {
-          attempt: this.reconnectAttempt,
-          lastError: err.message,
-        });
+        this.setConnectionState("disconnected", this.reconnectAttempt, err.message);
       }
     });
     // surface "connected" once stdout is open and
@@ -292,8 +336,7 @@ export class JsonRpcClient {
     setImmediate(() => {
       if (this.child === child) {
         this.reconnectAttempt = 0;
-        this.lastState = "connected";
-        this.onConnectionState("connected", { attempt: 0, lastError: null });
+        this.setConnectionState("connected", 0, null);
       }
     });
   }
@@ -307,18 +350,14 @@ export class JsonRpcClient {
     if (this.stopped) return;
     this.reconnectAttempt += 1;
     if (this.reconnectAttempt > this.maxReconnectAttempts) {
-      this.lastState = "disconnected";
-      this.onConnectionState("disconnected", {
-        attempt: this.reconnectAttempt,
-        lastError: `gave up after ${this.maxReconnectAttempts} attempts: ${lastError}`,
-      });
+      this.setConnectionState(
+        "disconnected",
+        this.reconnectAttempt,
+        `gave up after ${this.maxReconnectAttempts} attempts: ${lastError}`,
+      );
       return;
     }
-    this.lastState = "reconnecting";
-    this.onConnectionState("reconnecting", {
-      attempt: this.reconnectAttempt,
-      lastError,
-    });
+    this.setConnectionState("reconnecting", this.reconnectAttempt, lastError);
     // Backoff: 0.5s, 1s, 2s, 4s, 8s, 16s, 30s, 30s, 30s, 30s.
     const backoffMs = Math.min(30_000, 500 * Math.pow(2, this.reconnectAttempt - 1));
     this.reconnectTimer = setTimeout(() => {

@@ -51,6 +51,8 @@
  */
 
 import { hintFor } from "../componentKeys.js";
+// R388j — the shell owns the frame; the body owns the content.
+import { PanelBody, fitRow, blank } from "./PanelBody.js";
 import { PERMISSION_MODES } from "../permissionModes.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -66,6 +68,12 @@ export interface ModePickerProps {
   title?: string;
   /** Cap visible rows. Default 8 — enough for every mode the daemon has. */
   maxVisible?: number;
+  /**
+   * R388j: the CONTENT width — the cells available between the
+   * shell's border columns. Every row is laid out to this number,
+   * so nothing can overflow the frame.
+   */
+  width?: number;
 }
 
 export const ModePicker: React.FC<ModePickerProps> = ({
@@ -74,6 +82,7 @@ export const ModePicker: React.FC<ModePickerProps> = ({
   onClose,
   title = "Permission mode",
   maxVisible = 8,
+  width = 76,
 }) => {
   const modes = PERMISSION_MODES;
 
@@ -137,14 +146,8 @@ export const ModePicker: React.FC<ModePickerProps> = ({
   const visible = modes.slice(start, end);
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
-      <Box>
-        <Text color="cyan" bold>
-          ◆ {title}
-        </Text>
-        <Text dimColor> {hintFor("components/ModePicker.tsx")}</Text>
-      </Box>
-      <Text> </Text>
+    <PanelBody width={width} title={title}>
+      <Text>{blank(width)}</Text>
       {visible.map((m, i) => {
         const realIndex = start + i;
         const isHighlighted = realIndex === highlight;
@@ -153,9 +156,9 @@ export const ModePicker: React.FC<ModePickerProps> = ({
           <Box key={m.value} flexDirection="row">
             <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
             <Text color={isCurrent ? "yellowBright" : undefined}>{isCurrent ? "●" : " "} </Text>
-            <Text>
-              <Text bold={isHighlighted}>{m.value.padEnd(19)}</Text>
-              {m.label}
+            <Text wrap="truncate-end">
+              <Text bold={isHighlighted}>{m.value}</Text>
+              <Text> {m.label}</Text>
               {isCurrent ? <Text color="yellowBright"> (current)</Text> : null}
             </Text>
           </Box>
@@ -167,7 +170,16 @@ export const ModePicker: React.FC<ModePickerProps> = ({
           {start + 1}–{end} of {modes.length}
         </Text>
       ) : null}
-      {modes[highlight] ? <Text dimColor> {modes[highlight].blurb}</Text> : null}
-    </Box>
+      {modes[highlight] ? (
+        <Text dimColor wrap="truncate-end">
+          {" "}
+          {fitRow(modes[highlight].blurb, Math.max(12, width - 1))}
+        </Text>
+      ) : null}
+      <Text>{blank(width)}</Text>
+      <Text dimColor wrap="truncate-end">
+        {fitRow(hintFor("components/ModePicker.tsx"), width)}
+      </Text>
+    </PanelBody>
   );
 };

@@ -57,6 +57,9 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { t, formatRelative, formatTokens, formatCost } from "../../theme.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../../cellWidth.js";
 
 /** A single TODO summary (counts per status). The full
  *  TODO list is rendered by `TodoBoard`; this is just
@@ -242,7 +245,7 @@ const Row: React.FC<{ label: string; value: string; color?: string; onClick?: ()
   onClick,
 }) => (
   <Box flexDirection="row">
-    <Text dimColor>{label.padEnd(9, " ")} </Text>
+    <Text dimColor>{padCells(label, 9)} </Text>
     {onClick ? (
       <Text color="cyan" underline>
         {value}

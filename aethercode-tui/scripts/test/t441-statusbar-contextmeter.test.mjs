@@ -46,10 +46,26 @@ test("T-441: StatusBar.tsx builds a ContextInfo from state", () => {
 });
 
 test("T-441: StatusBar.tsx embeds <ContextMeter> with a small width", () => {
-  // The 200 px default would not fit in the bar — the
-  // host overrides with a small width (24 chars).
+  // The 200 px default would not fit in the bar — the host
+  // overrides with a small width.
+  //
+  // R388h: this used to pin the LITERAL `width={24}`. The meter
+  // moved onto the status row (it used to own a whole second
+  // line), so the width is now 10. Pinning the literal would be a
+  // pin on a LOCATION, and a location pin goes red on any
+  // refactor — including one that makes the code better.
+  //
+  // What this gate actually protects is the INTENT: the meter must
+  // be given a width that fits inside the bar. So pin the intent:
+  // a width prop is present, it is small, and it is a literal
+  // number (not a variable that could grow without bound).
   assert.match(sb, /<ContextMeter/);
-  assert.match(sb, /width=\{24\}/);
+  const width = sb.match(/<ContextMeter[^>]*\bwidth=\{(\d+)\}/);
+  assert.ok(width, "ContextMeter must be given an explicit numeric width");
+  assert.ok(
+    Number(width[1]) <= 24,
+    `ContextMeter width must stay small enough for the status row, got ${width[1]}`,
+  );
   assert.match(sb, /sampleIntervalMs=\{ctxPaused\s*\?\s*1_000_000\s*:\s*4_000\}/);
 });
 

@@ -38,7 +38,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -112,8 +113,32 @@ function detectCompactDrop(prev, next, threshold = 0.3) {
 // ----- 3. Wire a real aethercode-compact `CompactRpc`-shaped
 //         in-process backend by transpiling the TS source. ----
 
-const aethercodeCompact = "D:\\work\\workspace\\idea\\engine\\AetherCode\\aethercode-compact";
-const aethercodeCompactTmp = join(aethercodeCompact, "tmp-r194-e2e");
+// R388d: the sibling package's root, derived from THIS file's
+// location rather than hard-coded.
+//
+// It used to be the literal
+// "D:\\work\\workspace\\idea\\engine\\AetherCode\\aethercode-compact",
+// which meant that running this gate from an ISOLATED COPY of the
+// repo (a worktree, a baseline snapshot) still compiled against — and
+// DELETED — the REAL repository's `aethercode-compact/tmp-r194-e2e`.
+// The hard-coded path made the gate reach outside its own tree.
+//
+// `root` is the TUI package root; `aethercode-compact` is its
+// sibling, one level up.
+const aethercodeCompact = join(root, "..", "aethercode-compact");
+// R388d: the compiled output goes to a TEMP directory OUTSIDE the
+// checked-in tree.
+//
+// It used to go to `aethercode-compact/tmp-r194-e2e` — a path that
+// is TRACKED in git. The gate deleted it on every run and then
+// recompiled into it, so every run of this suite removed 13 tracked
+// files from the working tree. Two people "fixed" it with
+// `git checkout -- <dir>` and it came back on the next run, because
+// the CAUSE is the suite itself.
+//
+// A test must never write into a checked-in directory. Everything
+// it generates goes to a temp directory.
+const aethercodeCompactTmp = join(tmpdir(), `aethercode-r194-e2e-${process.pid}`);
 if (existsSync(aethercodeCompactTmp)) {
   spawnSync(
     process.platform === "win32" ? "cmd" : "rm",
@@ -122,6 +147,7 @@ if (existsSync(aethercodeCompactTmp)) {
       : ["-rf", aethercodeCompactTmp],
   );
 }
+mkdirSync(aethercodeCompactTmp, { recursive: true });
 {
   const tscBin2 = join(
     aethercodeCompact,

@@ -29,6 +29,7 @@ import { MemoryPanel } from './MemoryPanel';
 import { PromptHistory } from './PromptHistory';
 import { KanbanPanel } from './KanbanPanel';
 import { AgentsPanel } from './AgentsPanel';
+import { WorktreePanel } from './WorktreePanel';
 import { SubagentPanel } from './SubagentPanel';
 import { AgentTasksPanel } from './AgentTasksPanel';
 import './RightPanel.css';
@@ -55,7 +56,7 @@ interface RightPanelProps {
    * on"). Default 'telemetry' preserves the pre-R703
    * behaviour for tests that mount RightPanel in
    * isolation. */
-  initialTab?: 'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents';
+  initialTab?: 'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents' | 'worktrees';
 }
 
 export function RightPanel({ onClose, initialTab = 'telemetry' }: RightPanelProps = {}) {
@@ -79,7 +80,7 @@ export function RightPanel({ onClose, initialTab = 'telemetry' }: RightPanelProp
   // on every change so a click on the Header while
   // the panel is already open jumps tabs immediately
   // (the user shouldn't have to close + reopen).
-  const [tab, setTab] = useState<'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents'>(initialTab);
+  const [tab, setTab] = useState<'telemetry' | 'plan' | 'kanban' | 'agents' | 'subagents' | 'worktrees'>(initialTab);
   useEffect(() => { setTab(initialTab); }, [initialTab]);
   // badge on the Subagents tab so the user
   // notices a running job even when they're on
@@ -167,6 +168,11 @@ export function RightPanel({ onClose, initialTab = 'telemetry' }: RightPanelProp
           className={`right-tab ${tab === 'agents' ? 'active' : ''}`}
           onClick={() => setTab('agents')}
         >Agents</button>
+        <button
+          className={`right-tab ${tab === 'worktrees' ? 'active' : ''}`}
+          onClick={() => setTab('worktrees')}
+          data-testid="right-tab-worktrees"
+        >Worktrees</button>
         {onClose ? (
           <button
             className="right-tab right-tab-close"
@@ -207,6 +213,13 @@ export function RightPanel({ onClose, initialTab = 'telemetry' }: RightPanelProp
         // (Cancel / Insert) call the store + the
         // subagentCancel RPC.
         <section className="right-section right-subagents"><SubagentPanel /></section>
+      ) : tab === 'worktrees' ? (
+        // R388c: the worktree lifecycle — create an
+        // isolated git worktree, bind the next session
+        // to it, merge it back, remove it. The panel
+        // displays the daemon's isolation VERDICT; it
+        // never derives it.
+        <section className="right-section right-worktrees"><WorktreePanel /></section>
       ) : (
         // agents tab. The AgentsPanel
         // handles the list + the AgentEditor

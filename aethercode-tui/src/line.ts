@@ -32,8 +32,18 @@
 
 import * as readline from "node:readline";
 import { LineInput } from "./lineInput.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "./cellWidth.js";
+// R388m: the permission deadline contract — one wording for "nobody can
+// approve", shared by every surface.
+import { nobodyCanApproveReason } from "./permissionDeadline.js";
 import { JsonRpcClient, type RpcValue } from "./jsonrpc.js";
 import { handleSlash, SLASH_HELP } from "./commands.js";
+// R388l: the permission comment box's pure logic. `permissionResponseParams`
+// builds the reply params, so the two renderers produce byte-identical
+// params for the same answer (one wire shape, not two).
+import { permissionResponseParams } from "./permissionComment.js";
 // R369: the one table that says what this daemon cannot do, shared
 // with `handleSlash` and with the R366 gate.
 import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
@@ -77,6 +87,16 @@ import { classifyRunEnd, type StopKind } from "./stopKind.js";
 // R373: the workflow empty-state copy, shared with the Ink panel so
 // the two renderers cannot drift apart.
 import { workflowEmptyCopy } from "./workflowRows.js";
+// R388k — SDD run discovery. The line renderer has no reducer state, so
+// it cannot remember a slug; the daemon publishes the runs on disk
+// (`sdd.listRuns`) and the slug is DISCOVERED, not remembered.
+import {
+  extractRuns,
+  isActiveRun,
+  pickActiveRun,
+  sddParams,
+  type SddRunSummary,
+} from "./sddRun.js";
 // R375: the run-control vocabulary, shared with the Ink renderer so
 // the two cannot disagree about what "stop" means.
 import {
@@ -1245,8 +1265,25 @@ async function pickPermission(
   reason: string,
   guidance: string,
   noColor: boolean,
-): Promise<"allow" | "always_allow" | "deny" | "always_deny"> {
-  if (!process.stdout.isTTY) return "deny";
+): Promise<{
+  decision: "allow" | "always_allow" | "deny" | "always_deny";
+  comment?: string;
+  reason?: string;
+}> {
+  // R388m: a non-interactive stdout means NOBODY can approve. The
+  // denial must say so, and must tell the model NOT to retry — the
+  // model's default reaction to a denial is to try again, and a retry
+  // against a permission wall fails identically, forever.
+  //
+  // The wording comes from the ONE contract (`permissionDeadline.ts`),
+  // so the headless path, the line path and the daemon's own timeout
+  // all tell the model the same thing.
+  if (!process.stdout.isTTY) {
+    return {
+      decision: "deny",
+      reason: nobodyCanApproveReason(tool, "line mode (stdout is not a TTY)"),
+    };
+  }
 
   const options = [
     { label: "[1] A \u2014 allow once", value: "allow" as const },
@@ -1262,6 +1299,15 @@ async function pickPermission(
   return new Promise((resolvePromise) => {
     let selected = 0;
     let resolved = false;
+    // R388l: the COMMENT mode. Claude Code lets the user attach a
+    // free-text comment to a permission answer, and the comment
+    // reaches the model. `Tab` opens the comment field; the CURRENT
+    // selection becomes the armed decision (so the flow is "pick the
+    // option, Tab, explain it"), which is exactly Claude Code's
+    // shape. Enter sends decision + comment; Esc goes back to the
+    // option list WITHOUT answering.
+    let commentMode = false;
+    let commentText = "";
 
     // R353: capture the input area's top row up-front (the picker
     // paints one row above it). Same pattern as pickFromList.
@@ -1330,14 +1376,36 @@ async function pickPermission(
             colorize(opt.label, color, noColor),
         );
       }
-      lines.push(
-        colorize("  \u2502 ", C.dim, noColor) +
-          colorize(
-            "\u2191/\u2193 move  \u00B7  1/2/3/4  \u00B7  Enter  \u00B7  Esc deny",
-            C.dim,
-            noColor,
-          ),
-      );
+      if (commentMode) {
+        // R388l: the comment field. It shows the ARMED decision (the
+        // option that was selected when Tab was pressed) so the user
+        // can see what they are about to send, and the comment text
+        // with a cursor.
+        lines.push(
+          colorize("  \u2502 ", C.dim, noColor) +
+            colorize("\u270E ", C.cyan, noColor) +
+            colorize("comment: ", C.dim, noColor) +
+            commentText +
+            colorize("\u258D", C.cyan, noColor),
+        );
+        lines.push(
+          colorize("  \u2502 ", C.dim, noColor) +
+            colorize(
+              `sends as: ${options[selected].label}  \u00B7  Enter send  \u00B7  Esc back`,
+              C.dim,
+              noColor,
+            ),
+        );
+      } else {
+        lines.push(
+          colorize("  \u2502 ", C.dim, noColor) +
+            colorize(
+              "\u2191/\u2193 move  \u00B7  1/2/3/4  \u00B7  Enter  \u00B7  Tab comment  \u00B7  Esc deny",
+              C.dim,
+              noColor,
+            ),
+        );
+      }
 
       // Repaint: walk up to top, then redraw each line + clear remainder.
       // pickPermission's original design (R352) is a simple per-line
@@ -1376,7 +1444,15 @@ async function pickPermission(
       // from cursor to end-of-screen also wipes anything between
       // pickerTopRow (= inputTopRow - 1) and screen bottom.
       lineInput.resume();
-      resolvePromise(options[idx].value);
+      // R388l: the comment travels WITH the decision. A comment
+      // with no text is omitted entirely, so a reply without a
+      // comment produces byte-identical params to the pre-R388l
+      // reply (the daemon must not see an empty string where it
+      // used to see nothing).
+      const c = commentText.trim();
+      resolvePromise(
+        c ? { decision: options[idx].value, comment: c } : { decision: options[idx].value },
+      );
     }
 
     function cancel(): void {
@@ -1466,6 +1542,65 @@ async function pickPermission(
           continue;
         }
 
+        // R388l: the COMMENT mode. While it is open the keys are
+        // TEXT (typing "d" must not deny), so the option keys and
+        // the bare ESC are handled here instead of falling through
+        // to the option list.
+        if (commentMode) {
+          if (c === "\r" || c === "\n") {
+            // Enter sends. An EMPTY comment is not an answer —
+            // the user probably meant to type something — so go
+            // back to the option list with the ask still pending.
+            if (commentText.trim().length === 0) {
+              commentMode = false;
+              commentText = "";
+              render();
+            } else {
+              decide(selected);
+            }
+            return;
+          }
+          if (c === "\x7f" || c === "\b") {
+            commentText = commentText.slice(0, -1);
+            render();
+            return;
+          }
+          if (c === "\t") {
+            // Tab inside the comment field is a literal tab? No —
+            // it is a no-op, so the user cannot get stuck.
+            return;
+          }
+          if (c === "\x1b") {
+            // Esc goes BACK to the option list without answering.
+            // The ask stays pending — a cancelled comment must not
+            // be indistinguishable from an answer.
+            escBuf = "\x1b";
+            setTimeout(() => {
+              if (escBuf === "\x1b" && !resolved) {
+                escBuf = "";
+                commentMode = false;
+                commentText = "";
+                render();
+              }
+            }, 50);
+            return;
+          }
+          if (c >= " " && c !== "\x7f") {
+            commentText += c;
+            render();
+          }
+          return;
+        }
+        // R388l: Tab opens the comment field. The CURRENTLY
+        // SELECTED option becomes the armed decision — the flow is
+        // "pick the option, Tab, explain it", which is Claude
+        // Code's shape.
+        if (c === "\t") {
+          commentMode = true;
+          commentText = "";
+          render();
+          return;
+        }
         const num = parseInt(c, 10);
         if (Number.isFinite(num) && num >= 1 && num <= options.length) {
           decide(num - 1);
@@ -1509,9 +1644,38 @@ async function pickPermission(
           render();
         }
       } else if (n === "return" || n === "enter") {
-        decide(selected);
+        if (commentMode) {
+          if (commentText.trim().length === 0) {
+            commentMode = false;
+            commentText = "";
+            render();
+          } else {
+            decide(selected);
+          }
+        } else {
+          decide(selected);
+        }
+      } else if (n === "tab") {
+        // R388l: see the onData branch for the rationale.
+        commentMode = true;
+        commentText = "";
+        render();
       } else if (n === "escape") {
-        cancel();
+        if (commentMode) {
+          // R388l: Esc in the comment field goes BACK to the option
+          // list. The ask stays pending — cancelling must not be
+          // indistinguishable from answering.
+          commentMode = false;
+          commentText = "";
+          render();
+        } else {
+          cancel();
+        }
+      } else if (n === "backspace") {
+        if (commentMode) {
+          commentText = commentText.slice(0, -1);
+          render();
+        }
       }
     };
 
@@ -1560,7 +1724,9 @@ async function pickMode(
   // written here, and it was missing ASK_BEFORE_TOOL — a mode the
   // daemon has and whose own javadoc says it was named for the TUI.
   const modes = PERMISSION_MODES.map((m) => ({
-    label: `${m.value.padEnd(21)}\u2014 ${m.label}`,
+    // R388m: pad in CELLS — `padEnd` pads by character count, so a
+    // non-ASCII mode name made the em-dash column drift right.
+    label: `${padCells(m.value, 21)}\u2014 ${m.label}`,
     value: m.value,
   }));
   const initialIdx = modes.findIndex((m) => m.value === currentMode);
@@ -2964,6 +3130,117 @@ function panelTodos(ctx: PanelCtx): void {
 }
 
 // -------------------------------------------------------------------------
+//  /worktree
+// -------------------------------------------------------------------------
+
+/**
+ * R388c: the cmd.exe half of the worktree lifecycle.
+ *
+ * The daemon owns the isolation VERDICT. This frame reads the
+ * `isolated` flag the daemon publishes and renders it; it never
+ * infers isolation from the absence of a branch (a detached-HEAD
+ * worktree has no branch and IS isolated, and a stub worktree has no
+ * branch and is NOT).
+ *
+ * Two probes, because the two facts are different and the user
+ * needs both:
+ *
+ *   1. `worktreeStatus` — does this daemon have REAL git isolation
+ *      configured at all? Without it the list would be empty and
+ *      would read like "you have no worktrees" when the truth is
+ *      "this daemon cannot make worktrees".
+ *   2. `listWorktrees` — what exists.
+ *
+ * An older daemon answers -32601 to both, and the frame says so
+ * rather than showing an empty list.
+ */
+async function panelWorktrees(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+
+  const status = await probe(ctx, "worktreeStatus");
+  if (!status.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "worktrees",
+        endpoint: "worktreeStatus",
+        status: probeStatus(status),
+        instead: [
+          `the daemon answered: ${status.reason}`,
+          "restart it with --worktree-source-repo <path> to enable git isolation",
+        ],
+      }),
+    );
+    return;
+  }
+
+  const listed = await probe(ctx, "listWorktrees");
+  if (!listed.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "worktrees",
+        endpoint: "listWorktrees",
+        status: probeStatus(listed),
+        instead: [`the daemon answered: ${listed.reason}`],
+      }),
+    );
+    return;
+  }
+
+  // The daemon's own verdict on whether it can make REAL worktrees.
+  const available = field(status.value, ["available"]) === true;
+  const reason = fieldStr(status.value, ["reason"], "");
+  const sourceRepo = fieldStr(status.value, ["sourceRepo"], "");
+
+  const rows = asRows(field(listed.value, ["worktrees"]));
+  const cells: PanelCell[][] = rows.map((w) => {
+    const isolated = field(w, ["isolated"]) === true;
+    const branch = fieldStr(w, ["branch"], "");
+    const wReason = fieldStr(w, ["reason"], "");
+    return [
+      { text: fieldStr(w, ["name"], ""), tone: "strong" },
+      // R388c: the VERDICT is the daemon's, and it is rendered as
+      // such. A plain directory that only LOOKS like isolation gets
+      // a "plain" marker, never a blank column that reads like
+      // "no information".
+      { text: isolated ? "git" : "plain dir", tone: isolated ? "ok" : "warn" },
+      { text: branch === "" ? "(no branch)" : branch, tone: "muted" },
+      { text: wReason, tone: isolated ? "muted" : "warn" },
+    ];
+  });
+
+  const empty: string[] = available
+    ? ["no worktrees yet.", "create one with: /worktree"]
+    : [
+        "this daemon cannot make real git worktrees.",
+        reason === "" ? "no source repo is configured." : reason,
+        "start it with --worktree-source-repo <path>.",
+      ];
+
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "worktrees",
+      subtitle: sourceRepo === "" ? "no source repo configured" : `source: ${sourceRepo}`,
+      note: available
+        ? `${rows.length} worktree${rows.length === 1 ? "" : "s"}`
+        : "isolation unavailable",
+      noColor: nc,
+      columns: [
+        { header: "name", min: 10 },
+        { header: "kind", min: 9 },
+        { header: "branch", min: 12 },
+        { header: "note", flex: 2 },
+      ],
+      rows: cells,
+      empty,
+      hint: "n new · d remove · Enter merge · Esc close",
+    }),
+  );
+}
+
+// -------------------------------------------------------------------------
 //  /workflow
 // -------------------------------------------------------------------------
 
@@ -3100,9 +3377,63 @@ async function panelUpdate(ctx: PanelCtx, verb: UpdateVerb): Promise<void> {
 //  SDD family
 // -------------------------------------------------------------------------
 
+/**
+ * R388k — resolve the active SDD run for this cwd.
+ *
+ * The line renderer cannot "remember" a slug: it is a plain command loop,
+ * so a slug created in a previous session (or scrolled off the screen
+ * several commands ago) is gone. The daemon already publishes the runs on
+ * disk via `sdd.listRuns {cwd}` — so the slug is DISCOVERED, not remembered.
+ *
+ * Pre-R388k this function did not exist and the line renderer sent
+ * `{action}` with no slug at all, so every SDD verb after `/sdd <intent>`
+ * died on "slug and action are required" — an error indistinguishable from
+ * "this daemon has no SDD support".
+ *
+ * Returns null when there is no active run; the caller must say so
+ * clearly instead of sending a malformed request.
+ */
+async function resolveActiveSddRun(
+  ctx: PanelCtx,
+): Promise<{ run: SddRunSummary; all: SddRunSummary[] } | null> {
+  const r = await probe(ctx, "sdd.listRuns", { cwd: ctx.cwd } as RpcValue);
+  if (!r.ok) return null;
+  const all = extractRuns(r.value);
+  const run = pickActiveRun(all);
+  return run ? { run, all } : null;
+}
+
+/**
+ * R388k — the "there is no active run" panel.
+ *
+ * The benchmark set is explicit about how a non-interactive client should
+ * behave when nobody can answer: Claude Code DENIES loudly and tells the
+ * model not to retry, rather than hanging or sending a malformed request.
+ * So this panel names the cause and the fix.
+ */
+function panelNoActiveSddRun(ctx: PanelCtx, verb: string): void {
+  emitPanel(
+    ctx,
+    panelUnavailable(ctx.noColor, {
+      title: "SDD",
+      subtitle: verb,
+      reason: `no active SDD run under ${ctx.cwd}`,
+      instead: ["/sdd <intent>   start a spec-driven run", "/sdd-list   list every run on disk"],
+    }),
+  );
+}
+
 async function panelSddStatus(ctx: PanelCtx): Promise<void> {
   const nc = ctx.noColor;
-  const r = await probe(ctx, "sdd.status");
+  // R388k: sdd.status needs {slug, cwd}. Discover the slug first —
+  // pre-R388k this probed with NO params, so /sdd-status could never
+  // work in line mode.
+  const found = await resolveActiveSddRun(ctx);
+  if (!found) {
+    panelNoActiveSddRun(ctx, "status");
+    return;
+  }
+  const r = await probe(ctx, "sdd.status", sddParams(found.run, ctx.cwd) as RpcValue);
   if (!r.ok) {
     emitPanel(
       ctx,
@@ -3593,6 +3924,13 @@ async function renderPanelSentinel(
     case "__NOTIFICATION_CENTER__":
       panelNotifications(ctx);
       return true;
+    // R388c: the git worktree lifecycle. Without this arm the
+    // sentinel is CLAIMED by nothing in line mode, and cmd.exe
+    // users would see the raw `__WORKTREE_PANEL__` token — the
+    // R362 failure, one command over.
+    case "__WORKTREE_PANEL__":
+      await panelWorktrees(ctx);
+      return true;
 
     // --- mcp ---------------------------------------------------------
     case "__MCP_VIEWER__":
@@ -3635,24 +3973,144 @@ async function renderPanelSentinel(
         params: (rpcParams ?? { intent: payload }) as RpcValue,
       });
       return true;
-    case "__SDD_ADVANCE__":
+    case "__HELP_PANEL__": {
+      // R388k: `/help` now returns a SENTINEL so the Ink renderer can
+      // open the filterable CommandHelpPanel. A terminal has no
+      // panels, but it HAS a scrollback — so line mode prints the same
+      // catalog-derived text, and the terminal's own scrolling handles
+      // what the panel's scrolling handles in Ink.
+      //
+      // The text is the SAME `SLASH_HELP` string, rendered from the same
+      // catalog — so the two renderers cannot describe different
+      // commands.
+      emitPanel(ctx, SLASH_HELP.split("\n"));
+      return true;
+    }
+    case "__SDD_LIST__": {
+      // R388k: /sdd-list used to send NO params, but the daemon requires
+      // {cwd} — so it failed in both renderers with "cwd is required".
+      const r = await probe(ctx, "sdd.listRuns", { cwd: ctx.cwd } as RpcValue);
+      if (!r.ok) {
+        emitPanel(
+          ctx,
+          panelMissingEndpoint(ctx.noColor, {
+            title: "SDD runs",
+            endpoint: "sdd.listRuns",
+            status: probeStatus(r),
+            instead: [`the daemon answered: ${r.reason}`],
+          }),
+        );
+        return true;
+      }
+      const runs = extractRuns(r.value);
+      if (runs.length === 0) {
+        emitPanel(
+          ctx,
+          renderPanel({
+            title: "SDD runs",
+            subtitle: ctx.cwd,
+            noColor: ctx.noColor,
+            columns: [
+              { header: "field", min: 9 },
+              { header: "value", flex: 1 },
+            ],
+            rows: [],
+            empty: ["no SDD run under this cwd", "/sdd <intent>   start one"],
+          }),
+        );
+        return true;
+      }
+      const rows: PanelCell[][] = runs.map((run) => [
+        { text: run.slug, tone: "strong" },
+        { text: run.status || "?", tone: isActiveRun(run) ? "plain" : "muted" },
+        { text: String(run.currentPhase), tone: "muted" },
+        { text: run.lastUpdatedAt || "", tone: "muted" },
+      ]);
+      emitPanel(
+        ctx,
+        renderPanel({
+          title: "SDD runs",
+          subtitle: ctx.cwd,
+          noColor: ctx.noColor,
+          columns: [
+            { header: "slug", min: 10 },
+            { header: "status", min: 8 },
+            { header: "phase", min: 5 },
+            { header: "updated", flex: 1 },
+          ],
+          rows,
+          hint: "/sdd-approve  advance the active run",
+        }),
+      );
+      return true;
+    }
+    case "__SDD_ADVANCE__": {
+      // R388k: sdd.advance needs {slug, action}. Pre-R388k the line
+      // renderer sent {action} with no slug, so EVERY approve / modify /
+      // skip died on "slug and action are required" — the whole SDD
+      // approval chain was unreachable from a pure terminal.
+      const found = await resolveActiveSddRun(ctx);
+      if (!found) {
+        panelNoActiveSddRun(ctx, `advance (${payload || "approve"})`);
+        return true;
+      }
+      const p = (rpcParams ?? {}) as { action?: unknown; feedback?: unknown };
+      const action = String(p.action ?? payload ?? "approve");
+      const feedback = typeof p.feedback === "string" ? p.feedback : "";
       await panelSddAction(ctx, {
-        title: `sdd ${payload || "advance"}`,
+        title: `sdd ${action}`,
         method: "sdd.advance",
-        params: (rpcParams ?? { action: payload }) as RpcValue,
+        params: sddParams(found.run, ctx.cwd, {
+          action,
+          ...(feedback ? { feedback } : {}),
+        }) as RpcValue,
       });
       return true;
-    case "__SDD_ABORT__":
+    }
+    case "__SDD_ABORT__": {
+      // R388k: sdd.abort needs {slug, cwd} — same defect as advance.
+      const found = await resolveActiveSddRun(ctx);
+      if (!found) {
+        panelNoActiveSddRun(ctx, "abort");
+        return true;
+      }
       await panelSddAction(ctx, {
         title: "sdd abort",
         method: "sdd.abort",
-        params: {} as RpcValue,
+        params: sddParams(found.run, ctx.cwd) as RpcValue,
       });
       return true;
+    }
     case "__SDD_VIEW__":
     case "__SDD_DIFF__":
     case "__SDD_SNAPSHOT__":
     case "__SDD_CLEAR_CACHE__": {
+      // R388k: pre-R388k these four REFUSED in line mode ("only the full
+      // TUI's file actions do"), so 9 of 10 advertised SDD commands were
+      // non-functional in a pure terminal.
+      //
+      // The fix is not to re-implement a rich viewer — a pure terminal
+      // does not need one. The spec artefacts are markdown files at a
+      // PREDICTABLE path, so the honest line-mode behaviour is to show
+      // the path and let the shell's own tools render it. This is the
+      // same shape the benchmark set converges on: Devin Local writes
+      // its plan to a markdown file outside the repo that persists
+      // across sessions, and lets the human read/edit it there.
+      const found = await resolveActiveSddRun(ctx);
+      if (!found) {
+        panelNoActiveSddRun(
+          ctx,
+          base
+            .toLowerCase()
+            .replace(/^__sdd_/, "")
+            .replace(/__$/, ""),
+        );
+        return true;
+      }
+      const root = `${ctx.cwd}/.aethercode/sdd/${found.run.slug}`;
+      const p = (rpcParams ?? {}) as { phase?: unknown };
+      const phase = typeof p.phase === "number" ? p.phase : found.run.currentPhase;
+      const phaseFile = `${root}/phase-${phase}.md`;
       const what =
         base === "__SDD_DIFF__"
           ? "diff a phase"
@@ -3661,13 +4119,36 @@ async function renderPanelSentinel(
             : base === "__SDD_CLEAR_CACHE__"
               ? "clear the phase cache"
               : "view a phase";
+      const rows: PanelCell[][] = [
+        [
+          { text: "run", tone: "muted" },
+          { text: found.run.slug, tone: "strong" },
+        ],
+        [
+          { text: "phase", tone: "muted" },
+          { text: String(phase), tone: "plain" },
+        ],
+        [
+          { text: "artefact", tone: "muted" },
+          { text: phaseFile, tone: "plain" },
+        ],
+        [
+          { text: "directory", tone: "muted" },
+          { text: root, tone: "plain" },
+        ],
+      ];
       emitPanel(
         ctx,
-        panelUnavailable(nc, {
-          title: `SDD ${base === "__SDD_CLEAR_CACHE__" ? "cache" : "phase"}`,
+        renderPanel({
+          title: "SDD phase",
           subtitle: what,
-          reason: `\`${what}\` reads and writes spec files under the run directory, which only the full TUI's file actions do.`,
-          instead: ["/sdd-status   read the run state the daemon already tracks"],
+          noColor: ctx.noColor,
+          columns: [
+            { header: "field", min: 9 },
+            { header: "value", flex: 1 },
+          ],
+          rows,
+          hint: `read it with your shell:  cat ${phaseFile}`,
         }),
       );
       return true;
@@ -4180,16 +4661,31 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       // visually.
       logAbove("");
       void (async () => {
-        const decision = await runPicker(() =>
+        const picked = await runPicker(() =>
           pickPermission(lineInput, risk, tool, argDigest, reason, guidance, noColor),
         );
         if (!rlClosed) lineInput.redraw();
         try {
-          await client.request("permissionResponse", {
-            requestId,
-            decision,
-            reason: `line mode picked ${decision}`,
-          });
+          // R388l: the comment travels in its OWN wire field, separate
+          // from `reason` (the mechanical audit trail), so the daemon can
+          // hand the human sentence to the model without dressing
+          // boilerplate up as the user's voice. A reply with no comment
+          // produces byte-identical params to the pre-R388l reply.
+          await client.request(
+            "permissionResponse",
+            permissionResponseParams(
+              requestId,
+              picked.decision,
+              undefined,
+              picked.comment,
+              "line mode",
+              // R388m: when the pick carries its own reason (the
+              // non-interactive deny), that reason reaches the model.
+              // Otherwise the model sees only "line mode picked deny",
+              // which does not tell it whether a retry could work.
+              picked.reason,
+            ),
+          );
         } catch (e) {
           logAbove(colorize(`permission reply failed: ${(e as Error).message}`, C.red, noColor));
         }
@@ -4702,7 +5198,7 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     // Same flow as a real permission_request, just with hard-coded
     // MEDIUM / file_write / canned guidance.
     logAbove("");
-    const decision = await pickPermission(
+    const picked = await pickPermission(
       lineInput,
       "MEDIUM",
       "file_write",
@@ -4711,6 +5207,7 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
       "this will create or change a file (demo)",
       noColor,
     );
+    const decision = picked.decision;
     if (!rlClosed) lineInput.redraw();
     const decisionLabel = (
       {

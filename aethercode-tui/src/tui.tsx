@@ -90,6 +90,10 @@ import { intentForSentinel, describeSentinel } from "./panelIntents.js";
 // on a path is not a cwd comparison: it is case- and separator-
 // sensitive, which on Windows empties the list it is filtering.
 import { partitionByCwd, cwdBasename, sameCwd } from "./cwdMatch.js";
+// R388j — the shell draws the frame; a panel body draws the content,
+// and every line is fitted to the content width so nothing can
+// overflow the border.
+import { fitRow } from "./components/PanelBody.js";
 // R371: mounted on Ink for the first time. T-441 wrote this component
 // in T-441 and nothing has imported it since.
 import { ContextMeter } from "./components/ContextMeter.js";
@@ -135,10 +139,17 @@ import {
 import { runClear } from "./clearConversation.js";
 import { formatSystemPrompt, formatSystemPromptSection } from "./prompt-formatter.js";
 import { t, icon } from "./theme.js";
+// R388m: ONE width rule — columns are laid out in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { maxCells, padCells } from "./cellWidth.js";
 import { Header } from "./components/Header.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { SddMode } from "./components/SddMode.js";
 import { SddReview } from "./components/SddReview.js";
+// R388k — SDD run discovery, shared with the line renderer. The runs live
+// on disk, so the slug is DISCOVERED rather than remembered in session
+// state (which dies with the process).
+import { extractRuns, isActiveRun } from "./sddRun.js";
 import { SubagentPanel } from "./components/SubagentPanel.js";
 import { InputBox } from "./components/InputBox.js";
 import { Scrollback } from "./components/Scrollback.js";
@@ -188,10 +199,32 @@ import { EffortPicker, type EffortEntry } from "./components/EffortPicker.js";
 // cmd.exe line mode; on Ink it fell through to the R362 fallback and
 // told the user the command did not exist.
 import { ModePicker } from "./components/ModePicker.js";
+// R388k — `/help` as a filterable LIST projected from the one command
+// catalog, instead of a truncated wall of text.
+import { CommandHelpPanel } from "./components/CommandHelpPanel.js";
 // R385: the one permission-mode catalog — the same list the picker
 // shows, the status pill badges and the toast blurb all read.
 import { MODE, permissionModeBlurb } from "./permissionModes.js";
+// R388l: the permission comment box. Claude Code lets the user attach
+// a free-text comment to a permission answer; the comment reaches the
+// model. The pure logic lives in its own module so a gate script can
+// import it (a `.tsx` component cannot be imported by a Node gate).
+import {
+  armDecision,
+  DEFAULT_ARMED_DECISION,
+  newCommentBox,
+  permissionResponseParams,
+} from "./permissionComment.js";
+// R388m: the permission DEADLINE contract — the daemon publishes the
+// expiry, the client counts down on it, and every renderer denies for
+// "nobody can approve" with the SAME words.
+import {
+  readDeadline,
+  nobodyCanApproveReason,
+  PERMISSION_COUNTDOWN_MS,
+} from "./permissionDeadline.js";
 import { CwdSwitcher, makeStatValidator } from "./components/CwdSwitcher.js";
+import { WorktreePanel } from "./components/WorktreePanel.js";
 import {
   GrantsManager,
   filterGrants,
@@ -294,20 +327,58 @@ function handleStreamEvent(dispatch: (a: Action) => void, ev: Record<string, unk
  *       ~/.aethercode/projects/<hash>/permissions.json)
  *   D — deny once
  *   N — deny and remember for this tool (session-scope deny rule)
+ *
+ * <p><b>R388l — the optional comment.</b> The user may attach a free-text
+ * comment to their answer ("yes, but write to /tmp first", "no — use the
+ * read-only tool"). The comment travels in its OWN wire field, separate
+ * from `reason` (the mechanical audit trail): the daemon needs to be able
+ * to present the human sentence to the model without dressing boilerplate
+ * up as the user's voice. A reply with no comment produces byte-identical
+ * params to the pre-R388l reply.
  */
+/**
+ * R388m — the pending permission COUNTDOWN timers, keyed by requestId.
+ *
+ * <p>Each timer denies its ask when the deadline passes. A timer MUST be
+ * cleared when the user answers first — otherwise the timer fires later,
+ * finds the ask already resolved, and keeps the event loop alive for the
+ * rest of the session. Clearing it is also just correct: one ask, one
+ * timer.
+ *
+ * <p>★ WHY A MODULE-LEVEL REGISTRY ★
+ *
+ * <p>The alternative — threading the map through every call site as a
+ * 7th positional parameter — turned each call into nine lines and broke
+ * the R388l gate's anchor on `replyPermission(client, ask, "allow"`.
+ * The registry has exactly ONE owner (the permission flow), so a module
+ * level is the honest scope: a React ref would have to be threaded
+ * through a module-level function for no benefit.
+ */
+const permissionExpiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Cancel the countdown timer for an ask, if one is armed. */
+function cancelPermissionExpiry(requestId: string): void {
+  const t = permissionExpiryTimers.get(requestId);
+  if (!t) return;
+  clearTimeout(t);
+  permissionExpiryTimers.delete(requestId);
+}
+
 function replyPermission(
   client: JsonRpcClient,
   ask: PermissionAsk,
   decision: "allow" | "deny" | "always_allow" | "always_deny",
   dispatch: (a: Action) => void,
   rememberScope?: "session" | "project" | "user",
+  comment?: string,
 ): void {
+  // R388m: the user answered — cancel this ask's countdown timer.
+  cancelPermissionExpiry(ask.requestId);
   void client
-    .request("permissionResponse", {
-      requestId: ask.requestId,
-      decision,
-      reason: `TUI picked ${decision}`,
-    })
+    .request(
+      "permissionResponse",
+      permissionResponseParams(ask.requestId, decision, rememberScope, comment, "TUI"),
+    )
     .catch((e: Error) => {
       dispatch({ type: "log", message: `permission reply failed: ${e.message}` });
     });
@@ -474,6 +545,15 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   // and reported a feature that worked one keystroke away in the
   // other renderer as missing.
   "mode-picker": "mode",
+  // R388k: `/help` as a filterable LIST. The sentinel goes through the
+  // GENERIC panel claim below (intentForSentinel -> PANEL_BY_INTENT ->
+  // openPanel), so it needs no special case here — and that is the
+  // point: one path claims every panel, so a new one cannot forget to
+  // register.
+  "command-help": "help",
+  // R388c: the git worktree lifecycle. The daemon owns the isolation
+  // VERDICT — the panel displays `isolated` and never derives it.
+  "worktree-panel": "worktrees",
 };
 
 /** Intents whose panel row list is scoped to the active cwd. Kept as
@@ -565,6 +645,20 @@ const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string
     title: "Permission mode",
     hint: "↑/↓ or j/k navigate · Enter set · Esc cancel",
     loading: "reading the current permission mode",
+  },
+  // R388k: the command reference, as a LIST. The hint names the four
+  // actions the panel has — filter, navigate, run, close — and the
+  // loading copy is honest: the rows come from the command catalog
+  // compiled into the TUI, so there is nothing to fetch.
+  help: {
+    title: "Commands",
+    hint: "type to filter · ↑/↓ navigate · Enter run · Esc close",
+    loading: "listing the commands",
+  },
+  worktrees: {
+    title: "Worktrees",
+    hint: "n new · m merge target · d remove · Enter merge · Esc cancel",
+    loading: "reading the daemon's worktrees",
   },
 };
 
@@ -755,6 +849,50 @@ function isMissingMethod(e: unknown): boolean {
  * and Ink's `useInput` fans every keystroke out to every mounted
  * hook — so this is the safety net, and a component that also
  * closes on Esc simply dispatches the same idempotent action twice.
+ *
+ * ================= R388j — THE SHELL IS THE ONLY FRAME =================
+ *
+ * Before this round the shell drew a `round` frame and the panel
+ * component inside it drew its OWN `double` frame. The result was
+ * two nested boxes:
+ *
+ *     ╭────────────────────────────────╮
+ *     │ ◆ Threads          esc close   │
+ *     │ ╔════════════════════════════╗ │
+ *     │ ║║                          ║ │
+ *     │ ║  ◆ Sessions in AetherCode  ║ │   ← the title ran INTO the border
+ *     │ ║   D:\work\...             ║ │
+ *     │ ╚════════════════════════════╝ │
+ *     ╰────────────────────────────────╯
+ *
+ * Four defects, all of them the same defect seen from a different
+ * angle:
+ *
+ *   1. The inner frame's own border was DOUBLED (`║║`) — the
+ *      component's border cells and the shell's padding cells
+ *      landed on top of each other.
+ *   2. The inner frame was WIDER than the space the shell gave
+ *      it, so its right border was pushed off the edge.
+ *   3. The title line OVERFLOWED the inner frame and overlapped
+ *      the shell's border.
+ *   4. The notice line ("! 0 of 50 sessions…") wrapped PAST the
+ *      shell's right border.
+ *
+ * The fix is structural, not cosmetic: **the shell owns the frame
+ * and the component owns the content.** A component that wants a
+ * box (a tool card, a permission card) draws its own; a panel does
+ * not.
+ *
+ * ================= THE WIDTH CONTRACT =================
+ *
+ * The shell now publishes the CONTENT width — the number of cells
+ * available between the two border columns, after the shell's own
+ * padding — and panels lay their rows out to that number. Without
+ * this contract every panel guesses, and a guess that is one cell
+ * too wide shoves the border off the edge.
+ *
+ * `inner` is the value every panel's row-width maths must use. It
+ * is passed DOWN to the components that lay out rows.
  */
 const PanelShell: React.FC<{
   title: string;
@@ -775,16 +913,40 @@ const PanelShell: React.FC<{
     if (key.escape) onClose();
   });
   // frame = 2 border cells + 2 padding cells.
-  const inner = width - 4;
+  const inner = Math.max(20, width - 4);
+  // The title bar is one line: the brand title on the left, the
+  // Esc affordance on the right. `space-between` only separates
+  // them while there IS room (Lesson 1305), so the right-hand
+  // text is allowed to shrink rather than push the title out of
+  // the frame.
   return (
     <Box flexDirection="column" width={width} borderStyle="round" borderColor={t.dim} paddingX={1}>
-      <Box justifyContent="space-between">
-        <Text color={t.brand} bold>{`◆ ${title}`}</Text>
-        <Text dimColor>esc close</Text>
-      </Box>
-      {hint ? <Text dimColor>{hint}</Text> : null}
+      {/* R388j: the title row.
+
+          ★ IT IS ONE `<Text>`, NOT TWO. ★
+
+          The first version had a `<Box width={inner}>` holding a
+          padded title `<Text>` and a separate `esc` `<Text>`. Ink's
+          flexbox divides the container's width between the
+          children, and it shrinks the FIRST child to its content
+          width — so the title's 92 cells of padding were thrown
+          away and the row came out 13 cells wide. The padding was
+          in the string, but the LAYOUT discarded it.
+
+          With one `<Text>`, there is nothing to distribute: the
+          whole row is one string of exactly `inner` cells, so the
+          frame's right border cannot move. */}
+      <Text>
+        <Text color={t.brand} bold>
+          {fitRow(`◆ ${title}`, inner - 4)}
+        </Text>
+        <Text dimColor> esc</Text>
+      </Text>
+      {hint ? <Text dimColor>{fitRow(hint, inner)}</Text> : null}
       <Text color={t.dim}>{rule(inner)}</Text>
-      <Box flexDirection="column">{children}</Box>
+      <Box flexDirection="column" width={inner}>
+        {children}
+      </Box>
       <Text color={t.dim}>{rule(inner)}</Text>
       {status.loading ? (
         <Box>
@@ -794,8 +956,13 @@ const PanelShell: React.FC<{
           <Text color={t.warn}>{` ${loadingLabel}…`}</Text>
         </Box>
       ) : null}
-      {status.error ? <Text color={t.err}>{`✗ ${status.error}`}</Text> : null}
-      {status.notice && !status.error ? <Text color={t.warn}>{`! ${status.notice}`}</Text> : null}
+      {/* R388j: the notice and the error are lines like any other —
+          they are fitted to the content width, so they cannot run
+          past the frame's right border. */}
+      {status.error ? <Text color={t.err}>{fitRow(`✗ ${status.error}`, inner)}</Text> : null}
+      {status.notice && !status.error ? (
+        <Text color={t.warn}>{fitRow(`! ${status.notice}`, inner)}</Text>
+      ) : null}
     </Box>
   );
 };
@@ -1016,6 +1183,20 @@ const App: React.FC<{
       });
     };
     (process as any).on("aethercode:connectionState", onConn);
+    // R388f: REPLAY the current state.
+    //
+    // The client is started BEFORE React mounts (`runTui` does
+    // `await client.request("ping")` and only then calls
+    // `render(...)`), so BOTH the "connecting" and the "connected"
+    // events were emitted before this listener existed. The
+    // reducer therefore kept its INITIAL state — "connecting" —
+    // for the whole session, and the status bar sat on
+    // "connecting…" on a daemon that was up and answering RPCs.
+    //
+    // A late listener must be able to ASK for the current state
+    // instead of waiting for an event that already happened.
+    const current = client.connectionState();
+    onConn(current.state, current.attempt, current.lastError);
     return () => {
       (process as any).off("aethercode:connectionState", onConn);
     };
@@ -1282,6 +1463,9 @@ const App: React.FC<{
           // We park the request in state; the user picks A/Y/D/N
           // and we send back permission_response.
           const p = (params ?? {}) as Record<string, unknown>;
+          // R388m: the daemon publishes the deadline for this ask, so the
+          // card's countdown runs on the SAME clock the daemon enforces.
+          const deadline = readDeadline(p);
           const ask: PermissionAsk = {
             requestId: String(p.requestId ?? ""),
             runId: String(p.runId ?? ""),
@@ -1289,6 +1473,8 @@ const App: React.FC<{
             input: (p.input as Record<string, unknown>) ?? {},
             reason: String(p.reason ?? ""),
             riskLevel: ((p.riskLevel as string) ?? "medium") as PermissionAsk["riskLevel"],
+            expiresAtMs: deadline ? deadline.expiresAtMs : null,
+            timeoutMs: deadline ? deadline.timeoutMs : null,
           };
           // R363 — runId fallback #2. A permission ask is proof a run
           // is live, and the daemon has already stamped it with the
@@ -1319,6 +1505,43 @@ const App: React.FC<{
           // exactly the case where the user WANTS to be
           // asked. Render the card and let the user decide.
           dispatch({ type: "permissionAsk", ask });
+          // R388m: the COUNTDOWN that actually denies.
+          //
+          // The card shows the remaining time, but a countdown that only
+          // DISPLAYS is a decoration. The client must send the deny
+          // itself when the window closes — otherwise the user watches
+          // "0:00" and then waits for the daemon's (much longer)
+          // backstop timeout, with no idea whether their click landed.
+          //
+          // The daemon's own timeout is the backstop; this is the
+          // EARLY, INFORMED deny. The reason uses the ONE contract
+          // wording (permissionDeadline.ts) so the model reads the same
+          // sentence whichever path denied it.
+          if (deadline) {
+            const expiresInMs = Math.max(0, deadline.expiresAtMs - Date.now());
+            const timer = setTimeout(() => {
+              // only deny if this ask is STILL the pending one — the
+              // user may have answered in the meantime.
+              if (stateRef.current.permissionAsk?.requestId !== ask.requestId) return;
+              dispatch({ type: "permissionClear" });
+              void client
+                .request(
+                  "permissionResponse",
+                  permissionResponseParams(ask.requestId, "deny", undefined, undefined, "TUI"),
+                )
+                .catch((e: Error) => {
+                  dispatch({ type: "log", message: `permission auto-deny failed: ${e.message}` });
+                });
+              dispatch({
+                type: "pushToast",
+                kind: "warn",
+                text: `no response for '${ask.tool}' — denied`,
+              });
+            }, expiresInMs);
+            // keep the timer from holding the process open
+            (timer as unknown as { unref?: () => void }).unref?.();
+            permissionExpiryTimers.set(ask.requestId, timer);
+          }
           break;
         }
         case "skip_confirmation": {
@@ -1832,6 +2055,90 @@ const App: React.FC<{
       notice("this daemon exposes no MCP RPC yet — /mcp shows the viewer shell only");
     }
 
+    if (panel === "worktrees") {
+      // R388c. Two calls, in parallel:
+      //
+      //   1. `worktreeStatus` — does this daemon have REAL git
+      //      isolation configured at all? Without it the panel
+      //      would render an empty list that reads like "you have
+      //      no worktrees" when the truth is "this daemon cannot
+      //      make worktrees".
+      //   2. `listWorktrees` — what exists.
+      //
+      // Both are best-effort: an older daemon answers -32601 and
+      // the panel shows "this daemon does not expose worktrees"
+      // rather than an error the user cannot act on.
+      begin();
+      void client
+        .request("worktreeStatus", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          if (envErr) {
+            dispatch({ type: "setWorktrees", worktrees: [], status: null });
+            fail("worktreeStatus", envErr);
+            return;
+          }
+          const st = raw as {
+            ok?: boolean;
+            available?: boolean;
+            sourceRepo?: string | null;
+            root?: string;
+            reason?: string;
+          } | null;
+          dispatch({
+            type: "setWorktrees",
+            worktrees: state.worktrees,
+            status: {
+              available: !!st?.available,
+              sourceRepo: st?.sourceRepo ?? null,
+              root: st?.root ?? "",
+              reason: st?.reason,
+            },
+          });
+          done();
+        })
+        .catch((e: unknown) => fail("worktreeStatus", e));
+      void client
+        .request("listWorktrees", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          if (envErr) return; // the status call already reported the failure
+          const rows = ((raw as { worktrees?: unknown[] } | null)?.worktrees ?? []) as Array<{
+            name?: string;
+            path?: string;
+            branch?: string | null;
+            sourceRepo?: string | null;
+            isolated?: boolean;
+            reason?: string | null;
+          }>;
+          dispatch({
+            type: "setWorktrees",
+            worktrees: rows
+              .filter((r) => typeof r.name === "string" && typeof r.path === "string")
+              .map((r) => ({
+                name: r.name as string,
+                path: r.path as string,
+                branch: r.branch ?? null,
+                sourceRepo: r.sourceRepo ?? null,
+                // R388c: the daemon's verdict, carried
+                // verbatim. The renderer must NOT derive
+                // it from the absence of a branch.
+                isolated: r.isolated === true,
+                reason: r.reason ?? null,
+              })),
+            status: state.worktreeStatus,
+          });
+        })
+        .catch(() => {
+          // the status call surfaces the failure
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (panel === "workflows") {
       // R373. `listWorkflows` answers `{ workflows, count, dir,
       // skipped }`.
@@ -1920,13 +2227,17 @@ const App: React.FC<{
       };
     }
 
-    // "todos", "cwd", "effort", "notifications" and "mode" are served
-    // from local state; nothing to fetch, so nothing to await.
+    // "todos", "cwd", "effort", "notifications", "mode" and "help" are
+    // served from local state; nothing to fetch, so nothing to await.
     //
     // R385: "mode" (the permission-mode picker) reads the mode the
     // daemon already reported in `state.permissionMode`, so it has
     // nothing to ask for either — and inventing a fetch here would
     // put a spinner over a list that is already on screen.
+    //
+    // R388k: "help" (the command reference) projects the command
+    // CATALOG, which is compiled into the TUI. There is no RPC to make
+    // and nothing to wait for.
     return () => {
       cancelled = true;
     };
@@ -2139,7 +2450,7 @@ const App: React.FC<{
           .sort()
           .map(
             (n) =>
-              `  ${n.padEnd(20, " ")}  ${state.snippets[n].slice(0, 50)}${state.snippets[n].length > 50 ? "…" : ""}`,
+              `  ${padCells(n, 20)}  ${state.snippets[n].slice(0, 50)}${state.snippets[n].length > 50 ? "…" : ""}`,
           );
         dispatch({ type: "sideNote", kind: "snippet", message: lines.join("\n") });
       }
@@ -2464,6 +2775,56 @@ const App: React.FC<{
       })();
       return;
     }
+    if (slash?.local === "__SDD_LIST__") {
+      // R388k: /sdd-list used to be a bare `rpcMethod: "sdd.listRuns"` with
+      // no params, but the daemon requires `{cwd}` — so the command failed
+      // here too, with "cwd is required". Now it is a local sentinel, and
+      // only the renderer knows the cwd it is running in.
+      void (async () => {
+        try {
+          const resp = await client.request<{ ok: boolean; runs?: unknown; error?: string }>(
+            "sdd.listRuns",
+            { cwd: currentCwd } as RpcValue,
+          );
+          if (!resp.ok) {
+            dispatch({
+              type: "sideNote",
+              kind: "error",
+              message: `sdd.listRuns failed: ${resp.error ?? "unknown"}`,
+            });
+            return;
+          }
+          const runs = extractRuns(resp);
+          if (runs.length === 0) {
+            dispatch({
+              type: "sideNote",
+              kind: "info",
+              message: `📐 no SDD run under ${currentCwd}`,
+            });
+            return;
+          }
+          const lines = runs.map((run) => {
+            const active = isActiveRun(run) ? "•" : " ";
+            const ph = run.currentPhase ? `phase ${run.currentPhase}` : "";
+            // R388m: pad in CELLS — `padEnd` pads by character count, so
+            // a Chinese slug/status made the columns drift right.
+            return `  ${active} ${padCells(run.slug, 22)} ${padCells(run.status || "?", 9)} ${ph}`;
+          });
+          dispatch({
+            type: "sideNote",
+            kind: "info",
+            message: [`📐 SDD runs · ${currentCwd}`, ...lines].join("\n"),
+          });
+        } catch (e) {
+          dispatch({
+            type: "sideNote",
+            kind: "error",
+            message: `sdd.listRuns error: ${(e as Error).message}`,
+          });
+        }
+      })();
+      return;
+    }
     // R700d — /sdd-view [N] shows the artefact on disk (first
     // 80 lines) + a file:// link. The artefact path comes from
     // sddRun.phases[N-1].path, which the daemon populates when
@@ -2637,11 +2998,11 @@ const App: React.FC<{
           for (const k of Object.keys(m)) {
             const v = m[k];
             if (typeof v === "number" && (k === "errorRate" || k === "cacheHitRate")) {
-              lines.push(`  ${k.padEnd(18, " ")}  ${fmt((v as number) * 100)}%`);
+              lines.push(`  ${padCells(k, 18)}  ${fmt((v as number) * 100)}%`);
             } else if (typeof v === "number" && k === "costUsd") {
-              lines.push(`  ${k.padEnd(18, " ")}  $${fmt(v)}`);
+              lines.push(`  ${padCells(k, 18)}  ${fmt(v)}`);
             } else {
-              lines.push(`  ${k.padEnd(18, " ")}  ${v}`);
+              lines.push(`  ${padCells(k, 18)}  ${v}`);
             }
           }
           dispatch({ type: "sideNote", kind: "metrics", message: lines.join("\n") });
@@ -2675,7 +3036,7 @@ const App: React.FC<{
             const dur = typeof t.durationMs === "number" ? t.durationMs : 0;
             const durStr = dur < 1000 ? `${dur}ms` : `${(dur / 1000).toFixed(2)}s`;
             const icon = status === "ok" ? "✓" : status === "error" ? "✗" : "·";
-            lines.push(`  ${icon} ${name.padEnd(20, " ")}  ${durStr.padStart(8, " ")}  ${status}`);
+            lines.push(`  ${icon} ${padCells(name, 20)}  ${durStr.padStart(8, " ")}  ${status}`);
           }
           if (traces.length === 0) {
             lines.push("  (no traces yet — run a query to populate)");
@@ -2775,7 +3136,7 @@ const App: React.FC<{
               const durStr = node.dur < 1000 ? `${node.dur}ms` : `${(node.dur / 1000).toFixed(2)}s`;
               const connector = prefix === "" ? "" : isLast ? "└─ " : "├─ ";
               lines.push(
-                `  ${prefix}${connector}${icon} ${node.name.padEnd(20, " ")}  ${durStr.padStart(8, " ")}  ${node.status}`,
+                `  ${prefix}${connector}${icon} ${padCells(node.name, 20)}  ${durStr.padStart(8, " ")}  ${node.status}`,
               );
               const kids = node.children;
               for (let i = 0; i < kids.length; i++) {
@@ -2818,17 +3179,21 @@ const App: React.FC<{
           if (agents.length === 0) {
             lines.push("  (no agents — run the desktop editor to create one)");
           } else {
-            const nameWidth = Math.max(
-              "name".length,
-              ...agents.map((a) => (a.displayName || a.name || "").length),
-            );
-            lines.push(`  ${"name".padEnd(nameWidth)}  model`);
+            // R388m: the name column is measured in CELLS. A Chinese
+            // display name is twice as wide as its character count, and
+            // the character-count width made the column one cell short
+            // per CJK agent — the model column drifted right.
+            const nameWidth = maxCells([
+              "name",
+              ...agents.map((a) => a.displayName || a.name || ""),
+            ]);
+            lines.push(`  ${padCells("name", nameWidth)}  model`);
             for (const a of agents) {
               const nm = a.displayName || a.name || "?";
               const mdl = a.model && a.model.length > 0 ? a.model : "(default)";
-              lines.push(`  ${nm.padEnd(nameWidth)}  ${mdl}`);
+              lines.push(`  ${padCells(nm, nameWidth)}  ${mdl}`);
               if (a.description) {
-                lines.push(`  ${"".padEnd(nameWidth)}    ${a.description}`);
+                lines.push(`  ${padCells("", nameWidth)}    ${a.description}`);
               }
             }
           }
@@ -3396,6 +3761,80 @@ const App: React.FC<{
         return;
       }
     }
+    // R388l — the permission COMMENT BOX.
+    //
+    // Claude Code lets the user attach a free-text comment to a
+    // permission answer, and the comment reaches the model. A boolean
+    // gate becomes a communication channel.
+    //
+    // This branch sits BEFORE the decision-key branch on purpose: while
+    // the comment box is open the plain letter keys are TEXT (typing "d"
+    // must not deny), so the decision keys have to be out of the way.
+    if (state.commentBox) {
+      const box = state.commentBox;
+      // Ctrl+<decision key> arms the decision the comment will be sent
+      // with. The armed decision is shown in the box header, so the user
+      // can see what they are about to send before they send it.
+      //
+      // ★ The chords are spelled out as EXPLICIT comparisons, not as
+      // `armDecision(box, input)`. The key-binding registry scans this
+      // handler for a letter compared against the input inside a Ctrl
+      // window, to learn which chords the app really binds — a bare
+      // `input` is invisible to it, so the help would promise
+      // Ctrl+A / Ctrl+D / … that the registry cannot see bound. (The
+      // registry is derived from the handler, so the handler has to be
+      // readable to it.)
+      //
+      // ★ And the comparisons are written ONE PER LINE on purpose: the
+      // registry's scanner reads the raw source, comments included, so a
+      // comment that QUOTES the comparison it describes would read as a
+      // second, unbound chord.
+      if (
+        key.ctrl &&
+        (input === "a" ||
+          input === "t" ||
+          input === "p" ||
+          input === "u" ||
+          input === "y" ||
+          input === "d" ||
+          input === "n")
+      ) {
+        const armed = armDecision(box, input);
+        if (armed !== box) {
+          dispatch({ type: "setCommentBox", state: armed });
+          return;
+        }
+      }
+      // Esc cancels the box WITHOUT answering. The ask stays pending —
+      // a cancelled comment must not be indistinguishable from an
+      // answer, or the user believes they responded when they did not.
+      if (key.escape) {
+        dispatch({ type: "closeCommentBox" });
+        return;
+      }
+      // Enter sends the armed decision + the comment. The comment text
+      // itself is collected by the InputBox (it owns text editing); this
+      // branch only owns the control keys.
+      if (key.return) {
+        const comment = box.text.trim();
+        if (comment.length === 0) {
+          // An empty comment is not an answer — the user probably meant
+          // to type something. Close the box and leave the ask pending
+          // rather than silently denying.
+          dispatch({ type: "closeCommentBox" });
+          return;
+        }
+        dispatch({ type: "closeCommentBox" });
+        if (state.permissionAsk) {
+          replyPermission(client, state.permissionAsk, box.armed, dispatch, box.scope, comment);
+        }
+        return;
+      }
+      // Everything else (printable characters, backspace) belongs to the
+      // InputBox's own handler. Falling through here would let the
+      // decision keys fire while the user is typing a comment.
+      return;
+    }
     // when a permission ask is on screen, route the decision
     // keys to replyPermission. The card is now INLINE in the
     // scrollback (not a full-screen modal), so the user can keep
@@ -3404,6 +3843,20 @@ const App: React.FC<{
     // focus.
     if (state.permissionAsk) {
       const ask = state.permissionAsk;
+      // R388l: `Tab` opens the comment box. It is the same affordance
+      // Claude Code uses, and it is deliberately a SEPARATE key from the
+      // decision keys so the plain decision path (press `A`, done) keeps
+      // its muscle memory.
+      //
+      // `key.tab` alone — the same form the app handler already uses
+      // elsewhere. Adding the raw tab CHARACTER as an alternative would
+      // make the key-binding registry see a SECOND chord beside the real
+      // one, and the help would then owe the user a binding nobody
+      // documented.
+      if (key.tab) {
+        dispatch({ type: "openCommentBox", state: newCommentBox() });
+        return;
+      }
       // R344: numbered selector aliases (1=allow / 2=always_allow /
       // 3=deny / 4=always_deny) match Claude Code's modal style.
       // Letter aliases (A/Y/D/N + T/P/U for scope variants) are
@@ -3775,6 +4228,15 @@ const App: React.FC<{
   // R362 — panel geometry + the shared close handler.
   const cols = typeof process.stdout.columns === "number" ? process.stdout.columns : 120;
   const panelWidth = panelWidthFor(cols);
+  // R388j: the CONTENT width — the cells between the shell's border
+  // columns, after the shell's own padding. This is the number
+  // every panel lays its rows out to, so a row that is one cell
+  // too wide cannot shove the frame's border off the edge.
+  //
+  // It is derived from `panelWidth`, not guessed per panel. A panel
+  // that guessed would be right exactly until the terminal was
+  // resized.
+  const panelContentWidth = Math.max(20, panelWidth - 4);
   const meta = state.activePanel ? PANEL_META[state.activePanel] : null;
   const closePanel = () => dispatch({ type: "closePanel" });
   const setNotice = (n: string) =>
@@ -3847,7 +4309,7 @@ const App: React.FC<{
             activeTab={state.memoryTab}
             onTabChange={(tab) => dispatch({ type: "setMemoryTab", tab })}
             now={state.panelOpenedAt || Date.now()}
-            width={panelWidth - 6}
+            width={panelContentWidth}
             onEditFact={() =>
               setNotice("editing a memory entry is not wired up — /memory is read-only for now")
             }
@@ -3871,8 +4333,16 @@ const App: React.FC<{
         }));
         return (
           <ThreadSelector
+            width={panelContentWidth}
             threads={threads}
             currentCwd={currentCwd}
+            // R388j: `a` widens the scope in place. The panel stays
+            // open and the fetch effect re-runs with the wider
+            // scope, so the user lands on the full list rather than
+            // having to close the panel and remember another
+            // command's name.
+            onShowAll={() => dispatch({ type: "widenPanelScope" })}
+            showAllOffered={state.panelCwdOnly}
             onSelect={(threadId, choice) => {
               closePanel();
               const target = state.threads.find((r) => r.threadId === threadId);
@@ -3987,7 +4457,7 @@ const App: React.FC<{
             }
             emptyLabel={
               state.panelCwdOnly
-                ? `no sessions recorded under ${cwdBasename(currentCwd) || currentCwd || "the current directory"} — /threads shows every session`
+                ? `no sessions recorded under ${cwdBasename(currentCwd) || currentCwd || "the current directory"} — press 'a' to see every session`
                 : "no sessions yet — start one with a prompt"
             }
             // The title carries the leaf name; two checkouts can
@@ -4016,6 +4486,7 @@ const App: React.FC<{
       case "agents":
         return (
           <AgentSelector
+            width={panelContentWidth}
             agents={state.agents}
             current={state.defaultAgent}
             onSelect={(name) => {
@@ -4092,6 +4563,7 @@ const App: React.FC<{
         return (
           <Box flexDirection="column">
             <EffortPicker
+              width={panelContentWidth}
               efforts={EFFORT_CATALOG}
               current={state.effortCurrent}
               defaultEffort="medium"
@@ -4114,6 +4586,7 @@ const App: React.FC<{
                 against the daemon's `PermissionMode` enum — the
                 picker cannot offer a mode the daemon does not have. */}
             <ModePicker
+              width={panelContentWidth}
               current={state.permissionMode}
               onSelect={(mode) => {
                 void applyPermissionMode(mode);
@@ -4125,9 +4598,44 @@ const App: React.FC<{
           </Box>
         );
 
+      case "help":
+        return (
+          <Box flexDirection="column">
+            {/* R388k: `/help` as a LIST. The rows are PROJECTED from
+                the one command catalog (`src/commands.ts`), so the help
+                surface cannot describe a command that does not exist
+                and cannot omit one that does.
+
+                Before R388k `/help` returned the whole reference as ONE
+                `sideNote`, which the scrollback truncated to 3 visible
+                lines — commands 4–89 were unreachable and there was no
+                scroll, no pagination and no filter.
+
+                The benchmark: Claude Code's `/` menu merges built-ins,
+                skills, plugin and MCP commands into one list; Cursor
+                has a `/` menu plus `/help <command>`; Aider's `/help`
+                renders the command table GENERATED FROM SOURCE. */}
+            <CommandHelpPanel
+              width={panelContentWidth}
+              onRun={(command) => {
+                closePanel();
+                // Run the chosen command through the SAME router the
+                // user would have reached by typing it — so the panel
+                // and the prompt cannot disagree about what a command
+                // does.
+                void handleSubmit(`/${command}`);
+              }}
+              onClose={closePanel}
+              title=""
+              maxVisible={18}
+            />
+          </Box>
+        );
+
       case "cwd":
         return (
           <CwdSwitcher
+            width={panelContentWidth}
             currentCwd={currentCwd}
             validate={CWD_VALIDATE}
             onSelect={(path) => {
@@ -4231,6 +4739,93 @@ const App: React.FC<{
           </Box>
         );
       }
+
+      case "worktrees":
+        return (
+          <WorktreePanel
+            width={panelContentWidth}
+            worktrees={state.worktrees}
+            status={state.worktreeStatus}
+            selected={state.selectedWorktree}
+            onSelect={(name) => {
+              dispatch({ type: "selectWorktree", name });
+            }}
+            onCreate={async (name) => {
+              // R388c: the daemon's verdict is carried
+              // through verbatim — the panel shows WHY a
+              // stub is a stub.
+              try {
+                const raw = (await client.request("addWorktree", {
+                  name,
+                } as RpcValue)) as {
+                  ok?: boolean;
+                  isolated?: boolean;
+                  reason?: string | null;
+                  error?: string;
+                };
+                dispatch({
+                  type: "setWorktrees",
+                  worktrees: state.worktrees,
+                  status: state.worktreeStatus,
+                });
+                if (!raw?.ok) {
+                  return { ok: false, error: raw?.error ?? "worktree create failed" };
+                }
+                return { ok: true, isolated: raw.isolated, reason: raw.reason ?? null };
+              } catch (e) {
+                return { ok: false, error: errMsg(e) };
+              }
+            }}
+            onRemove={async (name) => {
+              try {
+                const raw = (await client.request("removeWorktree", {
+                  name,
+                  deleteBranch: true,
+                } as RpcValue)) as { ok?: boolean; error?: string };
+                dispatch({
+                  type: "setWorktrees",
+                  worktrees: state.worktrees,
+                  status: state.worktreeStatus,
+                });
+                return { ok: !!raw?.ok, error: raw?.error };
+              } catch (e) {
+                return { ok: false, error: errMsg(e) };
+              }
+            }}
+            onMerge={async (name, targetBranch) => {
+              try {
+                const raw = (await client.request("mergeWorktree", {
+                  name,
+                  targetBranch: targetBranch ?? null,
+                  removeWorktree: true,
+                  deleteBranch: false,
+                } as RpcValue)) as {
+                  ok?: boolean;
+                  merged?: boolean;
+                  message?: string;
+                  error?: string;
+                };
+                dispatch({
+                  type: "setWorktrees",
+                  worktrees: state.worktrees,
+                  status: state.worktreeStatus,
+                });
+                if (!raw?.ok) {
+                  // The daemon's reason is the useful part —
+                  // it says WHY (e.g. "has uncommitted changes").
+                  return {
+                    ok: false,
+                    message: raw?.message ?? raw?.error ?? "merge failed",
+                  };
+                }
+                return { ok: true, message: raw?.message };
+              } catch (e) {
+                return { ok: false, message: errMsg(e) };
+              }
+            }}
+            onClose={closePanel}
+          />
+        );
 
       case "grants": {
         const grants = state.grants;
@@ -4614,6 +5209,10 @@ const App: React.FC<{
               ) : null}
               <Box flexDirection="row" flexGrow={1}>
                 <Box flexDirection="column" flexGrow={1}>
+                  {/* R388h: the transcript is a flat, narrow, CENTRED
+                   *column — the desktop's centre panel shape. The
+                   *frame around it is gone; the markdown IS the UI.
+                   *See `components/Scrollback.tsx`. */}
                   <Scrollback
                     turns={state.turns}
                     height={1000}
@@ -4632,6 +5231,7 @@ const App: React.FC<{
                     showThinking={state.showThinking}
                     permissionAsk={state.permissionAsk}
                     decisionCardExpanded={state.decisionCardExpanded}
+                    terminalWidth={cols}
                   />
                   {/* inline subagent spawn cards. The host
                     also calls onOpen to switch the active
@@ -4749,6 +5349,19 @@ const App: React.FC<{
                     state={state}
                     onChange={(t) => dispatch({ type: "setInput", text: t })}
                     onSubmit={handleSubmit}
+                    // R388l: while the permission comment box is open
+                    // this input box is the COMMENT FIELD, so its text
+                    // editing is routed into the comment instead of the
+                    // prompt.
+                    onCommentChange={(text) =>
+                      dispatch({
+                        type: "setCommentBox",
+                        state: {
+                          ...(state.commentBox ?? { armed: DEFAULT_ARMED_DECISION }),
+                          text,
+                        },
+                      })
+                    }
                   />
                   {state.layout === "full" ? (
                     <StatusBar
@@ -4948,14 +5561,27 @@ async function runDemo(
       input: { file_path: "package.json", content: "{ /* ... */ }" },
       reason: "file_write requires approval",
       riskLevel: "medium",
+      // R388m: the demo's ask carries a DEADLINE, exactly as a real
+      // `permission_request` does — the daemon publishes `expiresAtMs`
+      // so the client's countdown runs on the same clock the daemon
+      // enforces. Without it the demo shows a card with NO countdown,
+      // which is honest (never guess a deadline) but does not
+      // demonstrate the feature the demo exists to show.
+      expiresAtMs: Date.now() + PERMISSION_COUNTDOWN_MS,
+      timeoutMs: PERMISSION_COUNTDOWN_MS,
     },
   });
   dispatch({
     type: "log",
     message:
-      "(demo) permission card is live — press 1/2/3/4 or A/Y/D/N to dismiss it (60s ceiling)",
+      "(demo) permission card is live — press 1/2/3/4 or A/Y/D/N to dismiss it " +
+      `(it auto-denies after ${Math.round(PERMISSION_COUNTDOWN_MS / 1000)}s with no answer)`,
   });
-  const permOutcome = await waitForPermissionAnswer(60_000);
+  // R388m: the demo waits for the SAME window the countdown shows, plus a
+  // little slack for the auto-deny to land. The old 60s ceiling was
+  // shorter than the 120s countdown, so the demo would cut the
+  // countdown short — the demo would show a feature it then truncated.
+  const permOutcome = await waitForPermissionAnswer(PERMISSION_COUNTDOWN_MS + 5_000);
   if (permOutcome === "timeout") {
     dispatch({
       type: "log",

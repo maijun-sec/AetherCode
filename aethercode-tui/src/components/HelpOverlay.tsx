@@ -41,6 +41,9 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { t, wordmark } from "../theme.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
 import {
   bindingUnavailable,
   bindingsIn,
@@ -97,7 +100,7 @@ function ShortcutRows({ items }: { items: Shortcut[] }): React.ReactElement {
     <>
       {items.map((s, i) => (
         <Text key={i}>
-          <Text color={t.warn}> {s.key.padEnd(14, " ")}</Text>
+          <Text color={t.warn}> {padCells(s.key, 14)}</Text>
           <Text dimColor={!!s.unavailable}>{s.desc}</Text>
           {s.when ? <Text dimColor> ({s.when})</Text> : null}
           {s.unavailable ? <Text color={t.err}> — {s.unavailable}</Text> : null}
@@ -153,7 +156,7 @@ export const HelpOverlay: React.FC = () => {
           {g.cmds.map((c, i) => (
             <Box key={i} flexDirection="row">
               <Box width={16}>
-                <Text color={t.accent}>{c.name.padEnd(14, " ")}</Text>
+                <Text color={t.accent}>{padCells(c.name, 14)}</Text>
               </Box>
               <Text dimColor>{c.desc}</Text>
             </Box>

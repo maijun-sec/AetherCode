@@ -402,6 +402,29 @@ public class AetherCodeMethods {
     private final Map<String, CompletableFuture<PermissionDecision>> pendingPermissions
             = new ConcurrentHashMap<>();
 
+    /**
+     * R388m — the deadline for the NEXT ask, in milliseconds; {@code 0}
+     * means "no deadline".
+     *
+     * <p>★ WHY THIS IS A FIELD AND NOT AN ARGUMENT ★
+     *
+     * <p>{@link #askPermission} is the ONE method that issues the ask, and
+     * every stub in the codebase overrides THAT signature. Adding a
+     * six-argument overload and having the prompter call it broke every
+     * one of those overrides: the stub's method was never reached, the
+     * ask went unanswered, and the test observed a timeout instead of the
+     * contract it was testing. The only symptom was a timeout message —
+     * Lesson 1328's shape, where a shared registration point makes a
+     * wiring difference invisible.
+     *
+     * <p>So the ask is issued by the overridable method, and the deadline
+     * is handed to it through this field by
+     * {@link #askPermissionWithDeadline}. The field is read-and-cleared by
+     * the ask, so it can never leak into a later ask.
+     */
+    private final java.util.concurrent.atomic.AtomicLong pendingDeadlineMs
+            = new java.util.concurrent.atomic.AtomicLong(0L);
+
     private final AetherCodeEngine engine;
     /**
      * runtime toggle for "auto-approve low risk
@@ -629,9 +652,39 @@ public class AetherCodeMethods {
     public AetherCodeMethods(AetherCodeEngine engine,
                               org.aethercode.sdk.SessionManager sessionManager,
                               Consumer<JsonRpcNotification> notifier) {
+        this(engine, sessionManager, notifier, null);
+    }
+
+    /** R388: constructor that also installs the git
+     *  repo new worktrees attach to.
+     *
+     *  <p>Pre-R388 the daemon had NO way to reach real
+     *  git isolation: {@link org.aethercode.sdk.WorktreeManager#setSourceRepo}
+     *  existed but nothing outside a unit test called it,
+     *  and the env var it was documented to read was
+     *  never actually read. The worktree RPCs therefore
+     *  created plain directories while presenting
+     *  themselves as git isolation.
+     *
+     *  <p>The value is applied per-instance (not via a
+     *  static) so a test can build a daemon with one
+     *  source repo while another test in the same JVM
+     *  uses another — a global would make them
+     *  interfere. */
+    public AetherCodeMethods(AetherCodeEngine engine,
+                              org.aethercode.sdk.SessionManager sessionManager,
+                              Consumer<JsonRpcNotification> notifier,
+                              String worktreeSourceRepo) {
         this.engine = Objects.requireNonNull(engine, "engine");
         this.sessionManager = sessionManager;
         this.notifier = Objects.requireNonNull(notifier, "notifier");
+        // R388: install the source repo BEFORE any
+        // worktree can be created, so the very first
+        // addWorktree call already sees it.
+        if (worktreeSourceRepo != null && !worktreeSourceRepo.isBlank()) {
+            worktreeManager.setSourceRepo(worktreeSourceRepo);
+            LOG.info("R388: worktree source repo = {}", worktreeManager.resolvedSourceRepo());
+        }
         this.continuationDispatcher = new EngineContinuationDispatcher(engine, this);
         this.continuationHook = new org.aethercode.hooks.builtin.TodoContinuationHook(continuationDispatcher);
         // wire the engine's skip-confirmation consumption
@@ -1664,6 +1717,15 @@ public class AetherCodeMethods {
         dispatcher.register("addWorktree",           this::addWorktree);
         dispatcher.register("removeWorktree",        this::removeWorktree);
         dispatcher.register("listWorktrees",         this::listWorktrees);
+        // R388: report the daemon's worktree
+        // configuration (source repo + whether real
+        // git isolation is available). The client asks
+        // the daemon instead of re-deriving the
+        // verdict from an absent branch.
+        dispatcher.register("worktreeStatus",        this::worktreeStatus);
+        // R388c: merge a worktree's branch back into a
+        // target branch and optionally clean up.
+        dispatcher.register("mergeWorktree",         this::mergeWorktree);
         // legacy .7: supervisor RPCs (Option C).
         // The supervisor is a daemon that owns
         // multiple child daemons (one per
@@ -2011,10 +2073,33 @@ public class AetherCodeMethods {
     // Permission ask over JSON-RPC
     // ------------------------------------------------------------------
 
-    /** Internal record of a permission decision the client has made. */
-    public record PermissionDecision(String decision, String reason) {
+    /**
+     * Internal record of a permission decision the client has made.
+     *
+     * <p><b>R388l — the optional {@code comment}.</b> A client may attach a
+     * free-text comment to its answer ("yes, but write to /tmp first",
+     * "no — use the read-only tool"). The comment is the USER'S OWN WORDS and
+     * is kept separate from {@code reason}, which is the mechanical audit
+     * trail ("TUI picked allow"). Keeping them apart is what lets the
+     * executor present the comment to the model without also presenting
+     * boilerplate as if the user had said it.
+     *
+     * <p>Adding a component to a record is source-compatible for every
+     * construction site that uses the two-argument form, so the
+     * two-argument constructor is kept and the one-argument form delegates
+     * with a null comment.
+     */
+    public record PermissionDecision(String decision, String reason, String comment) {
+        /** Pre-R388l shape — a decision with no user comment. */
+        public PermissionDecision(String decision, String reason) {
+            this(decision, reason, null);
+        }
         public boolean isAllow() { return DECISION_ALLOW.equals(decision) || DECISION_ALWAYS_ALLOW.equals(decision); }
         public boolean isPersist() { return DECISION_ALWAYS_ALLOW.equals(decision) || DECISION_ALWAYS_DENY.equals(decision); }
+        /** The user's comment, or {@code null} when they gave none. */
+        public String comment() {
+            return comment == null || comment.isBlank() ? null : comment;
+        }
     }
 
     /** Issue a permission ask to the client. Returns a future that the
@@ -2031,6 +2116,72 @@ public class AetherCodeMethods {
      *  token. Pass null or blank to keep the legacy {@code "n/a"}
      *  shape (existing callers that don't track a runId continue to
      *  work). */
+    /**
+     * Issue a permission ask to the client, WITH AN EXPLICIT DEADLINE.
+     *
+     * <p>R388m: the daemon is the authority on WHEN the ask expires.
+     * A client that wants to show a countdown used to have to guess a
+     * timeout — and a client that guessed wrong either (a) counted down
+     * to zero while the daemon was still willing to wait, and denied a
+     * call the user was about to approve, or (b) kept waiting after the
+     * daemon had already denied.
+     *
+     * <p>So the ask carries its own deadline:
+     *
+     * <ul>
+     *   <li>{@code timeoutMs} — how long the daemon will wait;</li>
+     *   <li>{@code expiresAtMs} — the wall-clock instant it expires.</li>
+     * </ul>
+     *
+     * <p>A client that does not understand these fields ignores them and
+     * behaves exactly as before — the daemon's timeout is still the
+     * backstop. A client that DOES understand them can show an accurate
+     * countdown and deny at the deadline itself, so the user is told the
+     * truth instead of watching a stalled prompt.
+     *
+     * <p>★ WHY THIS IS A SEPARATE METHOD AND NOT AN OVERLOAD ★
+     *
+     * <p>The first version of R388m added a SIX-argument
+     * {@code askPermission(..., long timeoutMs)} and had the prompter call
+     * it directly. That silently broke every test stub that overrides the
+     * FIVE-argument {@code askPermission}: the override was no longer
+     * reached, the ask went unanswered, and the test observed a TIMEOUT
+     * instead of the contract it was testing.
+     *
+     * <p>(Lesson 1328's shape: a shared registration point makes a wiring
+     * difference invisible — here the difference was an OVERLOAD, and the
+     * only symptom was a timeout message.)
+     *
+     * <p>So the ask is still issued by the ONE method everyone overrides.
+     * The deadline travels as an argument to this wrapper, which sets it
+     * and then calls the overridable method.
+     *
+     * @param timeoutMs the daemon-side deadline in milliseconds; {@code 0}
+     *                  means "no deadline" and no deadline fields are
+     *                  published
+     */
+    public CompletableFuture<PermissionDecision> askPermissionWithDeadline(
+            String runId, String toolName, Map<String, Object> input,
+            String reason, String riskLevel, long timeoutMs) {
+        // Set the deadline, then issue the ask through the OVERRIDABLE
+        // method. The field is consumed by that call.
+        pendingDeadlineMs.set(timeoutMs > 0 ? timeoutMs : 0L);
+        try {
+            return askPermission(runId, toolName, input, reason, riskLevel);
+        } finally {
+            pendingDeadlineMs.set(0L);
+        }
+    }
+
+    /**
+     * Issue a permission ask to the client.
+     *
+     * <p>★ THIS IS THE ONE METHOD THAT ISSUES THE ASK ★ — every stub and
+     * every override in the codebase hooks THIS signature, so the ask must
+     * never be issued from a different overload. See
+     * {@link #askPermissionWithDeadline} for why the deadline is not an
+     * argument here.
+     */
     public CompletableFuture<PermissionDecision> askPermission(
             String runId, String toolName, Map<String, Object> input,
             String reason, String riskLevel) {
@@ -2047,6 +2198,20 @@ public class AetherCodeMethods {
         payload.put("input",     input);
         payload.put("reason",    reason);
         payload.put("riskLevel", riskLevel);
+        // R388m: publish the deadline so the client can count down on the
+        // SAME clock the daemon enforces. Without it the client either
+        // guesses (and may deny a call the user was about to approve) or
+        // waits past the daemon's own timeout (and the user watches a
+        // prompt that has already been resolved).
+        //
+        // The value comes from the field that
+        // {@link #askPermissionWithDeadline} set — see that method for
+        // why the deadline is NOT an argument of this one.
+        long timeoutMs = pendingDeadlineMs.getAndSet(0L);
+        if (timeoutMs > 0) {
+            payload.put("timeoutMs", timeoutMs);
+            payload.put("expiresAtMs", System.currentTimeMillis() + timeoutMs);
+        }
         // include the current pending count in every
         // permission_request so a TUI that joins late (or comes
         // back from sleep and missed a few notifications) can
@@ -2186,6 +2351,13 @@ public class AetherCodeMethods {
         String requestId = stringOrThrow(p, "requestId");
         String decision = String.valueOf(p.getOrDefault("decision", DECISION_DENY));
         String reason = String.valueOf(p.getOrDefault("reason", ""));
+        // R388l: the optional `comment` is the USER'S OWN WORDS attached
+        // to the answer. It is separate from `reason` (the mechanical audit
+        // trail) so the executor can hand the model the human sentence
+        // without dressing boilerplate up as the user's voice. A client
+        // that predates R388l simply omits the field — the answer still
+        // works, it just carries no comment.
+        String comment = p.get("comment") instanceof String cs ? cs : null;
         CompletableFuture<PermissionDecision> fut = pendingPermissions.remove(requestId);
         if (fut == null) {
             // Stale / unknown id —the client may have sent a reply
@@ -2194,7 +2366,7 @@ public class AetherCodeMethods {
             LOG.warn("permissionResponse for unknown requestId: {}", requestId);
             return Map.of("ok", false, "reason", "unknown requestId");
         }
-        fut.complete(new PermissionDecision(decision, reason));
+        fut.complete(new PermissionDecision(decision, reason, comment));
         return Map.of("ok", true, "requestId", requestId, "decision", decision);
     }
 
@@ -5767,9 +5939,24 @@ public class AetherCodeMethods {
                     if (colonIdx < 0) return "";
                     int quoteIdx = line.indexOf('"', colonIdx + 1);
                     if (quoteIdx < 0) return "";
-                    int endQuote = line.indexOf('"', quoteIdx + 1);
+                    // R388j: find the closing quote by SCANNING, and
+                    // skip the ESCAPED ones.
+                    //
+                    // The naive `indexOf('"', quoteIdx + 1)` stopped at
+                    // the first quote of ANY kind — including the
+                    // `\"` inside the text. A user message of
+                    // `say "hi" now` was truncated to `say \`, and
+                    // the session list showed a title that had been
+                    // cut in half.
+                    //
+                    // A JSON string ends at a quote that is NOT
+                    // preceded by an odd number of backslashes.
+                    int endQuote = findClosingQuote(line, quoteIdx + 1);
                     if (endQuote < 0) return "";
                     String text = line.substring(quoteIdx + 1, endQuote);
+                    // Unescape the JSON escapes so the title reads
+                    // as the user typed it.
+                    text = unescapeJsonText(text);
                     // Trim and cap to 200 chars for the TUI
                     // picker.
                     text = text.replaceAll("\\s+", " ").trim();
@@ -5781,6 +5968,90 @@ public class AetherCodeMethods {
             // best-effort preview; never fail the list
         }
         return "";
+    }
+
+    /**
+     * R388j — the index of the quote that CLOSES a JSON string, or
+     * {@code -1} if the string is not closed on this line.
+     *
+     * <p>A quote preceded by an EVEN number of backslashes closes
+     * the string; one preceded by an ODD number is ESCAPED and does
+     * not. Counting the backslashes (rather than just looking at the
+     * previous character) is what makes {@code "a\\\\"} — a string
+     * whose last character is a literal backslash — close correctly.
+     *
+     * @param line  the raw JSON line
+     * @param start the index of the first character INSIDE the string
+     */
+    private static int findClosingQuote(String line, int start) {
+        for (int i = start; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c != '"') continue;
+            int backslashes = 0;
+            for (int k = i - 1; k >= 0 && line.charAt(k) == '\\'; k--) {
+                backslashes++;
+            }
+            if (backslashes % 2 == 0) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * R388j — turn a JSON string BODY into the text it stands for.
+     *
+     * <p>Only the escapes a session transcript can actually contain
+     * are handled: the quote, the backslash, the solidus, backspace,
+     * form feed, newline, carriage return, tab, and the four-hex-digit
+     * unicode escape. An unknown escape is passed through as the
+     * escaped character itself, so a malformed transcript degrades
+     * to readable text instead of losing the tail.
+     *
+     * <p>★ THE UNICODE ESCAPE IS SPELLED IN WORDS, NOT LITERALLY. ★
+     * Java's lexer processes a unicode escape BEFORE the parser sees
+     * the file, so a literal backslash-u in a COMMENT is a compile
+     * error ("illegal unicode escape"). The same trap catches the
+     * string-literal case, where it silently becomes the character
+     * itself.
+     */
+    private static String unescapeJsonText(String raw) {
+        if (raw.indexOf('\\') < 0) return raw;
+        StringBuilder sb = new StringBuilder(raw.length());
+        int i = 0;
+        while (i < raw.length()) {
+            char c = raw.charAt(i);
+            if (c != '\\' || i + 1 >= raw.length()) {
+                sb.append(c);
+                i++;
+                continue;
+            }
+            char n = raw.charAt(i + 1);
+            switch (n) {
+                case '"' -> { sb.append('"'); i += 2; }
+                case '\\' -> { sb.append('\\'); i += 2; }
+                case '/' -> { sb.append('/'); i += 2; }
+                case 'b' -> { sb.append('\b'); i += 2; }
+                case 'f' -> { sb.append('\f'); i += 2; }
+                case 'n' -> { sb.append('\n'); i += 2; }
+                case 'r' -> { sb.append('\r'); i += 2; }
+                case 't' -> { sb.append('\t'); i += 2; }
+                case 'u' -> {
+                    if (i + 5 < raw.length()) {
+                        try {
+                            sb.append((char) Integer.parseInt(raw.substring(i + 2, i + 6), 16));
+                            i += 6;
+                        } catch (NumberFormatException ignored) {
+                            sb.append(c);
+                            i++;
+                        }
+                    } else {
+                        sb.append(c);
+                        i++;
+                    }
+                }
+                default -> { sb.append(n); i += 2; }
+            }
+        }
+        return sb.toString();
     }
 
     /** R270 (2026-09-15) — extract the most recent agent
@@ -6252,11 +6523,55 @@ public class AetherCodeMethods {
                             newId, msEx.getMessage());
                 }
             }
-            return Map.of("ok", true, "sessionId", newId,
-                    "cwd", resolvedCwd == null ? "" : resolvedCwd,
-                    "worktree", worktree == null ? "" : worktree,
-                    "messageCount", t.messages().size(),
-                    "active", newId);
+            // R388b: the response carries the ISOLATION
+            // VERDICT for the worktree this session is
+            // bound to. Pre-R388b, `createSession({
+            // worktree: "x"})` would silently fall back
+            // to a plain directory when no source repo
+            // was configured — and the response looked
+            // exactly like a successful, isolated
+            // session. The client had no way to know
+            // that "the session is in a worktree" and
+            // "the session is in a git-isolated worktree"
+            // were different claims.
+            //
+            // `isolated` is only meaningful when a
+            // worktree was requested at all; a session
+            // bound to a plain cwd is not "degraded",
+            // it is just a normal session — so it
+            // reports isolated=true (there is nothing
+            // to degrade) with no reason.
+            boolean isolated = true;
+            String isolationReason = null;
+            if (worktree != null) {
+                org.aethercode.sdk.WorktreeManager.WorktreeState bound =
+                        worktreeManager.getWorktree(worktree);
+                if (bound != null) {
+                    isolated = bound.isolated();
+                    isolationReason = bound.reason();
+                } else {
+                    // The worktree was found on the git
+                    // side (or auto-created above) but
+                    // is not in the manager's registry.
+                    // Ask git whether it is real.
+                    isolated = worktreeManager.isolationAvailable();
+                    if (!isolated) {
+                        isolationReason = worktreeManager.isolationUnavailableReason();
+                    }
+                }
+            }
+            Map<String, Object> resp = new java.util.LinkedHashMap<>();
+            resp.put("ok", true);
+            resp.put("sessionId", newId);
+            resp.put("cwd", resolvedCwd == null ? "" : resolvedCwd);
+            resp.put("worktree", worktree == null ? "" : worktree);
+            resp.put("messageCount", t.messages().size());
+            resp.put("active", newId);
+            resp.put("isolated", isolated);
+            if (isolationReason != null) {
+                resp.put("reason", isolationReason);
+            }
+            return resp;
         } catch (UnsupportedOperationException e) {
             throw new JsonRpcProtocolException(
                     "createSession unavailable: SessionStore is not wired",
@@ -8476,12 +8791,23 @@ public class AetherCodeMethods {
         try {
             org.aethercode.sdk.WorktreeManager.WorktreeState st =
                     worktreeManager.addWorktree(name, sourceRepo, baseBranch);
+            // R388: the response carries the SAME
+            // verdict fields as toWireSnapshot() — the
+            // client must not have to re-derive
+            // "is this real isolation?" from the
+            // presence of a branch. A stub worktree
+            // reports ok:true (the directory WAS
+            // created) AND isolated:false (it is not
+            // git isolation) — two different questions,
+            // two different answers.
             Map<String, Object> resp = new java.util.LinkedHashMap<>();
             resp.put("ok", true);
             resp.put("name", st.name());
             resp.put("path", st.path().toString());
             resp.put("branch", st.branch());
             resp.put("sourceRepo", st.sourceRepo());
+            resp.put("isolated", st.isolated());
+            resp.put("reason", st.reason());
             return resp;
         } catch (Exception e) {
             return Map.of("ok", false, "error", e.getMessage() == null ? e.toString() : e.getMessage());
@@ -8505,6 +8831,108 @@ public class AetherCodeMethods {
         return Map.of("ok", ok, "name", name);
     }
 
+    /** R388: install the source repo the worktree
+     *  manager attaches new worktrees to. The CLI
+     *  calls this once at daemon startup from
+     *  {@code --worktree-source-repo}. Before R388
+     *  there was NO way to configure the daemon's
+     *  manager from outside the class — the setter
+     *  existed but no production code ever called
+     *  it, so the daemon always ran in stub mode
+     *  unless the caller passed an explicit
+     *  {@code sourceRepo} to every addWorktree call.
+     *
+     *  <p>Returns the RESOLVED source repo so the
+     *  caller can log what the daemon actually ended
+     *  up with. */
+    public String setWorktreeSourceRepo(String path) {
+        worktreeManager.setSourceRepo(path);
+        String resolved = worktreeManager.resolvedSourceRepo();
+        if (resolved == null) {
+            LOG.warn("R388: no worktree source repo configured — worktrees will be "
+                    + "plain directories, NOT git-isolated. Pass --worktree-source-repo "
+                    + "or set AETHERCODE_WORKTREE_SOURCE_REPO.");
+        } else {
+            LOG.info("R388: worktree source repo = {}", resolved);
+        }
+        return resolved;
+    }
+
+    /** R388: report the worktree configuration. The
+     *  desktop / TUI use this to show whether git
+     *  isolation is AVAILABLE in this daemon, instead
+     *  of each client re-deriving it from the absence
+     *  of a branch (R383's lesson: the verdict comes
+     *  from the daemon). */
+    public Object worktreeStatus(Object params) {
+        Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("ok", true);
+        String resolved = worktreeManager.resolvedSourceRepo();
+        resp.put("sourceRepo", resolved);
+        resp.put("root", worktreeManager.root().toString());
+        // R388: `available` is the single boolean the
+        // client needs: "can this daemon create REAL
+        // git-isolated worktrees?" The manager owns the
+        // probe — the protocol layer does not
+        // re-implement it (two copies of a probe
+        // drift).
+        boolean available = worktreeManager.isolationAvailable();
+        resp.put("available", available);
+        if (!available) {
+            resp.put("reason", worktreeManager.isolationUnavailableReason());
+        }
+        return resp;
+    }
+
+    /** R388c: merge a worktree's branch back into a target
+     *  branch, and optionally clean the worktree up.
+     *
+     *  <p>The lifecycle had a hole before this: a user
+     *  could create a worktree, work in it, and push — but
+     *  there was no supported way to bring the work HOME.
+     *  The worktree and its branch lingered forever.
+     *
+     *  <p>Deliberately conservative: it does not push, does
+     *  not delete the branch unless asked, and REFUSES a
+     *  dirty worktree (removing it would destroy
+     *  uncommitted work). A refusal leaves everything
+     *  exactly as it was.
+     *
+     *  <p>Returns {@code merged: false} with a reason
+     *  rather than throwing, so the client can show the
+     *  reason to the user. */
+    public Object mergeWorktree(Object params) {
+        Map<String, Object> p = asMap(params);
+        String name = p.get("name") instanceof String s && !s.isBlank() ? s : null;
+        if (name == null) {
+            return Map.of("ok", false, "error", "name required");
+        }
+        String targetBranch = p.get("targetBranch") instanceof String s && !s.isBlank() ? s : null;
+        // R388c: the DEFAULTS matter. Removing the worktree
+        // after a successful merge is what "close" means,
+        // but deleting the branch is destructive — the user
+        // may want to keep it (a tag, a shared branch, a
+        // worktree they still have open elsewhere). So:
+        // removeWorktree defaults to TRUE, deleteBranch to
+        // FALSE.
+        boolean removeWorktree = !p.containsKey("removeWorktree")
+                || Boolean.TRUE.equals(p.get("removeWorktree"));
+        boolean deleteBranch = Boolean.TRUE.equals(p.get("deleteBranch"));
+        try {
+            org.aethercode.sdk.WorktreeManager.MergeResult r =
+                    worktreeManager.mergeWorktree(name, targetBranch, removeWorktree, deleteBranch);
+            Map<String, Object> resp = new java.util.LinkedHashMap<>();
+            resp.put("ok", r.merged());
+            resp.putAll(r.toWireSnapshot());
+            if (!r.merged()) {
+                resp.put("error", r.message());
+            }
+            return resp;
+        } catch (Exception e) {
+            return Map.of("ok", false, "error", e.getMessage() == null ? e.toString() : e.getMessage());
+        }
+    }
+
     public Object listWorktrees(Object params) {
         java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
         for (org.aethercode.sdk.WorktreeManager.WorktreeState st :
@@ -8520,10 +8948,53 @@ public class AetherCodeMethods {
         // session to it.
         java.util.List<org.aethercode.sdk.WorktreeManager.WorktreeState> gitOnes =
                 worktreeManager.listGitWorktrees();
+        // R388: dedupe by PATH. A worktree this
+        // manager created shows up in BOTH lists (the
+        // manager's own registry AND `git worktree
+        // list`), so the naive concatenation returned
+        // every manager-created worktree TWICE. The
+        // manager's entry wins — it carries the
+        // sourceRepo, which the git-side entry does
+        // not.
+        //
+        // The paths are NOT string-equal: git reports
+        // them with FORWARD slashes ("D:/work/...")
+        // while the manager holds the platform form
+        // ("D:\work\..."). toAbsolutePath() does NOT
+        // normalise the separator, so a plain string
+        // comparison still saw two distinct entries.
+        // The key is the normalised path.
+        java.util.Set<String> seenPaths = new java.util.LinkedHashSet<>();
+        for (var st : worktreeManager.listWorktrees().values()) {
+            seenPaths.add(normalizedPathKey(st.path()));
+        }
         for (var st : gitOnes) {
-            out.add(st.toWireSnapshot());
+            if (seenPaths.add(normalizedPathKey(st.path()))) {
+                out.add(st.toWireSnapshot());
+            }
         }
         return Map.of("ok", true, "worktrees", out);
+    }
+
+    /** R388: a comparison key for paths that is
+     *  stable across the two spellings git and the
+     *  JVM produce. {@code toRealPath} would also
+     *  resolve symlinks, but it throws when the path
+     *  does not exist yet — a worktree being created
+     *  may not be on disk yet. So: absolute, lower
+     *  case (Windows paths are case-insensitive),
+     *  backslashes folded to forward slashes. */
+    private static String normalizedPathKey(java.nio.file.Path p) {
+        if (p == null) return "";
+        String s = p.toAbsolutePath().toString()
+                .replace('\\', '/')
+                .toLowerCase(java.util.Locale.ROOT);
+        // strip a trailing slash so "C:/x" and "C:/x/"
+        // are the same key.
+        while (s.length() > 1 && s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
     }
 
     // legacy .7 / R150: supervisor RPCs (Option C).

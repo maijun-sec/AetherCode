@@ -1,4 +1,4 @@
-// Copyright (c) 2026 maijun
+﻿// Copyright (c) 2026 maijun
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -37,6 +37,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileShim, importCompiled } from "./shim-compile.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -61,25 +62,32 @@ test("T-6-09: ConsentModal.tsx exists and exports the 10-option modal + pure hel
 
 // ----- 2. Pure: buildOptions("shell.command.npm") → 10 -----------------
 
+// R388d: the shim is compiled in a TEMP MIRROR of `src/`, not
+// in the checked-in tree. See `./shim-compile.mjs` — fifteen gates
+// used to overwrite a TRACKED source file with a generated one-liner
+// and never restored it, so every run of this suite silently
+// stripped the licence header from it.
 const tmp = join(root, "tmp-t6-09-tsc");
-const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-if (existsSync(tmp)) {
-  spawnSync(
-    process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-  );
-}
-mkdirSync(tmp, { recursive: true });
-const shimPath = join(root, "src", "components", "consent", "_t6_09_helpers.ts");
+const shimRel = ["components", "consent", "_t6_09_helpers.ts"];
 const shim = [
   `export { buildOptions, shouldShowWildcard, deriveWildcardSubCategory } from "./ConsentModal.js";`,
   "",
 ].join("\n");
-writeFileSync(shimPath, shim, "utf-8");
-
+const compiledShim = compileShim({
+  root,
+  tmp: join(root, "tmp-t6-09-tsc"),
+  shimRel: shimRel.join("/"),
+  body: shim,
+  extraArgs: [],
+});
+const helpers = await importCompiled(compiledShim);
+// R388d: the SECOND compile — the REAL component, read-only. It
+// writes to its own out dir so it cannot collide with the shim
+// compile's output, and it never writes into the checked-in tree.
+const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const tscArgs = [
   "--outDir",
-  join(tmp, "out"),
+  join(tmp, "out2"),
   "--target",
   "ES2022",
   "--module",
@@ -95,19 +103,7 @@ const tscArgs = [
   "--rootDir",
   join(root, "src"),
 ];
-{
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
-    encoding: "utf-8",
-    shell: true,
-  });
-  if (r.status !== 0) {
-    console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
-    process.exit(1);
-  }
-}
-const helpers = await import(
-  "file:///" + join(tmp, "out", "components", "consent", "_t6_09_helpers.js").replace(/\\/g, "/")
-);
+
 const { buildOptions, shouldShowWildcard, deriveWildcardSubCategory } = helpers;
 
 test("T-6-09: buildOptions('shell.command.npm') returns 10 options (1-8 + wildcard pair)", () => {

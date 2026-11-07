@@ -81,8 +81,21 @@ public class JsonRpcPermissionPrompter implements ToolPermissionPrompter {
     @Override
     public CompletableFuture<PermissionResult> ask(Tool tool, Map<String, Object> input, String question) {
         if (methods == null) {
+            // R388m: the daemon has NO client to ask. Nobody can approve,
+            // so the reason must SAY that — and must tell the model not
+            // to retry, or the model re-emits the same tool call and the
+            // run loops. The wording matches the clients' contract
+            // (`permissionDeadline.ts` / `nobodyCanApproveReason`) so the
+            // model reads one sentence whichever path denied it.
             return CompletableFuture.completedFuture(
-                    PermissionResult.Deny.of("no JSON-RPC connection"));
+                    PermissionResult.Deny.of(
+                            "permission denied: no one can approve the '" + tool.name()
+                                    + "' call in this session. There is no JSON-RPC client connected, "
+                                    + "so the ask was answered automatically with deny. "
+                                    + "DO NOT retry this tool call — the answer will be the same every time. "
+                                    + "Either (1) tell the user what you wanted to do so they can re-run it "
+                                    + "with permission, or (2) pick a different tool or approach that does "
+                                    + "not require permission."));
         }
         // classify risk so the TUI can render a danger icon.
         String riskLevel = classifyRisk(tool.name(), input);
@@ -146,12 +159,24 @@ public class JsonRpcPermissionPrompter implements ToolPermissionPrompter {
             LOG.debug("R277 auto-approved {} tool call (mode={}, flag=true)", riskLevel, methods.currentPermissionModeName());
             return CompletableFuture.completedFuture(new PermissionResult.Allow(input));
         }
-        CompletableFuture<PermissionDecision> fut = methods.askPermission(
+        CompletableFuture<PermissionDecision> fut = methods.askPermissionWithDeadline(
                 "n/a", // runId is not threaded into the prompter API yet; TUI can correlate via tool+input
                 tool.name(),
                 input,
                 question,
-                riskLevel);
+                riskLevel,
+                // R388m: publish the deadline so the client counts down on
+                // the SAME clock this prompter will enforce. Without it the
+                // client guesses, and a guess that is too short denies a
+                // call the user was about to approve.
+                //
+                // ★ askPermissionWithDeadline, NOT askPermission(...,
+                // timeoutMs) ★ — the latter is a DIFFERENT overload, and
+                // every test stub overrides the FIVE-argument
+                // askPermission. Calling the overload directly meant the
+                // stubs were never reached, the ask went unanswered, and
+                // the tests saw a TIMEOUT instead of the contract.
+                timeoutMs);
         return fut
                 .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .exceptionally(ex -> {
@@ -187,9 +212,27 @@ public class JsonRpcPermissionPrompter implements ToolPermissionPrompter {
                 })
                 .thenApply(decision -> {
                     if (decision.isAllow()) {
-                        return new PermissionResult.Allow(input);
+                        // R388l: the approval branch used to DROP the
+                        // reason. A user who wrote "yes, but write to /tmp
+                        // first" would have had their comment reach the
+                        // daemon and then evaporate — the silent-degradation
+                        // shape. The reason now rides along as the note and
+                        // is appended to the tool_result, so the model reads
+                        // the comment on the same turn it reads the output.
+                        return new PermissionResult.Allow(input, decision.comment());
                     }
-                    return PermissionResult.Deny.of(decision.reason());
+                    // R388l: on the deny branch the message the model sees
+                    // IS the reason, so a user comment must not be buried
+                    // behind boilerplate. When the client sent a comment we
+                    // put it FIRST — the model reads "user said: <comment>"
+                    // as the headline and the mechanical reason after it.
+                    String comment = decision.comment();
+                    String reason = decision.reason();
+                    if (comment == null || comment.isBlank()) {
+                        return PermissionResult.Deny.of(reason);
+                    }
+                    return PermissionResult.Deny.of(
+                            "user said: " + comment + " (denied by client: " + reason + ")");
                 });
     }
 

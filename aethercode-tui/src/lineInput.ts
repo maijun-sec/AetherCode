@@ -105,45 +105,11 @@ export interface LineInputCallbacks {
   onEscape?: () => void;
 }
 
-/** Visual cell width for the most common CJK + emoji ranges.
- *  Anything not listed here counts as 1. The values match the
- *  East Asian Width property used by terminals. */
-function isWide(cp: number): boolean {
-  return (
-    (cp >= 0x1100 && cp <= 0x115f) ||
-    (cp >= 0x2329 && cp <= 0x232a) ||
-    (cp >= 0x2e80 && cp <= 0x303e) ||
-    (cp >= 0x3041 && cp <= 0x33ff) ||
-    (cp >= 0x3400 && cp <= 0x4dbf) ||
-    (cp >= 0x4e00 && cp <= 0x9fff) ||
-    (cp >= 0xa000 && cp <= 0xa4cf) ||
-    (cp >= 0xac00 && cp <= 0xd7a3) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0xfe30 && cp <= 0xfe4f) ||
-    (cp >= 0xff00 && cp <= 0xff60) ||
-    (cp >= 0xffe0 && cp <= 0xffe6) ||
-    (cp >= 0x1f300 && cp <= 0x1f64f) ||
-    (cp >= 0x1f900 && cp <= 0x1f9ff) ||
-    (cp >= 0x20000 && cp <= 0x2fffd) ||
-    (cp >= 0x30000 && cp <= 0x3fffd)
-  );
-}
-
-/** Strip ANSI escape sequences so visible-cell math isn't fooled by colour. */
-function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
-/** Visible cell count of a string, accounting for CJK + emoji width. */
-function cellWidth(s: string): number {
-  let w = 0;
-  for (let i = 0; i < s.length; i++) {
-    const cp = s.codePointAt(i)!;
-    w += isWide(cp) ? 2 : 1;
-    if (cp > 0xffff) i++; // surrogate pair advances by 2
-  }
-  return w;
-}
+// R388m: the width rule now lives in ONE place (cellWidth.ts). This
+// module used to keep a private copy, and the panel helpers counted
+// CHARACTERS instead — so a Chinese title was laid out at half its
+// intended width and ran past the frame's right border.
+import { cellWidth, stripAnsi } from "./cellWidth.js";
 
 /** Walk back from `pos` (a JS string index, not a cell offset) to the
  *  start of the code point that ends at `pos`. Backspace should never

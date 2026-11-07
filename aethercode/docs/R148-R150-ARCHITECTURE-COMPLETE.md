@@ -68,6 +68,14 @@ isolation story didn't hold.
 - `setSourceRepo(String)` — install a per-manager source repo.
   Resolution order: per-manager setter → `AETHERCODE_WORKTREE_SOURCE_REPO`
   env → no source (stub fallback, logged at WARN).
+  **R388: this paragraph described behaviour that did not exist.**
+  The env var was named here but never read by any code path, and
+  `setSourceRepo` was never called outside a test — so the default
+  deployment always landed on the stub and the worktree RPCs looked
+  healthy while providing no git isolation. R388 made the resolution
+  real and added `--worktree-source-repo` as the daemon-side way to
+  configure it. The description above is now true; before R388 it was
+  a claim about code that did not exist.
 - `setRoot(Path)` — per-manager worktree root override. Tests use
   this to point at a TempDir so a prior run's stale directories
   don't block subsequent runs.

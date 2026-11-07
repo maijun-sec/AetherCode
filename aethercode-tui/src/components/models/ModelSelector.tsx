@@ -57,6 +57,9 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import { t } from "../../theme.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../../cellWidth.js";
 
 // --------------------------------------------------------------------
 //  Types
@@ -364,7 +367,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 <Box key={m.name} flexDirection="row">
                   <Text color={isHi ? "cyan" : undefined}>{isHi ? "▶" : " "} </Text>
                   <Text color={isHi ? "white" : undefined} bold={isHi}>
-                    {m.name.padEnd(20)}
+                    {padCells(m.name, 20)}
                   </Text>
                   <Text dimColor> ({tier})</Text>
                   {isCurrent ? (

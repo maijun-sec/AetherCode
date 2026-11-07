@@ -293,6 +293,25 @@ export const PANEL_INTENTS: PanelIntent[] = [
     line: "rendered",
   },
   {
+    // R388c: the git worktree lifecycle. Create an
+    // isolated checkout on its own branch, bind the next
+    // session to it, merge it back, remove it.
+    //
+    // The daemon owns the isolation VERDICT — the panel
+    // displays `isolated` and never derives it (R383's
+    // lesson). A worktree with `isolated: false` is a
+    // plain directory that only LOOKS like isolation, and
+    // the panel says so with the reason.
+    id: "worktree-panel",
+    sentinels: ["__WORKTREE_PANEL__"],
+    command: "/worktree",
+    title: "Create, merge, and remove isolated git worktrees",
+    group: "config",
+    component: "components/WorktreePanel.tsx",
+    ink: "mounted",
+    line: "rendered",
+  },
+  {
     id: "cwd-switcher",
     sentinels: ["__CWD_PICK__"],
     command: "/cwd-pick",
@@ -448,6 +467,30 @@ export const PANEL_INTENTS: PanelIntent[] = [
       "needs a fact this daemon cannot produce. The panel reports the " +
       "versions, says what did NOT happen, and points at the package " +
       "manager.",
+  },
+  {
+    id: "command-help",
+    sentinels: ["__HELP_PANEL__"],
+    command: "/help",
+    title: "Browse every command (type to filter, Enter runs it)",
+    group: "session",
+    component: "components/CommandHelpPanel.tsx",
+    // R388k: `/help` used to return the whole reference as ONE string,
+    // which the Ink renderer emitted as a single `sideNote` — and the
+    // scrollback truncated it to 3 visible lines. Commands 4–89 were
+    // unreachable, with no scroll and no filter.
+    //
+    // Now it opens a PANEL: a filterable, scrollable list PROJECTED
+    // from the one command catalog, where `Enter` runs the command you
+    // picked. That is the shape every tool in the benchmark uses —
+    // Claude Code's `/` menu, Cursor's `/` menu, Aider's
+    // source-generated command table.
+    //
+    // The line renderer PRINTS the same catalog-derived text: a
+    // terminal has no panels, but it has a scrollback, which is the
+    // terminal's own scrolling.
+    ink: "mounted",
+    line: "rendered",
   },
 ];
 

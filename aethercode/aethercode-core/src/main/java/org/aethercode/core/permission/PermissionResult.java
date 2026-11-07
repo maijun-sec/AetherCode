@@ -34,8 +34,36 @@ import java.util.Map;
  */
 public sealed interface PermissionResult {
 
-    /** Always allow. {@code updatedInput} may rewrite the input before the tool runs. */
-    record Allow(Map<String, Object> updatedInput) implements PermissionResult {}
+    /**
+     * Always allow. {@code updatedInput} may rewrite the input before the tool runs.
+     *
+     * <p><b>R388l — the optional {@code note}.</b> A user who approves a tool
+     * call can attach a free-text comment ("yes, but write to /tmp first").
+     * Before R388l the approval path had NO place to put it: the prompter
+     * received a reason and <em>discarded</em> it on the allow branch, so the
+     * comment would have reached the daemon and then evaporated — the exact
+     * "silent degradation" shape (the user believes they said something; the
+     * model never sees it).
+     *
+     * <p>The note is optional and the single-argument constructor is kept, so
+     * every existing {@code new Allow(input)} call site keeps compiling and
+     * keeps its meaning ("approved, nothing to say").
+     *
+     * <p>The note is model-facing context: the executor appends it to the
+     * tool_result so the model reads the comment on the SAME turn it reads
+     * the tool's output.
+     */
+    record Allow(Map<String, Object> updatedInput, String note) implements PermissionResult {
+        /** Approved with no comment — the pre-R388l shape, kept intact. */
+        public Allow(Map<String, Object> updatedInput) {
+            this(updatedInput, null);
+        }
+
+        /** The user's comment, or {@code null} when they gave none. */
+        public String note() {
+            return note == null || note.isBlank() ? null : note;
+        }
+    }
 
     /** Always deny. {@code message} is sent to the model; {@code decisionReason} is for logs. */
     record Deny(String message, String decisionReason) implements PermissionResult {

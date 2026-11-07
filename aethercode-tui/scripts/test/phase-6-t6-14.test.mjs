@@ -63,11 +63,21 @@ test("T-6-14: Scrollback.tsx imports SummaryFooter from ./chat/SummaryFooter.js"
 test("T-6-14: assistant turn renders SummaryFooter below the body", () => {
   const src = readFileSync(scrollbackPath, "utf-8");
   // The body is rendered via Markdown, then a SummaryFooter
-  // mounted with `marginTop={1}` so it sits below.
+  // mounted after it.
   assert.match(src, /<Markdown text=\{lead\} \/>/);
   assert.match(src, /<SummaryFooter summary=\{summary\} \/>/);
-  // The marginTop={1} wrapper around the SummaryFooter.
-  assert.match(src, /<Box marginTop=\{1\}>\s*\n\s*<SummaryFooter/);
+  // R388h: the `marginTop={1}` WRAPPER around the SummaryFooter is
+  // gone — the flat transcript gives each turn its own spacing, and
+  // a nested margin inside it drew a second gap. What the gate is
+  // really about is the ORDER: the footer comes AFTER the body.
+  //
+  // So assert the order, not the wrapper. (An earlier version of
+  // this gate pinned the wrapper's exact spelling, which is the
+  // "a pin that names a LOCATION goes red on a REFACTOR" trap.)
+  const markdownAt = src.indexOf("<Markdown text={lead} />");
+  const footerAt = src.indexOf("<SummaryFooter summary={summary} />", markdownAt);
+  assert.ok(markdownAt >= 0, "the assistant body must render the markdown");
+  assert.ok(footerAt > markdownAt, "the SummaryFooter must render AFTER the body");
 });
 
 // ----- 3. Scrollback: tool / plan collapsed form exists ----------------

@@ -2586,3 +2586,612 @@ a gate. Both of those cost this round real time.
 - **修好一个消费者之后,数一数还有几个消费者。**
   R380 把目录变成了 `/help` 和 Tab 补全的唯一来源,**唯独漏了面板**。
 
+
+## Watch out for (R388 additions — worktree isolation)
+
+- **worktree 的"成功"不等于"git 隔离"。**
+  R388 之前 `addWorktree` 只有两种返回:`branch != null`
+  (真 git worktree)或 `branch == null`(空目录 stub),
+  **两种都返回 `ok: true`**。客户端无法区分"真隔离"和
+  "一个看起来像隔离的空文件夹",唯一的信号是一条没人读的
+  WARN 日志。现在每个 worktree 都带 `isolated`(只有真 git
+  worktree 才是 `true`)和 `reason`(降级时说明原因),
+  新增 `worktreeStatus` RPC 报告 daemon 到底能不能做真隔离。
+  **Lesson 1278 — 一个降级路径不能和成功路径长得一样。**
+- **文档写了不等于代码读了。**
+  `WorktreeManager` 的 javadoc 和 `docs/R148-R150-ARCHITECTURE-COMPLETE.md`
+  都写着解析顺序是「setter → `AETHERCODE_WORKTREE_SOURCE_REPO`
+  → stub」,但**那个环境变量从来没有被任何代码读过**,
+  `setSourceRepo` 也**只在测试里被调用过** —— 于是默认部署
+  永远落在 stub 上,而 worktree RPC 看上去一切正常。
+  真正的隔离要显式传 `sourceRepo` 参数才会发生。
+  **Lesson 1279 — 一段描述行为的文档,和一段实现它的代码,
+  是两件事;前者不能作为后者的证据。**
+- **参数名遮蔽字段名,会让一条解析链少一环。**
+  `addWorktree(String name, String sourceRepo, String baseBranch)`
+  的参数 `sourceRepo` **遮蔽**了同名字段。写成
+  `sourceRepo != null ? sourceRepo : envSourceRepo` 时,
+  **per-manager setter 被整条链丢掉了** —— R149 自己的
+  `addWorktree_usesCustomBaseBranch` 用例当场抓到
+  (它传 null 参数、依赖 setter)。现在三步链显式写全。
+  **Lesson 1280 — 遮蔽是隐式的,调用点读起来完全正常。**
+- **`waitFor()` 在读流之前,就是一个管道死锁。**
+  `git worktree add` 会为每个文件打印 "Updating files: N%",
+  输出远超 64KB 管道缓冲;旧代码先 `waitFor(30s)` 再读流,
+  git 卡在写管道上、进程永远不退出,**30 秒后被强杀**,
+  留下一个 **半初始化且 locked** 的 worktree(锁文件写着
+  "initializing")。现在输出与等待**并发**进行。
+  **Lesson 1281 — 先等后读,只有当输出装得下管道缓冲时才安全。**
+- **git 继承了 daemon 的 stdin,就是继承了 JSON-RPC 管道。**
+  stdio daemon 的 stdin 正是客户端请求的通道;git 若从中读
+  stdin(pager、凭据提示),会**吞掉 RPC 帧**、破坏协议。
+  现在 `redirectInput(PIPE)` 并立即关闭,git 拿到 EOF。
+  **Lesson 1282 — 子进程继承的 stdin 未必是"没有人用的"。**
+- **git 报的路径和 JVM 存的路径,分隔符不一样。**
+  `git worktree list --porcelain` 报的是 `D:/work/...`
+  (正斜杠),JVM 手里是 `D:\work\...`;`toAbsolutePath()`
+  **不会**归一化分隔符,所以按路径去重时两个条目仍然不同,
+  每个 worktree 在 `listWorktrees` 里出现两次。去重键要
+  显式归一化(绝对路径 + 折叠分隔符 + 小写)。
+  **Lesson 1283 — 两个来源的同一个东西,先确认它们写的字面量一样。**
+
+## Watch out for (R388b additions — worktree 的生命周期)
+
+- **`git worktree remove --force` 拒绝删除 locked 的 worktree。**
+  git 要的是 **`-f -f`**(两个 `-f`)。而 locked 正是**上一次
+  `worktree add` 半途失败**留下的状态(锁文件写着 "initializing"),
+  所以这**不是边角情况,是重试路径本身**。旧代码只发一个 `--force`,
+  于是 R388 那个管道死锁留下的残骸**永远清不掉**。现在失败后
+  自动重试 `-f -f`。
+  **Lesson 1284 — 一个工具的"强制"常常不止一级。**
+- **先删状态再干活,失败了就留下孤儿。**
+  `removeWorktree` 原来是 `states.remove(name)` **在前**、git 操作
+  **在后**:git 失败时 daemon 已经"忘了"这个 worktree,但 git 还留着,
+  分支也还在 —— daemon 和 git 对"存在什么"意见不一致,而且**没法按名字重试**
+  (`removeWorktree` 会因为状态没了而返回 false)。现在**只有 git 真的放手了
+  才 forget**,失败时保留注册项以便重试。
+  **Lesson 1285 — 状态删除要放在副作用成功之后,不是之前。**
+- **`git worktree add -b <branch>` 在分支已存在时失败。**
+  这正是"部分失败后重试"的样子(分支建好了、checkout 被打断),
+  也正是"daemon 重启后重建 worktree"的样子。现在先试 `-b`,
+  失败且**确认分支确实存在**时,退化成 `git worktree add <path> <branch>`
+  —— **挂到已有分支上**而不是新建。
+  **Lesson 1286 — 失败原因决定退路;不要把"分支已存在"当成硬错误。**
+- **`createSession` 也要报隔离判定。**
+  R388 之后 `createSession({worktree:"x"})` 在没有 source repo 时
+  会静默落到空目录,而响应和"真隔离"**长得一模一样**。现在响应带
+  `isolated`(以及降级时的 `reason`)。注意区分:普通 cwd 的会话
+  报 `isolated: true` —— **没有东西可降级**,客户端不该读成
+  "这个会话在 worktree 里"。
+  **Lesson 1287 — 判定要一路带到最终的用户可见的那一次调用。**
+
+## Watch out for (R388c additions — skill 与 merge 生命周期)
+
+- **一个 skill 缺失是 WARNING,不是错误 —— 所以它静默。**
+  六个 shipped workflow 声明了 `skills: [...]`,**而那些 skill
+  一个都不在磁盘上**。`SkillComposer` 把缺失的 skill 当 warning,
+  于是 `tdd-feature` —— 一个整个职责就是 red-green-refactor 的
+  workflow —— 的 TDD 指导**只活在 yaml 自己的 `prompts:` 块里**,
+  而 `skills: [tdd, code-review]` 那张列表是装饰。
+  **workflow 的 yaml 和 skill 文件住在两个不同的地方**(jar 资源 vs
+  用户主目录),**没有任何东西把它们连起来**,所以也没有东西会发现漂移。
+  → 现在补齐了全部 10 个 skill,并加了一个门禁
+  (`ShippedWorkflowSkillResolutionTest`):shipped workflow 引用的
+  每个 skill 都必须**真的装上了**,而且**必须有 body**。
+  **Lesson 1288 — 一个引用列表如果没有门禁,它就是装饰。**
+- **skill 的存放格式有两个约定,查清楚再放。**
+  AetherCode 的 `SkillComposer` / `SkillRegistry` 找的是
+  **扁平的 `<name>.md`**(`~/.aethercode/skills/tdd.md`),
+  **不是** `<name>/SKILL.md` 目录形式。放错地方 → 门禁变红,
+  而症状是"skill 没装"。
+  **Lesson 1289 — 同一个仓库里放同一个东西,可能有两套约定。**
+- **一个空 body 的 skill 比缺失的 skill 更安静。**
+  它的文件在,`lookup` 成功,于是它出现在 "Injected skills" 列表里 ——
+  **prompt 看上去是完整的**,但内容一个字都没有。现在
+  `SkillComposer` 把空 body 当成 missing,放进
+  "Missing skills (skipped)" 段,让它**可见**。
+  **Lesson 1290 — "存在"不等于"起了作用"。**
+- **`git worktree add` 的合并要在 source repo 里做。**
+  git 拒绝 checkout 一个已经在别的 worktree 里 checkout 的分支,
+  所以在 worktree 内部往另一个分支合并是不可能的。R388c 的
+  `mergeWorktree` 从 **source repo** 合并(它的 HEAD 才是目标分支),
+  而且**拒绝脏的 worktree** —— 合并本身是安全的,但随后删除
+  worktree 会丢掉未提交的工作。拒绝时**什么都不改**,用户可以
+  commit / stash 之后重试。
+  **Lesson 1291 — 拒绝比"顺手做掉"安全。**
+
+## Watch out for (R388d additions — 门禁的 occurrence 编号)
+
+- **★ 加一个 overload 会重排所有兄弟方法的编号。★**
+  TUI 的 source-pin 门禁用 **"第 N 个形如 X 的方法"** 来定位 Java
+  方法:`javaMethod(runnerCode, "private static int runInternal(")`
+  取**第 1 个**匹配,`javaMethod(runnerCode, "EngineFactoryWithSpec
+  specFactory) {", 2)` 取**第 2 个**。这些签名是**前缀**,所以:
+  - 给 `runInternal` **加第 7 个参数** → 它不再匹配那个前缀 → 编号顺移;
+  - 给 `runHttp` **加第 5 个参数** → 同上;
+  - **加一个同名 overload** → 编号同样顺移。
+  R388d 两个都做了,于是 R371 门禁开始读**一行 delegate**(里面什么
+  接线都没有),报出三条**并不存在**的缺陷:`CompactMethods` 没有构造、
+  没有注册、HTTP 没拿到同一个实例。
+  → 修法:**worktree repo 走一个 static field + setter**
+  (`DaemonRunner.setWorktreeSourceRepo`),入口方法的形状一动不动。
+  **Lesson 1292 — 一个 overload 不是白加的:它重排了所有共享前缀的
+  兄弟,而读这些编号的是没人记得的门禁。**
+- **一个"能提取成功但读错了东西"的提取,比提取失败更贵。**
+  `javaMethod(code, sig, occurrence)` 的 `occurrence` 参数就是为此存在的:
+  `WorktreeManager` 里 `MergeResult.toWireSnapshot()` 声明**在前**,
+  `WorktreeState.toWireSnapshot()` 在后 —— 取 occurrence 1 读到的是
+  merge 的快照(既没有 `isolated` 也没有 `reason`),门禁报"daemon 从不
+  发布隔离判定",而 daemon 一直都在发布。
+  **Lesson 1293 — 提取成功但读到的是错的那个,和提取失败一样有害。**
+- **门禁的基线数字要"故意地"改,并写清理由。**
+  `SLASH_COMMANDS.length` 的基线从 88 → 89:新增的 `/worktree`
+  是一个**真正的新能力**(daemon 一直有那些 RPC,只是用户没有名字
+  可以敲)。同样的道理,`/work` 从"唯一匹配 `/workflow`"变成
+  **歧义**(同时匹配 `/workflow` 和 `/worktree`),补全返回最长公共前缀
+  和两个候选 —— **把用户敲的四个字符替他押在一个命令上是撒谎**。
+  **Lesson 1294 — 一个新命令会让旧的前缀变歧义;补全必须跟着变。**
+- **一个 panel 的键位提示必须来自 registry,不是手写。**
+  `WorktreePanel` 手写了 "n new · m merge target · d remove · ↑/↓
+  select · Enter merge · Esc close",而它的 `useInput` **一个都没绑**
+  —— 提示承诺了三个不存在的键。R381 门禁会抓这个。现在键表在
+  `src/componentKeys.ts`,提示用 `hintFor(...)` 渲染,handler 真的
+  绑了 `n` / `m` / `d`。
+  **Lesson 1295 — 手写的键位提示和它的 handler 是两份会漂移的真相。**
+- **降级路径不能和成功路径长得一样。**
+  没有 source repo 的 daemon:`worktreeStatus` 报 `available: false` +
+  可执行的 `reason`;`addWorktree` 仍然成功,但返回
+  `isolated: false` + 同一个 reason。TUI 的 Ink panel 和 line frame
+  都**显示** daemon 的 `isolated`,**从不**从"没有 branch"推断它 ——
+  detached-HEAD 的 worktree 没有 branch 但**是**隔离的,stub 没有
+  branch 但**不是**。
+  **Lesson 1296 — 判定归 daemon;渲染器只显示,不推导。**
+
+## Watch out for (R388d additions — 测试不许写进 checked-in 目录)
+
+- **★ 15 个门禁把 tracked 源文件覆盖成了没有 licence header 的生成文件。★**
+  有一类门禁需要编译一个"shim"(一行 re-export)才能 import 纯函数
+  并**跑**它。因为 shim 的 import 是**相对路径**,它必须坐在被
+  re-export 的模块旁边 —— 于是这些门禁都这么写:
+  ```js
+  const shimPath = join(root, "src", "components", "chat", "_t6_13_helpers.ts");
+  writeFileSync(shimPath, shim, "utf-8");   // ← 覆盖了一个 TRACKED 文件
+  ```
+  `src/` 是 **tracked 目录**。shim 是生成的、没有 MIT header,
+  而且**从来不被还原**。症状:**每跑一次 TUI 全量套件,就静默删掉
+  7 个 tracked 文件的 licence header**,`git status` 显示它们被改了。
+  症状2:`aethercode-compact/tmp-r194-e2e`(13 个 **tracked** 文件)
+  是 `r194-end-to-end.test.mjs` 的编译输出目录,每次跑先删后写。
+  我两次用 `git checkout -- <paths>` "修好"它,**下一次跑套件又回来**
+  —— 因为**原因就是套件本身**。
+  → 修法:新增 `aethercode-tui/scripts/test/shim-compile.mjs`。
+  它把 `src/` **复制**到 temp 目录当镜像,shim 写在**镜像**里,
+  `--rootDir` 指向镜像,相对 import 照样能解析。**checked-in 目录
+  一个字节都不动。** 两个 cleanup 门禁从"删掉 shim"改成
+  **"断言 checked-in 目录里没有 shim"** —— 变成回归护栏。
+  **Lesson 1297 — 测试不许写进 checked-in 目录;生成物一律进 temp。**
+- **★ 一个硬编码的绝对路径会让门禁伸手到仓库外面。★**
+  `r194-end-to-end.test.mjs` 里写死了
+  `"D:\\work\\...\\AetherCode\\aethercode-compact"`。于是**从一个
+  隔离副本**(worktree / 基线快照)跑这个门禁时,它编译的、删掉的
+  仍然是**真仓库**里的 `tmp-r194-e2e` —— 我做基线对比时,它把我
+  真仓库的 13 个 tracked 文件删了,而隔离副本安然无恙。
+  → 修法:`join(root, "..", "aethercode-compact")` —— 从**这个文件
+  的位置**推导兄弟包。
+  **Lesson 1298 — 硬编码路径让门禁越出自己的树;用相对推导。**
+- **门禁的失败集合要按"名字"比,不要按"控制台输出"比。**
+  这次比对里,同一个测试在两次运行中分别显示成
+  `StatusBar: contains the ?? suggested rendering` 和
+  `StatusBar: contains the 💡 suggested rendering` —— 那是
+  **控制台编码**的差异,不是两条不同的失败。用
+  `String.fromCharCode(0x2716)` 读原始字节再比,才不会被
+  PowerShell 的重定向编码骗到(它会把文件写成 UTF-16,
+  `readFileSync` 读出来全是 `�`)。
+  **Lesson 1299 — 比对失败集合要读原始字节,不要信控制台的转述。**
+
+## Watch out for (R388e additions — 渲染器的降级不能是静默的)
+
+- **★ "降级到另一个渲染器" 必须说出来,而且要说清原因。★**
+  TUI 自己在 **Ink(全屏)** 和 **line(逐行)** 之间选。判定条件:
+  `useLine = wantLine || !haveTty || !inkSupportsRaw`。
+  原来的提示语挂在
+  ```js
+  } else if (!useLine && !inkSupportsRaw && process.stderr.isTTY) {
+  ```
+  —— 这是**死代码**:`useLine` 在 `!inkSupportsRaw` 时必然为 true,
+  所以 `!useLine && !inkSupportsRaw` **永远不成立**。
+  结果:最常见的情形(用户**没有**传 `--tui`、终端不支持 raw mode、
+  于是拿到 line mode 而不是全屏 UI)**一个字都不打印**。
+  用户看到的是一个"能用但少了整个面板/键位/markdown 渲染"的界面,
+  没有任何线索说明自己拿到的不是他要的那个。
+  → 现在三个分支各自报告:`--line` 是**用户的选择**(不说);
+  `!inkSupportsRaw` 说"终端不支持 raw mode,请用 Windows Terminal /
+  PowerShell 7 / 支持 raw mode 的 SSH/tmux";`!haveTty` 说
+  "stdin/stdout 不是终端"。
+  **Lesson 1300 — 静默的降级和静默的失败是同一种坏:用户以为
+  自己拿到的是完整的东西。**
+- **怎么证明"TUI 走的是 Ink 而不是 line":** 用 `conhost.exe` 造一个
+  真的 ConPTY TTY(`conhost --headless -- <cmd>`),子进程里
+  `process.stdin.isTTY` / `stdout.isTTY` 都是 true,raw mode 探测
+  通过,`useLine=false`。把 conhost 的 stdout 重定向到文件,就能
+  抓到**真实的 Ink 帧**(边框、`ASK` 权限药丸、输入框、运行控制、
+  状态栏)。
+  **Lesson 1301 — 要证明"选了哪个渲染器",就把两个选择都跑一遍,
+  看输出里出现的是哪一个。**
+
+## Watch out for (R388g additions — 模块 URL 不是身份,gate 只会 SKIP 等于没有)
+
+- **一个模块的 URL 不是它的身份。bundle 里所有模块共用同一个 bundle URL。**
+  `aethercode-memory/src/cli.ts` 结尾有 `if (isDirectInvocation()) {
+  main().then(code => process.exit(code)) }`,而 `isDirectInvocation()`
+  原来比较 `import.meta.url` 与 `process.argv[1]`。TUI 打成**一个**
+  esbuild bundle(`dist/ac-tui.js`),又 import 了 memory 包的**库**接口
+  (`index.ts` re-export `./cli.js`)→ esbuild 把 CLI 模块**内联进
+  bundle** → bundle 里 `import.meta.url` 就是 bundle 的 URL,而用户
+  跑 `node dist/ac-tui.js` 时 `argv[1]` **正是**同一个路径 → guard 返回
+  **true** → memory CLI 的 `main()` 拿 TUI 的 argv 跑,认不出子命令,
+  **`process.exit(2)`** → TUI 画完第一帧后自己死了。
+  症状是"还是进入不了":进程没了,所以 `getState` 的回复永远落不下来,
+  `jar` 一直是 `—`。**R388f 的 state replay 让状态栏显示 `✓ ready`,
+  但那只是让 TUI 在死掉前一秒"看起来正常"。**
+  **判据必须落在"文件"上,不是"模块 URL"上** —— 比 basename:
+  `basename(invoked)` 是 `cli.js` / `ac-mem` 才允许自启;bundle 叫
+  `ac-tui.js`,不管 argv 是什么都不是 CLI。
+  **Lesson 1302 — bundle 里每个模块的 URL 都一样,所以"我的 URL 是不是
+  等于 argv[1]"根本区分不了"用户跑了我"和"别的程序 import 了我"。**
+- **一个只能 SKIP 的 gate 等于没有 gate。** R388g 的新 gate 第一版有两
+  条 skip 路径(esbuild 二进制不在预期位置、bundle 解析不到自己的
+  native 模块),都报成 "skipped" —— 那**读起来像有覆盖,其实一次都没跑**。
+  最后改用 esbuild 的 **JS API**(和 `scripts/bundle.mjs` 同一个,这样
+  bundle 形状和出货的一致)+ `better-sqlite3` 保持 external + cwd 设成
+  memory 包目录,native 模块才能按运行时的方式解析。
+  **Lesson 1303 — 一个 gate 如果只会 skip,它证明不了任何事;skip 要
+  报成"没跑",不能报成"通过"。**
+- **从对象上摘下来的方法,bare 调用时没有 `this`。** `InputBox` 的
+  `acceptSuggestion()` 原来写 `const pickFn = active.pick; pickFn()`,
+  `pick()` 里读 `this.suggestions` → undefined → **TypeError**,而且是
+  用户按下 Tab/Enter 接受补全的那一刻 TUI 直接崩。同文件里还有三处
+  同形状的 bare 调用(`rangeFn()`、`moveFn(-1)`、`moveFn(1)`)。
+  **Lesson 1304 — 这不是风格问题,是崩溃;凡是 `obj.fn` 摘下来调用的,
+  都要 `fn.call(obj)`。**
+- **`space-between` 不是分隔符,只是"还有地方"的提示。** 把 context
+  meter 挪到状态行同一行后,长左边把两半挤到一起,读成了
+  `in flightctx[░░░░]`。**Lesson 1305 — 行被填满时两半会贴在一起,
+  文字就变成了一个词;要一个挤不掉的分隔符。**
+- **只在一种状态下有意义的 UI,就该只在那一种状态下渲染。**
+  旧的 `Continue [c] Pause [p] Stop [s]` 行**无条件**渲染,于是空闲
+  状态下 TUI 拿整整一行去显示三个**点了什么都不会发生**的按钮。
+  Desktop 的 centre panel 只在有 run 的时候显示运行控制。
+  → `showControl = !!(onContinue||onPause||onStop) && (state.submitting || state.continuationPaused)`。
+  **Lesson 1306 — 三个什么都不会发生的按钮是一行装饰,不是功能。**
+- **"参考产品"是一个形状,不是一套样式。** 用户说的是"像 desktop 中间
+  那部分",而 desktop 的中间那部分**就是两个组件**
+  (`ChatView.tsx` = `<MessageList/>` + `<MessageInput/>`)。
+  抄它的**形状**(扁平 transcript + 底部悬浮 pill)比抄它的**像素**
+  (820px 上限在这里就是 96 列)更准。
+  **Lesson 1307 — 用户拿别家产品做参照时,参照的是布局拓扑,不是配色。**
+- **R388h 的门禁:改形状要改"意图",不是删门禁。** 四个门禁钉住了旧形状
+  (`borderStyle`、`marginTop={1}`、`width={24}`)。按 **Lesson 1233**,
+  钉**位置**的门禁在任何重构上都会红,包括让代码变好的重构 —— 所以
+  改成钉**意图**("是个圆角 PILL"、"footer 在 markdown 之后"、"width 是
+  显式数字且 ≤ 24"),并把理由写进注释。
+  改形状的门禁必须**逐条**留痕:钉住的东西变了,钉它的理由也要跟着变。
+  Doc: `docs/R388h-tui-chat-shaped.md`。
+- **列表和动作必须对"什么存在"有同一个答案(R388i)。**
+  `listWorktrees` 返回的是**两个来源的并集**:manager 自己的 registry
+  (`states`)+ git 自己的 `git worktree list --porcelain`。第二个来源是
+  有意的 —— 用户在 AetherCode 之外(`git worktree add`)建的 worktree
+  必须可见、可挂载。
+
+  但 `mergeWorktree` 和 `removeWorktree` **只查 registry**。于是:
+  **列表里显示了一个 worktree,用户点"合并",daemon 回"no such worktree"
+  —— 对着一个它刚显示出来的东西。** 这是 R377 的形状向上翻了一层:
+  两个界面 disagree 什么存在,**由用户**来发现。
+
+  修法:两个动作都走 `resolveForMerge(name)` —— registry 命中就返回;
+  没命中就去 git 的列表里找(按 name 或 path 的 file name),并**补上
+  resolved source repo**(git 的记录没有 sourceRepo,因为 git 不知道这个
+  worktree 属于哪个 repo —— 它**就是**那个 repo 的 worktree;不补的话
+  merge 会换一个理由再失败一次)。
+
+  **Lesson 1308 — 一个"列表"和它的"动作"读不同的数据源时,列表里那一项
+  就是一次未来的失败;凡是 list 用了并集,action 就必须能解析到并集的
+  每一项。**
+  **Lesson 1309 — 从另一个来源补来的记录,缺的那个字段要自己补:
+  "记录存在"不等于"记录够用"。**
+  回归测试:`WorktreeManagerR388iTest`(6 例;去掉修复后 3 例红)。
+- **只通过"被测代码本身"造状态的测试,看不见"状态从别处来"的缺陷。**
+  `WorktreeManagerR388Test`(21)+ `R97MTest`(5)全绿,因为它们每一个
+  worktree 都是用 `addWorktree` 造的 —— 永远在 registry 里。漏掉的正是
+  "worktree 在 **git** 里但不在 registry 里"这一条。
+  **Lesson 1310 — 一个只会用被测代码造状态的测试套件,无法发现"这个状态
+  是从别处来的"那类缺陷。**
+  Doc: `docs/R388i-list-and-action-disagree.md`。
+- **R388j** (one frame, one width contract — and a lesson about MEASURING):
+  `PanelShell` 画外框,六个面板组件**自己也画了一个**(`borderStyle="double"`),
+  于是屏幕上出现两个套在一起的框:边框格子重复(`║║`)、内框比容器宽、
+  标题撞进边框、提示行溢出到框外。**规则:外框归 shell,内容归面板。**
+  卡片(tool card / permission card / stop banner)仍可以自己画框 —— 那正是
+  卡片的意义。新增 `PanelBody.tsx`:无外框 + 宽度契约 + `fitRow`(唯一负责
+  补齐到宽度或截断加省略号的地方)。宽度契约**只推导一次**
+  (`panelWidth - 4`),由 host 传给每个面板 —— 面板自己猜宽度,只会在终端
+  改尺寸那一刻开始错。
+  `/sessions` 的作用域必须**诚实且有出路**:空列表要说实话("50 个会话里
+  0 个记录在这个目录"),并且给一个**按键**(`a` → `widenPanelScope` 就地
+  放宽作用域),而不是让用户去记另一个命令的名字。
+  ★ **但这一轮最大的收获是:那个"右边参差不齐"根本不是渲染缺陷。**
+  Ink 把行尾的补白写成 `ESC[nX`(擦 n 格)+ `ESC[nC`(光标右移 n 格),
+  而不是空格;**把所有 ANSI 序列剥掉的测量工具把那两条也删了**,于是每一行
+  都"短了 74 格",边框看起来就在乱跑。按终端的方式重建屏幕(遵守光标移动)
+  之后,**每一行的右边框都在第 100 列**。而且 Ink 的 `<Box width={n}>` 会把
+  子节点**拉满**宽度,所以右边框由**布局**决定,不由文字决定。
+  **Lesson 1311 — 一个把被测对象删掉的测量工具,看不见被测对象。**
+  ANSI 剥除器适合读文本;终端不是文本文件。
+  **Lesson 1312 — 测量和修复必须是同一个产物。** 每一次修复尝试都用同一个
+  坏工具验证,所以工具本身从没被怀疑过;当一个"应该能修好它"的改动修不好时,
+  先怀疑仪器。
+  **Lesson 1313 — Java 源文件里不能出现字面的反斜杠-u 序列,注释里也不行。**
+  Java 的词法分析在 parser 看到文件之前就处理 unicode 转义,所以 javadoc 里的
+  `{@code \uXXXX}` 是**编译错误**("非法的 Unicode 逃逸"),不是文档字符串。
+  **Lesson 1314 — 会飘的测量不是"系统会飘"的证据。** 先证明测量本身是确定的
+  (连跑三次看它是否自洽),再去追缺陷。
+  **Lesson 1315 — 一个渲染文本框的组件自带 `useInput`,它也会收到你的按键。**
+  "我在自己的 handler 里 return 了"不等于"这个键什么也没发生"。`/sessions` 面板
+  里按 `a`:面板 widen 了作用域,同时 filter 框和 prompt 框里也各多了一个 `a`
+  ——三处 `useInput` 同时收到同一个键。
+  **Lesson 1316 — 一个只差一个 Enter 的命令是个陷阱。** autocomplete 下拉框在
+  打开时独占 Enter(接受补全就 return),于是 `/sessions` + Enter 只是把输入框
+  填成 `/sessions `,**命令没有跑**;用户得再按一次 Enter。"我记得住的命令"正是
+  用户最容易踩到的形状。现在:输入已经是完整命令时,补全是装饰性的,同一个
+  Enter 就把命令跑掉;完整性的判断来自**命令目录**(`isCompleteSlashCommand`),
+  不是第二份列表。
+  **Lesson 1317 — 一个 TYPE-ONLY 的 import 要用编译器的 paths 映射,不是
+  package.json 依赖。** desktop 的 `aethercode-themes` 是 type-only import,而
+  R209 明确把它从依赖里**移除**了(那个包从未发布,实现改成了轻量版);
+  把 `file:../aethercode-themes` 加回 `dependencies` 会直接违反那个决定,并让
+  `ThemeSettings.test.tsx` 的门禁变红。正确做法是 tsconfig 的 `paths`:
+  没有安装期依赖,`package.json` 不变,R209 的门禁照样绿。
+  门禁:`r388j-panel-frame.test.mjs`(11 例,含两条**真渲染**断言:在真 TTY 下
+  渲染真的 shell + 真的 panel body,再用终端模拟器重建屏幕);
+  三个变异都**证明会红**(`fitRow` 不补齐 / `ThreadSelector` 自画边框 /
+  面板打开时 prompt 仍然接收按键)。
+  Doc: `docs/R388j-one-frame-one-width.md`。
+- **R388k** (业界对标的 UX 审计 + 三个 P0/P1 修复):对着 Claude Code / Cursor /
+  OpenCode / Cline / Devin Local / Aider 审计 TUI,发现并修了:
+  **(1) 纯命令行下 SDD 全线不可用(P0)** —— daemon 的 `sdd.advance`/`sdd.abort`/
+  `sdd.status` 都要求 `slug`,而 line renderer **从不发 slug**(它没有 reducer 状态,
+  "记住"一个 slug 是不可能的)。于是 `/sdd <intent>` 之后的每一条 SDD 命令都死在
+  "slug and action are required",报错还长得像"这个 daemon 不支持 SDD"。修法:
+  **slug 是"发现"的,不是"记住"的** —— daemon 本来就有 `sdd.listRuns {cwd}`,新增
+  `src/sddRun.ts`(`pickActiveRun`/`isActiveRun`/`extractRuns`/`sddParams`,纯函数
+  无 Ink),line renderer 用它发现当前 run。这也符合业界形状:Devin Local 的 plan
+  写在**仓库外的一个 markdown 文件**里、跨会话存活;Claude Code 的 plan 在
+  `~/.claude/plans/`。
+  **(2) `/help` 只看得到 89 条里的 3 条(P0)** —— help 原来是一个 ~110 行的字符串,
+  作为一个 `sideNote` 发出去,被 scrollback 截到只剩 3 行,没有滚动、没有分页、
+  没有过滤,命令 4–89 根本够不着。现在 `/help` 返回 `__HELP_PANEL__` 哨兵,
+  Ink 打开新的 **CommandHelpPanel**:过滤框 + 滚动窗口 + `↑/↓` + `Enter` 跑命令
+  (走**同一个 router**)。行由**命令目录投影**而来(R380 的"唯一清单"规则),
+  纯逻辑拆到 `src/commandHelp.ts`(没有 React,门禁可直接 import)。
+  **(3) `/sdd-list` 在两个 renderer 里都是坏的** —— 它是个裸
+  `rpcMethod: "sdd.listRuns"`,没有 params,而 daemon 要求 `{cwd}`。现在改成
+  `__SDD_LIST__` 哨兵,两个 renderer 都拦截(只有 renderer 知道自己的 cwd)。
+  另外 line mode 不再拒绝 `/sdd-view|diff|snapshot|clear-cache`:它给出
+  **产物路径**,让 shell 自己的 `cat` 去渲染(纯终端不需要富文本查看器,需要的是
+  路径)。
+  门禁:`r388k-line-sdd.test.mjs`(11 例)、`r388k-help-panel.test.mjs`(9 例)、
+  `r388k-one-name-one-surface.test.mjs`(5 例);五个变异**证明会红**。
+  重复面用**真跑 `routeSlash` 按"效果"(method+params)归并**来判定,不肉眼看名字:
+  真正的重复只有 `/theme` + `/theme-pick`(现已 `aliasOf`);`/continue`+`/pause`
+  是同一个 RPC 的**反向**两个动作,`/sdd-approve`+`/sdd-skip` 是**不同 action**,
+  都不是重复。
+  **Lesson 1318 — 一个"文件里有没有这个模式"的检查,无法钉住逐调用点的契约。**
+  第一版 SDD 门禁只断言 `line.ts` 里**某处**有 `slug:` 和 `cwd: ctx.cwd`;
+  把 `__SDD_ADVANCE__` 改回无 slug 的形状,门禁**照样绿** —— 因为
+  `__SDD_ABORT__`/`__SDD_STATUS__` 仍然带着。**其它正确的实例替错误的那个背书。**
+  每条命令必须在自己的块里检查。
+  **Lesson 1319 — 找"某个词"的检查会在注释里找到那个词。** 第二版问"这条 arm 提到
+  slug 了吗",而变异 `params: { action }`(恰恰是修复前的形状)**活了下来** —— 因为
+  arm 自己的注释里有 "slug" 字样,还调了 `resolveActiveSddRun`。契约要在**它真正
+  被交付的地方**检查:那个变成 request params 的表达式。
+  **Lesson 1320 — 对共享字符串做"邻近正则"只会绑住其中一个出现位置。** 两个
+  `sdd.listRuns` 调用点,去掉其中一个的 cwd,门禁依然绿。契约适用于每个调用点时,
+  就得**逐个调用点**断言。
+  **Lesson 1321 — 契约检查要锚在"调用"上,不是锚在一个也出现在散文里的字符串上。**
+  扫 `src/line.ts` 里的 `sdd.listRuns` 找到 5 处,其中 3 处是注释、错误信息和面板标题。
+  **Lesson 1322 — 在一大块里搜一个标签,可能搜到**邻近构造**的标签。**
+  `paramsExpression(block)` 在整个文件尾巴里找 `params:`,结果抽出了**另一条命令**
+  的 params。提取必须拆成"有 `params:` 标签的块"和"裸实参表达式"两种形状。
+  **Lesson 1323 — 组件里的纯逻辑,只能通过组件来测。** help 面板的投影和过滤写在
+  `.tsx` 里,门禁 import 不了(bundle 会拉进 `react`/`ink`,临时目录里的 bundle
+  解析不到)。把数据拆到 `src/commandHelp.ts` 才测得了 —— 而且代码因此更好。
+  **Lesson 1324 — 没有花括号的 `case` arm 是另一种形状,假设有花括号的提取器会读到
+  错的代码。** `case "__SDD_STATUS__":` 没有块,找"下一个 `{`"会抓到后面某个 arm 的
+  花括号,报出一个并不存在的缺陷。
+  **Lesson 1325 — 同一个方法 + 不同的 params 不算重复。** `/continue` 和 `/pause`
+  都调 `setContinuationStopped`,是一个开关的两面;`/sdd-approve` 和 `/sdd-skip`
+  都发 `__SDD_ADVANCE__`,是两个不同 action。只按 METHOD 归并的门禁会要求删掉
+  它们 —— 所以门禁按**效果**(method + params)归并,并排除已声明的 alias。
+  **Lesson 1326 — 审计对某个子系统的断言,是对另一个系统词汇表的断言,它无法自证。**
+  审计初稿说"always allow 只在 session 内生效,没有落盘",列成 P2。读完 daemon
+  发现**完全相反**:`P` → `<cwd>/.aethercode/permissions.json`,`U` →
+  `~/.aethercode/permissions.json`,而且 `ProjectPermissionPolicy.check` 的顺序就是
+  **deny → ask → allow → mode**,和 Claude Code / Cursor / OpenCode 一字不差。
+  初稿只读了 **TUI 的按键处理**就推断 daemon 的行为 —— 而**作用域是按键选的,
+  持久化是 daemon 做的**,客户端只看到一半。这和 R377 是同一个形状(拒绝表声称
+  方法不存在,而 daemon 其实是**用同义词**提供的)。反复出现的缺陷是:
+  **相信客户端对服务端的视图**。审计报告里保留**作废记录**(哪一条、为什么错、
+  当时读错了哪一半),不要删掉 —— "审计怎么错的"本身就是交付物的一部分。
+  **Lesson 1327 — 现有的双向门禁会抓住你新加的东西,别绕过它们。**
+  R388k 加 `/help` 面板后,r362 的 "every panel sentinel has a registry entry"
+  报 `__HELP_PANEL__` 没有 owner,r381 的 "every registered table's tokens are
+  exactly the handler's tokens" 报面板 handler 多绑了一个 `/`。两条都是**真缺陷**
+  (前者:哨兵没有归属;后者:handler 绑了键表没写的键),都由既有门禁发现 ——
+  它们的"双向"设计正是为了这个。加新表面时**先跑这两个门禁**,而不是等全量。
+  **Lesson 1328 — 一个共享的注册表,会让"每个传输层的接线不同"这个缺陷变得不可见。**
+  daemon 的五个 `sdd.*` RPC 由 `AetherCodeMethods.registerAll(...)` 在**两个**传输层
+  都注册了 —— 所以"方法注册了吗?"在两边都答"是"。但真正干活的 **orchestrator 只在
+  `runHttp` 里装**(`http.methods().setSddOrchestrator`),stdio 路径上它是 null,
+  于是每个调用都抛 `-32603: Internal error: sdd orchestrator not configured`。
+  **TUI 的 line renderer 走的就是 stdio** —— 所以整个 SDD 面在纯终端里不可达,
+  而且**只改客户端永远修不好**。
+  这是 R720 的形状往下一层(`memory/*` 注册了但 store 没装):这里更糟,方法是
+  **已知的**然后运行时才失败,客户端于是相信这个能力存在。
+  → **只有一次真实调用才能发现它。** 静态检查看不见:注册表是共享的,接线是
+  每传输层不同的,所以"注册了吗"这个问题永远问不到这个缺陷上。
+  修法:stdio 路径也装 orchestrator(同样的 best-effort 语义 + 同样的
+  `reloadActiveRuns(cwd)` 重挂),门禁
+  `SddOrchestratorWiringR388kTest`(5 例)**逐传输层**问"装了吗",并按
+  **marker** 而不是签名取方法体(否则会读到 overload 的**一行 delegate** ——
+  R388d 踩过同一个坑)。
+  Doc: `docs/R388k-agent-cli-ux-audit.md`。
+- **R388l** (权限"评论框":注释真的到达模型):照 Claude Code 的权限提示实现
+  "Tab 打开评论框、评论作为理由/上下文发给模型" —— 布尔门禁变成沟通通道。
+  **先查清楚了现状再动手**:wire 上**本来就有** `reason`,**deny 路径本来就能**
+  到达模型(`reason` → `PermissionDecision.reason` → `PermissionResult.Deny.of(reason)`
+  → `Event.Completed(call.id(), d.message(), true)` = tool_result)。
+  **洞在 approve 分支**:`JsonRpcPermissionPrompter.thenApply` 写的是
+  `new PermissionResult.Allow(input)`,reason 被**丢掉了**;而 `Allow` 这个 record
+  只有 `Map updatedInput` 一个字段,**根本没有地方放**。
+  → 用户写"yes, but write to /tmp first",注释**到达 daemon 然后蒸发** ——
+  用户以为自己说了,模型永远没听见。这正是**静默降级**的形状(Lesson 1300)。
+  **Lesson 1329 — 只检查客户端的门禁证明的是"注释发出去了",不是"注释到了"。**
+  客户端和 daemon 是两个系统,注释可以死在它们的边界上。两端都要有门禁,而且
+  **谁都不能替谁作证**。本轮 TUI 门禁同时断言了 daemon 侧(prompter 带上注释、
+  executor 把它追加进 tool_result),Java 侧另有一个走**真实往返**的测试。
+  **Lesson 1330 — 一个"没有留言槽位"的批准分支就是一个静默丢弃。**
+  字段"存在"不等于"被用上"(Lesson 1230 往上一层:approve 分支把**已经收到**的
+  reason 丢了)。
+  **Lesson 1331 — 机器的理由和用户的话是两件事,不能共用一个字段。**
+  `reason` 是审计轨迹("TUI picked deny"),`comment` 是用户原话
+  ("no — use the read-only tool")。合成一个字段,executor 就只能把样板话当成
+  用户的话呈现给模型,或者逼用户自己敲样板话。
+  实现:`PermissionResult.Allow` 与 `PermissionDecision` 各加一个**可选**分量,
+  **旧的构造器全部保留**(`Allow(Map)` / `PermissionDecision(decision, reason)`),
+  所以 15 个生产点 + ~40 个测试点的 `new Allow(input)` **一字不改**继续编译、
+  继续是原来的意思。executor 用**一个** `appendApprovalNote(output, note)` 追加,
+  队列路径和 sink 路径**共用**它(只走一条路的注释 = 只sometimes到达模型的注释)。
+  客户端:Ink 里评论框是**输入框的一个模式**(卡片是 inline 的),`Tab` 开、
+  `Ctrl+<键>` **装填**要发的决定、Enter 发、Esc **只取消不回答**(ask 仍 pending);
+  **评论框开着的时候决定键被挂起**(否则打 "d" 会拒绝而不是写字),
+  默认装填 **deny**(开评论框的人几乎都在说"不完全这样",而默认 allow 是
+  **危险的那一侧**)。line mode 同契约(picker 本来就有 ↑/↓ 列表,更贴
+  Claude Code)。两个 renderer 用**同一个** `permissionResponseParams` ——
+  两个 renderer 不许手搓两种 wire 形状。
+  **空评论是"省略"而不是 `""`** —— 没有评论的回复必须和 R388l 之前**逐字节相同**。
+  门禁:`scripts/test/r388l-permission-comment.test.mjs`(19 例)+
+  `JsonRpcPermissionPrompterR388lCommentTest`(11 例);
+  变异电池 `scripts/test/r388l-mutate.mjs` **10/10 全部变红**(含**原始缺陷**
+  本身:daemon 在 approve 分支丢掉注释)。
+  **Lesson 1332 — 一个键是隐藏的模式就是用户用不了的模式。** 评论框在自己的
+  header 里写明控制键,并且**发送前**就能看到装填的决定。
+  **Lesson 1333 — 一个改错了位置的变异是伪装成"门禁弱"的空操作。**
+  `String.replace` 用字符串 pattern 只换**第一处**,而 **10 个空格的缩进里
+  含有 8 个空格的 pattern 作为子串** —— 所以变异改到了"评论模式里的 Tab
+  空操作"而不是"打开评论框的 Tab",真身没被动,门禁当然还是绿的。
+  正确做法:变异锚在 handler **做了什么**(`commentMode = true`),而不是它的
+  条件文本;门禁的断言也要**有界**(取 comment-mode 块**之后**的那一段)。
+  → 这是 Lesson 1322("在一大块里搜一个标签,可能搜到邻近构造的标签")的
+  推论:**改错位置的变异会报告一个并不存在的门禁缺陷。**
+  **本轮自己的新门禁第一遍是绿的,而既有门禁又抓出 4 个真缺陷** ——
+  ① `keybindings.ts` 的和弦是**从 handler 推导**的(它扫 `input === "x"`
+  在 Ctrl 窗口里),而 handler 写的是 `armDecision(box, input)`(一个裸
+  `input`,扫描器看不见)→ help 会承诺 Ctrl+A/D 这些"注册表看不到绑定"的键;
+  修法:handler 把和弦**显式写出来**,注册表再登记(带 `when`:"a permission
+  comment box is open",和既有的 `d` 绑定一个形状)。
+  ② `key.tab || input === "\t"` 让扫描器把 `"\t"` 当成**第二个**和弦,
+  help 于是欠用户一个没人登记过的绑定 → 只用 `key.tab`。
+  ③ InputBox 手写了 "Ctrl+A/T/P/U/D/N to change · Enter send · Esc cancel"
+  → 组件注册表禁止手写键提示,文字改从 `componentKeys.ts` 来。
+  ④ **注释里引用代码 = 代码**:注册表的扫描器读的是**原始源码**(含注释),
+  两条解释性注释引用了它们描述的比较式,于是被读成两个多出来的"未绑定和弦"。
+  **Lesson 1335 — 读原始源码的扫描器也会读你的注释。** 当扫描器是真相来源,
+  代码周围的散文也是输入的一部分。
+  **Lesson 1336 — 注册表看不见的和弦,help 就没法承诺。**
+  注册表是**从 handler 推导**出来的,所以 handler 必须对它可读:把和弦显式
+  写出来,让注册表去登记。
+  变异电池 `scripts/test/r388l-mutate.mjs` **13/13 全部变红**(含**原始缺陷**
+  本身:daemon 在 approve 分支丢掉注释;以及"Tab 检查长出字面量 `"\t"`"
+  这个幽灵和弦)。
+  **Lesson 1337 — 重新构建之后大小一模一样的 jar,就是没有重新构建的 jar。**
+  shade 插件的"是否过期"判定把**旧构建配置**留下的产物留在了 `target/`,
+  连着三次 `mvn package` 每次都只更新了 mtime,内容一动没动。破绽是
+  `original-…jar`(shade **之前**的 jar)竟然和"shaded"那个一样大 —— 真正的
+  shade 会让 jar 涨 ~57 MB,不可能一样大。**shaded jar 的产物名是
+  `aethercode-cli-0.1.0-SNAPSHOT.jar`,不是 `…-shaded.jar`。**
+  **Lesson 1338 — "BUILD SUCCESS" 不指名是哪一个产物。** 构建成功了,但被
+  检查的文件和被发布的文件不是同一个。要验**内容**(`javap` 出 class,找只有
+  新代码才有的字符串,这里是 `"user said"`),不能只看时间戳。
+  Doc: `docs/R388l-permission-comment.md`。
+- **R388m**(权限截止时间 + 一套宽度规则):三条契约,每条都关掉一个**读代码
+  读出来的**缺陷(不是看屏幕看出来的)。**(1) 权限 ask 由 daemon 公布截止
+  时间**(`timeoutMs` + `expiresAtMs`)。此前客户端只能**猜**超时,而猜错两个
+  方向都致命:猜短了会在用户正要批准时把它拒掉,猜长了用户盯着一个 daemon
+  已经解决掉的 prompt。**一个数,不是两个数** —— 客户端数的必须是 daemon 强制
+  的那个。**(2) 倒计时必须真的拒绝**:一张写着 "auto-denies in 1:12" 然后又
+  静坐五分钟的卡片是**装饰**,不是契约 —— 用户无法分辨这个倒计时有没有意义。
+  所以客户端自己发 deny,并且:用 **ask 的身份**做守卫(用户在期间答了,不能
+  误拒另一个 ask)、**回答时清掉定时器**(一个 ask 一个定时器)、卡片**自己
+  走秒**(只在有截止时间时开 1Hz 定时器)。**(3)「没人能批准」是一句话**,
+  而一句话有三个副本就是三句话:headless `--print`、line(非 TTY)、daemon
+  (无 client)此前各写各的,而且**没有一个告诉模型"别重试"** —— 模型的默认
+  反应就是再试一次,而对着权限墙重试每次都一样失败(症状:跑不完、
+  `loopStops=0`、`errorRate=0.89`、`turnsCompleted=0`)。现在统一走
+  `src/permissionDeadline.ts` 的 `nobodyCanApproveReason`,并且
+  `permissionResponseParams` 新增可选 `reason` **覆盖**默认审计串,否则模型
+  只看到 "line mode picked deny"。
+  **(4) 一套宽度规则**:产品里曾有**三套** —— line input 按**单元**
+  (CJK=2,光标要落对位置),而 `PanelBody.fitRow`、markdown 表格、system-prompt
+  表格按**字符**。中文标题在 60 单元的面板里被当成 30 字符 → 实际占 60 单元
+  → **冲出右边框**(这就是"对话框参差不齐"的成因)。现在统一到
+  `src/cellWidth.ts` 的 `cellWidth`/`fitCells`/`padCells`/`maxCells`;
+  所有**用户可控字符串**的列(`padEnd`)都换成 `padCells`。
+  **Lesson 1339 — 用 `.length` 算出来的列宽,是**单位错了**的列宽。**
+  终端是**单元**的网格,CJK 占 2 格。
+  **Lesson 1340 — 只**显示**的倒计时不是契约。**
+  **Lesson 1341 —「没人能批准」是一句话;一句话有三个副本就是三句话。**
+  **Lesson 1342 — 共享工具函数可以带着它要消灭的那个缺陷。**
+  `fitCells` 的**截断**分支是按单元的,**填充**分支却是 `plain.padEnd(w)`
+  (按字符)—— 同一个函数、同一次提交里,一个对一个错。**每个分支都要查。**
+  **Lesson 1343 —「文件乱码」在证明之前是对**读的人**的指控。**
+  conhost 的输出一直是正确 UTF-8(`e2 8c ac` = `⌬`),mojibake 来自
+  PowerShell 的 `Get-Content`。**读文件用 node,不要用 `Get-Content`。**
+  **Lesson 1344 — 倒计时要**向下取整**。**向上取整会显示并不存在的时间
+  ("0:01" 而实际是 0),用户按的键会迟到。
+  **Lesson 1345 — 权限墙拒掉一次调用时,模型需要知道**两件事**:
+  没人能批准,以及**不要重试**。少了第二条,重试循环就是必然结果。
+  **Lesson 1346 — 契约检查要锚在**构造**上,不是锚在一个也出现在散文里的
+  字符串上。** `[\s\S]{0,2000}?` 这种**邻近**正则:改个名就变红(重构不
+  算缺陷),把 deny 挪到 1500 字符外的另一个函数里照样变绿(那才是缺陷)。
+  改成**抽取那个 block** 再断言 block。
+  **Lesson 1347 — 产品没错的时候,先怀疑仪器。** 这一轮的终端模拟器错了
+  **三次**(没实现换行 / `ESC[nC` 越过末列不换行 / `ESC[nX` 扩展了行而不是
+  裁剪到终端宽),每次都是仪器的问题;修好后:可见屏幕 30 行、maxCells=119、
+  **0 行超过 120** —— R388j 的宽度契约本来就成立。
+  **Lesson 1348 — 一个数,不是两个数。** 客户端数的截止时间必须**就是**
+  daemon 强制的那一个;公布一个窗口、强制另一个,是客户端赢不了的赛跑。
+  **Lesson 1349 — 一个要穿过每个调用点的参数,就是放错了位置的参数。**
+  定时器表作为 `replyPermission` 的第 7 个位置参数,把每个调用点撑成
+  9 行(prettier 展开),**并且**打破了 R388l 门禁锚在
+  `replyPermission(client, ask, "allow"` 上的字符串 —— 一次**无害**的重构
+  把门禁弄红了。这张表只有一个主人(权限流程),所以**模块级**才是诚实的
+  作用域;React ref 反而要穿过一个模块级函数,毫无收益。
+  **而且:当一次 reflow 把门禁弄红时,先问门禁钉的是"拼写"(Lesson 1233)
+  还是"不变量"。** 本次门禁钉的确实是拼写,所以它对"更干净的重构"变红
+  是**假警报** —— 该改的是**参数的位置**,不是删门禁。
+  **Lesson 1350 — 重载(overload)也是一种"接线差异"。** 一个 override
+  了**五参** `askPermission` 的 stub,不会被**六参**重载的调用命中。第一版
+  R388m 加了 `askPermission(..., long timeoutMs)` 并让 prompter 直接调它,
+  结果**每一个** stub 都被绕过:ask 无人应答,future 超时,测试看到的是
+  **一条超时消息**而不是它要验的契约。这是 Lesson 1328 的形状 —— 共享的
+  注册点让接线差异不可见;只不过这里的差异是**重载**,而**唯一的症状
+  是一条超时消息**。修法:ask 仍然由**大家都会 override 的那一个方法**
+  发出,截止时间通过一个**读后即清**的字段传进去(所以不会漏进下一次 ask)。
+  **Lesson 1351 — 测试里的"超时消息"是**症状**,不是判决。**
+  "ask 超时了"读起来像"被测代码太慢";实际上它意味着"这次调用去了 stub
+  看不见的地方"。**读消息,然后问:到底调用的是哪一个方法。**
+  **Lesson 1352 —"诚实"和"可演示"都是要求。** 一个只渲染出"这个功能
+  诚实地不存在"的 demo,什么也没演示。demo 的合成 ask 现在带上了来自
+  **那一个常量**的截止时间;而且它的等待窗口被**加长**了 —— 60 秒的上限
+  比 120 秒的倒计时**短**,会把它正在展示的那个功能自己截断。
+  Doc: `docs/R388m-permission-deadline-and-cell-width.md`。

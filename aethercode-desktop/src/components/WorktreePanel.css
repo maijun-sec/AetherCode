@@ -1,0 +1,218 @@
+/* worktree panel — list + create / merge / remove
+   affordances for the daemon's git worktrees.
+   Compact: lives in the right panel under a tab, so a
+   long worktree list scrolls within the panel.
+
+   The colour of the badge is the POINT of this panel:
+   a "plain dir" badge must be visible at a glance,
+   because it means the user asked for isolation and
+   did not get it (R388c). */
+.worktree-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.worktree-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary, #a0a0a8);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.worktree-panel-refresh {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary, #a0a0a8);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.worktree-panel-refresh:hover { opacity: 0.85; }
+
+/* R388c: when the daemon cannot create real git
+   isolation, the panel says so up front — with the
+   reason and the fix. A silent degradation would let
+   the user believe they were isolated. */
+.worktree-panel-warning {
+  margin: 8px 4px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(224, 168, 83, 0.4);
+  background: rgba(224, 168, 83, 0.1);
+  color: #e0a853;
+  font-size: 11px;
+  line-height: 1.5;
+  flex: 0 0 auto;
+}
+.worktree-panel-warning code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.worktree-panel-notice {
+  margin: 6px 4px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  flex: 0 0 auto;
+}
+.worktree-panel-notice-ok {
+  border: 1px solid rgba(90, 190, 120, 0.4);
+  background: rgba(90, 190, 120, 0.1);
+  color: #5abe78;
+}
+.worktree-panel-notice-warn {
+  border: 1px solid rgba(224, 168, 83, 0.4);
+  background: rgba(224, 168, 83, 0.1);
+  color: #e0a853;
+}
+.worktree-panel-notice-err {
+  border: 1px solid rgba(224, 96, 96, 0.4);
+  background: rgba(224, 96, 96, 0.1);
+  color: #e06060;
+}
+.worktree-panel-create,
+.worktree-panel-merge-target {
+  display: flex;
+  gap: 6px;
+  padding: 8px 4px 0;
+  flex: 0 0 auto;
+}
+.worktree-panel-merge-target { padding-top: 6px; }
+.worktree-panel-input {
+  flex: 1;
+  background: var(--bg-input, #1a1a1e);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text, #e0e0e6);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.worktree-panel-input:focus { border-color: var(--accent, #4a9eff); }
+.worktree-panel-create-btn {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.worktree-panel-create-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.worktree-panel-empty {
+  padding: 20px 12px;
+  text-align: center;
+  color: var(--text-tertiary, #5a5a62);
+  font-size: 12px;
+  font-style: italic;
+}
+.worktree-panel-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0 4px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+.worktree-panel-row {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin-bottom: 6px;
+  background: var(--bg-elevated, #1e1e22);
+}
+.worktree-panel-row-selected {
+  border-color: var(--accent, #4a9eff);
+}
+.worktree-panel-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.worktree-panel-row-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text, #e0e0e6);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-panel-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* the verdict badge — the daemon's `isolated` flag */
+.worktree-panel-badge-ok {
+  background: rgba(90, 190, 120, 0.15);
+  color: #5abe78;
+  border: 1px solid rgba(90, 190, 120, 0.35);
+}
+.worktree-panel-badge-warn {
+  background: rgba(224, 168, 83, 0.15);
+  color: #e0a853;
+  border: 1px solid rgba(224, 168, 83, 0.4);
+}
+.worktree-panel-row-branch {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary, #a0a0a8);
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-panel-row-reason {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #e0a853;
+}
+.worktree-panel-row-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.worktree-panel-row-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary, #a0a0a8);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.worktree-panel-row-actions button:hover:not(:disabled) {
+  border-color: var(--accent, #4a9eff);
+  color: var(--text, #e0e0e6);
+}
+.worktree-panel-row-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.worktree-panel-selected {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary, #a0a0a8);
+  flex: 0 0 auto;
+}

@@ -37,24 +37,18 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileShim, importCompiled } from "./shim-compile.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
 // ----- Compile the helpers to plain ESM -----------------------------
-const tmp = join(root, "tmp-r169b-tsc");
-const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-if (existsSync(tmp)) {
-  spawnSync(
-    process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-  );
-}
-mkdirSync(tmp, { recursive: true });
-// Build the shim with forward-slash absolute paths so Windows +
-// module resolution play nicely. We put the shim in src/ so the
-// relative imports work too.
-const shimPath = join(root, "src", "components", "_r169_helpers.ts");
+// R388d: the shim is compiled in a TEMP MIRROR of `src/`, not
+// in the checked-in tree. See `./shim-compile.mjs` — fifteen gates
+// used to overwrite a TRACKED source file with a generated one-liner
+// and never restored it, so every run of this suite silently
+// stripped the licence header from it.
+const shimRel = ["components", "_r169_helpers.ts"];
 const shim = [
   `export { formatAgentLabel } from "./AgentSelector.js";`,
   `export { formatEffortLabel } from "./EffortPicker.js";`,
@@ -62,37 +56,15 @@ const shim = [
   `export { formatThemeLabel, filterThemes } from "./ThemePicker.js";`,
   "",
 ].join("\n");
-writeFileSync(shimPath, shim, "utf-8");
-
-const tscArgs = [
-  "--outDir",
-  join(tmp, "out"),
-  "--target",
-  "ES2022",
-  "--module",
-  "ES2022",
-  "--moduleResolution",
-  "bundler",
-  "--jsx",
-  "react",
-  "--esModuleInterop",
-  "true",
-  "--skipLibCheck",
-  "true",
-  "--rootDir",
-  join(root, "src"),
-];
-const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
-  encoding: "utf-8",
-  shell: true,
+const compiledShim = compileShim({
+  root,
+  tmp: join(root, "tmp-r169b-tsc"),
+  shimRel: shimRel.join("/"),
+  body: shim,
+  extraArgs: [],
 });
-if (r.status !== 0) {
-  console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
-  process.exit(1);
-}
-const helpers = await import(
-  "file:///" + join(tmp, "out", "components", "_r169_helpers.js").replace(/\\/g, "/")
-);
+const helpers = await importCompiled(compiledShim);
+
 const { formatAgentLabel, formatEffortLabel, makeStatValidator, formatThemeLabel, filterThemes } =
   helpers;
 

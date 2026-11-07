@@ -44,6 +44,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { hintFor } from "../componentKeys.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
 import { useTheme } from "../ThemeContext.js";
 
 /** A 9-color palette for swatch rendering. Mirrors `aethercode-themes`'s
@@ -216,7 +219,7 @@ export const ThemePicker: React.FC<ThemePickerProps> = ({
                 </Text>
                 <Text color={isActive ? active.brand : undefined}>{isActive ? "●" : " "} </Text>
                 <Text>
-                  <Text bold={isHighlighted}>{t.name.padEnd(18)}</Text>
+                  <Text bold={isHighlighted}>{padCells(t.name, 18)}</Text>
                   <Text dimColor> </Text>
                   <Text dimColor>{t.origin === "user" ? "(user)  " : "(built-in)"}</Text>
                 </Text>

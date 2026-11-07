@@ -54,6 +54,38 @@ final class DaemonRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DaemonRunner.class);
 
+    /**
+     * R388d: the git repo new worktrees attach to, set once by
+     * {@code Main} before the daemon starts.
+     *
+     * <p>It is a FIELD and not an extra method parameter on purpose.
+     * The source-pin gates address the daemon's entry points by
+     * "occurrence N of {@code private static int runInternal(}" and
+     * "occurrence N of {@code EngineFactoryWithSpec specFactory)
+     * {}". Those signatures are PREFIXES, so adding a parameter
+     * to an existing overload — or adding an overload beside it —
+     * renumbers every sibling and silently repoints the gate at a
+     * different method. R388d added a 7th parameter to
+     * {@code runInternal} and a 5th to {@code runHttp}, and the
+     * R371 gate went red on three assertions that were still
+     * true, because it had begun reading a one-line DELEGATE.
+     *
+     * <p>Lesson 1288 — an overload is not a free addition: it
+     * renumbers every sibling that shares the signature's
+     * prefix, and the readers of that numbering are gates nobody
+     * remembers.
+     *
+     * <p>The alternative — one setter on this class — keeps the
+     * entry points' shapes exactly as the gates expect them.
+     */
+    private static volatile String worktreeSourceRepo;
+
+    /** R388d: the git repo new worktrees attach to, or null for
+     *  plain-directory mode. */
+    static void setWorktreeSourceRepo(String path) {
+        worktreeSourceRepo = path;
+    }
+
     private DaemonRunner() {}
 
     /** convenience overload for callers that
@@ -122,7 +154,21 @@ final class DaemonRunner {
      *  and {@code prebuiltManager} is also non-null,
      *  the helper installs the spec factory on the
      *  prebuilt manager before letting
-     *  {@code SessionManager.getOrCreate} see it. */
+     *  {@code SessionManager.getOrCreate} see it.
+     *
+     *  <p>R388d: the git repo new worktrees attach to
+     *  arrives as {@link #worktreeSourceRepo}, NOT as a
+     *  seventh parameter. A second overload of this method
+     *  shares this one's signature prefix, so it renumbers
+     *  the occurrences that the source-pin gates address
+     *  this method by — and the R371 gate began reading a
+     *  one-line DELEGATE and reported three defects that
+     *  did not exist.
+     *
+     *  <p>Lesson 1288 — an overload is not a free
+     *  addition: it renumbers every sibling that shares
+     *  the signature's prefix, and the readers of that
+     *  numbering are gates nobody remembers. */
     private static int runInternal(
             AetherCodeEngine engine,
             java.util.function.Function<String, AetherCodeEngine> sessionFactory,
@@ -214,8 +260,63 @@ final class DaemonRunner {
         // returning "session manager not configured".
         AetherCodeMethods methods = new AetherCodeMethods(engine,
                 sessionManager,
-                n -> server.notify(n.method(), n.params()));
+                n -> server.notify(n.method(), n.params()),
+                worktreeSourceRepo);
         methods.registerAll(server.dispatcher());
+
+        // R388k — install the SDD orchestrator on the STDIO path too.
+        //
+        // It was installed on the HTTP path only (runHttp), so the five
+        // `sdd.*` RPCs answered `-32603: Internal error: sdd
+        // orchestrator not configured` on stdio. The TUI's LINE mode
+        // talks to the daemon over stdio, so the whole SDD surface was
+        // unreachable from a pure terminal — the client fix alone
+        // could not have made it work.
+        //
+        // This is the R720 memory/* shape again, one layer out: a
+        // capability wired on ONE transport and missing on the other.
+        // The method REGISTRY is shared (AetherCodeMethods.registerAll
+        // registers sdd.* on both), so the methods were ADVERTISED on
+        // stdio and then failed every call — the worst of both.
+        //
+        // Wiring is best-effort, exactly as on the HTTP path: if the
+        // bundle fails to load (missing jar resource, partial release)
+        // the daemon logs and continues without sdd.*.
+        try {
+            SddBundleLoader bundle = SddBundleLoader.load();
+            org.aethercode.core.llm.ChatClient chatForSdd = engine.chatClient();
+            // R709-E5 engine-side: the orchestrator's model-routing
+            // factory. The default `m -> chatForSdd` returns the same
+            // client regardless of model, so per-phase model overrides
+            // are recorded on phase-state.json but the actual stream()
+            // call still goes through the engine's default client.
+            java.util.function.Function<String, org.aethercode.core.llm.ChatClient> chatForSddModel
+                    = m -> chatForSdd;
+            SddOrchestrator sdd = new SddOrchestrator(
+                    bundle, chatForSdd, List.of(), chatForSddModel);
+            methods.setSddOrchestrator(sdd);
+            LOG.info("R388k: SDD orchestrator installed on the stdio path ({} phase refs, {} templates loaded)",
+                    bundle.isLoaded() ? 8 : 0,
+                    4);
+            // R709-B: re-attach in-memory cwdBySlug from on-disk
+            // phase-state.json files, so a run that was mid-flight when
+            // the daemon went down can still be advanced.
+            try {
+                java.nio.file.Path cwdPath = engine.appState().cwd();
+                if (cwdPath != null) {
+                    int n = sdd.reloadActiveRuns(cwdPath);
+                    if (n > 0) {
+                        LOG.info("R709-B: re-attached {} active SDD slug(s) from {}",
+                                n, cwdPath);
+                    }
+                }
+            } catch (Exception reloadErr) {
+                LOG.warn("R709-B: reloadActiveRuns failed: {}", reloadErr.getMessage());
+            }
+        } catch (Exception sddLoadErr) {
+            LOG.warn("R388k: SDD bundle load failed — sdd.* RPC surface disabled on stdio: {}",
+                    sddLoadErr.getMessage());
+        }
 
         // R-paper-batch6-TIER-3-E2E: register the Tier-3 paper-compat
         // RPC surface on the same dispatcher the front-end (CLI / TUI
@@ -564,7 +665,19 @@ final class DaemonRunner {
      *  see {@link #buildSessionManager} for the
      *  full root-cause story. The CLI's
      *  {@code Main.buildEngineForSession(SessionSpec)}
-     *  is the canonical spec factory. */
+     *  is the canonical spec factory.
+     *
+     *  <p>R388: the HTTP+WS daemon is the one the desktop
+     *  talks to, so this is the path that enables real
+     *  git isolation for the desktop's session picker.
+     *
+     *  <p>R388d: the repo is carried by
+     *  {@link #setWorktreeSourceRepo(String)} rather than by a
+     *  parameter on this method. The source-pin gates address
+     *  it by "occurrence N of {@code
+     *  EngineFactoryWithSpec specFactory) {"}, and a 5th
+     *  parameter would remove THIS declaration from that
+     *  sequence — repointing the gate at the next method. */
     static int runHttp(AetherCodeEngine engine, int port,
                         java.util.function.Function<String, AetherCodeEngine> sessionFactory,
                         org.aethercode.sdk.SessionManager.EngineFactoryWithSpec specFactory) {
@@ -599,7 +712,7 @@ final class DaemonRunner {
         // field is initialised with the right
         // reference too.
         org.aethercode.protocol.http.HttpJsonRpcServer http =
-                new org.aethercode.protocol.http.HttpJsonRpcServer(port, engine, sessionManager);
+                new org.aethercode.protocol.http.HttpJsonRpcServer(port, engine, sessionManager, worktreeSourceRepo);
 
         // same SessionStore wire-up as the stdio
         // path. The HTTP+WS daemon is what the Tauri /

@@ -72,6 +72,11 @@ import { MODE } from "./permissionModes.js";
 // registry's own type, and the default is the registry's own symbol.
 import { DEFAULT_THEME_NAME, type ThemeName } from "./themes.js";
 
+// R388l: the permission comment box's state shape lives in its own
+// module (pure, no React) so a gate script can import it — a `.tsx`
+// component cannot be imported by a Node gate (Lesson 1323).
+import type { CommentBoxState } from "./permissionComment.js";
+
 export type Role =
   "user" | "assistant" | "thinking" | "tool" | "plan" | "system" | "error" | "permission";
 export type ToolStatus = "running" | "ok" | "error";
@@ -181,7 +186,9 @@ export type PanelId =
   | "context" // R371 — /context, the row R362 shipped as a placeholder
   | "workflows" // R373 — /workflow, the row R365 found line-mode-only
   | "update" // R374 — /update and /update-deps, one panel + a verb flag
-  | "mode"; // R385 — /mode, the picker only line mode used to have
+  | "mode" // R385 — /mode, the picker only line mode used to have
+  | "help" // R388k — /help as a filterable LIST, not a truncated wall of text
+  | "worktrees"; // R388c — /worktree, the git isolation lifecycle
 
 /** Loading / error / notice triple shared by every panel. Drives
  *  the shell's pending row and its red error row so a failed RPC is
@@ -248,6 +255,39 @@ export interface ThreadRow {
 /** One stored consent grant, normalised from `permission/list`.
  *  Field names match `GrantsManager.Grant` so the component can
  *  consume the array without a conversion step. */
+/**
+ * R388c: one worktree, normalised from `listWorktrees`.
+ *
+ * `isolated` is the daemon's VERDICT — the renderer displays
+ * it and never derives it. A worktree with `isolated: false`
+ * is a plain directory that only LOOKS like isolation; the
+ * `reason` says why.
+ */
+export interface WorktreeRow {
+  name: string;
+  path: string;
+  branch: string | null;
+  sourceRepo: string | null;
+  isolated: boolean;
+  reason: string | null;
+}
+
+/**
+ * R388c: the daemon's worktree configuration.
+ *
+ * `available` is false when the daemon cannot create REAL
+ * git isolation at all — no source repo configured, git
+ * missing, or the path is not a repository. The panel says
+ * so with the reason instead of rendering an empty list
+ * that reads like "you have no worktrees".
+ */
+export interface WorktreeStatusRow {
+  available: boolean;
+  sourceRepo: string | null;
+  root: string;
+  reason?: string;
+}
+
 export interface GrantRow {
   id: string;
   scope: "session" | "project" | "user";
@@ -676,6 +716,22 @@ export interface State {
    */
   decisionCardExpanded: boolean;
   /**
+   * R388l — the permission COMMENT BOX.
+   *
+   * <p>Claude Code lets the user attach a free-text comment to a permission
+   * answer (`Tab` on the selected option opens a comment field), and the
+   * comment reaches the model. A boolean gate becomes a communication
+   * channel.
+   *
+   * <p>While this is non-null the input box is a COMMENT FIELD, not a
+   * prompt: the decision keys are suspended (otherwise "d" would deny
+   * instead of typing the letter d), and the decision the comment will be
+   * sent with is armed with `Ctrl+&lt;key&gt;`.
+   *
+   * <p>`null` means "no comment box open" — the normal state.
+   */
+  commentBox: CommentBoxState | null;
+  /**
    * while the model is streaming, we keep a "current mode" — the
    * next text delta either lands in the most recent assistant turn
    * ({@code "reply"}) or in a dedicated "thinking" turn (between
@@ -853,6 +909,12 @@ export interface State {
   threads: ThreadRow[];
   /** R362: consent grants, from `permission/list`. */
   grants: GrantRow[];
+  /** R388c: the worktree list + the daemon's verdict on
+   *  whether real git isolation is available. */
+  worktrees: WorktreeRow[];
+  worktreeStatus: WorktreeStatusRow | null;
+  /** R388c: the worktree the NEXT session binds to. */
+  selectedWorktree: string | null;
   /** R373: workflow-picker rows, from `listWorkflows`. */
   workflows: WorkflowRow[];
   /**
@@ -1139,6 +1201,20 @@ export interface PermissionAsk {
   input: Record<string, unknown>;
   reason: string;
   riskLevel: "low" | "medium" | "high" | "critical";
+  /**
+   * R388m: when the ask expires, in epoch millis.
+   *
+   * <p>The DAEMON publishes this, so the client's countdown runs on the
+   * same clock the daemon enforces. `null` means the daemon published no
+   * deadline — the card then shows NO countdown rather than a guessed one
+   * (a guessed deadline can deny a call the user was about to approve).
+   */
+  expiresAtMs?: number | null;
+  /**
+   * R388m: the full window in millis, so the card can show "2:00" at the
+   * start rather than counting down from an unknown total.
+   */
+  timeoutMs?: number | null;
 }
 
 export type Action =
@@ -1260,6 +1336,12 @@ export type Action =
   | { type: "setSpanTree"; traceId: string | null; spans: TraceSummary[] } // R79
   | { type: "setShowThinking"; show: boolean } // R86: toggle dim "thinking" sub-section
   | { type: "setDecisionCardExpanded"; expanded: boolean } // R86: collapse the inline permission card
+  // R388l: the permission comment box. `open` starts a fresh box;
+  // `close` cancels it (the ask stays pending — cancelling must not be
+  // indistinguishable from answering).
+  | { type: "openCommentBox"; state: CommentBoxState }
+  | { type: "setCommentBox"; state: CommentBoxState }
+  | { type: "closeCommentBox" }
   | { type: "setPermissionMode"; mode: string } // R87: update the active permission mode (ACCEPT_TASK / DEFAULT / ...)
   | {
       type: "subagentEvent";
@@ -1312,6 +1394,7 @@ export type Action =
 
   /* --- R362: Ink panel host ------------------------------------ */
   | { type: "openPanel"; id: PanelId; cwdOnly?: boolean; updateVerb?: UpdateVerb } // R362: mount a panel; R370: `cwdOnly` filters the session list to the active cwd; R374: `updateVerb` picks which update operation the panel is about
+  | { type: "widenPanelScope" } // R388j: widen the session picker from "this cwd" to "every session" without closing it (the `a` key in the empty state)
   | { type: "closePanel" } // R362: unmount + restore the prompt draft
   | { type: "setPanelStatus"; status: PanelStatus } // R362: pending / error / notice
   | { type: "setMemoryTab"; tab: MemoryScopeId } // R362: switch tab (App re-fetches the scope)
@@ -1319,6 +1402,8 @@ export type Action =
   | { type: "setMemoryCompact"; progress: MemoryCompactProgress } // R362: `memory/compact` result
   | { type: "setThreads"; threads: ThreadRow[] } // R362: `listSessions` result
   | { type: "setGrants"; grants: GrantRow[] } // R362: `permission/list` result
+  | { type: "setWorktrees"; worktrees: WorktreeRow[]; status: WorktreeStatusRow | null } // R388c: `listWorktrees` + `worktreeStatus`
+  | { type: "selectWorktree"; name: string | null } // R388c: the worktree the next session binds to
   | { type: "setWorkflows"; workflows: WorkflowRow[]; dir: string | null; skipped: string[] } // R373: `listWorkflows` result
   | { type: "setUpdateFacts"; facts: UpdateFacts | null } // R374: the update probe's answer
   | { type: "setMcpServers"; servers: McpServerRow[] } // R362: MCP listing
@@ -1419,6 +1504,9 @@ export const INITIAL: State = {
   // press Esc to collapse it (the input box then takes the focus,
   // and the keys A/T/P/U/D/N are still honoured).
   decisionCardExpanded: true,
+  // R388l: no permission comment box open. `Tab` opens one while an
+  // ask is pending.
+  commentBox: null,
   // streaming parser state. Both reset to "reply" / "" on every
   // runStart. The reducer updates them on every streamText action.
   streamingMode: "reply",
@@ -1481,6 +1569,10 @@ export const INITIAL: State = {
   memoryCompact: { state: "idle" },
   threads: [],
   grants: [],
+  // R388c: the worktree list + the daemon's verdict.
+  worktrees: [],
+  worktreeStatus: null,
+  selectedWorktree: null,
   workflows: [],
   workflowDir: null,
   workflowSkipped: [],
@@ -2217,6 +2309,20 @@ export function reducer(state: State, action: Action): State {
       // keep using the input box; the decision keys A/T/P/U/D/N
       // still fire as long as permissionAsk is non-null.
       return { ...state, decisionCardExpanded: action.expanded };
+    case "openCommentBox":
+      // R388l: open the permission comment box. The input box becomes
+      // a comment field and the decision keys are suspended.
+      return { ...state, commentBox: action.state };
+    case "setCommentBox":
+      // R388l: the comment box changed (a character typed, the armed
+      // decision changed).
+      return { ...state, commentBox: action.state };
+    case "closeCommentBox":
+      // R388l: cancel the comment box. The ask stays PENDING — a
+      // cancelled comment must not be indistinguishable from an answer
+      // (that would be a silent degradation: the user thinks they
+      // answered, the daemon thinks nobody did).
+      return { ...state, commentBox: null };
     case "setPermissionMode":
       // update the active permission mode. The header pill
       // re-colors immediately and any pending permission ask
@@ -2529,6 +2635,23 @@ export function reducer(state: State, action: Action): State {
       };
     }
 
+    case "widenPanelScope":
+      // R388j: `/sessions` is scoped to the active cwd, and a
+      // directory with no sessions yet shows an empty panel. The
+      // empty state offers a keypress ("press 'a' to see every
+      // session"), so the state has to be able to widen in place —
+      // the panel STAYS OPEN and the row list is re-fetched.
+      //
+      // The fetch effect keys on `panelCwdOnly`, so flipping the
+      // flag re-runs it with the wider scope.
+      if (state.activePanel === null) return state;
+      if (!state.panelCwdOnly) return state;
+      return {
+        ...state,
+        panelCwdOnly: false,
+        panelStatus: EMPTY_PANEL_STATUS,
+      };
+
     case "closePanel":
       // Guard the draft restore on `activePanel !== null`: a stray
       // `closePanel` after the panel is already gone would
@@ -2640,6 +2763,16 @@ export function reducer(state: State, action: Action): State {
 
     case "setGrants":
       return { ...state, grants: action.grants };
+
+    case "setWorktrees":
+      return {
+        ...state,
+        worktrees: action.worktrees,
+        worktreeStatus: action.status,
+      };
+
+    case "selectWorktree":
+      return { ...state, selectedWorktree: action.name };
 
     case "setWorkflows":
       return {

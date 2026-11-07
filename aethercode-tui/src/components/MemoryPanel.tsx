@@ -54,9 +54,14 @@
 // source of truth and avoids dual-write hazards.
 
 import { hintFor } from "../componentKeys.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { t, icon, formatTokens, formatRelative } from "../theme.js";
+// R388j — the shell owns the frame; the body owns the content.
+import { PanelBody } from "./PanelBody.js";
 
 /* ----------------------------- types --------------------------------- */
 
@@ -298,7 +303,7 @@ export function MemoryPanel(props: MemoryPanelProps) {
   const effectiveFocus = focusId ?? current.entries[0]?.id ?? null;
 
   return (
-    <Box flexDirection="column" width={width} borderStyle="single" borderColor={t.dim} paddingX={1}>
+    <PanelBody width={width}>
       {/* Title + tab bar (T-081) */}
       <Box>
         <Text bold color={t.brand}>
@@ -356,7 +361,7 @@ export function MemoryPanel(props: MemoryPanelProps) {
           <Box key={e.id} flexDirection="column">
             <Box>
               <Text inverse={focused} color={focused ? "black" : kindColor}>
-                {focused ? "▶" : " "} {kindIcon} {e.kind.padEnd(10, " ")}
+                {focused ? "▶" : " "} {kindIcon} {padCells(e.kind, 10)}
               </Text>
               <Text {...(focused ? { inverse: true } : {})}>{rowText(e, lineWidth)}</Text>
             </Box>
@@ -371,7 +376,7 @@ export function MemoryPanel(props: MemoryPanelProps) {
       <Box marginTop={1}>
         <CompactFooter scope={effectiveTab} progress={compactProgress} onCompact={onCompact} />
       </Box>
-    </Box>
+    </PanelBody>
   );
 }
 

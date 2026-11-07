@@ -56,6 +56,9 @@
  */
 
 import { hintFor } from "../componentKeys.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
 import React from "react";
 import { Box, Text, useInput } from "ink";
 import type { UpdatePanelModel } from "../updateInfo.js";
@@ -99,7 +102,7 @@ export const UpdatePanel: React.FC<UpdatePanelProps> = ({ model, onChangelog, on
       <Text> </Text>
       {model.rows.map(([k, v]) => (
         <Box key={k} flexDirection="row">
-          <Text dimColor> {k.padEnd(16)}</Text>
+          <Text dimColor> {padCells(k, 16)}</Text>
           <Text>{v}</Text>
         </Box>
       ))}

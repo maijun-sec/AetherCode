@@ -354,9 +354,23 @@ public final class HttpJsonRpcServer {
      *  uses the 3-arg form. */
     public HttpJsonRpcServer(int port, AetherCodeEngine engine,
                               org.aethercode.sdk.SessionManager sessionManager) {
+        this(port, engine, sessionManager, null);
+    }
+
+    /** R388: constructor that also installs the git
+     *  repo new worktrees attach to.
+     *
+     *  <p>The HTTP+WS daemon is what the desktop talks
+     *  to, so this is the path that MATTERS for worktree
+     *  isolation in the desktop app. Pre-R388 the HTTP
+     *  path had no way to enable real git isolation at
+     *  all. */
+    public HttpJsonRpcServer(int port, AetherCodeEngine engine,
+                              org.aethercode.sdk.SessionManager sessionManager,
+                              String worktreeSourceRepo) {
         this.port = port;
         this.engine = Objects.requireNonNull(engine, "engine");
-        this.methods = new AetherCodeMethods(engine, sessionManager, broadcastNotifier);
+        this.methods = new AetherCodeMethods(engine, sessionManager, broadcastNotifier, worktreeSourceRepo);
     }
 
     public AetherCodeMethods methods() { return methods; }
@@ -925,6 +939,15 @@ public final class HttpJsonRpcServer {
             case "addWorktree" -> methods.addWorktree(params);
             case "removeWorktree" -> methods.removeWorktree(params);
             case "listWorktrees" -> methods.listWorktrees(params);
+            // R388: the daemon's worktree configuration.
+            // Registered on HTTP too — the desktop talks
+            // HTTP+WS, so a stdio-only registration would
+            // make the capability invisible to exactly the
+            // client that needs it.
+            case "worktreeStatus" -> methods.worktreeStatus(params);
+            // R388c: merge a worktree's branch back into a
+            // target branch and optionally clean up.
+            case "mergeWorktree" -> methods.mergeWorktree(params);
             // prior round 7: supervisor RPCs (Option C).
             case "registerChild" -> methods.registerChild(params);
             case "unregisterChild" -> methods.unregisterChild(params);

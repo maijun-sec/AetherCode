@@ -1967,6 +1967,43 @@ interface AppState {
    *  `createNewSession({ mode })` with the user's choice
    *  (or simply closes if the user cancels). */
   pendingNewSession: { cwd: string | null } | null;
+  // ---- R388c: the worktree lifecycle -----------------------------
+  //
+  // The daemon owns the isolation VERDICT. These
+  // fields carry it verbatim — the renderer must NOT
+  // re-derive isolation from the absence of a branch
+  // (R383's lesson: the verdict comes from the daemon).
+  //
+  // `isolated` is false for a stub worktree (a plain
+  // directory that merely LOOKS like isolation). The
+  // `reason` says why.
+  worktrees: import('../lib/methods').WorktreeInfo[];
+  /** the daemon's worktree configuration. `available`
+   *  is false when the daemon cannot create REAL git
+   *  isolation at all (no source repo, no git, not a
+   *  repo). */
+  worktreeStatus: {
+    available: boolean;
+    sourceRepo: string | null;
+    root: string;
+    reason?: string;
+  } | null;
+  /** pull the worktree list + status from the daemon. */
+  refreshWorktrees: () => Promise<void>;
+  /** create a worktree. Returns the daemon's verdict so
+   *  the caller can tell real isolation from a degraded
+   *  stub. */
+  createWorktree: (name: string) => Promise<{ ok: boolean; isolated?: boolean; reason?: string | null; error?: string }>;
+  /** remove a worktree (and optionally its branch). */
+  deleteWorktree: (name: string, deleteBranch?: boolean) => Promise<{ ok: boolean; error?: string }>;
+  /** merge a worktree's branch back into a target branch.
+   *  The daemon refuses a dirty worktree and returns
+   *  `ok: false` with a reason. */
+  mergeWorktree: (name: string, targetBranch?: string | null) => Promise<{ ok: boolean; message?: string; error?: string }>;
+  /** the worktree the user wants the NEXT session to
+   *  bind to. null = bind to the plain cwd. */
+  selectedWorktree: string | null;
+  setSelectedWorktree: (name: string | null) => void;
   /** delete a session from the daemon's SessionStore
    *  and from the localStorage cache. Refuses to delete the
    *  active session (the daemon rejects with
@@ -4597,6 +4634,14 @@ export const useStore = create<AppState>((set, get) => {
     // Workflow. cwd is the directory the new session will
     // bind to (or null for an unlinked session).
     pendingNewSession: null,
+    // R388c: the worktree list + the daemon's verdict on
+    // whether real git isolation is available. Filled by
+    // refreshWorktrees().
+    worktrees: [],
+    worktreeStatus: null,
+    // the worktree the NEXT session binds to. null = the
+    // plain cwd.
+    selectedWorktree: null,
     // agent list cache. Filled by
     // refreshAgents() (called by the Agents
     // tab on open). Each entry has {name,
@@ -5893,10 +5938,19 @@ export const useStore = create<AppState>((set, get) => {
           // falls back). model override is left null
           // for now; future rounds can plumb a UI
           // picker through here.
+          //
+          // R388c: when a worktree is selected, the
+          // session binds to the WORKTREE instead of the
+          // cwd — that is the whole point of the
+          // worktree: the session works in an isolated
+          // checkout on its own branch. The daemon
+          // resolves the worktree's path and reports
+          // back whether the isolation is REAL.
+          const selectedWorktree = get().selectedWorktree;
           const r = await rpc.createEngine({
             sessionId: newId,
-            cwd,
-            worktree: null,
+            cwd: selectedWorktree ? null : cwd,
+            worktree: selectedWorktree,
             model: null,
           });
           if (!r?.ok) {
@@ -6156,10 +6210,111 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
+    // ---- R388c: the worktree lifecycle -----------------------------
+
+    refreshWorktrees: async () => {
+      // Both calls are best-effort: a daemon that does
+      // not have the worktree surface (older build) must
+      // not break the panel. The status call is what
+      // says whether real isolation is POSSIBLE; the
+      // list call says what exists.
+      try {
+        const status = await rpc.worktreeStatus();
+        set({
+          worktreeStatus: {
+            available: !!status?.available,
+            sourceRepo: status?.sourceRepo ?? null,
+            root: status?.root ?? '',
+            reason: status?.reason,
+          },
+        });
+      } catch {
+        set({ worktreeStatus: null });
+      }
+      try {
+        const r = await rpc.listWorktrees();
+        set({ worktrees: r?.worktrees ?? [] });
+      } catch {
+        set({ worktrees: [] });
+      }
+    },
+
+    createWorktree: async (name) => {
+      const trimmed = (name ?? '').trim();
+      if (!trimmed) {
+        return { ok: false, error: 'name required' };
+      }
+      try {
+        const r = await rpc.addWorktree({ name: trimmed });
+        await get().refreshWorktrees();
+        if (!r?.ok) {
+          return { ok: false, error: r?.error ?? 'worktree create failed' };
+        }
+        // R388c: the daemon's verdict is carried
+        // verbatim. A stub worktree comes back with
+        // ok:true AND isolated:false — the caller MUST
+        // show the reason, because the user asked for
+        // isolation and did not get it.
+        return {
+          ok: true,
+          isolated: r.isolated,
+          reason: r.reason ?? null,
+        };
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? String(e) };
+      }
+    },
+
+    deleteWorktree: async (name, deleteBranch = true) => {
+      try {
+        const r = await rpc.removeWorktree({ name, deleteBranch });
+        await get().refreshWorktrees();
+        // A worktree that is still registered after a
+        // failed teardown stays selected — the user must
+        // be able to retry.
+        set((s) => (
+          s.selectedWorktree === name && !r?.ok
+            ? { selectedWorktree: null }
+            : {}
+        ));
+        return { ok: !!r?.ok, error: r?.error };
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? String(e) };
+      }
+    },
+
+    mergeWorktree: async (name, targetBranch = null) => {
+      try {
+        const r = await rpc.mergeWorktree({
+          name,
+          targetBranch,
+          removeWorktree: true,
+          deleteBranch: false,
+        });
+        await get().refreshWorktrees();
+        set((s) => (
+          s.selectedWorktree === name && r?.ok
+            ? { selectedWorktree: null }
+            : {}
+        ));
+        if (!r?.ok) {
+          // The daemon's reason is the useful part: it
+          // says WHY (e.g. "has uncommitted changes").
+          return { ok: false, message: r?.message ?? r?.error ?? 'merge failed' };
+        }
+        return { ok: true, message: r?.message };
+      } catch (e: any) {
+        return { ok: false, message: e?.message ?? String(e) };
+      }
+    },
+
+    setSelectedWorktree: (name) => {
+      set({ selectedWorktree: name });
+    },
+
     emptyTrash: async () => {
       try {
-        const r = await rpc.emptyTrash();
-        if (r && r.ok) {
+        const r = await rpc.emptyTrash();        if (r && r.ok) {
           set({ trashedSessions: [] });
           set((s) => ({
             messages: [...s.messages, {

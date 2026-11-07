@@ -21,10 +21,51 @@
 /**
  * scrollback (conversation list).
  *
- * Renders the most recent N "turns" in a single boxed column.
+ * R388h — THE TRANSCRIPT IS THE DOCUMENT.
+ *
+ * The user asked for the TUI to look like the desktop's CENTRE
+ * PANEL. That panel is exactly two things
+ * (`aethercode-desktop/src/components/ChatView.tsx`):
+ *
+ *     <MessageList />   ← flex: 1, scrollable, flat
+ *     <MessageInput />  ← pinned to the bottom
+ *
+ * So the target is not "prettier chrome" — it is a DIFFERENT SHAPE:
+ * a conversation that reads as a document, with the input as the
+ * only framed element on screen.
+ *
+ * The rules this component now holds:
+ *
+ * 1. **THE MARKDOWN IS THE UI.** No frame around the transcript, no
+ *    `│` gutter on every turn, no per-line timestamp. The
+ *    desktop's `.agent-message` is a plain `<div>` with
+ *    typography; the assistant's prose IS the surface. A transcript
+ *    drawn with a gutter column reads as a LOG, not a conversation.
+ *
+ * 2. **THE READING COLUMN IS NARROW.** The desktop caps the
+ *    transcript at `max-width: 820px` and centres it. A terminal
+ *    is 80–200 columns wide; a full-width transcript at 200
+ *    columns is unreadable. We cap at 96 columns and centre.
+ *
+ * 3. **THE USER TURN IS A SPEECH ACT, NOT A LOG ROW.** The desktop
+ *    right-aligns the user's bubble. A terminal cannot right-align
+ *    reliably, so the user turn gets a distinct accent bar — the
+ *    visual equivalent of "that was you".
+ *
+ * 4. **THE EMPTY STATE IS ONE LINE.** The desktop shows a single
+ *    centred italic "Start a conversation…". The TUI used to show
+ *    a boxed ASCII wordmark plus a shortcuts grid — a wall of
+ *    chrome before the user had said anything.
+ *
+ * 5. **BANNERS STAY BOXED.** The stop banner and the error card
+ *    keep their borders: a run that died silently is the worst
+ *    outcome, and those two must be unmissable. They are EXCEPTIONS
+ *    to the flat transcript, which is exactly why they read as
+ *    exceptions.
+ *
  * Each turn dispatches to the appropriate component:
- *   - user:       blue prompt marker + text
- *   - assistant:  Markdown-rendered text (prior round: collapsed if long)
+ *   - user:       accent bar + text
+ *   - assistant:  Markdown-rendered text (collapsed if long)
  *   - thinking:   R86: dim, collapsible sub-section between <think> tags
  *   - tool:       ToolCard (boxed, prior round: collapsible)
  *   - plan:       PlanList (boxed)
@@ -40,10 +81,24 @@ import { t, icon } from "../theme.js";
 import { Markdown } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { PlanList } from "./PlanList.js";
-import { Welcome } from "./Welcome.js";
 import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/SummaryFooter.js";
 // R383: the shared stop-kind type — one definition, not one per component.
 import type { StopKind } from "../stopKind.js";
+// R388m: the permission deadline contract — one countdown, one wording.
+import { countdownLine } from "../permissionDeadline.js";
+
+/**
+ * The reading column's width.
+ *
+ * 96 columns is the terminal analogue of the desktop's 820px
+ * transcript. It fits an 80-column terminal (the TUI's hard floor)
+ * with room for the 2-column left inset, and it stops a 200-column
+ * terminal from stretching prose into unreadable line lengths.
+ */
+export const CHAT_COLUMN_WIDTH = 96;
+
+/** the left inset of the whole transcript, in columns. */
+const COLUMN_INSET = 2;
 
 interface Props {
   turns: Turn[];
@@ -75,11 +130,16 @@ interface Props {
   /** when false, the inline card collapses to a single line
    *  (the user can keep typing in the input box). Default: true. */
   decisionCardExpanded: boolean;
+  /** the live terminal width. Used to keep the reading column
+   *  centred and never wider than the viewport. */
+  terminalWidth?: number;
 }
 
-function fmtTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString();
-}
+// R388h: `fmtTime` is GONE. The old transcript prefixed every turn
+// with a timestamp ("14:32 › your text"). The desktop's centre panel
+// has no per-turn clock, and a transcript with a clock on every line
+// reads as a LOG rather than a conversation. The time is still
+// available where it is useful — the stop banner and the error card.
 
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
@@ -113,6 +173,28 @@ const RISK_LABEL: Record<string, string> = {
   critical: "CRITICAL",
 };
 
+/**
+ * A clock that ticks once a second while `active` is true.
+ *
+ * <p>R388m: the permission card shows a live countdown, and a countdown
+ * that only re-renders when something ELSE happens is not a countdown —
+ * the user watches a frozen "1:59" for two minutes.
+ *
+ * <p>The tick is driven by a real interval (not by the render loop), so
+ * the number changes on its own. When `active` is false the interval is
+ * not running at all — an always-on 1Hz timer in a TUI is a battery
+ * drain for a card that is usually not on screen.
+ */
+function useTick(active: boolean): number {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return now;
+}
+
 /** inline "decision pending" card. Renders inside the
  *  scrollback (so the user can see the rest of the conversation)
  *  rather than as a full-screen modal. The decision keys
@@ -121,6 +203,16 @@ const RISK_LABEL: Record<string, string> = {
 const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ ask, expanded }) => {
   const riskColor = RISK_COLOR[ask.riskLevel] ?? t.warn;
   const riskLabel = RISK_LABEL[ask.riskLevel] ?? ask.riskLevel.toUpperCase();
+  // R388m: the countdown. The DEADLINE comes from the daemon (it
+  // publishes `expiresAtMs`), so the client's clock and the daemon's
+  // clock agree — a client that guessed could deny a call the user was
+  // about to approve.
+  const deadline =
+    ask.expiresAtMs && ask.expiresAtMs > 0
+      ? { expiresAtMs: ask.expiresAtMs, timeoutMs: ask.timeoutMs ?? 300_000 }
+      : null;
+  const now = useTick(deadline !== null);
+  const countdown = deadline ? countdownLine(deadline, now) : null;
   if (!expanded) {
     // Collapsed: one-line pill. The user can keep typing in the
     // input box; the A/T/P/U/D/N keys still fire.
@@ -133,6 +225,12 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
           <Text dimColor> · </Text>
           <Text bold>{ask.tool}</Text>
           <Text dimColor> · [{riskLabel}]</Text>
+          {countdown ? (
+            <>
+              <Text dimColor> · </Text>
+              <Text color={t.warn}>{countdown}</Text>
+            </>
+          ) : null}
           <Text dimColor> · A=allow T=task P=project U=user D=deny N=never</Text>
         </Text>
       </Box>
@@ -151,6 +249,14 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
           {icon.warn} PERMISSION REQUIRED
         </Text>
         <Text dimColor> · [{riskLabel}] risk</Text>
+        {countdown ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text color={t.warn} bold>
+              {countdown}
+            </Text>
+          </>
+        ) : null}
       </Text>
       <Text> </Text>
       <Text>
@@ -219,16 +325,22 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
   turn,
   effectiveCollapsed,
 }) => {
-  const ts = fmtTime(turn.ts);
   switch (turn.role) {
     case "user":
+      // R388h: an accent bar, not a timestamp + marker. The bar is
+      // the terminal's equivalent of the desktop's right-aligned
+      // user bubble: it says "this was you" without needing an
+      // alignment a terminal cannot guarantee.
       return (
-        <Box flexDirection="column" marginY={0}>
-          <Text>
-            <Text dimColor>{ts} </Text>
-            <Text color={t.user}>{icon.user} </Text>
-            <Text>{turn.text}</Text>
+        <Box flexDirection="row">
+          <Text color={t.user} bold>
+            {"▌ "}
           </Text>
+          <Box flexDirection="column" flexGrow={1}>
+            {turn.text.split("\n").map((line, i) => (
+              <Text key={i}>{line}</Text>
+            ))}
+          </Box>
         </Box>
       );
     case "assistant": {
@@ -241,12 +353,10 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
       // if collapsed, show a one-line preview instead of full markdown.
       if (effectiveCollapsed) {
         return (
-          <Box flexDirection="column" marginY={0}>
-            <Text>
-              <Text dimColor>{ts} </Text>
-              <Text color={t.brand}>💬 </Text>
-              <Text dimColor>{truncate(lead.replace(/\n+/g, " "), turn.previewChars)}</Text>
-              <Text dimColor> · Tab to expand</Text>
+          <Box flexDirection="column">
+            <Text dimColor>Assistant</Text>
+            <Text dimColor>
+              {truncate(lead.replace(/\n+/g, " "), turn.previewChars)} · Tab to expand
             </Text>
             {/* T-6-14: summary footer is ALWAYS visible,
                 even when the rest of the turn is collapsed. */}
@@ -255,19 +365,12 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
         );
       }
       return (
-        <Box flexDirection="column" marginY={0}>
-          <Text>
-            <Text dimColor>{ts} </Text>
-            <Text color={t.brand} bold>
-              💬 Reply{" "}
-            </Text>
-          </Text>
-          <Box marginLeft={2}>{lead ? <Markdown text={lead} /> : <Text dimColor>…</Text>}</Box>
+        <Box flexDirection="column">
+          <Text dimColor>Assistant</Text>
+          {lead ? <Markdown text={lead} /> : <Text dimColor>…</Text>}
           {/* T-6-14: summary footer rendered as the LAST
               line of the assistant message; never collapsed. */}
-          <Box marginTop={1}>
-            <SummaryFooter summary={summary} />
-          </Box>
+          <SummaryFooter summary={summary} />
         </Box>
       );
     }
@@ -277,20 +380,15 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
       // actual reply. When collapsed, just a one-line preview.
       if (effectiveCollapsed) {
         return (
-          <Box flexDirection="column" marginY={0} marginLeft={2}>
-            <Text dimColor>
-              🧠 Thinking · {truncate(turn.text.replace(/\n+/g, " "), turn.previewChars)} · Tab to
-              expand
-            </Text>
-          </Box>
+          <Text dimColor>
+            Thinking · {truncate(turn.text.replace(/\n+/g, " "), turn.previewChars)} · Tab to expand
+          </Text>
         );
       }
       return (
-        <Box flexDirection="column" marginY={0} marginLeft={2}>
-          <Text dimColor>🧠 Thinking</Text>
-          <Box marginLeft={2}>
-            <Text dimColor>{turn.text}</Text>
-          </Box>
+        <Box flexDirection="column">
+          <Text dimColor>Thinking</Text>
+          <Text dimColor>{turn.text}</Text>
         </Box>
       );
     }
@@ -317,27 +415,19 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
       if (effectiveCollapsed) {
         const items = turn.planItems ?? [];
         return (
-          <Box flexDirection="column" marginY={0} marginLeft={2}>
-            <Text dimColor>
-              {icon.plan} {turn.text || "Plan"} · {items.length} item{items.length === 1 ? "" : "s"}{" "}
-              · Tab to expand
-            </Text>
-          </Box>
+          <Text dimColor>
+            {icon.plan} {turn.text || "Plan"} · {items.length} item{items.length === 1 ? "" : "s"} ·
+            Tab to expand
+          </Text>
         );
       }
       return <PlanList items={turn.planItems ?? []} title={turn.text || "Plan"} />;
     case "system":
-      return (
-        <Text dimColor>
-          {" "}
-          {ts} · {turn.text}
-        </Text>
-      );
+      return <Text dimColor>{turn.text}</Text>;
     case "error":
       return (
         <Text color={t.err}>
-          {" "}
-          {ts} ✗ {turn.text}
+          {icon.err} {turn.text}
         </Text>
       );
     case "permission":
@@ -350,6 +440,42 @@ const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
     default:
       return <Text>{turn.text}</Text>;
   }
+};
+
+/**
+ * The empty state — ONE centred italic line.
+ *
+ * R388h: this replaces the boxed ASCII wordmark + shortcuts grid.
+ * The desktop's `.message-list-empty` is a single line, and the
+ * user's complaint ("我觉得并不好看") was aimed at exactly that
+ * wall of chrome. The model's name and the cwd ride along on a
+ * second, dimmer line — context, not decoration.
+ */
+const EmptyState: React.FC<{ model: string; cwd: string; width: number }> = ({
+  model,
+  cwd,
+  width,
+}) => {
+  const tail = cwd.split(/[\\/]/).filter(Boolean).slice(-2).join("/");
+  // R388h: Ink's `alignItems="center"` only centres a child when the
+  // parent has a BOUNDED width — and inside a `flexDirection="column"`
+  // box it centres each child HORIZONTALLY, which left the two lines
+  // ragged against each other. We centre the text ourselves: pad the
+  // line so its middle lands in the middle of the reading column.
+  // Terminal text cannot be aligned by a flexbox, so the offset is
+  // computed from the string length.
+  const centre = (line: string): string => {
+    const pad = Math.max(0, Math.floor((width - line.length) / 2));
+    return " ".repeat(pad) + line;
+  };
+  return (
+    <Box flexDirection="column" justifyContent="center" flexGrow={1}>
+      <Text italic dimColor>
+        {centre("Start a conversation…")}
+      </Text>
+      <Text dimColor>{centre(`${model}${tail ? ` · ${tail}` : ""}`)}</Text>
+    </Box>
+  );
 };
 
 export const Scrollback: React.FC<Props> = ({
@@ -365,6 +491,7 @@ export const Scrollback: React.FC<Props> = ({
   showThinking,
   permissionAsk,
   decisionCardExpanded,
+  terminalWidth,
 }) => {
   const start = Math.max(0, turns.length - height);
   // filter out "thinking" turns when the toggle is off. The
@@ -387,47 +514,37 @@ export const Scrollback: React.FC<Props> = ({
   const permCard = permissionAsk ? (
     <PermissionCard ask={permissionAsk} expanded={decisionCardExpanded} />
   ) : null;
+
+  // R388h: the reading column. Never wider than the viewport, never
+  // wider than CHAT_COLUMN_WIDTH, and always centred — the desktop
+  // centres its 820px transcript the same way.
+  const cols =
+    terminalWidth ?? (typeof process.stdout.columns === "number" ? process.stdout.columns : 120);
+  const columnWidth = Math.max(24, Math.min(CHAT_COLUMN_WIDTH, cols - COLUMN_INSET * 2));
+  const leftPad = Math.max(0, Math.floor((cols - columnWidth) / 2));
+
+  // Nothing to show at all: the centred empty state, and nothing
+  // else. No box, no banner row, no gutter.
+  if (visible.length === 0 && !banner && !errorCard && !permCard) {
+    return (
+      <Box flexDirection="column" flexGrow={1} paddingLeft={leftPad} paddingRight={leftPad}>
+        <EmptyState model={welcomeCtx.model} cwd={welcomeCtx.cwd} width={columnWidth} />
+      </Box>
+    );
+  }
+
   return (
-    <Box
-      flexDirection="column"
-      flexGrow={1}
-      paddingX={1}
-      borderStyle="single"
-      borderColor={banner || errorCard || permCard ? t.err : t.dim}
-    >
-      {errorCard ? <Box marginY={1}>{errorCard}</Box> : null}
-      {banner ? <Box marginY={1}>{banner}</Box> : null}
-      {permCard ? <Box marginY={1}>{permCard}</Box> : null}
-      {showWelcome ? (
-        <Box marginY={1}>
-          <Welcome
-            model={welcomeCtx.model}
-            cwd={welcomeCtx.cwd}
-            sessionId={welcomeCtx.sessionId}
-            mode={welcomeCtx.mode}
-          />
-        </Box>
-      ) : null}
-      {visible.length === 0 && !showWelcome ? (
-        <Text dimColor> (empty — type a prompt or /help)</Text>
-      ) : (
-        // wrap the conversation in a clear left gutter
-        // (a vertical dim line) so the user can SEE the row
-        // boundaries at a glance. Each turn sits inside the
-        // gutter; the gutter itself is rendered as a column
-        // of "│" characters next to the turn text. This is
-        // much more readable than the old "blank line between
-        // turns" approach — the eye now has a continuous
-        // visual anchor to follow.
-        visible.map((turn, idx) => (
-          <Box key={turn.id} flexDirection="row" marginTop={idx === 0 ? 0 : 1}>
-            <Text dimColor>│ </Text>
-            <Box flexDirection="column" flexGrow={1}>
-              <TurnLine turn={turn} effectiveCollapsed={collapseAll || turn.collapsed} />
-            </Box>
+    <Box flexDirection="column" flexGrow={1} paddingLeft={leftPad} paddingRight={leftPad}>
+      <Box flexDirection="column" width={columnWidth}>
+        {errorCard ? <Box marginBottom={1}>{errorCard}</Box> : null}
+        {banner ? <Box marginBottom={1}>{banner}</Box> : null}
+        {permCard ? <Box marginBottom={1}>{permCard}</Box> : null}
+        {visible.map((turn, idx) => (
+          <Box key={turn.id} flexDirection="column" marginTop={idx === 0 ? 0 : 1}>
+            <TurnLine turn={turn} effectiveCollapsed={collapseAll || turn.collapsed} />
           </Box>
-        ))
-      )}
+        ))}
+      </Box>
     </Box>
   );
 };

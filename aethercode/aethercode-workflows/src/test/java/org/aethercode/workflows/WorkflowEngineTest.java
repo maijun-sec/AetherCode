@@ -179,4 +179,46 @@ class WorkflowEngineTest {
     private static SessionSpawner noopSpawner() {
         return (prompt, c, m, cfg) -> new SessionRef("c-noop", c, m, "noop", cfg);
     }
+
+    /**
+     * R388c: the REAL installed {@code tdd} skill must reach
+     * the spawned prompt.
+     *
+     * <p>The gap this pins: every shipped workflow declared
+     * {@code skills: [...]}, and none of those skills existed.
+     * The composer treated a missing skill as a WARNING, so
+     * {@code tdd-feature} — whose entire job is the
+     * red-green-refactor loop — ran with its TDD guidance
+     * living only in the YAML's own prompt block, while the
+     * {@code skills: [tdd, code-review]} list was
+     * decoration.
+     *
+     * <p>This test is the whole chain: the shipped workflow
+     * → the real user skills directory → the composed
+     * prompt → the spawned session. A unit test of the
+     * composer alone would not catch a skill that is
+     * installed but never injected.
+     */
+    @Test
+    void theRealTddSkillReachesTheSpawnedPrompt(@TempDir Path cwd) {
+        AtomicReference<String> capturedPrompt = new AtomicReference<>();
+        SessionSpawner fake = (prompt, c, m, cfg) -> {
+            capturedPrompt.set(prompt);
+            return new SessionRef("c-fake", c, m, "tdd-feature", cfg);
+        };
+        WorkflowEngine engine = WorkflowEngine.forCwd(cwd, fake);
+        engine.run("tdd-feature", Map.of("feature", "login flow"), cwd, null);
+
+        String prompt = capturedPrompt.get();
+        assertThat(prompt)
+                .as("the real tdd skill must be injected into the prompt — "
+                        + "its body is what teaches the red-green-refactor loop")
+                .contains("# Injected skills");
+        assertThat(prompt)
+                .as("the injected skill must carry its BODY, not just its name")
+                .contains("REFACTOR");
+        assertThat(prompt)
+                .as("a skill that is only LISTED but not injected teaches nothing")
+                .doesNotContain("is not installed; skipping");
+    }
 }

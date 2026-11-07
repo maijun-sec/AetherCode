@@ -106,8 +106,22 @@ public final class SkillComposer {
         List<String> missing = new ArrayList<>();
         for (String name : names) {
             Skill s = lookup(name);
-            if (s != null) resolved.put(name, s);
-            else missing.add(name);
+            // R388c: a skill whose BODY is empty is
+            // treated as MISSING, not as installed. It
+            // exists, so the lookup succeeds — but it
+            // teaches the model nothing, and the
+            // "Injected skills" section would still LIST
+            // it, so the prompt would LOOK complete while
+            // the guidance was absent. That is the same
+            // silent failure as a missing skill, quieter.
+            // Reporting it as missing puts it in the
+            // "Missing skills (skipped)" section, where
+            // it is visible.
+            if (s != null && hasBody(s)) {
+                resolved.put(name, s);
+            } else {
+                missing.add(name);
+            }
         }
         if (resolved.isEmpty()) {
             // Even when every skill is missing we still want a
@@ -129,6 +143,13 @@ public final class SkillComposer {
             }
         }
         return sb.toString();
+    }
+
+    /** R388c: does this skill actually carry guidance?
+     *  A skill with a blank body teaches the model
+     *  nothing. */
+    private static boolean hasBody(Skill s) {
+        return s != null && s.body() != null && !s.body().isBlank();
     }
 
     /** Resolve a single skill by name. Returns {@code null} if the

@@ -591,6 +591,10 @@ public class StreamingToolExecutor {
                 appState != null && appState.permissionMode() != null
                         ? appState.permissionMode().name() : "?");
         Map<String, Object> finalInput = ((PermissionResult.Allow) pr).updatedInput();
+        // R388l: the user's approval comment, if they attached one. It is
+        // appended to the tool_result further down so the model reads it on
+        // the same turn as the tool's output.
+        String allowNote = ((PermissionResult.Allow) pr).note();
         // R266h: early-reject when the model emitted a tool_use
         // with missing required parameters. Prior round the
         // input was forwarded to tool.call() and the tool itself
@@ -716,7 +720,38 @@ public class StreamingToolExecutor {
                 toolResultCache.put(key, cachedStr);
             } catch (RuntimeException ignored) { /* cache is best-effort */ }
         }
-        queue.offer(new Event.Completed(call.id(), output, result.isError()));
+        queue.offer(new Event.Completed(call.id(), appendApprovalNote(output, allowNote), result.isError()));
+    }
+
+    /**
+     * R388l — append the user's approval comment to the tool output.
+     *
+     * <p>When the user approves a tool call AND attaches a comment ("yes, but
+     * write to /tmp first"), the comment must reach the model. Before R388l
+     * the approval branch had no place for it: the prompter received the
+     * reason and discarded it, so the comment reached the daemon and then
+     * evaporated — the user believed they had said something the model never
+     * heard. Appending it to the tool_result puts the comment on the SAME
+     * turn as the tool's output, which is the only place the model will read
+     * it.
+     *
+     * <p>The shape is deliberately explicit about whose voice it is:
+     * {@code "[user's note] <comment>"}. Boilerplate must never be presented
+     * as if the user had said it.
+     *
+     * @param output the tool's own output (may be a String or a structured value)
+     * @param note   the user's comment, or {@code null} when they gave none
+     */
+    public static Object appendApprovalNote(Object output, String note) {
+        if (note == null || note.isBlank()) return output;
+        String suffix = "[user's note] " + note.strip();
+        if (output instanceof String s) {
+            return s.isEmpty() ? suffix : s + "\n\n" + suffix;
+        }
+        // A structured (non-String) tool output: wrap it so the note is not
+        // lost. The model's tool_result content is text either way, and the
+        // structured value is still reachable via toString.
+        return String.valueOf(output) + "\n\n" + suffix;
     }
 
     /** R718-B: build a stable cache key for the executor-level
@@ -872,6 +907,10 @@ public class StreamingToolExecutor {
                 appState != null && appState.permissionMode() != null
                         ? appState.permissionMode().name() : "?");
         Map<String, Object> finalInput = ((org.aethercode.core.permission.PermissionResult.Allow) pr).updatedInput();
+        // R388l: the user's approval comment, if they attached one. Same
+        // contract as the queue-based path above — the comment rides on the
+        // tool_result so the model reads it next to the tool's output.
+        String allowNote = ((org.aethercode.core.permission.PermissionResult.Allow) pr).note();
         // R266h: see the early-reject comment in the parallel
         // branch above. The sink-based path is the newer
         // observation model; both must reject missing-params
@@ -924,7 +963,8 @@ public class StreamingToolExecutor {
                 LOG.debug("toolCallObserver threw for {}: {}", tool.name(), t.toString());
             }
         }
-        sink.accept(new Event.Completed(call.id(), result.output(), result.isError()));
+        sink.accept(new Event.Completed(call.id(),
+                appendApprovalNote(result.output(), allowNote), result.isError()));
     }
 
     /** Events yielded as tools run. The TUI turns these into redraws. */

@@ -212,6 +212,26 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--sessions-dir"}, description = "R6: multi-session transcript directory. Default: .aethercode/sessions in cwd.")
     Path sessionsDir;
 
+    /** R388: the git repo new worktrees are attached
+     *  to. When set, {@code createSession({worktree:
+     *  "..."})} creates a REAL {@code git worktree}
+     *  (branch {@code aethercode/<name>}) instead of an
+     *  empty directory. When unset, the daemon falls
+     *  back to {@code AETHERCODE_WORKTREE_SOURCE_REPO}
+     *  and then to the plain-directory mode (which the
+     *  worktreeStatus RPC reports as
+     *  {@code available: false}).
+     *
+     *  <p>Pre-R388 there was no way to configure this on
+     *  the daemon at all: the setter existed but nothing
+     *  outside a test called it, so the daemon always
+     *  ran in plain-directory mode while the RPCs
+     *  looked like they were doing git isolation. */
+    @Option(names = {"--worktree-source-repo"},
+            description = "R388: git repo that new worktrees attach to. Enables real `git worktree` isolation. "
+                    + "Falls back to AETHERCODE_WORKTREE_SOURCE_REPO, then to plain-directory mode.")
+    String worktreeSourceRepo;
+
     /** disable skill discovery. By default the engine
      *  scans {@code ~/.aethercode/skills/} and {@code <cwd>/.aethercode/skills/}
      *  for SKILL.md files; pass this flag to skip the scan
@@ -359,9 +379,18 @@ public class Main implements Callable<Integer> {
             // resolves to buildEngineForSession(String)
             // because Function<String, …> takes a
             // String.
+            // R388d: the git repo for new worktrees is handed
+            // over by a SETTER, not as a parameter. The
+            // daemon's entry points are addressed by the
+            // source-pin gates by "occurrence N of <their
+            // signature>", and adding a parameter to one of
+            // them silently repoints the gate at a different
+            // method. See DaemonRunner.setWorktreeSourceRepo.
+            DaemonRunner.setWorktreeSourceRepo(worktreeSourceRepo);
             return DaemonRunner.run(engine,
                     this::buildEngineForSession,   // legacy String → engine
-                    this::buildEngineForSession);  // spec SessionSpec → engine
+                    this::buildEngineForSession,   // spec SessionSpec → engine
+                    null);                         // prebuilt session manager
         }
         if (httpPort > 0) {
             // HTTP+WebSocket daemon mode. One engine, many
@@ -380,6 +409,8 @@ public class Main implements Callable<Integer> {
             // silently drops the cwd field and the
             // freshly-materialised engine inherits
             // the daemon's startup cwd.
+            // R388d: same hand-over as the stdio path above.
+            DaemonRunner.setWorktreeSourceRepo(worktreeSourceRepo);
             return DaemonRunner.runHttp(engine, httpPort,
                     this::buildEngineForSession,
                     this::buildEngineForSession);

@@ -56,6 +56,9 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { proseFor } from "../componentKeys.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
 import { TUI_VERSION } from "../version.js";
 import { t, icon, wordmark, banner } from "../theme.js";
 // R378: the shortcut grid is the registry's, not a second copy of it.
@@ -310,7 +313,7 @@ export const Welcome: React.FC<Props> = ({
         <Box flexWrap="wrap" marginTop={0}>
           {SHORTCUTS.map((s, i) => (
             <Box key={s.key} marginRight={3} marginBottom={0}>
-              <Text color={t.accent}>{s.key.padEnd(7)}</Text>
+              <Text color={t.accent}>{padCells(s.key, 7)}</Text>
               <Text dimColor>{s.label}</Text>
             </Box>
           ))}

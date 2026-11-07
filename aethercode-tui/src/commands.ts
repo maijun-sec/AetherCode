@@ -39,6 +39,9 @@ export interface SlashResult {
 // honestly instead of returning -32601; the R366 gate imports the same
 // table, so the UI and the gate cannot disagree about it.
 import { EFFORT_METHOD, unsupportedReason, unsupportedMessage } from "./rpcCapabilities.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "./cellWidth.js";
 
 // R385: the ONE permission-mode catalog. `/mode <name>` normalises
 // its argument through it (the daemon's `PermissionMode.valueOf` is
@@ -240,13 +243,38 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
   { name: "tool-actions", group: "config", description: "list recent tool actions" },
 
   {
+    // R388c: the git worktree lifecycle — create an
+    // isolated checkout, bind the next session to it,
+    // merge it back, remove it.
+    name: "worktree",
+    group: "config",
+    description: "manage isolated git worktrees",
+  },
+
+  {
     name: "theme",
     group: "config",
     args: "[name]",
     description: "pick or set the active theme",
   },
 
-  { name: "theme-pick", group: "config", description: "open the interactive theme picker" },
+  // R388k: bare `/theme` opens the picker and `/theme-pick` opens the
+  // SAME picker — two names for one surface, neither declared as an
+  // alias. That is the duplication Aider's own docs still carry
+  // (`/edit` and `/editor` listed separately with different
+  // descriptions). The benchmark set prevents it structurally:
+  // Cursor ships "explicit aliases rather than duplicate entries",
+  // and OpenCode has one registry where a later source REPLACES an
+  // earlier command of the same name.
+  //
+  // So `/theme-pick` is declared as what it is — an alias — and the
+  // help text's "(aliases: …)" mention is DERIVED from this field.
+  {
+    name: "theme-pick",
+    group: "config",
+    aliasOf: "theme",
+    description: "alias for /theme",
+  },
 
   {
     name: "layout",
@@ -520,6 +548,37 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
 export const SLASH_COMMANDS: string[] = SLASH_COMMANDS_DETAILED.map((c) => c.name);
 
 /**
+ * R388j — is the typed text a COMPLETE slash command?
+ *
+ * <p>The autocomplete dropdown owns Enter while it is open: it
+ * accepts the highlighted suggestion and stops. So `/sessions` +
+ * Enter filled the input with `/sessions ` and did nothing — the
+ * user had to press Enter a SECOND time to run the command.
+ *
+ * <p>Two Enters for one command is a trap, and it is exactly the
+ * shape a user hits when they type a command they know by heart.
+ *
+ * <p>This predicate lets the input box tell the two cases apart:
+ * when the text is ALREADY a complete command, the acceptance is
+ * cosmetic (it spells the command canonically) and the command can
+ * run in the same keystroke.
+ *
+ * <p>The answer comes from the CATALOG, not from a second list — the
+ * same discipline R380 established for `/help` and the palette.
+ */
+export function isCompleteSlashCommand(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return false;
+  const spaceAt = trimmed.indexOf(" ");
+  // A command with arguments (`/stop <id>`) is NOT "complete" in
+  // this sense: the user is still typing the argument, and Enter
+  // should accept the completion, not run a half-typed command.
+  if (spaceAt >= 0) return false;
+  const name = trimmed.slice(1);
+  return SLASH_COMMANDS.includes(name);
+}
+
+/**
  * The description a command-palette row shows, DERIVED from the catalog.
  *
  * R388: the palette used to carry its OWN hand-written table
@@ -605,10 +664,14 @@ function renderSlashHelp(): string {
 
   // Longest "/name <arg>" label across the whole catalog, so every group
   // aligns its description column on the same gutter.
+  // R388m: the gutter is measured in CELLS. A command name is
+  // user-facing and can be Chinese; a character-count gutter made
+  // the description column drift right for every CJK command.
   let gutter = 0;
   for (const c of SLASH_COMMANDS_DETAILED) {
     const label = `/${c.name}${c.args ? " " + c.args : ""}`;
-    if (label.length > gutter) gutter = label.length;
+    const w = cellWidth(label);
+    if (w > gutter) gutter = w;
   }
   gutter += 2;
 
@@ -626,7 +689,7 @@ function renderSlashHelp(): string {
       out.push(`# ${current}`);
     }
     const label = `/${c.name}${c.args ? " " + c.args : ""}`;
-    out.push(`${label.padEnd(gutter)}${describe(c)}`.trimEnd());
+    out.push(`${padCells(label, gutter)}${describe(c)}`.trimEnd());
   }
   return out.join("\n");
 }
@@ -757,8 +820,24 @@ export function routeSlash(input: string): SlashResult | null {
   const [cmd, ...rest] = trimmed.slice(1).split(/\s+/);
   switch (cmd) {
     case "help":
-    case "?":
-      return { local: SLASH_HELP };
+    case "?": {
+      // R388k: `/help` used to return `SLASH_HELP` — one ~110-line
+      // string. The Ink renderer emitted it as a single `sideNote`,
+      // which the scrollback truncated to the available height: on a
+      // real TTY only 3 lines were visible, and commands 4–89 were
+      // unreachable. There was no scroll, no pagination and no filter.
+      //
+      // Now it is a SENTINEL, and the Ink renderer opens the
+      // CommandHelpPanel — a filterable, scrollable list PROJECTED from
+      // this catalog. The line renderer prints the text (a terminal has
+      // no panels, and its scrollback is the terminal's own).
+      //
+      // The benchmark agrees: Claude Code's `/` menu merges built-ins,
+      // skills, plugin and MCP commands into one list; Cursor has a
+      // `/` menu plus `/help <command>`; Aider's `/help` renders the
+      // command table GENERATED FROM SOURCE, so it cannot drift.
+      return { local: "__HELP_PANEL__" };
+    }
     case "clear":
       return { local: "__CLEAR__" };
     case "exit":
@@ -902,6 +981,11 @@ export function routeSlash(input: string): SlashResult | null {
     case "theme-pick":
       // Open the theme picker — the same surface bare `/theme` opens.
       return { local: "__THEMES_PICK__" };
+    case "worktree":
+      // R388c: open the worktree panel. The panel owns
+      // the lifecycle (create / bind / merge / remove);
+      // the daemon owns the isolation verdict.
+      return { local: "__WORKTREE_PANEL__" };
     case "layout": {
       // switch layout preset.
       if (rest.length === 0) return { local: "usage: /layout <full|minimal|focus>" };
@@ -1477,7 +1561,11 @@ export function routeSlash(input: string): SlashResult | null {
       return { local: "__SDD_STATUS__" };
     }
     case "sdd-list": {
-      return { rpcMethod: "sdd.listRuns" };
+      // R388k: this used to be a bare `rpcMethod: "sdd.listRuns"` with no
+      // params, but the daemon requires `{cwd}` — so the command failed in
+      // BOTH renderers with "cwd is required". It is now a local sentinel,
+      // because only the renderer knows the cwd it is running in.
+      return { local: "__SDD_LIST__" };
     }
     case "sdd-approve": {
       return { local: "__SDD_ADVANCE__", rpcParams: { action: "approve" } };

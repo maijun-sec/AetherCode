@@ -62,6 +62,9 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { t, wordmark, icon } from "../theme.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
 
 /** T-443: the rich welcome payload. Mirrors the
  *  `WelcomeBanner` Java port. */
@@ -120,7 +123,7 @@ function Row({
 }): React.ReactElement {
   return (
     <Box>
-      <Text dimColor>{label.padEnd(11, " ")}</Text>
+      <Text dimColor>{padCells(label, 11)}</Text>
       <Text color={color ?? t.asst}>{value}</Text>
     </Box>
   );

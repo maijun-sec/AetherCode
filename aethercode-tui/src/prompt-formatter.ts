@@ -37,6 +37,10 @@
  * rendering contract is documented in one place.
  */
 
+// R388m: ONE width rule — table columns are laid out in terminal
+// CELLS, not characters. A CJK label is twice as wide as its length.
+import { maxCells, padCells } from "./cellWidth.js";
+
 export interface SystemPromptSection {
   name?: string;
   length?: number;
@@ -180,19 +184,19 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
     return lines.join("\n");
   }
 
-  const nameWidth = Math.max("section".length, ...sections.map((s) => (s.name ?? "?").length));
+  // R388m: measure in CELLS. A Chinese section/source label is twice
+  // as wide as its character count, and the column would then be one
+  // cell narrower than its content — the divider drifts right per CJK row.
+  const nameWidth = maxCells(["section", ...sections.map((s) => s.name ?? "?")]);
   // Source column width is computed from the *plain*
   // source label — the ANSI color codes are zero-width
   // for length math but padEnd() doesn't know that, so
   // we strip them before measuring.
   const plainSource = (s: string | null | undefined) => (s ?? "?").replace(/\u001b\[[0-9;]*m/g, "");
-  const sourceWidth = Math.max(
-    "source".length,
-    ...sections.map((s) => plainSource(s.source).length),
-  );
-  const pathWidth = hasAnyPaths ? Math.max("paths".length, ...pathCells.map((p) => p.length)) : 0;
-  let header = `  ${"section".padEnd(nameWidth)}  ${"source".padEnd(sourceWidth)}  length`;
-  if (hasAnyPaths) header += `  ${"paths".padEnd(pathWidth)}`;
+  const sourceWidth = maxCells(["source", ...sections.map((s) => plainSource(s.source))]);
+  const pathWidth = hasAnyPaths ? maxCells(["paths", ...pathCells.map((p) => p)]) : 0;
+  let header = `  ${padCells("section", nameWidth)}  ${padCells("source", sourceWidth)}  length`;
+  if (hasAnyPaths) header += `  ${padCells("paths", pathWidth)}`;
   header += "  first line";
   lines.push(header);
   for (let i = 0; i < sections.length; i++) {
@@ -212,12 +216,13 @@ export function formatSystemPrompt(result: SystemPromptResponse | null | undefin
     // ANSI bytes too — to keep the alignment right
     // we pad the plain text, then splice the color
     // codes in around it.
-    const plain = plainSource(source).padEnd(sourceWidth, " ");
+    // R388m: padCells pads by CELLS, so a CJK label lines up.
+    const plain = padCells(plainSource(source), sourceWidth);
     const color = colorForSource(source);
     const coloredSource = color + plain + COLOR_RESET;
-    let row = `  ${name.padEnd(nameWidth)}  ${coloredSource}  ${String(length).padStart(6)}`;
+    let row = `  ${padCells(name, nameWidth)}  ${coloredSource}  ${String(length).padStart(6)}`;
     if (hasAnyPaths) {
-      const cell = pathCells[i].padEnd(pathWidth, " ");
+      const cell = padCells(pathCells[i], pathWidth);
       row += `  ${cell}`;
     }
     row += `  ${truncated}`;

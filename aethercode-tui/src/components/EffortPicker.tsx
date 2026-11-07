@@ -36,6 +36,11 @@
  */
 
 import { hintFor } from "../componentKeys.js";
+// R388m: ONE width rule — column padding is done in terminal CELLS,
+// not characters. A CJK glyph is twice as wide as its length.
+import { cellWidth, padCells } from "../cellWidth.js";
+// R388j — the shell owns the frame; the body owns the content.
+import { PanelBody, fitRow, blank } from "./PanelBody.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
@@ -68,6 +73,12 @@ export interface EffortPickerProps {
   title?: string;
   /** Cap visible rows. Default 8. */
   maxVisible?: number;
+  /**
+   * R388j: the CONTENT width — the cells available between the
+   * shell's border columns. Every row is laid out to this number,
+   * so nothing can overflow the frame.
+   */
+  width?: number;
 }
 
 /** Resolve the id used by the daemon. Defaults to `label`. */
@@ -84,6 +95,7 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
   onClose,
   title = "Select Reasoning Effort",
   maxVisible = 8,
+  width = 76,
 }) => {
   // Resolve the *id* of the current effort so we can match it
   // even when host supplied `id: "extra_high"` but `label: "xhigh"`.
@@ -146,17 +158,9 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
   const visible = efforts.slice(start, end);
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
-      <Box>
-        <Text color="cyan" bold>
-          ◆ {title}
-        </Text>
-        <Text dimColor> {hintFor("components/EffortPicker.tsx")}</Text>
-      </Box>
-      {modelSpec ? <Text dimColor> for {modelSpec}</Text> : null}
-      <Text> </Text>
+    <PanelBody width={width} title={title} subtitle={modelSpec ? `for ${modelSpec}` : undefined}>
       {efforts.length === 0 ? (
-        <Text dimColor> no effort levels available for this model</Text>
+        <Text dimColor>{fitRow(" no effort levels available for this model", width)}</Text>
       ) : (
         visible.map((e, i) => {
           const realIndex = start + i;
@@ -168,11 +172,21 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
             <Box key={id} flexDirection="row">
               <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
               <Text color={isCurrent ? "yellowBright" : undefined}>{isCurrent ? "●" : " "} </Text>
-              <Text>
-                <Text bold={isHighlighted}>{e.label.padEnd(12)}</Text>
+              <Text wrap="truncate-end">
+                {/* R388j: the label column is padded to 12 so the
+                    `(default)` / `(current)` markers line up down
+                    the list — the same alignment the Java
+                    `EffortSelectorScreen` had. Without it the
+                    markers ragged to the right of each label. */}
+                <Text bold={isHighlighted}>{padCells(e.label, 12)}</Text>
                 {isDefault ? <Text color="magenta"> (default)</Text> : null}
                 {isCurrent ? <Text color="yellowBright"> (current)</Text> : null}
-                {e.description ? <Text dimColor> — {e.description}</Text> : null}
+                {e.description ? (
+                  <Text dimColor>
+                    {" "}
+                    — {fitRow(e.description, Math.max(12, width - e.label.length - 16))}
+                  </Text>
+                ) : null}
               </Text>
             </Box>
           );
@@ -184,7 +198,11 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({
           {start + 1}–{end} of {efforts.length}
         </Text>
       ) : null}
-    </Box>
+      <Text>{blank(width)}</Text>
+      <Text dimColor wrap="truncate-end">
+        {fitRow(hintFor("components/EffortPicker.tsx"), width)}
+      </Text>
+    </PanelBody>
   );
 };
 

@@ -255,6 +255,28 @@ export const KEYBINDINGS: ReadonlyArray<Keybinding> = [
     group: "editing",
     welcome: true,
   },
+  // --- the permission COMMENT box (R388l) ---------------------------------
+  //
+  // Tab opens the comment box while a permission prompt is on screen,
+  // and the Ctrl chords choose what the comment is sent with. The
+  // `when` clause is what makes the chord honest: these do nothing
+  // outside a pending permission prompt.
+  {
+    keys: ["tab"],
+    label: "Tab",
+    desc: "open the comment box on a permission prompt",
+    short: "comment",
+    group: "editing",
+    when: "a permission prompt is on screen",
+  },
+  {
+    keys: ["ctrl+a", "ctrl+t", "ctrl+p", "ctrl+u", "ctrl+y", "ctrl+d", "ctrl+n"],
+    label: "Ctrl+A / T / P / U / Y / D / N",
+    desc: "choose what a permission comment is sent with",
+    short: "arm the decision",
+    group: "editing",
+    when: "a permission comment box is open",
+  },
   {
     keys: ["up", "down"],
     label: "↑ / ↓",

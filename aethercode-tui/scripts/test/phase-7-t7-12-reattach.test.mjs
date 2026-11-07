@@ -36,55 +36,28 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileShim, importCompiled } from "./shim-compile.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
 // Compile a shim that imports the MockRpcServer.
-const tmp = join(root, "tmp-t7-12-tsc");
-const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-if (existsSync(tmp)) {
-  spawnSync(
-    process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-  );
-}
-mkdirSync(tmp, { recursive: true });
-const shimPath = join(root, "src", "_t7_12_mock.ts");
+// R388d: the shim is compiled in a TEMP MIRROR of `src/`, not
+// in the checked-in tree. See `./shim-compile.mjs` — fifteen gates
+// used to overwrite a TRACKED source file with a generated one-liner
+// and never restored it, so every run of this suite silently
+// stripped the licence header from it.
+const shimRel = ["_t7_12_mock.ts"];
 const shim = [`export { MockRpcServer } from "./rpc/MockRpcServer.js";`, ""].join("\n");
-writeFileSync(shimPath, shim, "utf-8");
-
-const tscArgs = [
-  "--outDir",
-  join(tmp, "out"),
-  "--target",
-  "ES2022",
-  "--module",
-  "ES2022",
-  "--moduleResolution",
-  "bundler",
-  "--jsx",
-  "react",
-  "--esModuleInterop",
-  "true",
-  "--skipLibCheck",
-  "true",
-  "--rootDir",
-  join(root, "src"),
-];
-{
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
-    encoding: "utf-8",
-    shell: true,
-  });
-  if (r.status !== 0) {
-    console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
-    process.exit(1);
-  }
-}
-const { MockRpcServer } = await import(
-  "file:///" + join(tmp, "out", "_t7_12_mock.js").replace(/\\/g, "/")
-);
+const compiledShim = compileShim({
+  root,
+  tmp: join(root, "tmp-t7-12-tsc"),
+  shimRel: shimRel.join("/"),
+  body: shim,
+  extraArgs: [],
+});
+const helpers = await importCompiled(compiledShim);
+const { MockRpcServer } = helpers;
 
 // T-7-12.1: Ring buffer replays events 1..N in order on attach.
 test("T-7-12: ring buffer replays events 1..N in order on attach", async () => {

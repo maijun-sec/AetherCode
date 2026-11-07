@@ -44,21 +44,18 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileShim, importCompiled } from "./shim-compile.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
 // Compile a shim that re-exports the commands module.
-const tmp = join(root, "tmp-t6-17-tsc");
-const tscBin = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
-if (existsSync(tmp)) {
-  spawnSync(
-    process.platform === "win32" ? "cmd" : "rm",
-    process.platform === "win32" ? ["/c", "rmdir", "/s", "/q", tmp] : ["-rf", tmp],
-  );
-}
-mkdirSync(tmp, { recursive: true });
-const shimPath = join(root, "src", "_t6_17_helpers.ts");
+// R388d: the shim is compiled in a TEMP MIRROR of `src/`, not
+// in the checked-in tree. See `./shim-compile.mjs` — fifteen gates
+// used to overwrite a TRACKED source file with a generated one-liner
+// and never restored it, so every run of this suite silently
+// stripped the licence header from it.
+const shimRel = ["_t6_17_helpers.ts"];
 const shim = [
   // R369: routeSlash is the unrouted inner function. The capability
   // filter in handleSlash drops rpcParams, so this is the only thing
@@ -66,39 +63,15 @@ const shim = [
   `export { handleSlash, routeSlash, SLASH_COMMANDS, SLASH_HELP, completeSlash } from "./commands.js";`,
   "",
 ].join("\n");
-writeFileSync(shimPath, shim, "utf-8");
+const compiledShim = compileShim({
+  root,
+  tmp: join(root, "tmp-t6-17-tsc"),
+  shimRel: shimRel.join("/"),
+  body: shim,
+  extraArgs: [],
+});
+const helpers = await importCompiled(compiledShim);
 
-const tscArgs = [
-  "--outDir",
-  join(tmp, "out"),
-  "--target",
-  "ES2022",
-  "--module",
-  "ES2022",
-  "--moduleResolution",
-  "bundler",
-  "--jsx",
-  "react",
-  "--esModuleInterop",
-  "true",
-  "--skipLibCheck",
-  "true",
-  "--rootDir",
-  join(root, "src"),
-];
-{
-  const r = spawnSync(`"${tscBin}"`, [...tscArgs, `"${shimPath}"`], {
-    encoding: "utf-8",
-    shell: true,
-  });
-  if (r.status !== 0) {
-    console.error("tsc failed:\n" + r.stdout + "\n" + r.stderr);
-    process.exit(1);
-  }
-}
-const helpers = await import(
-  "file:///" + join(tmp, "out", "_t6_17_helpers.js").replace(/\\/g, "/")
-);
 // R369. This helper asserts a REFUSAL: the command must answer in
 // words and never dispatch a method the daemon does not register.
 //
@@ -282,10 +255,31 @@ test("T-6-17: tab-completion picks up the new commands", () => {
   const c2 = completeSlash("/tok");
   assert.equal(c2.completed, "/tokens ");
   assert.equal(c2.oneShot, true);
-  // /work → /workflow (unique)
+  // /work → AMBIGUOUS since R388c added `/worktree`.
+  //
+  // It used to be unique (`/workflow `), and the assertion below
+  // encoded that. `/worktree` shares the `work` prefix and diverges
+  // at the fifth character (`workt` vs `workf`), so `/work` now
+  // completes to the longest common prefix and offers BOTH — which
+  // is what `/con` has always done for `/consents`, `/context` and
+  // `/continue`.
+  //
+  // Completing to "/workflow " here would have been a LIE: the user
+  // typed four characters, three of which are also the start of a
+  // different command, and the completer would have committed them
+  // to one of the two without being asked.
   const c3 = completeSlash("/work");
-  assert.equal(c3.completed, "/workflow ");
-  assert.equal(c3.oneShot, true);
+  assert.equal(c3.completed, "/work");
+  assert.deepEqual(c3.alternatives.sort(), ["workflow", "worktree"]);
+  assert.equal(c3.oneShot, false);
+  // /workt is unique to /worktree.
+  const c3b = completeSlash("/workt");
+  assert.equal(c3b.completed, "/worktree ");
+  assert.equal(c3b.oneShot, true);
+  // /workf is unique to /workflow.
+  const c3c = completeSlash("/workf");
+  assert.equal(c3c.completed, "/workflow ");
+  assert.equal(c3c.oneShot, true);
   // /continu is unique to /continue.
   const c4 = completeSlash("/continu");
   assert.equal(c4.completed, "/continue ");

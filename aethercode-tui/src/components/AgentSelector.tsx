@@ -45,6 +45,8 @@ import { hintFor } from "../componentKeys.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
+// R388j — the shell owns the frame; the body owns the content.
+import { PanelBody, fitRow, blank, filterRow } from "./PanelBody.js";
 
 /** A single row in the picker. Mirrors the wire shape of
  *  `agent/list`'s result, but is local to the TUI so the
@@ -75,6 +77,12 @@ export interface AgentSelectorProps {
   title?: string;
   /** Cap visible rows. Default 9. */
   maxVisible?: number;
+  /**
+   * R388j: the CONTENT width — the cells available between the
+   * shell's border columns. Every row is laid out to this number,
+   * so nothing can overflow the frame.
+   */
+  width?: number;
 }
 
 export const AgentSelector: React.FC<AgentSelectorProps> = ({
@@ -85,6 +93,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
   onSetDefault,
   title = "Select Agent",
   maxVisible = 9,
+  width = 76,
 }) => {
   // Filter — type-to-narrow the catalog. Empty query shows all.
   const [query, setQuery] = useState("");
@@ -152,24 +161,19 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
   const visible = filtered.slice(start, end);
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
-      <Box>
-        <Text color="cyan" bold>
-          ◆ {title}
-        </Text>
-        <Text dimColor> {hintFor("components/AgentSelector.tsx")}</Text>
-      </Box>
-      <Text> </Text>
-      <Box>
-        <Text color="yellow">{">"}</Text>
-        <Text> </Text>
-        <TextInput value={query} onChange={setQuery} placeholder="filter agents…" />
-      </Box>
-      <Text> </Text>
+    <PanelBody width={width} title={title}>
+      {/* R388j: the filter row pads itself to the panel width. */}
+      {filterRow({
+        width,
+        value: query,
+        placeholder: "filter agents…",
+        onChange: setQuery,
+      })}
+      <Text>{blank(width)}</Text>
       {agents.length === 0 ? (
-        <Text dimColor> no agents found</Text>
+        <Text dimColor>{fitRow(" no agents found", width)}</Text>
       ) : filtered.length === 0 ? (
-        <Text dimColor> no matches for "{query}"</Text>
+        <Text dimColor>{fitRow(` no matches for "${query}"`, width)}</Text>
       ) : (
         visible.map((a, i) => {
           const realIndex = start + i;
@@ -179,11 +183,16 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
             <Box key={a.name} flexDirection="row">
               <Text color={isHighlighted ? "cyan" : undefined}>{isHighlighted ? "▶" : " "} </Text>
               <Text color={isCurrent ? "yellowBright" : undefined}>{isCurrent ? "●" : " "} </Text>
-              <Text>
-                <Text bold={isHighlighted}>{a.name.padEnd(20)}</Text>
+              <Text wrap="truncate-end">
+                <Text bold={isHighlighted}>{a.name}</Text>
                 {a.isDefault ? <Text color="magenta"> (default)</Text> : null}
                 {isCurrent ? <Text color="yellowBright"> (current)</Text> : null}
-                {a.description ? <Text dimColor> — {truncate(a.description, 60)}</Text> : null}
+                {a.description ? (
+                  <Text dimColor>
+                    {" "}
+                    — {fitRow(a.description, Math.max(12, width - a.name.length - 14))}
+                  </Text>
+                ) : null}
               </Text>
             </Box>
           );
@@ -195,14 +204,13 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
           {start + 1}–{end} of {filtered.length}
         </Text>
       ) : null}
-    </Box>
+      <Text>{blank(width)}</Text>
+      <Text dimColor wrap="truncate-end">
+        {fitRow(hintFor("components/AgentSelector.tsx"), width)}
+      </Text>
+    </PanelBody>
   );
 };
-
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return s.slice(0, n - 1) + "…";
-}
 
 /** Pure helper: format the row label for an agent — used by tests
  *  and any future call sites that need the same string in another

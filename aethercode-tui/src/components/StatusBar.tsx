@@ -167,7 +167,18 @@ export const StatusBar: React.FC<Props> = ({
     ? labelForRunning(state.status)
     : KIND_LABEL[state.lastStopKind ?? "ok"];
 
-  const showControl = !!(onContinue || onPause || onStop);
+  // R388h: the run-control row appears only when there is a run to
+  // control. It used to render unconditionally, so an IDLE TUI spent
+  // a whole line on "Continue [c] Pause [p] Stop [s]" — three
+  // buttons for actions that would all do nothing. The desktop's
+  // centre panel shows its run controls only while a run is live.
+  //
+  // So: while a run is in flight, or while the auto-continuation is
+  // paused (the only state where "Continue" means anything), the row
+  // is there. Otherwise the bottom of the screen is the input pill
+  // and ONE status line — which is the shape the user asked for.
+  const showControl =
+    !!(onContinue || onPause || onStop) && (state.submitting || state.continuationPaused);
   const showStale =
     !!staleSession && isStale(staleSession.lastActiveAt, Date.now()) && !!onReattach;
 
@@ -264,8 +275,15 @@ export const StatusBar: React.FC<Props> = ({
         />
       ) : null}
       <Text color={color}>{"─".repeat(60)}</Text>
+      {/* R388h: ONE status row. The context meter used to be a whole
+          second line under the strip (and a THIRD line for the
+          "no usage reported yet" note). It is now a compact
+          `ctx ▓░░ 12%` chip on the LEFT of the same row, and the
+          right side keeps the token counters — the two are
+          different numbers, so they can share a line without
+          competing. */}
       <Box flexDirection="row" justifyContent="space-between">
-        <Box>
+        <Box flexDirection="row" flexShrink={1}>
           <Text color={color}>▌ </Text>
           {connGlyph}
           <Text> </Text>
@@ -278,8 +296,21 @@ export const StatusBar: React.FC<Props> = ({
           ) : null}
           {skipNode}
         </Box>
-        <Box>
-          <Text dimColor>in </Text>
+        {/* R388h: an explicit gap. `justifyContent="space-between"`
+            only inserts space while the row still has room — with a
+            long left half ("running tool… · 1 tool call in flight")
+            the two boxes butted up against each other and read as
+            "in flightctx[…]". A separator can never be squeezed
+            out. */}
+        <Box flexDirection="row" flexShrink={0}>
+          <Text dimColor> · </Text>
+          <ContextMeter
+            info={ctxInfo}
+            width={10}
+            sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000}
+            showLabel={false}
+          />
+          <Text dimColor> · in </Text>
           <Text>{formatTokens(state.inputTokens)}</Text>
           <Text dimColor> · out </Text>
           <Text>{formatTokens(state.outputTokens)}</Text>
@@ -290,10 +321,6 @@ export const StatusBar: React.FC<Props> = ({
           <Text>{jarName(state.jarPath)}</Text>
         </Box>
       </Box>
-      {/* R371: the one-line strip stays one line; the meter gets its
-          own row rather than 24 columns inside the strip, which would
-          have squeezed the token counters off an 80-column terminal. */}
-      <ContextMeter info={ctxInfo} width={24} sampleIntervalMs={ctxPaused ? 1_000_000 : 4_000} />
     </Box>
   );
 };
