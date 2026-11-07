@@ -52,7 +52,11 @@ import { t, icon, wordmark, formatRelative } from "../theme.js";
 // what `DEFAULT` looks like (here: the raw name; there: "ASK"). It
 // also carried four names the daemon cannot produce (`AUTO`, `ASK`,
 // `DENY`, `BYPASS` — the old `Action` enum).
-import { permissionModeEntry, type PermissionModeTone } from "../permissionModes.js";
+import {
+  permissionModeEntry,
+  permissionModeIndicator,
+  type PermissionModeTone,
+} from "../permissionModes.js";
 
 interface Props {
   state: State;
@@ -125,6 +129,9 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
   // Mode pill (filled coloured badge — bg gives the pill look).
   const ms = modeStyle(state.permissionMode);
   const modeShort = modeLabel(state.permissionMode);
+  // R388n: the literal phrase. From the ONE catalog, so the pill and the
+  // phrase cannot describe the same mode differently.
+  const modeIndicator = permissionModeIndicator(state.permissionMode);
 
   // ctx fill. contextWindow may be 0 (unknown); hide the glyph in that case.
   const totalTokens = (state.inputTokens ?? 0) + (state.outputTokens ?? 0);
@@ -167,12 +174,20 @@ export const Header: React.FC<Props> = ({ state, cwd }) => {
               <Text>{state.provider}</Text>
             </>
           ) : null}
-          {/* mode badge */}
+          {/* mode indicator.
+              R388n: a LITERAL PHRASE, not an acronym.
+              The badge (`ASK`, `TASK`, `EDITS`) could not say the two
+              things the user needs: `DEFAULT` and `ASK_BEFORE_TOOL` both
+              rendered as `ASK` — two distinct daemon modes that looked
+              IDENTICAL — and an acronym never says whether the mode
+              still interrupts you. The phrase's leading glyph does:
+              `⏸` = still asks, `⏵⏵` = does not ask. */}
           <Text dimColor> · </Text>
           <Text color={ms.fg} bold backgroundColor={ms.bg}>
             {" "}
             {modeShort}{" "}
           </Text>
+          <Text color={ms.fg}>{modeIndicator}</Text>
         </Box>
         <Box flexDirection="row">
           {/* ctx fill (only when known) */}

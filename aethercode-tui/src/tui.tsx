@@ -199,21 +199,33 @@ import { EffortPicker, type EffortEntry } from "./components/EffortPicker.js";
 // cmd.exe line mode; on Ink it fell through to the R362 fallback and
 // told the user the command did not exist.
 import { ModePicker } from "./components/ModePicker.js";
+// R388n — the CHECKPOINT menu (Claude Code's `/rewind` / `Esc Esc`
+// menu). It offers the six actions; two of them ("Restore code",
+// "Summarize from here") had no backend before R388n.
+import {
+  CheckpointMenu,
+  CHECKPOINT_ACTION_INFO,
+  type CheckpointAction,
+  type CheckpointRow,
+} from "./components/CheckpointMenu.js";
 // R388k — `/help` as a filterable LIST projected from the one command
 // catalog, instead of a truncated wall of text.
 import { CommandHelpPanel } from "./components/CommandHelpPanel.js";
 // R385: the one permission-mode catalog — the same list the picker
 // shows, the status pill badges and the toast blurb all read.
-import { MODE, permissionModeBlurb } from "./permissionModes.js";
+import { MODE, permissionModeBlurb, type PermissionModeName } from "./permissionModes.js";
 // R388l: the permission comment box. Claude Code lets the user attach
 // a free-text comment to a permission answer; the comment reaches the
 // model. The pure logic lives in its own module so a gate script can
 // import it (a `.tsx` component cannot be imported by a Node gate).
 import {
   armDecision,
+  DECISION_KEYS,
   DEFAULT_ARMED_DECISION,
   newCommentBox,
+  NUMBERED_DECISION_KEYS,
   permissionResponseParams,
+  resolveDecisionKey,
 } from "./permissionComment.js";
 // R388m: the permission DEADLINE contract — the daemon publishes the
 // expiry, the client counts down on it, and every renderer denies for
@@ -364,24 +376,109 @@ function cancelPermissionExpiry(requestId: string): void {
   permissionExpiryTimers.delete(requestId);
 }
 
+/**
+ * R388n: the ANSWER a permission reply carries.
+ *
+ * <p>★ WHY AN OBJECT, AND NOT MORE POSITIONAL PARAMETERS ★
+ *
+ * <p>`replyPermission` already had six positional parameters, and the
+ * mode would have been the seventh. R388m's own lesson was about
+ * exactly this shape: a 7th positional parameter turned every call site
+ * into nine lines, and the fix was to move the data to where it belongs
+ * (a module-level registry) instead of threading it.
+ *
+ * <p>The decision's parts — the decision, the scope it installs, the
+ * comment, the mode it switches to — are ONE answer. They travel
+ * together, they are produced together (the registry entry), and they
+ * are consumed together (the wire). Passing them as four loose
+ * arguments lets the call site pair a scope with the WRONG decision.
+ *
+ * <p>So the answer is an OBJECT, and the call site names its parts.
+ */
+interface PermissionAnswer {
+  decision: "allow" | "deny" | "always_allow" | "always_deny";
+  /** The scope a remembered decision installs, if any. */
+  rememberScope?: "session" | "project" | "user";
+  /** The user's own words, if any. */
+  comment?: string;
+  /** The permission mode the answer switches the session to, if any. */
+  mode?: PermissionModeName;
+}
+
 function replyPermission(
   client: JsonRpcClient,
   ask: PermissionAsk,
-  decision: "allow" | "deny" | "always_allow" | "always_deny",
+  answer: PermissionAnswer,
   dispatch: (a: Action) => void,
-  rememberScope?: "session" | "project" | "user",
-  comment?: string,
 ): void {
+  const { decision, rememberScope, comment, mode } = answer;
   // R388m: the user answered — cancel this ask's countdown timer.
   cancelPermissionExpiry(ask.requestId);
   void client
     .request(
       "permissionResponse",
-      permissionResponseParams(ask.requestId, decision, rememberScope, comment, "TUI"),
+      permissionResponseParams(
+        ask.requestId,
+        decision,
+        rememberScope,
+        comment,
+        "TUI",
+        undefined,
+        mode,
+      ),
     )
     .catch((e: Error) => {
       dispatch({ type: "log", message: `permission reply failed: ${e.message}` });
     });
+  // R388n: the "yes, and switch to auto mode" answer.
+  //
+  // The mode change is a SECOND RPC, issued AFTER the permission
+  // reply — deliberately not chained onto it. Two reasons:
+  //
+  //  1. The reply is what unblocks the model. If the mode change were
+  //     chained, a failing `setPermissionMode` would delay (or fail)
+  //     the approval — the user said YES and the tool still did not
+  //     run. The approval must not depend on a cosmetic follow-up.
+  //  2. The daemon's `setPermissionMode` answers with the mode it
+  //     ACTUALLY applied (`PermissionMode.valueOf` resolution), so the
+  //     toast can report the daemon's word rather than the client's
+  //     request — R377's rule, unchanged.
+  //
+  // Both requests are fire-and-forget with independent failure
+  // reports: a failed mode change must not look like a failed
+  // approval, and vice versa.
+  if (mode) {
+    void client
+      .request("setPermissionMode", { mode })
+      .then((res) => {
+        const r = res as { ok?: boolean; mode?: string; error?: string } | null | undefined;
+        if (r && r.ok === false) {
+          dispatch({
+            type: "pushToast",
+            kind: "err",
+            text: `permission mode not changed — ${r.error ?? "the daemon refused it"}`,
+          });
+          return;
+        }
+        // Report the mode the daemon RESOLVED, never the one we asked
+        // for — the daemon's answer is the only claim about what is in
+        // force (R377).
+        const applied = r?.mode ?? mode;
+        dispatch({ type: "setPermissionMode", mode: applied });
+        dispatch({
+          type: "pushToast",
+          kind: applied === MODE.DEFAULT ? "info" : "ok",
+          text: `mode → ${applied}: ${permissionModeBlurb(applied)}. Run /mode to change again.`,
+        });
+      })
+      .catch((e: Error) => {
+        dispatch({
+          type: "pushToast",
+          kind: "err",
+          text: `permission mode not changed — ${(e as Error).message}`,
+        });
+      });
+  }
   // If the user picked a remembered scope, also install a rule.
   // We do this AFTER the immediate reply so the model isn't held
   // up — the rule only affects future calls in this or later runs.
@@ -554,6 +651,8 @@ const PANEL_BY_INTENT: Record<string, PanelId> = {
   // R388c: the git worktree lifecycle. The daemon owns the isolation
   // VERDICT — the panel displays `isolated` and never derives it.
   "worktree-panel": "worktrees",
+  // R388n: the checkpoint menu (Claude Code's `/rewind` menu).
+  "checkpoint-menu": "checkpoints",
 };
 
 /** Intents whose panel row list is scoped to the active cwd. Kept as
@@ -659,6 +758,15 @@ const PANEL_META: Record<PanelId, { title: string; hint: string; loading: string
     title: "Worktrees",
     hint: "n new · m merge target · d remove · Enter merge · Esc cancel",
     loading: "reading the daemon's worktrees",
+  },
+  // R388n: the checkpoint menu. The hint names the TWO questions the
+  // menu asks — which point, and which action — because the panel has
+  // a Tab that switches between them. A hint that listed only one
+  // would leave the second list unexplainable.
+  checkpoints: {
+    title: "Rewind",
+    hint: "Tab switch list · ↑/↓ navigate · Enter choose · 1-6 action · Esc close",
+    loading: "reading the session's checkpoints",
   },
 };
 
@@ -794,6 +902,36 @@ function normalizeThreadRow(raw: unknown, i: number, now: number): ThreadRow {
     prompt: String(r.title ?? r.prompt ?? r.summary ?? r.firstPrompt ?? r.preview ?? ""),
     cwd: String(r.cwd ?? r.workingDirectory ?? ""),
     gitBranch: r.gitBranch == null ? undefined : String(r.gitBranch),
+    // R388n: the size. The daemon has always sent it; the TUI never
+    // read it. `sizeBytes` is a number on the wire.
+    sizeBytes: r.sizeBytes == null ? undefined : Number(r.sizeBytes),
+  };
+}
+
+/**
+ * R388n: normalise one checkpoint row from the daemon.
+ *
+ * <p>The row's `files` are the files the session touched up to that
+ * point. Each one says whether it can be restored (`restorable` — a
+ * binary file cannot) and whether the session CREATED it (`created` —
+ * a restore deletes it rather than writing it back).
+ */
+function normalizeCheckpointRow(raw: unknown): CheckpointRow {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const files = Array.isArray(r.files) ? r.files : [];
+  return {
+    id: String(r.id ?? ""),
+    userMessageIndex: Number(r.userMessageIndex ?? 0) || 0,
+    summary: String(r.summary ?? ""),
+    files: files.map((f) => {
+      const fr = (f ?? {}) as Record<string, unknown>;
+      return {
+        path: String(fr.path ?? ""),
+        name: String(fr.name ?? fr.path ?? "?"),
+        restorable: Boolean(fr.restorable),
+        created: Boolean(fr.created),
+      };
+    }),
   };
 }
 
@@ -1640,6 +1778,10 @@ const App: React.FC<{
           // getProviders RPC. Today the wire doesn't carry it,
           // so we leave it undefined.
           provider: typeof stObj.provider === "string" ? stObj.provider : undefined,
+          // R388n: the cwd's branch, for the session picker's Ctrl+B
+          // filter. Absent when the cwd is not a repository (or HEAD
+          // is detached) — an absent branch, not an empty one.
+          gitBranch: typeof stObj.gitBranch === "string" ? stObj.gitBranch : undefined,
         });
 
         // R364 — reconcile the launch directory against the DAEMON's.
@@ -1992,6 +2134,48 @@ const App: React.FC<{
       };
     }
 
+    // R388n — the checkpoint menu's rows.
+    //
+    // ★ An EMPTY list and a FAILED fetch are DIFFERENT facts. ★ The
+    // daemon has no checkpoints because the session has not written
+    // any files yet; that is not the same as "the wire is broken".
+    // The menu says which, because a menu that shows "no checkpoints
+    // yet" when the RPC failed sends the user looking for a problem
+    // that is in the wire.
+    if (panel === "checkpoints") {
+      begin();
+      void client
+        .request("checkpoints/list", {} as RpcValue)
+        .then((raw) => {
+          if (cancelled) return;
+          const envErr = envelopeError(raw);
+          if (envErr) {
+            dispatch({ type: "setCheckpoints", checkpoints: [] });
+            dispatch({ type: "setCheckpointsError", error: envErr });
+            fail("checkpoints/list", envErr);
+            return;
+          }
+          const arr = (raw as { checkpoints?: unknown[] })?.checkpoints;
+          const rows = Array.isArray(arr) ? arr : [];
+          dispatch({
+            type: "setCheckpoints",
+            checkpoints: rows.map((r) => normalizeCheckpointRow(r)),
+          });
+          dispatch({ type: "setCheckpointsError", error: null });
+          done();
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          const msg = e instanceof Error ? e.message : String(e);
+          dispatch({ type: "setCheckpoints", checkpoints: [] });
+          dispatch({ type: "setCheckpointsError", error: msg });
+          fail("checkpoints/list", e);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (panel === "agents") {
       begin();
       void client
@@ -2247,7 +2431,18 @@ const App: React.FC<{
     // leave `activePanel` unchanged while the filter flips — without
     // this dep the panel would re-render showing the previous
     // command's row list with the new command's title.
-  }, [state.activePanel, state.memoryTab, state.sessionId, state.panelCwdOnly, client]);
+    //
+    // R388n: `state.threadsRefresh` is a DEP too — a rename changes a
+    // row in the STORE, and the row list is a local copy, so it has
+    // to be re-read.
+  }, [
+    state.activePanel,
+    state.memoryTab,
+    state.sessionId,
+    state.panelCwdOnly,
+    state.threadsRefresh,
+    client,
+  ]);
 
   useEffect(() => {
     // TUI flicker fix (R-2026-09-13-R-tui-flicker): the
@@ -3640,6 +3835,20 @@ const App: React.FC<{
     if (!state.submitting) cancelSentRef.current = false;
   }, [state.submitting]);
 
+  // R388n: the ESC ESC shortcut — Claude Code's way into the rewind
+  // menu.
+  //
+  // ★ Two presses, not one. ★ A single Esc already means "close the
+  // overlay / stop the run / drop the queue"; stealing it for the
+  // menu would break every other use. The second press within
+  // ESC_ESC_WINDOW_MS is the one that opens the menu.
+  //
+  // The timestamp lives in a REF, not in the reducer: it is not UI
+  // state, it must not trigger a re-render, and a stale timestamp
+  // from ten minutes ago must not count as "the second press".
+  const escEscRef = React.useRef(0);
+  const ESC_ESC_WINDOW_MS = 600;
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       dispatch({ type: "exit" });
@@ -3760,6 +3969,28 @@ const App: React.FC<{
         void pauseAutoContinue(true);
         return;
       }
+      // R388n: ESC ESC opens the checkpoint menu.
+      //
+      // ★ It sits AFTER the overlay cases, not before. ★ The first
+      // Esc must still close the overlay the user opened — a shortcut
+      // that swallows the first press would make every panel need
+      // two Escs to close.
+      //
+      // The rule: the SECOND Esc within the window opens the menu. The
+      // FIRST one falls through to the rest of the ladder (stop the
+      // run / drop the queue), so the shortcut never takes a meaning
+      // away from a single press.
+      const now = Date.now();
+      if (now - escEscRef.current <= ESC_ESC_WINDOW_MS) {
+        escEscRef.current = 0;
+        // ★ The panel's open state IS `state.activePanel`. ★ There is
+        // no second flag saying "the checkpoint menu is open" — a
+        // second holder would be a second truth, and the two could
+        // disagree (the flag says open, the panel says closed).
+        dispatch({ type: "openPanel", id: "checkpoints" });
+        return;
+      }
+      escEscRef.current = now;
     }
     // R388l — the permission COMMENT BOX.
     //
@@ -3826,7 +4057,19 @@ const App: React.FC<{
         }
         dispatch({ type: "closeCommentBox" });
         if (state.permissionAsk) {
-          replyPermission(client, state.permissionAsk, box.armed, dispatch, box.scope, comment);
+          replyPermission(
+            client,
+            state.permissionAsk,
+            {
+              decision: box.armed,
+              rememberScope: box.scope,
+              comment,
+              // R388n: the armed decision may carry a mode — the `M`
+              // answer, armed with Ctrl+M.
+              mode: box.mode,
+            },
+            dispatch,
+          );
         }
         return;
       }
@@ -3861,38 +4104,58 @@ const App: React.FC<{
       // 3=deny / 4=always_deny) match Claude Code's modal style.
       // Letter aliases (A/Y/D/N + T/P/U for scope variants) are
       // still accepted for muscle memory.
-      if (input === "a" || input === "A" || input === "1") {
-        replyPermission(client, ask, "allow", dispatch);
+      //
+      // ★ R388n: the keys are resolved through the ONE registry
+      // (`DECISION_KEYS`), not a hand-written if-chain. ★
+      //
+      // The chain used to be a SECOND list of the decision keys — the
+      // registry (which the comment box arms) and the chain (which
+      // answers) were two lists that had to agree. That is Lesson
+      // 1207's shape, and it already cost a bug: `y` was in the
+      // registry and in the chain, but the chain's copy was the one
+      // that decided the SCOPE, so a scope fix in the registry would
+      // have silently done nothing.
+      //
+      // The `M` key (R388n's "yes, and switch to auto mode") makes the
+      // drift fatal: a chain that does not know about `m` would leave
+      // the key DEAD — it would look advertised on the card and do
+      // nothing when pressed. So there is now ONE list, and the chain
+      // is a LOOKUP.
+      //
+      // The numbered aliases (1..5) are a DIFFERENT axis — they are
+      // Claude Code's modal hotkeys, positional, not per-decision.
+      // They come from the registry's OWN `number` field, so a digit
+      // can never point at a different answer than the one the list
+      // documents (R380: the number is the catalog's projection, not
+      // a second numbering).
+      const numericAlias = NUMBERED_DECISION_KEYS.find(
+        (e) => e.number === Number.parseInt(input, 10),
+      );
+      const pressed = resolveDecisionKey(input);
+      if (pressed) {
+        replyPermission(
+          client,
+          ask,
+          {
+            decision: pressed.decision,
+            rememberScope: pressed.scope,
+            mode: pressed.mode,
+          },
+          dispatch,
+        );
         return;
       }
-      // T — allow for this task. Session-scope rule, but only
-      // future calls of this tool in the current run.
-      if (input === "t" || input === "T") {
-        replyPermission(client, ask, "always_allow", dispatch, "session");
-        return;
-      }
-      // P — allow for this project. Persists to .aethercode/permissions.json.
-      if (input === "p" || input === "P") {
-        replyPermission(client, ask, "always_allow", dispatch, "project");
-        return;
-      }
-      // U — allow for this user (cross-project, but only for this
-      // user's account on this machine).
-      if (input === "u" || input === "U") {
-        replyPermission(client, ask, "always_allow", dispatch, "user");
-        return;
-      }
-      // 2 = always_allow (session scope by default; matches "Y").
-      if (input === "y" || input === "Y" || input === "2") {
-        replyPermission(client, ask, "always_allow", dispatch, "session");
-        return;
-      }
-      if (input === "d" || input === "D" || input === "3") {
-        replyPermission(client, ask, "deny", dispatch);
-        return;
-      }
-      if (input === "n" || input === "N" || input === "4") {
-        replyPermission(client, ask, "always_deny", dispatch, "session");
+      if (numericAlias && /^[1-9]$/.test(input)) {
+        replyPermission(
+          client,
+          ask,
+          {
+            decision: numericAlias.decision,
+            rememberScope: numericAlias.scope,
+            mode: numericAlias.mode,
+          },
+          dispatch,
+        );
         return;
       }
       // Esc collapses the inline card but leaves the ask pending.
@@ -4245,6 +4508,126 @@ const App: React.FC<{
     dispatch({ type: "setPanelStatus", status: { loading: false, error: m, notice: null } });
   const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+  /**
+   * R388n: carry out a checkpoint menu action.
+   *
+   * <p>★ The action's FLAGS decide which RPCs fire — not the action's
+   * name. ★ "Restore code and conversation" is the code restore AND the
+   * conversation restore; a separate branch for it would let the two
+   * drift.
+   *
+   * <p>★ The scope is sent as ONE request. ★ The daemon's
+   * `checkpoints/restore` takes a `scope` of `code`, `conversation` or
+   * `both` and does both in one round trip. Two requests would mean
+   * the code restore could succeed while the conversation restore
+   * failed — and the user would be told "done" with half the work
+   * undone.
+   *
+   * <p>The toast reports what ACTUALLY happened, including the files
+   * the daemon skipped (binary) and the ones it failed on. A toast
+   * that says "restored" while a file is still modified is the
+   * silent-degradation shape.
+   */
+  async function applyCheckpointAction(
+    action: CheckpointAction,
+    checkpoint: CheckpointRow,
+    touchesCode: boolean,
+    touchesConversation: boolean,
+  ): Promise<void> {
+    // The two SUMMARIZE actions are a different operation entirely —
+    // they replace the conversation with a summary instead of
+    // rolling it back. They are the only actions that do not restore.
+    const isSummarize = action === "summarize_from_here" || action === "summarize_up_to_here";
+    if (isSummarize) {
+      try {
+        const raw = (await client.request("checkpoints/summarize", {
+          checkpointId: checkpoint.id,
+          mode: action === "summarize_from_here" ? "from" : "up_to",
+        } as RpcValue)) as {
+          ok?: boolean;
+          reason?: string;
+          summarized?: number;
+          kept?: number;
+        };
+        if (raw?.ok === false) {
+          dispatch({
+            type: "pushToast",
+            kind: "err",
+            text: `summarize failed — ${raw.reason ?? "the daemon refused it"}`,
+          });
+          return;
+        }
+        dispatch({
+          type: "pushToast",
+          kind: "ok",
+          text: `summarised ${raw?.summarized ?? 0} message(s), kept ${raw?.kept ?? 0}`,
+        });
+      } catch (e) {
+        dispatch({
+          type: "pushToast",
+          kind: "err",
+          text: `summarize failed — ${errMsg(e)}`,
+        });
+      }
+      return;
+    }
+
+    const scope =
+      touchesCode && touchesConversation ? "both" : touchesCode ? "code" : "conversation";
+    try {
+      const raw = (await client.request("checkpoints/restore", {
+        id: checkpoint.id,
+        scope,
+      } as RpcValue)) as {
+        ok?: boolean;
+        reason?: string;
+        restored?: string[];
+        deleted?: string[];
+        skipped?: string[];
+        failed?: string[];
+        conversation?: { removed?: number };
+      };
+      if (raw?.ok === false) {
+        dispatch({
+          type: "pushToast",
+          kind: "err",
+          text: `restore failed — ${raw.reason ?? "the daemon refused it"}`,
+        });
+        return;
+      }
+      // Report what happened. The skipped and failed lists are the
+      // interesting part: they say which files were NOT put back.
+      const parts: string[] = [];
+      if (touchesCode) {
+        const restored = raw?.restored?.length ?? 0;
+        const deleted = raw?.deleted?.length ?? 0;
+        const skipped = raw?.skipped?.length ?? 0;
+        const failed = raw?.failed?.length ?? 0;
+        parts.push(
+          `${restored} restored${deleted ? `, ${deleted} deleted` : ""}` +
+            `${skipped ? `, ${skipped} skipped` : ""}` +
+            `${failed ? `, ${failed} FAILED` : ""}`,
+        );
+        if (skipped) parts.push(`skipped: ${raw?.skipped?.join(", ")}`);
+        if (failed) parts.push(`failed: ${raw?.failed?.join(", ")}`);
+      }
+      if (touchesConversation) {
+        parts.push(`${raw?.conversation?.removed ?? 0} message(s) rolled back`);
+      }
+      dispatch({
+        type: "pushToast",
+        kind: raw?.failed?.length ? "err" : "ok",
+        text: parts.join(" · "),
+      });
+    } catch (e) {
+      dispatch({
+        type: "pushToast",
+        kind: "err",
+        text: `restore failed — ${errMsg(e)}`,
+      });
+    }
+  }
+
   // The memory panel's compact action. Fires `memory/compact` with
   // `force: true`, mirrors the outcome into `memoryCompact` so the
   // panel's own footer can show the before/after token counts, and
@@ -4330,6 +4713,7 @@ const App: React.FC<{
           prompt: r.prompt,
           cwd: r.cwd,
           gitBranch: r.gitBranch,
+          sizeBytes: r.sizeBytes,
         }));
         return (
           <ThreadSelector
@@ -4343,6 +4727,49 @@ const App: React.FC<{
             // command's name.
             onShowAll={() => dispatch({ type: "widenPanelScope" })}
             showAllOffered={state.panelCwdOnly}
+            // R388n: the branch filter's reference point. Without it
+            // "Ctrl+B: this branch" has no branch to filter BY, so
+            // the panel would show everything while claiming a
+            // filter — a lie about the list.
+            currentBranch={state.currentGitBranch}
+            // R388n: Ctrl+R renames the session. The daemon answers
+            // with the title it STORED, and the toast reports that —
+            // never the request (R377's rule).
+            onRename={(threadId, title) => {
+              void client
+                .request("session/rename", { id: threadId, title } as RpcValue)
+                .then((res: unknown) => {
+                  const r = (res ?? {}) as { ok?: boolean; title?: string; error?: string };
+                  if (r.ok === false) {
+                    dispatch({
+                      type: "pushToast",
+                      kind: "err",
+                      text: `rename failed — ${r.error ?? "the daemon refused it"}`,
+                    });
+                    return;
+                  }
+                  dispatch({
+                    type: "pushToast",
+                    kind: "ok",
+                    text: `renamed to "${r.title ?? title}"`,
+                  });
+                  // Re-fetch so the row shows the name the STORE holds.
+                  dispatch({ type: "refreshThreads" });
+                })
+                .catch((e: unknown) =>
+                  dispatch({
+                    type: "pushToast",
+                    kind: "err",
+                    text: `rename failed — ${errMsg(e)}`,
+                  }),
+                );
+            }}
+            // R388n: Ctrl+A / Ctrl+W widen the scope. They are the
+            // SAME scope the picker already has (`panelCwdOnly`), so
+            // the two chords dispatch the SAME action — one fact, one
+            // action (Lesson 1207).
+            onShowAllProjects={() => dispatch({ type: "widenPanelScope" })}
+            onShowAllWorktrees={() => dispatch({ type: "widenPanelScope" })}
             onSelect={(threadId, choice) => {
               closePanel();
               const target = state.threads.find((r) => r.threadId === threadId);
@@ -4824,6 +5251,39 @@ const App: React.FC<{
               }
             }}
             onClose={closePanel}
+          />
+        );
+
+      // R388n: the checkpoint menu — Claude Code's `/rewind` menu.
+      //
+      // ★ The DISPATCH reads the FLAGS, not a switch on the action
+      // name. ★ "Restore code and conversation" is not a third
+      // implementation: it is the code restore AND the conversation
+      // restore, and expressing it as a separate branch would let the
+      // two drift — a fix to one would not reach the other, and the
+      // user would get code restored in one menu entry and not the
+      // other.
+      case "checkpoints":
+        return (
+          <CheckpointMenu
+            width={panelContentWidth}
+            checkpoints={state.checkpoints}
+            onClose={closePanel}
+            onChoose={(action: CheckpointAction, checkpoint: CheckpointRow) => {
+              const info = CHECKPOINT_ACTION_INFO[action];
+              if (!info.touchesCode && !info.touchesConversation) {
+                // "Never mind" — the menu closes and nothing changes.
+                closePanel();
+                return;
+              }
+              closePanel();
+              void applyCheckpointAction(
+                action,
+                checkpoint,
+                info.touchesCode,
+                info.touchesConversation,
+              );
+            }}
           />
         );
 

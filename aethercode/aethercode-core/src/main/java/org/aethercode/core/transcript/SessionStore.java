@@ -247,6 +247,25 @@ public final class SessionStore {
     }
 
     /**
+     * R388n: rename a session — set its display title.
+     *
+     * <p>Only the TITLE changes. The session's cwd, worktree, model and
+     * first prompt are untouched — a rename must not move a session to
+     * another directory (see {@code SessionStoreSqlite.setTitle} for
+     * why this is not a {@code touch}).
+     *
+     * <p>Returns {@code true} when a row was updated, {@code false}
+     * when there is no such session.
+     */
+    public boolean rename(String id, String title) throws IOException {
+        try {
+            return meta.setTitle(id, title);
+        } catch (SQLException sqle) {
+            throw new IOException("rename failed for " + id, sqle);
+        }
+    }
+
+    /**
      * Mark a session as compacted. {@code compactedPath} is
      * the path the compactor wrote the compressed JSONL to
      * (typically {@code <id>.compacted.jsonl}). The size

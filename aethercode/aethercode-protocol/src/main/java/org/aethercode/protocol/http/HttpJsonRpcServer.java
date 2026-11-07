@@ -972,10 +972,24 @@ public final class HttpJsonRpcServer {
             // stdio + HTTP paths expose the same RPC.
             case "summary" -> methods.summary(params);
             case "listSessions" -> methods.listSessions(params);
+            // R388n: rename a session. Registered here AND in
+            // AetherCodeMethods.registerAll so BOTH transports expose
+            // it — a method that exists on stdio only is invisible to
+            // the HTTP client, and the symptom is a -32601 that
+            // depends on which transport the user happens to be on.
+            case "session/rename" -> methods.sessionRename(params);
             // R379: per-session token accounting.
             case "session/tokens" -> methods.sessionTokens(params);
             // R379: roll the transcript back to an earlier user message.
             case "rewind"         -> methods.rewind(params);
+            // R388n: the checkpoint surface. Routed here AND registered
+            // in AetherCodeMethods.registerAll so BOTH transports expose
+            // it — a method that exists on stdio only fails with -32601
+            // on HTTP, and the symptom depends on which transport the
+            // user happens to be on.
+            case "checkpoints/list" -> methods.checkpointsList(params);
+            case "checkpoints/restore" -> methods.checkpointsRestore(params);
+            case "checkpoints/summarize" -> methods.checkpointsSummarize(params);
             case "loadSession" -> methods.loadSession(params);
             case "listTasks" -> methods.listTasks(params);
             // Kanban-style task CRUD. The

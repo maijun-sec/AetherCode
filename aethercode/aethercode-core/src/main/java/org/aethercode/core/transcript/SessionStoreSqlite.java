@@ -424,6 +424,36 @@ public final class SessionStoreSqlite {
     }
 
     /**
+     * R388n: rename a session — set its display title.
+     *
+     * <p>★ Why a dedicated statement, and not {@code touch(...)} ★
+     *
+     * <p>{@code touch} is an UPSERT of the whole metadata row: it takes
+     * the cwd, the worktree, the model, the first prompt and the title,
+     * and it replaces every one of them. A rename that went through
+     * {@code touch} would have to read the row first and pass all the
+     * other fields back — and a caller that passed a stale cwd would
+     * silently MOVE the session to another directory. A rename that can
+     * move a session is not a rename.
+     *
+     * <p>So this is one column, one statement, and nothing else moves.
+     *
+     * <p>Returns {@code true} when a row was updated, {@code false}
+     * when there is no such session — the caller can tell "renamed"
+     * from "no such session" without a second round trip.
+     */
+    public boolean setTitle(String id, String title) throws SQLException {
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                 "UPDATE sessions SET title = ? WHERE id = ?"
+             )) {
+            ps.setString(1, title);
+            ps.setString(2, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /**
      * Drop the row + leave the JSONL files for the caller to
      * delete (the SessionStore wrapper does both atomically
      * via a tempdir rename trick — see SessionStore.delete).

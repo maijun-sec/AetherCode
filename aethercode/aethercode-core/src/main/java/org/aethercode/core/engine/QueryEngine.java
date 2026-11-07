@@ -127,6 +127,28 @@ public class QueryEngine {
     // installs a hook that detects "no confirmation needed for next N
     // rounds" patterns and arms the skip-confirmation counter.
     private volatile java.util.function.Consumer<String> onUserPrompt = s -> {};
+    /**
+     * R388n: hook fired at the TURN BOUNDARY — the moment a new user
+     * turn begins, BEFORE the prompt is appended and BEFORE any tool
+     * runs.
+     *
+     * <p>★ This is the only place a code checkpoint can be taken
+     * correctly. ★
+     *
+     * <p>At this instant the working tree holds the state the session
+     * is ABOUT TO change — so that state is the "before" state for
+     * everything this turn does. A checkpoint taken later (after the
+     * tools ran) would capture the "after" state and restore nothing;
+     * one taken before the prompt was appended would not know which
+     * turn it belongs to.
+     *
+     * <p>The argument is the prompt text; the sink is expected to
+     * resolve the turn ordinal itself from the transcript, because
+     * only the caller knows which messages count as user turns.
+     * Failures are swallowed — a broken checkpoint must never break a
+     * user's turn.
+     */
+    private volatile java.util.function.Consumer<String> onTurnBoundary = s -> {};
     private final AtomicInteger runCounter = new AtomicInteger();
     /** R719: anchor turn stride. Every K turns the engine
      *  auto-appends a USER-role session-anchor message whose
@@ -206,6 +228,26 @@ public class QueryEngine {
      *  {@code null} to clear. */
     public void setOnUserPrompt(java.util.function.Consumer<String> hook) {
         this.onUserPrompt = hook == null ? s -> {} : hook;
+    }
+
+    /**
+     * R388n: install the TURN BOUNDARY hook.
+     *
+     * <p>Fired once per user turn, before the prompt is appended to the
+     * transcript and before the model is called. The AetherCodeEngine
+     * installs a hook that takes a code checkpoint of the files the
+     * session has touched.
+     *
+     * <p>★ This is a SEPARATE setter from {@link #setOnUserPrompt}
+     * because a second installer would SILENTLY REPLACE the first. ★
+     * The skip-confirmation detector and the checkpoint writer are
+     * independent concerns; one setter for both would mean whichever
+     * installed last wins.
+     *
+     * @param hook the hook, or null to clear it
+     */
+    public void setOnTurnBoundary(java.util.function.Consumer<String> hook) {
+        this.onTurnBoundary = hook == null ? s -> {} : hook;
     }
 
     /** hard turn cap is no longer enforced. Per-todo adaptive control
@@ -1898,6 +1940,22 @@ public class QueryEngine {
             // end-of-turn check will still fire.
             java.util.logging.Logger.getLogger(QueryEngine.class.getName())
                     .warning("R140 pre-flight compact failed: " + ex.getMessage());
+        }
+        // R388n: fire the TURN BOUNDARY hook. This is the ONLY point
+        // where a code checkpoint can be taken correctly: the working
+        // tree still holds the state this turn is about to change, and
+        // the prompt has not been appended yet, so the turn ordinal the
+        // caller computes is the ordinal of the turn that is STARTING.
+        //
+        // It fires AFTER the pre-flight compact (which may have
+        // rewritten the transcript, changing the ordinals) and BEFORE
+        // the `[Resuming after user decision]` note is appended.
+        try {
+            onTurnBoundary.accept(userInput);
+        } catch (RuntimeException boundaryErr) {
+            // A broken checkpoint must never break a user's turn.
+            java.util.logging.Logger.getLogger(QueryEngine.class.getName())
+                    .warning("onTurnBoundary hook failed: " + boundaryErr);
         }
         // fire the onUserPrompt hook (no-op by default). The
         // engine installs a hook that detects skip-confirmation

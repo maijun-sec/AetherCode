@@ -159,6 +159,11 @@ export const ModePicker: React.FC<ModePickerProps> = ({
             <Text wrap="truncate-end">
               <Text bold={isHighlighted}>{m.value}</Text>
               <Text> {m.label}</Text>
+              {/* R388n: the SAME phrase the header and the status line
+                  show. Three surfaces, one phrase — a picker that
+                  describes a mode differently from the header is a
+                  second truth (R380's subject). */}
+              <Text dimColor> · {m.indicator}</Text>
               {isCurrent ? <Text color="yellowBright"> (current)</Text> : null}
             </Text>
           </Box>

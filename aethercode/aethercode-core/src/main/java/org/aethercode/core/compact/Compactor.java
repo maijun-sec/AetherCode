@@ -45,4 +45,28 @@ public interface Compactor {
      *         or {@code null} if compaction was skipped or failed
      */
     List<Message> compact(List<Message> messages);
+
+    /**
+     * R388n: summarise a transcript NOW, unconditionally.
+     *
+     * <p>{@link #compact(List)} is GATED — it returns {@code null}
+     * unless the transcript is over the context window. That gate is
+     * right for the automatic compaction (there is no point compacting
+     * a small transcript) and wrong for the USER's explicit
+     * "summarize from here": the user asked for a summary of a
+     * conversation that may be perfectly small.
+     *
+     * <p>So the user-initiated path gets its own method, and the
+     * default implementation delegates to {@code compact} — so an
+     * implementation that does not support unconditional summarisation
+     * still behaves (it just refuses, and the caller reports the
+     * refusal).
+     *
+     * @param messages the transcript to summarise
+     * @return the summary transcript, or {@code null} when the
+     *   summarisation was not possible
+     */
+    default List<Message> summarizeNow(List<Message> messages) {
+        return compact(messages);
+    }
 }

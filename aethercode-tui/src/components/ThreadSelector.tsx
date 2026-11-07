@@ -54,6 +54,29 @@ export interface ThreadInfo {
   gitBranch?: string;
   prompt: string;
   cwd: string;
+  /**
+   * R388n: the session file's size in BYTES.
+   *
+   * <p>The daemon has always sent `sizeBytes` on `listSessions` — it
+   * is the source of the `messageCount` proxy. The TUI never read it.
+   * Claude Code's `/resume` selector shows the size next to each row,
+   * and it is the only number that says "this session is 40 MB, do not
+   * open it by accident".
+   */
+  sizeBytes?: number;
+}
+
+/**
+ * R388n: a session's size, in the compact form the desktop's session
+ * rail uses ("12 B" / "4 KB" / "3 MB").
+ *
+ * <p>A size of 0 or less is "" — an unknown size is not "0 B".
+ */
+export function formatBytes(sizeBytes: number | undefined): string {
+  if (sizeBytes == null || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return "";
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** Outcome of the cwd-switch prompt invoked when the user
@@ -121,6 +144,35 @@ export interface ThreadSelectorProps {
    * affordance is not advertised.
    */
   showAllOffered?: boolean;
+  /**
+   * R388n: the git branch of the CURRENT working directory.
+   *
+   * <p>Claude Code's `/resume` selector has a `Ctrl+B` chord: "only
+   * sessions on my current branch". The filter needs the CURRENT
+   * branch to compare against — the picker cannot discover it, because
+   * it knows the sessions' branches but not the cwd's.
+   */
+  currentBranch?: string;
+  /**
+   * R388n: `Ctrl+R` — rename the highlighted session.
+   *
+   * <p>Claude Code lets the user name a session so the picker shows
+   * something meaningful instead of a timestamp. The daemon's
+   * `session/rename` RPC does the write.
+   */
+  onRename?: (threadId: string, title: string) => void;
+  /**
+   * R388n: `Ctrl+W` — show every session, across every WORKTREE.
+   *
+   * <p>A worktree is a different checkout of the same repo, and a
+   * session started in one is invisible when the picker is scoped to
+   * the cwd. This widens the scope past the cwd filter.
+   */
+  onShowAllWorktrees?: () => void;
+  /**
+   * R388n: `Ctrl+A` — show every session (across every project).
+   */
+  onShowAllProjects?: () => void;
 }
 
 export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
@@ -136,9 +188,25 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
   width = 76,
   onShowAll,
   showAllOffered = false,
+  currentBranch,
+  onRename,
+  onShowAllWorktrees,
+  onShowAllProjects,
 }) => {
   const [filter, setFilter] = useState("");
   const [highlight, setHighlight] = useState(0);
+  // R388n: the PREVIEW pane. Claude Code's `/resume` selector opens a
+  // preview with Space — the user reads what a session is about
+  // BEFORE deciding to switch to it. Without the preview, picking a
+  // session is a guess based on a one-line title.
+  const [preview, setPreview] = useState(false);
+  // R388n: the RENAME field. Ctrl+R opens it; the user types a name
+  // and presses Enter to apply it.
+  const [renaming, setRenaming] = useState(false);
+  const [renameText, setRenameText] = useState("");
+  // R388n: the branch filter. Ctrl+B narrows the list to the
+  // sessions on the CURRENT branch.
+  const [branchOnly, setBranchOnly] = useState(false);
   // R388j: the filter row's `TextInput` has its OWN `useInput`, and
   // Ink's `useInput` is NOT focus-scoped — so the `a` that widens the
   // scope ALSO lands in the filter. This latch swallows exactly that
@@ -151,18 +219,31 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
 
   // Filter — empty query shows all. Match on threadId, agent,
   // branch, prompt, or cwd.
+  //
+  // R388n: the BRANCH filter is a separate axis from the text filter.
+  // It is a MODE (Ctrl+B toggles it), not a refinement of the query —
+  // so it is applied AFTER the text filter, and toggling it does not
+  // touch the query.
   const filtered = useMemo(() => {
-    if (!filter.trim()) return threads;
-    const q = filter.toLowerCase();
-    return threads.filter(
-      (t) =>
-        t.threadId.toLowerCase().includes(q) ||
-        t.agentName.toLowerCase().includes(q) ||
-        (t.gitBranch ?? "").toLowerCase().includes(q) ||
-        t.prompt.toLowerCase().includes(q) ||
-        t.cwd.toLowerCase().includes(q),
-    );
-  }, [threads, filter]);
+    const q = filter.trim().toLowerCase();
+    const byText = q
+      ? threads.filter(
+          (t) =>
+            t.threadId.toLowerCase().includes(q) ||
+            t.agentName.toLowerCase().includes(q) ||
+            (t.gitBranch ?? "").toLowerCase().includes(q) ||
+            t.prompt.toLowerCase().includes(q) ||
+            t.cwd.toLowerCase().includes(q),
+        )
+      : threads;
+    if (!branchOnly) return byText;
+    // ★ The branch filter needs a CURRENT branch to compare against. ★
+    // Without one there is nothing to filter BY, and showing everything
+    // while claiming "branch only" is a lie. So the filter is a no-op
+    // until the host supplies the branch — and the host is told.
+    if (!currentBranch) return byText;
+    return byText.filter((t) => (t.gitBranch ?? "") === currentBranch);
+  }, [threads, filter, branchOnly, currentBranch]);
 
   // Clamp highlight when the filtered list shrinks.
   useEffect(() => {
@@ -172,7 +253,41 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
   }, [filtered.length, highlight]);
 
   useInput((input, key) => {
+    // R388n: the RENAME field owns the keyboard while it is open —
+    // typing "d" must type a "d", not navigate. Esc cancels, Enter
+    // applies. This branch comes FIRST, for the same reason the
+    // comment box's does (R388l).
+    if (renaming) {
+      if (key.escape) {
+        setRenaming(false);
+        setRenameText("");
+        return;
+      }
+      if (key.return) {
+        const t = filtered[highlight];
+        const name = renameText.trim();
+        setRenaming(false);
+        setRenameText("");
+        if (t && name) onRename?.(t.threadId, name);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setRenameText((s) => s.slice(0, -1));
+        return;
+      }
+      // A modifier chord is not text — Ctrl+R must not type an "r".
+      if (key.ctrl || key.meta || key.shift) return;
+      if (input && input.length === 1) setRenameText((s) => s + input);
+      return;
+    }
     if (key.escape) {
+      // R388n: Esc closes the PREVIEW first — it is a mode, and Esc
+      // means "leave the mode I am in" before it means "close the
+      // panel".
+      if (preview) {
+        setPreview(false);
+        return;
+      }
       onClose();
       return;
     }
@@ -194,6 +309,65 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
       swallowNextFilterChar.current = true;
       setFilter("");
       onShowAll();
+      return;
+    }
+    // R388n: the Ctrl chords. Claude Code's `/resume` selector binds
+    // Ctrl+A (all projects), Ctrl+W (all worktrees), Ctrl+B (current
+    // branch) and Ctrl+R (rename).
+    //
+    // ★ These are MODIFIER chords, so they never reach the filter row
+    // as text — the `TextInput` inserts the bare letter, but the panel
+    // swallows it the same way it swallows `a`. ★
+    if (key.ctrl) {
+      const chord = input.toLowerCase();
+      if (chord === "r" && onRename) {
+        swallowNextFilterChar.current = true;
+        setRenameText("");
+        setRenaming(true);
+        return;
+      }
+      if (chord === "a" && onShowAllProjects) {
+        swallowNextFilterChar.current = true;
+        setFilter("");
+        onShowAllProjects();
+        return;
+      }
+      if (chord === "w" && onShowAllWorktrees) {
+        swallowNextFilterChar.current = true;
+        setFilter("");
+        onShowAllWorktrees();
+        return;
+      }
+      if (chord === "b") {
+        swallowNextFilterChar.current = true;
+        setFilter("");
+        setBranchOnly((b) => !b);
+        return;
+      }
+    }
+    // R388n: Space toggles the PREVIEW. The user reads what a session
+    // is about before switching to it.
+    //
+    // Space is also a printable character the filter row would
+    // swallow, so the panel clears it the same way.
+    if (input === " ") {
+      swallowNextFilterChar.current = true;
+      setFilter((f) => f);
+      setPreview((p) => !p);
+      return;
+    }
+    // R388n: a DIGIT jumps to that row and picks it. Claude Code's
+    // `/resume` selector accepts "1".."9" as a direct pick — the user
+    // does not have to arrow down to a session they can already see.
+    //
+    // The digit selects the Nth row of the VISIBLE list, so the
+    // number always matches what is on screen.
+    if (/^[1-9]$/.test(input)) {
+      const idx = Number.parseInt(input, 10) - 1;
+      const t = filtered[idx];
+      if (!t) return;
+      const choice: CwdSwitchChoice = chooseCwd(t.cwd, currentCwd);
+      onSelect(t.threadId, choice);
       return;
     }
     if (key.upArrow || input === "k") {
@@ -289,11 +463,27 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
           // a list whose ids are timestamps. R388j renders it in the
           // desktop's compact form ("12m" / "3h" / "5d").
           const when = t.updatedAt ? relativeAge(t.updatedAt) : "";
+          // R388n: the BRANCH and the SIZE.
+          //
+          // The branch is the column that answers "which one was I
+          // working on" — the daemon sends it now (R388n's
+          // GitBranchReader), and the `showBranch` prop that was
+          // declared for it and never used is finally honest.
+          //
+          // The size is the only number that says "this session is
+          // 40 MB, do not open it by accident".
+          const branch = t.gitBranch ? ` · ${t.gitBranch}` : "";
+          const size = formatBytes(t.sizeBytes);
           // The title line: gutter (2) + label + " · " + id tail.
           // The id tail is fixed-width so the labels line up.
           const titleLine = `${mark}${activeMark} ${label}`;
           const titleBudget = Math.max(8, width - 4 - idTail.length - 3);
-          const metaLine = `   ${meta}${when ? ` · ${when}` : ""}`;
+          const metaLine = `   ${meta}${when ? ` · ${when}` : ""}${branch}${size ? ` · ${size}` : ""}`;
+          // R388n: the row NUMBER. The digit keys pick the Nth
+          // VISIBLE row, so the number on screen and the number the
+          // user presses must be the same thing — and the number is
+          // the position in the FILTERED list, not in the window.
+          const rowNumber = start + i + 1;
           return (
             <Box key={t.threadId} flexDirection="column">
               {/* R388j: ONE `<Text>` per row. Ink's flexbox
@@ -304,6 +494,8 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
                   comes out short. One `<Text>` has nothing to
                   distribute. */}
               <Text>
+                {/* R388n: the number gutter. */}
+                <Text dimColor>{rowNumber}. </Text>
                 <Text color={isHighlighted ? "cyan" : undefined} bold={isHighlighted}>
                   {fitRow(titleLine, titleBudget)}
                 </Text>
@@ -318,6 +510,46 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
       {filtered.length > maxVisible ? (
         <Text dimColor>{fitRow(` ${start + 1}–${end} of ${filtered.length}`, width)}</Text>
       ) : null}
+      {/* R388n: the PREVIEW pane. Claude Code's `/resume` selector
+          opens a preview with Space: the user reads what a session is
+          about BEFORE deciding to switch to it. Without it, picking a
+          session is a guess based on a one-line title.
+
+          The preview shows the facts the row cannot fit: the full
+          path, the branch, the size, and the session's prompt. */}
+      {preview && filtered[highlight] ? (
+        <>
+          <Text>{blank(width)}</Text>
+          <Text color="cyan">
+            {fitRow(
+              ` preview · ${filtered[highlight].agentName || filtered[highlight].threadId}`,
+              width,
+            )}
+          </Text>
+          <Text dimColor>{fitRow(`   cwd: ${filtered[highlight].cwd || "(unknown)"}`, width)}</Text>
+          <Text dimColor>
+            {fitRow(
+              `   branch: ${filtered[highlight].gitBranch ?? "(none)"} · size: ${
+                formatBytes(filtered[highlight].sizeBytes) || "(unknown)"
+              }`,
+              width,
+            )}
+          </Text>
+          {filtered[highlight].prompt ? (
+            <Text dimColor>{fitRow(`   ${filtered[highlight].prompt}`, width)}</Text>
+          ) : null}
+        </>
+      ) : null}
+      {/* R388n: the RENAME field. The name the user types REPLACES
+          the generated title — the daemon's `session/rename` writes
+          it, and the picker shows it from then on. */}
+      {renaming ? (
+        <>
+          <Text>{blank(width)}</Text>
+          <Text color="cyan">{fitRow(" rename:", width)}</Text>
+          <Text>{fitRow(` ${renameText}▌`, width)}</Text>
+        </>
+      ) : null}
       {/* R388j: the escape hatch out of a narrow scope. It is a
           KEYPRESS, not a sentence that tells the user to go and
           remember another command's name. */}
@@ -326,6 +558,22 @@ export const ThreadSelector: React.FC<ThreadSelectorProps> = ({
           <Text>{blank(width)}</Text>
           <Text color="cyan">
             {fitRow("a  show every session (not just this directory)", width)}
+          </Text>
+        </>
+      ) : null}
+      {/* R388n: the branch filter's own state line. The user needs to
+          know that the list is NARROWED — a filter that is on but
+          invisible looks like the list lost rows. */}
+      {branchOnly ? (
+        <>
+          <Text>{blank(width)}</Text>
+          <Text color="cyan">
+            {fitRow(
+              currentBranch
+                ? `branch only: ${currentBranch}`
+                : "branch only (no current branch — showing everything)",
+              width,
+            )}
           </Text>
         </>
       ) : null}

@@ -1009,10 +1009,19 @@ export function routeSlash(input: string): SlashResult | null {
       return { local: "__BUDGET__:" + usd };
     }
     case "rewind": {
-      // rewind to a specific history index (1-based for UX).
-      // Emitted as RPC; the engine handles the actual transcript
-      // rollback.
-      if (rest.length === 0) return { local: "usage: /rewind <history-index>" };
+      // R388n: bare `/rewind` opens the CHECKPOINT MENU — Claude
+      // Code's shape, and the only one a user can actually use.
+      //
+      // Before R388n this demanded a history INDEX the user had to
+      // know, and the number was a raw transcript ordinal that no
+      // surface ever displayed. A menu that lists the points and
+      // offers the SIX operations (restore code / conversation /
+      // both, summarize from here / up to here) replaces it.
+      //
+      // The index form is KEPT for the users who type it — it is a
+      // working, precise operation. What changed is that it is no
+      // longer the ONLY way in.
+      if (rest.length === 0) return { local: "__CHECKPOINT_MENU__" };
       const n = Number(rest[0]);
       if (!Number.isInteger(n) || n < 1) return { local: "usage: /rewind <history-index>  (>= 1)" };
       return { rpcMethod: "rewind", rpcParams: { target: n - 1 } };

@@ -210,6 +210,20 @@ export const PANEL_INTENTS: PanelIntent[] = [
     line: "rendered", // R365: was 'unavailable'; line.ts has a __THREAD_SELECTOR__ arm.
   },
   {
+    id: "checkpoint-menu",
+    sentinels: ["__CHECKPOINT_MENU__"],
+    command: "/rewind",
+    title: "Return to an earlier point — restore the code, the conversation, or both",
+    group: "session",
+    component: "components/CheckpointMenu.tsx",
+    // R388n: the menu is real on Ink. On the line renderer it is a
+    // NUMBERED text menu (the line renderer has no `useInput` loop, so
+    // an arrow-key selector is not possible there — and a menu that
+    // shows arrows the renderer cannot honour is a lie).
+    ink: "mounted",
+    line: "rendered",
+  },
+  {
     id: "session-picker",
     sentinels: ["__SESSION_PICKER__"],
     command: "/sessions",

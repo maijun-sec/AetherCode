@@ -94,6 +94,16 @@ const acTuiSrc = readSrc("src/ac-tui.ts");
 const FLAGS = { escape: "esc", tab: "tab", upArrow: "up", downArrow: "down", return: "return" };
 
 /**
+ * R388n: the ONE decision-key registry, loaded from the real module.
+ *
+ * <p>The app's permission keys are resolved through it, so the chord
+ * extractor has to know what it carries — otherwise a registry-driven
+ * binding reads as "no binding at all" and the gate reports a false
+ * failure on an improvement.
+ */
+const DECISION_KEYS = (await loadTsModule(root, "src/permissionComment.ts")).DECISION_KEYS;
+
+/**
  * The bodies of every `useInput` handler in a source file.
  *
  * @param {string} src
@@ -115,6 +125,26 @@ function handlerBodies(src) {
  *
  * <p>`ctrl+c`, `ctrl+shift+b`, `ctrl+1-9`, `esc`, `tab`, `up`, `down`,
  * `return`, or a bare letter.
+ *
+ * <p>★ R388n: a REGISTRY-DRIVEN binding counts too. ★
+ *
+ * <p>Pre-R388n the app's permission keys were literal comparisons
+ * (`input === "a" || input === "A" || input === "1"`). R388n replaced
+ * that hand-written chain with a LOOKUP through the ONE decision-key
+ * registry (`DECISION_KEYS` in `src/permissionComment.ts`), so the
+ * literals are gone from the handler.
+ *
+ * <p>That would have made this gate report `a` and `1` as PHANTOM
+ * chords — "the help documents chords nothing binds" — even though the
+ * keys work perfectly. A gate that cannot tell "the key is gone" from
+ * "the key moved" reports a false failure on an improvement, and a gate
+ * that cries wolf gets ignored (Lesson 1233: a CONTRACT pin must FOLLOW
+ * the implementation).
+ *
+ * <p>So the extractor follows the truth to its new home: a handler
+ * that calls `resolveDecisionKey(` binds every key the registry
+ * carries. The registry is loaded ONCE, from the real module — not
+ * re-implemented here (a second copy is a second truth).
  *
  * @param {string} body
  * @returns {string[]}
@@ -147,6 +177,20 @@ function chordsIn(body) {
   for (const m of body.matchAll(/key\.(escape|tab|upArrow|downArrow|return)\b/g)) {
     if (inCtrl(m.index)) continue;
     tokens.add(FLAGS[m[1]]);
+  }
+
+  // ★ R388n: the registry-driven bindings. ★
+  //
+  // A handler that resolves a decision key binds every key the
+  // registry carries — the letter AND its positional alias (the
+  // alias is the entry's OWN `number` field, not its position in the
+  // array: `t` and `y` are the same answer, and only some entries
+  // carry a number at all).
+  if (/resolveDecisionKey\(/.test(body) || /DECISION_KEYS/.test(body)) {
+    for (const entry of DECISION_KEYS) {
+      tokens.add(entry.key.toLowerCase());
+      if (typeof entry.number === "number") tokens.add(String(entry.number));
+    }
   }
 
   return [...tokens].sort();

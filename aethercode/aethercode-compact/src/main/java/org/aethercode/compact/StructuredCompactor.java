@@ -151,6 +151,36 @@ public final class StructuredCompactor implements Compactor {
         }
     }
 
+    /**
+     * R388n: summarise a transcript NOW, unconditionally.
+     *
+     * <p>{@link #compact(List)} is GATED on the context window. That
+     * gate is right for the AUTOMATIC compaction and wrong for the
+     * USER's explicit "summarize from here": the user asked for a
+     * summary of a conversation that may be perfectly small, and a
+     * silent {@code null} would read as "summarisation failed".
+     *
+     * <p>So this path skips the gate and always summarises.
+     */
+    @Override
+    public List<Message> summarizeNow(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) return null;
+        try {
+            String summary = summarise(messages);
+            consecutiveFailures = 0;
+            return List.of(new Message(
+                    "summary-" + System.currentTimeMillis(),
+                    Role.ASSISTANT,
+                    List.of(new ContentBlock.TextBlock(summary)),
+                    null,
+                    java.util.Map.of("kind", "structured-summary")));
+        } catch (Exception e) {
+            consecutiveFailures++;
+            LOG.warn("explicit summarise failed (consecutive={}): {}", consecutiveFailures, e.getMessage());
+            return null;
+        }
+    }
+
     /** Build the structured summary by calling the chat client
      *  with a prompt that asks for the 7-section markdown layout. */
     String summarise(List<Message> messages) {

@@ -974,6 +974,30 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                                 + rounds + " rounds on session " + appState.sessionId());
             }
         });
+        // R388n: install the TURN BOUNDARY hook — the code checkpoint
+        // producer.
+        //
+        // ★ This is where a checkpoint MUST be taken. ★ At the turn
+        // boundary the working tree still holds the state the turn is
+        // about to change, so that state is the "before" state. A
+        // checkpoint taken after the tools ran would capture the
+        // "after" state and restore nothing.
+        //
+        // The ordinal is the count of REAL user turns already in the
+        // transcript — the turn that is STARTING is the next one.
+        // The rule is the shared one in CodeCheckpointStore, so the
+        // menu's numbering and the restore's boundary cannot drift.
+        this.queryEngine.setOnTurnBoundary(prompt -> {
+            try {
+                java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+                int ordinal =
+                        org.aethercode.core.transcript.CodeCheckpointStore.userTurnIndices(t).size();
+                saveCodeCheckpoint(ordinal, summarizePrompt(prompt));
+            } catch (RuntimeException cpErr) {
+                // A broken checkpoint must never break a user's turn.
+                LOG.warn("R388n: code checkpoint failed: {}", cpErr.getMessage());
+            }
+        });
         // per-query turn cap — bounds runaway tool loops. -1 / 0 disables.
         if (b.maxTurnsPerQuery > 0) {
             this.queryEngine.setMaxTurnsPerQuery(b.maxTurnsPerQuery);
@@ -2743,6 +2767,318 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         out.put("kept", keep);
         out.put("removed", removed);
         out.put("transcriptSize", keep);
+        return out;
+    }
+
+    /**
+     * R388n: the CODE checkpoints — the files, at each user turn.
+     *
+     * <p>Claude Code's rewind menu offers "Restore code and
+     * conversation" / "Restore conversation" / "Restore code". The
+     * conversation half existed ({@link #rewind(int)}); the CODE half
+     * did not, and the pre-existing {@code CheckpointStore} was dead
+     * code that stored messages and no files.
+     *
+     * <p>So the engine keeps a {@link org.aethercode.core.transcript.CodeCheckpointStore}
+     * and exposes it. The checkpoints are DERIVED from the transcript's
+     * tool calls — the files the session wrote — so there is no second
+     * bookkeeping path that could disagree with what actually happened.
+     */
+    private final org.aethercode.core.transcript.CodeCheckpointStore codeCheckpoints =
+            new org.aethercode.core.transcript.CodeCheckpointStore();
+
+    /**
+     * R388n: the one-line label the checkpoint menu shows.
+     *
+     * <p>The prompt is truncated to a single line — a checkpoint row is
+     * a menu entry, not a paragraph. A blank prompt (which happens when
+     * a tool-only turn follows a decision) gets an explicit placeholder
+     * rather than an empty row, because an empty row in a list of
+     * checkpoints is indistinguishable from a broken one.
+     */
+    private static String summarizePrompt(String prompt) {
+        if (prompt == null || prompt.isBlank()) return "(no prompt)";
+        String oneLine = prompt.replace('\n', ' ').replace('\r', ' ').strip();
+        if (oneLine.length() > 60) oneLine = oneLine.substring(0, 57) + "…";
+        return oneLine;
+    }
+
+    /**
+     * R388n: take a code checkpoint of the files the session has touched.
+     *
+     * <p>★ The ORDINAL is resolved with
+     * {@link org.aethercode.core.transcript.CodeCheckpointStore#userTurnIndices}
+     * — the SAME rule every consumer uses. ★
+     *
+     * <p>An earlier version derived the transcript index from the
+     * ordinal directly (`transcriptIndex = userMessageIndex`). That
+     * works only when every USER-role message is a real user turn —
+     * and the engine writes compaction notices, session anchors and
+     * controller prompts with {@code Role.USER} too. Under that rule a
+     * "restore to turn 3" would land on a compaction notice, and the
+     * feature would look like it worked while corrupting the
+     * conversation.
+     *
+     * @param userMessageIndex the 0-based user-TURN ordinal
+     * @return the checkpoint
+     */
+    public org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint
+            saveCodeCheckpoint(int userMessageIndex, String summary) {
+        java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+        java.util.List<Integer> turns =
+                org.aethercode.core.transcript.CodeCheckpointStore.userTurnIndices(t);
+        // The turn that is STARTING is not in the transcript yet — it is
+        // one past the last existing turn. Its transcript index is the
+        // current transcript size.
+        int transcriptIndex;
+        if (userMessageIndex >= 0 && userMessageIndex < turns.size()) {
+            transcriptIndex = turns.get(userMessageIndex);
+        } else {
+            transcriptIndex = t.size();
+        }
+        java.nio.file.Path cwd = appState.cwd();
+        String id = "cp-" + userMessageIndex + "-" + System.currentTimeMillis();
+        return codeCheckpoints.save(id, t, transcriptIndex, userMessageIndex, cwd, summary);
+    }
+
+    /** R388n: every code checkpoint, in creation order. */
+    public java.util.List<org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint>
+            codeCheckpoints() {
+        return codeCheckpoints.list();
+    }
+
+    /**
+     * R388n: put the files back to a checkpoint's state.
+     *
+     * <p>Only the CODE is restored — the transcript is a separate
+     * operation ({@link #restoreConversationTo(String)}), and the menu
+     * offers them separately for exactly that reason.
+     */
+    public org.aethercode.core.transcript.CodeCheckpointStore.RestoreResult
+            restoreCodeCheckpoint(String id) {
+        return codeCheckpoints.get(id)
+                .map(codeCheckpoints::restore)
+                .orElseThrow(() -> new IllegalArgumentException("no such checkpoint: " + id));
+    }
+
+    /**
+     * R388n: roll the CONVERSATION back to a checkpoint.
+     *
+     * <p>★ The checkpoint's OWN transcript index is the boundary. ★
+     *
+     * <p>The pre-existing {@link #rewind(int)} takes a user-message
+     * ordinal and re-derives the transcript index by counting
+     * {@code Role.USER} messages — which includes the side-notes the
+     * engine writes. A checkpoint, by contrast, was taken at a known
+     * transcript position. Re-deriving the position from an ordinal
+     * would put the two out of step and land the rewind on a
+     * different message than the menu said.
+     *
+     * <p>So the checkpoint path uses the recorded index, and the
+     * legacy ordinal path keeps its own behaviour — two entry points,
+     * each honest about what it means.
+     *
+     * @param checkpointId the checkpoint to roll back to
+     * @return what happened
+     */
+    public java.util.Map<String, Object> restoreConversationTo(String checkpointId)
+            throws java.io.IOException {
+        org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint cp = codeCheckpoints
+                .get(checkpointId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "no such checkpoint: " + checkpointId));
+        java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+        // The checkpoint's index was the transcript size at the moment
+        // the turn STARTED — so the prompt of that turn is at that
+        // index. Rolling back keeps everything BEFORE it.
+        int keep = Math.max(0, Math.min(cp.transcriptIndex(), t.size()));
+        java.util.List<org.aethercode.core.message.Message> kept =
+                new java.util.ArrayList<>(t.subList(0, keep));
+        int removed = appState.truncateTranscript(keep);
+        Transcript onDisk = this.currentTranscript;
+        if (onDisk != null) onDisk.truncateTo(keep);
+        var push = transcriptPush;
+        if (push != null) {
+            try {
+                java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
+                payload.put("action", "sync");
+                payload.put("sessionId", appState.sessionId());
+                java.util.List<java.util.Map<String, Object>> msgs =
+                        new java.util.ArrayList<>(kept.size());
+                for (org.aethercode.core.message.Message m : kept) msgs.add(m.toMap());
+                payload.put("messages", msgs);
+                push.accept(payload);
+            } catch (Exception e) {
+                LOG.debug("transcript push (restoreConversationTo) failed: {}", e.getMessage());
+            }
+        }
+        LOG.info("restoreConversationTo: checkpoint={} kept={} removed={}",
+                checkpointId, keep, removed);
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("checkpointId", checkpointId);
+        out.put("kept", keep);
+        out.put("removed", removed);
+        out.put("transcriptSize", keep);
+        return out;
+    }
+
+    /**
+     * R388n: "summarize from here" — replace the conversation UP TO a
+     * point with a summary of that conversation.
+     *
+     * <p>Claude Code's rewind menu offers "Summarize from here" and
+     * "Summarize up to here". The daemon had NO summarisation of a
+     * transcript PREFIX: the {@code summary} RPC is a task-stats
+     * snapshot, and {@code compact} is the automatic, context-window-
+     * gated compaction. Neither is the user's explicit request.
+     *
+     * <p>So this:
+     *
+     * <ol>
+     *   <li>summarises the transcript UP TO the target (the messages
+     *       before the Nth user message), unconditionally — the user
+     *       asked, so the context-window gate does not apply;</li>
+     *   <li>replaces that prefix with the summary;</li>
+     *   <li>keeps everything AFTER the target — that is the
+     *       "from here" part.</li>
+     * </ol>
+     *
+     * <p>"Summarize UP TO here" is the same operation with the
+     * summarised side flipped; both are the same engine primitive with
+     * a different half kept.
+     *
+     * @param target the 0-based user-message ordinal
+     * @param keepAfter true = "summarize from here" (keep the tail),
+     *                  false = "summarize up to here" (keep the head)
+     * @return a report: what was summarised, what was kept
+     */
+    public java.util.Map<String, Object> summarizeFrom(
+            int target, boolean keepAfter) throws java.io.IOException {
+        if (target < 0) {
+            throw new IllegalArgumentException("target must be >= 0, got " + target);
+        }
+        java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+        // The boundary: the index of the Nth REAL user turn. The rule
+        // is shared with the checkpoint producer — the same helper —
+        // so "summarise up to turn 3" and "restore to turn 3" land on
+        // the SAME message.
+        java.util.List<Integer> turns =
+                org.aethercode.core.transcript.CodeCheckpointStore.userTurnIndices(t);
+        if (target >= turns.size()) {
+            throw new IllegalArgumentException(
+                    "no user turn at index " + target + " (transcript has "
+                    + turns.size() + " user turn(s))");
+        }
+        int userIdx = turns.get(target);
+        return summarizeAtTranscriptIndex(userIdx, keepAfter, "target=" + target);
+    }
+
+    /**
+     * R388n: summarise the conversation at a CHECKPOINT.
+     *
+     * <p>★ The checkpoint's own transcript index is the boundary. ★
+     *
+     * <p>Like {@link #restoreConversationTo(String)}, this uses the
+     * recorded position rather than re-deriving one from an ordinal.
+     * The menu says "summarise from checkpoint 3" — so the operation
+     * must happen at checkpoint 3, not at whatever the Nth user turn
+     * happens to be after a compaction notice shifted the numbering.
+     *
+     * @param checkpointId the checkpoint
+     * @param keepAfter true = keep the tail ("from here"), false = keep
+     *                  the head ("up to here")
+     * @return what was summarised and what was kept
+     */
+    public java.util.Map<String, Object> summarizeAtCheckpoint(
+            String checkpointId, boolean keepAfter) throws java.io.IOException {
+        org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint cp = codeCheckpoints
+                .get(checkpointId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "no such checkpoint: " + checkpointId));
+        return summarizeAtTranscriptIndex(cp.transcriptIndex(), keepAfter,
+                "checkpoint=" + checkpointId);
+    }
+
+    /**
+     * R388n: the summarisation primitive — split the transcript at a
+     * transcript index, summarise one half, keep the other.
+     *
+     * <p>★ ONE implementation, three callers. ★
+     *
+     * <p>{@code summarizeFrom} (by ordinal), {@code summarizeAtCheckpoint}
+     * (by checkpoint) and any future caller all go through here, so the
+     * "which half is summarised" rule cannot differ between them.
+     *
+     * @param boundaryIndex the transcript index of the boundary message
+     * @param keepAfter true = summarise the head and keep the tail
+     * @param label a label for the log line
+     */
+    private java.util.Map<String, Object> summarizeAtTranscriptIndex(
+            int boundaryIndex, boolean keepAfter, String label) throws java.io.IOException {
+        java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+        // The half to summarise: everything BEFORE the boundary message
+        // ("up to here"), or everything FROM it on ("from here").
+        int split = keepAfter ? boundaryIndex : boundaryIndex + 1;
+        java.util.List<org.aethercode.core.message.Message> head =
+                new java.util.ArrayList<>(t.subList(0, Math.max(0, Math.min(split, t.size()))));
+        java.util.List<org.aethercode.core.message.Message> tail =
+                new java.util.ArrayList<>(
+                        t.subList(Math.max(0, Math.min(split, t.size())), t.size()));
+        // The head is what gets summarised; the tail is what survives.
+        // ("summarize from here" summarises the UP-TO part and keeps
+        // the FROM part — the naming in the menu is about which end the
+        // cursor is at, and the operation is the same.)
+        if (head.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "nothing to summarise at " + label + " (the head is empty)");
+        }
+        org.aethercode.core.compact.Compactor c = compactor();
+        if (c == null) {
+            throw new IllegalStateException("no compactor is wired — summarisation is unavailable");
+        }
+        java.util.List<org.aethercode.core.message.Message> summary =
+                c.summarizeNow(head);
+        if (summary == null || summary.isEmpty()) {
+            throw new IllegalStateException(
+                    "the summariser did not produce a summary — the conversation was NOT changed");
+        }
+        // Install: summary + tail.
+        java.util.List<org.aethercode.core.message.Message> rebuilt =
+                new java.util.ArrayList<>(summary.size() + tail.size());
+        rebuilt.addAll(summary);
+        rebuilt.addAll(tail);
+        appState.transcript().clear();
+        for (org.aethercode.core.message.Message m : rebuilt) appState.transcript().add(m);
+        Transcript onDisk = this.currentTranscript;
+        if (onDisk != null) onDisk.truncateTo(0);
+        if (onDisk != null) {
+            for (org.aethercode.core.message.Message m : rebuilt) onDisk.append(m);
+        }
+        // Tell the renderer the transcript changed shape.
+        var push = transcriptPush;
+        if (push != null) {
+            try {
+                java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
+                payload.put("action", "sync");
+                payload.put("sessionId", appState.sessionId());
+                java.util.List<java.util.Map<String, Object>> msgs =
+                        new java.util.ArrayList<>(rebuilt.size());
+                for (org.aethercode.core.message.Message m : rebuilt) msgs.add(m.toMap());
+                payload.put("messages", msgs);
+                push.accept(payload);
+            } catch (Exception e) {
+                LOG.debug("transcript push (summarizeFrom) failed: {}", e.getMessage());
+            }
+        }
+        LOG.info("summarizeAt: {} keptAfter={} summarized={} kept={}",
+                label, keepAfter, summary.size(), tail.size());
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("target", boundaryIndex);
+        out.put("summarized", summary.size());
+        out.put("kept", tail.size());
+        out.put("transcriptSize", rebuilt.size());
         return out;
     }
 

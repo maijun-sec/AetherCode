@@ -469,7 +469,14 @@ test("the picker lists the modes the daemon has, and the line picker agrees", ()
   const catalogValues = PERMISSION_MODES.map((m) => m.value)
     .slice()
     .sort();
-  const lineValues = [...lineCode.matchAll(/m\.value\.padEnd/g)].length;
+  // ★ Anchor on the CONSTRUCT, not the spelling. ★ (Lesson 1233 / 1346)
+  //
+  // This used to count `m.value.padEnd` occurrences — so R388m's change
+  // of `padEnd` → `padCells` (the cell-width fix) turned this gate RED
+  // on a rename that made the code BETTER. The invariant is "line mode
+  // builds its picker rows from the shared catalog", so the anchor is
+  // the catalog MAP, not the padding call.
+  const lineValues = [...lineCode.matchAll(/PERMISSION_MODES\.map\(/g)].length;
   assert.ok(lineValues > 0, "line mode no longer builds its rows from the catalog — re-anchor");
   assert.ok(
     /PERMISSION_MODES\.map\(/.test(lineCode),

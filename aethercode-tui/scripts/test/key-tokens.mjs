@@ -269,6 +269,28 @@ export function handWrittenHints(src) {
  * ORIGINAL source so the string literals survive). A file-wide scan
  * would pick up keys the component does not bind.
  *
+ * <p>★ R388n: THREE MORE SHAPES ★
+ *
+ * <ol>
+ *   <li><b>A RANGE.</b> `/^[1-9]$/.test(input)` binds the digits 1-9.
+ *       A `input === "1"` scan sees nothing, so the extractor reported
+ *       that the component binds no digits — and a key table that
+ *       listed "1-9: pick row" would not match. The digits are now
+ *       recognised as a range.</li>
+ *   <li><b>A MODIFIER CHORD.</b> `key.ctrl` plus `input.toLowerCase()`
+ *       compared against a letter binds `ctrl+<letter>`. The modifier
+ *       itself is not a key — `ctrl` alone is not something the user
+ *       presses — so it is not emitted as a token; the CHORD is.</li>
+ *   <li><b>A SPACE.</b> `input === " "` is Space; `normalizeToken` maps
+ *       it to "space". (Already handled, kept here for the record.)</li>
+ * </ol>
+ *
+ * <p>→ **Lesson 1215 — a checker that answers a slightly different
+ * question than the one you think is worse than no checker: it agrees
+ * with itself.** Each new shape is a shape the REAL handler uses, so
+ * the extractor has to know it — otherwise the gate compares two
+ * different questions and reports a mismatch that is not there.
+ *
  * @param {string} src the whole file
  * @param {Record<string, string>} keyPropToken the product's vocabulary
  * @returns {string[] | null} the sorted tokens, or null when the file
@@ -287,19 +309,155 @@ export function handlerTokens(src, keyPropToken) {
   const constants = moduleConstants(src);
   const tokens = new Set();
 
+  // ─────────────────────────────────────────────────────────────────
+  // PASS 1: the CHORDS.
+  //
+  // Two shapes bind a chord:
+  //
+  //   (a) `key.ctrl && input === "s"` — the canonical form. The
+  //       modifier and the letter are in ONE expression.
+  //   (b) `if (key.ctrl) { const chord = input.toLowerCase();
+  //       if (chord === "r") … }` — the modifier opens a branch and
+  //       the letter is compared inside it.
+  //
+  // The bare `ctrl` is not a key the user presses — it is a modifier
+  // — so emitting "ctrl" as a token would make the table promise a
+  // key that does not exist. The CHORD is the key.
+  //
+  // ★ The chord scan runs FIRST, because it decides whether a
+  // modifier is a key or part of a chord. ★
+  // ─────────────────────────────────────────────────────────────────
+
+  // ── shape (a) ──
+  const ctrlChordSpans = [];
+  for (const m of body.matchAll(/key\.ctrl\s*&&\s*input\s*===\s*"([^"]+)"/g)) {
+    ctrlChordSpans.push([m.index, m.index + m[0].length, m[1].toLowerCase()]);
+    const letter = m[1].toLowerCase();
+    if (letter.length === 1 && /[a-z]/.test(letter)) tokens.add(`ctrl+${letter}`);
+  }
+
+  // ── shape (b) ──
+  //
+  // ★ EVERY `key.ctrl` occurrence is tried, not just the first. ★
+  // A handler may have a modifier GUARD before the chord branch
+  // (`if (key.ctrl || key.meta) return;` — "a modifier is not text"),
+  // and the first occurrence is not the branch that binds a chord.
+  //
+  // ★ The branch is matched by BRACE, not by a line break. ★ A
+  // line-based cut truncates the branch at the first `}` — which is
+  // the end of the FIRST `if` inside it — so only the first chord
+  // would be seen (Lesson 1322: searching in a big block can find a
+  // neighbouring construct's label).
+  const ctrlBranchSpans = [];
+  for (const ctrlMatch of body.matchAll(/key\.ctrl/g)) {
+    const braceAt = body.indexOf("{", ctrlMatch.index);
+    let branch = body.slice(ctrlMatch.index);
+    if (braceAt >= 0) {
+      const branchEnd = matchBrace(body, braceAt);
+      if (branchEnd > 0) {
+        branch = body.slice(ctrlMatch.index, branchEnd);
+        ctrlBranchSpans.push([ctrlMatch.index, branchEnd]);
+      }
+    }
+    const derived = /(\w+)\s*=\s*input\.toLowerCase\(\)/.exec(branch);
+    if (!derived) continue;
+    const varName = derived[1];
+    const re = new RegExp(`${varName}\\s*===\\s*"([^"]+)"`, "g");
+    for (const m of branch.matchAll(re)) {
+      const letter = m[1].toLowerCase();
+      if (letter.length === 1 && /[a-z]/.test(letter)) {
+        tokens.add(`ctrl+${letter}`);
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // PASS 2: the MODIFIERS.
+  //
+  // ★ The MODIFIER properties are keys only when they are checked
+  // ALONE, and not part of a chord. ★
+  //
+  // `if (key.shift) { … }` — Shift+Enter is a chord the user presses,
+  // and the InputBox's hint names it. The modifier IS the key there.
+  //
+  // `key.ctrl && input === "s"` — Ctrl+S. The modifier is not a key on
+  // its own; the CHORD is. Emitting "ctrl" as a token would make the
+  // key table promise a key the user cannot press.
+  //
+  // `if (key.ctrl || key.meta || key.shift) return;` — a MODIFIER
+  // GUARD: "a modifier chord is not text". No key is bound here at
+  // all, so the modifier is not a key either.
+  //
+  // `if (key.ctrl) { …chords… }` — the modifier OPENS A CHORD BRANCH.
+  // If that branch really derived a chord (pass 1 found one in it),
+  // the modifier is part of the chord, not a key.
+  // ─────────────────────────────────────────────────────────────────
+  const MODIFIER_PROPS = new Set(["ctrl", "meta", "shift", "alt"]);
+  const modifierSpans = [];
+  for (const m of body.matchAll(/key\.([A-Za-z]+)\s*&&/g)) {
+    if (!MODIFIER_PROPS.has(m[1])) continue;
+    modifierSpans.push([m.index, m.index + m[0].length]);
+  }
+  // A modifier GUARD: `key.a || key.b || …` — every modifier in the
+  // chain is part of the guard.
+  for (const m of body.matchAll(/key\.([A-Za-z]+)(?:\s*\|\|\s*key\.[A-Za-z]+)+/g)) {
+    modifierSpans.push([m.index, m.index + m[0].length]);
+  }
+  // A modifier that OPENS A CHORD BRANCH that really derived a chord.
+  for (const [a, b] of ctrlBranchSpans) {
+    const branch = body.slice(a, b);
+    if (/input\.toLowerCase\(\)/.test(branch)) modifierSpans.push([a, b]);
+  }
+  const inChordModifier = (i) => modifierSpans.some(([a, b]) => i >= a && i < b);
+
   for (const m of body.matchAll(/key\.([A-Za-z]+)/g)) {
     const prop = m[1];
+    if (MODIFIER_PROPS.has(prop) && inChordModifier(m.index)) continue;
     tokens.add(keyPropToken[prop] ?? prop.toLowerCase());
   }
 
   // `input === X` — on EITHER side, so the order does not matter.
+  //
+  // ★ A comparison that is part of a CTRL CHORD is not a bare key. ★
+  // `key.ctrl && input === "s"` binds Ctrl+S — the plain "s" does NOT
+  // trigger anything, so emitting "s" as a separate token would make
+  // the key table have to list a key the handler does not bind.
+  const inCtrlChord = (i) => ctrlChordSpans.some(([a, b]) => i >= a && i < b);
+
   const cmp =
     /(input)\s*===\s*("[^"]*"|'[^']*'|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\["[^"]+"\])?)|("[^"]*"|'[^']*')\s*===\s*(input)/g;
   for (const m of body.matchAll(cmp)) {
+    if (inCtrlChord(m.index)) continue;
     const rhs = m[2] ?? m[4];
     const literal = resolveLiteral(rhs, constants);
     if (literal === null) continue;
     tokens.add(normalizeToken(literal));
+  }
+
+  // ★ R388n: a RANGE of keys, tested with a regular expression. ★
+  //
+  // `/^[1-9]$/.test(input)` binds nine keys. The `input === X` scan
+  // above sees a REGEX, not a literal, so the range was invisible and
+  // the key table could not match its handler.
+  //
+  // The range's ENDPOINTS are expanded — "1-9" is nine keys, not two.
+  for (const m of body.matchAll(/\/\^?\[([^\]]+)\]\$\/\.test\(/g)) {
+    const spec = m[1];
+    const range = /^([0-9A-Za-z])-([0-9A-Za-z])$/.exec(spec);
+    if (range) {
+      const from = range[1].charCodeAt(0);
+      const to = range[2].charCodeAt(0);
+      if (to >= from && to - from < 64) {
+        for (let c = from; c <= to; c++) {
+          tokens.add(normalizeToken(String.fromCharCode(c)));
+        }
+        continue;
+      }
+    }
+    for (const part of spec.split("-")) {
+      const ch = part.trim();
+      if (ch.length === 1) tokens.add(normalizeToken(ch));
+    }
   }
 
   return [...tokens].sort();

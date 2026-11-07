@@ -397,6 +397,21 @@ export const KEYBINDINGS: ReadonlyArray<Keybinding> = [
     group: "permission",
     when: "a permission prompt is on screen",
   },
+  {
+    // R388n: "Yes, and switch to auto mode". The one answer that
+    // approves the call AND raises the session's permission mode —
+    // Claude Code offers it as a single option.
+    //
+    // The help names the MODE, not just "auto": the mode's own name is
+    // the daemon's word, and the user can change it afterwards with
+    // /mode. "auto" alone is an acronym, and R388n exists because
+    // acronyms cannot carry the safety fact.
+    keys: ["m", "5"],
+    label: "M / 5",
+    desc: "allow it and switch to auto mode",
+    group: "permission",
+    when: "a permission prompt is on screen",
+  },
 ];
 
 /** The help sections, in the order the overlay renders them. */

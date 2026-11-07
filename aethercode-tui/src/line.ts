@@ -59,6 +59,10 @@ import { formatRewind, formatSessionTokens } from "./rpcReports.js";
 // describe the same preset differently.
 import { EFFORT_EFFECT, EFFORT_LEVELS, variantLine, type VariantInfo } from "./effort.js";
 import { describeSentinel, intentForSentinel } from "./panelIntents.js";
+// R388n: the checkpoint menu's ACTION list. The Ink component owns it
+// and the line renderer IMPORTS it — so the six actions cannot be
+// described one way on screen and another way here.
+import { CHECKPOINT_ACTIONS, CHECKPOINT_ACTION_INFO } from "./components/CheckpointMenu.js";
 // R387 — what `/clear` does: the daemon method that starts a fresh
 // conversation, its params, and the sentence the user reads afterwards.
 // Shared with the Ink renderer, so one command cannot get two different
@@ -76,7 +80,10 @@ import { replayTranscript } from "./transcriptHydrate.js";
 import {
   MODE,
   PERMISSION_MODES,
+  permissionModeBlurb,
   permissionModeEntry,
+  permissionModeIndicator,
+  type PermissionModeName,
   type PermissionModeTone,
 } from "./permissionModes.js";
 // R383: the stop-reason taxonomy, shared with the Ink renderer. This file
@@ -381,6 +388,21 @@ function modeStyle(mode: string): { label: string; bg: string; fg: string } {
   const entry = permissionModeEntry(m);
   if (!entry) return { label: m, bg: MODE_TONE_COLOR.unknown, fg: C.bold };
   return { label: entry.badge, bg: MODE_TONE_COLOR[entry.tone], fg: C.bold };
+}
+
+/**
+ * R388n: the mode's PERSISTENT indicator.
+ *
+ * <p>A literal phrase, not an acronym — the same phrase the Ink header
+ * shows, from the same ONE catalog. The badge alone could not say
+ * whether the mode still interrupts you, and `DEFAULT` and
+ * `ASK_BEFORE_TOOL` both rendered as `ASK`.
+ */
+function modeIndicator(mode: string, noColor: boolean): string {
+  const phrase = permissionModeIndicator(mode);
+  if (noColor) return phrase;
+  const s = modeStyle(mode);
+  return `${s.bg}${phrase}${C.reset}`;
 }
 
 function modePill(mode: string, noColor: boolean): string {
@@ -751,6 +773,10 @@ function renderStatusLine(state: DisplayState, inFlight: number, noColor: boolea
   parts.push(colorize(state.model, C.cyan, noColor));
   parts.push(colorize(" \u00B7 ", C.dim, noColor));
   parts.push(modePill(state.permissionMode, noColor));
+  // R388n: the literal phrase beside the badge. The badge alone cannot
+  // say whether the mode still interrupts you.
+  parts.push(" ");
+  parts.push(modeIndicator(state.permissionMode, noColor));
   parts.push(colorize(" \u00B7 ", C.dim, noColor));
   const ctx = ctxFillGlyph(state.inputTokens, state.outputTokens, state.contextWindow);
   if (ctx) parts.push(ctx + colorize(" \u00B7 ", C.dim, noColor));
@@ -783,7 +809,9 @@ function renderSplash(state: DisplayState, noColor: boolean): string {
     colorize("\u232C ", C.cyan, noColor) +
     colorize(state.model, C.bold, noColor) +
     colorize("  \u00B7  ", C.dim, noColor) +
-    modePill(state.permissionMode, noColor);
+    modePill(state.permissionMode, noColor) +
+    "  " +
+    modeIndicator(state.permissionMode, noColor);
   const sessionLine =
     colorize("# ", C.dim, noColor) + colorize(shortSession(state.sessionId), C.dim, noColor);
   // Compose the row so we can compute the padding as a single
@@ -1269,6 +1297,7 @@ async function pickPermission(
   decision: "allow" | "always_allow" | "deny" | "always_deny";
   comment?: string;
   reason?: string;
+  mode?: PermissionModeName;
 }> {
   // R388m: a non-interactive stdout means NOBODY can approve. The
   // denial must say so, and must tell the model NOT to retry — the
@@ -1285,11 +1314,34 @@ async function pickPermission(
     };
   }
 
+  // R388n: the "allow and switch to auto mode" answer. It is the
+  // FIFTH option, so the positional hotkeys 1..5 stay contiguous and
+  // the hint line can say "1/2/3/4/5" without lying.
+  //
+  // The MODE is named by the daemon's own enum constant, imported from
+  // the ONE mode catalog (`src/permissionModes.ts`) — the line renderer
+  // does not spell a mode name itself (R385's rule).
   const options = [
-    { label: "[1] A \u2014 allow once", value: "allow" as const },
-    { label: "[2] Y \u2014 always for this session", value: "always_allow" as const },
-    { label: "[3] D \u2014 deny once", value: "deny" as const },
-    { label: "[4] N \u2014 always deny", value: "always_deny" as const },
+    { letter: "a", label: "[1] A \u2014 allow once", value: "allow" as const, mode: undefined },
+    {
+      letter: "y",
+      label: "[2] Y \u2014 always for this session",
+      value: "always_allow" as const,
+      mode: undefined,
+    },
+    { letter: "d", label: "[3] D \u2014 deny once", value: "deny" as const, mode: undefined },
+    {
+      letter: "n",
+      label: "[4] N \u2014 always deny",
+      value: "always_deny" as const,
+      mode: undefined,
+    },
+    {
+      letter: "m",
+      label: "[5] M \u2014 allow and switch to auto mode",
+      value: "allow" as const,
+      mode: MODE.ACCEPT_TASK,
+    },
   ];
 
   const riskColor = risk === "CRITICAL" ? C.red : risk === "HIGH" ? C.yellowBright : C.yellow;
@@ -1400,7 +1452,7 @@ async function pickPermission(
         lines.push(
           colorize("  \u2502 ", C.dim, noColor) +
             colorize(
-              "\u2191/\u2193 move  \u00B7  1/2/3/4  \u00B7  Enter  \u00B7  Tab comment  \u00B7  Esc deny",
+              "\u2191/\u2193 move  \u00B7  1/2/3/4/5  \u00B7  Enter  \u00B7  Tab comment  \u00B7  Esc deny",
               C.dim,
               noColor,
             ),
@@ -1450,9 +1502,13 @@ async function pickPermission(
       // reply (the daemon must not see an empty string where it
       // used to see nothing).
       const c = commentText.trim();
-      resolvePromise(
-        c ? { decision: options[idx].value, comment: c } : { decision: options[idx].value },
-      );
+      // R388n: the mode travels WITH the answer. A pick that switches
+      // the mode must not produce a reply that looks like a plain
+      // allow — the two answers differ, and the caller has to be able
+      // to tell them apart.
+      const mode = options[idx].mode;
+      const base = mode ? { decision: options[idx].value, mode } : { decision: options[idx].value };
+      resolvePromise(c ? { ...base, comment: c } : base);
     }
 
     function cancel(): void {
@@ -1606,6 +1662,19 @@ async function pickPermission(
           decide(num - 1);
           return;
         }
+        // R388n: the LETTER hotkey. Every option's label already
+        // showed a letter ("[1] A", "[5] M"), but only the number was
+        // pressable — the letter was a decoration the user would try
+        // and find dead.
+        //
+        // The letter comes from the option's OWN `letter` field, so
+        // the hotkey and the label cannot drift: there is no second
+        // table mapping letters to positions.
+        const letterIdx = options.findIndex((o) => o.letter === c.toLowerCase());
+        if (letterIdx >= 0) {
+          decide(letterIdx);
+          return;
+        }
         if (c === "\r" || c === "\n" || c === " ") {
           decide(selected);
           return;
@@ -1675,6 +1744,14 @@ async function pickPermission(
         if (commentMode) {
           commentText = commentText.slice(0, -1);
           render();
+        }
+      } else if (!commentMode && n.length === 1) {
+        // R388n: the LETTER hotkey, on the keypress path too. The two
+        // paths must agree — a key that works on one terminal and not
+        // the other is a key that looks broken on half the machines.
+        const letterIdx = options.findIndex((o) => o.letter === n.toLowerCase());
+        if (letterIdx >= 0) {
+          decide(letterIdx);
         }
       }
     };
@@ -2666,6 +2743,178 @@ async function panelThreads(ctx: PanelCtx, cwdOnly: boolean): Promise<void> {
     res.ok
       ? colorize(`  \u2713 now working in ${ctx.sessionId}`, C.green, nc)
       : colorize(`  \u2717 loadSession failed: ${res.reason}`, C.red, nc),
+  );
+}
+
+/**
+ * R388n: the CHECKPOINT menu in line mode — Claude Code's `/rewind`
+ * menu.
+ *
+ * <p>★ The ACTION list is the ONE list, imported from the Ink
+ * component. ★ The line renderer keeps its own copy of nothing: the
+ * six actions and their labels live in `components/CheckpointMenu.tsx`
+ * and both renderers read them, so a menu entry cannot be described
+ * one way on screen and another way in the other renderer.
+ *
+ * <p>The flow is two questions — which POINT, then which ACTION —
+ * because one list of (point × action) would be six rows per
+ * checkpoint.
+ */
+async function panelCheckpoints(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "checkpoints/list");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "checkpoints",
+        endpoint: "checkpoints/list",
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`],
+      }),
+    );
+    return;
+  }
+  const rows = asRows((r.value as { checkpoints?: unknown[] } | null)?.checkpoints);
+  if (rows.length === 0) {
+    emitPanel(
+      ctx,
+      renderPanel({
+        title: "checkpoints",
+        subtitle: "return to an earlier point",
+        note: "the daemon reports no checkpoints yet",
+        noColor: nc,
+        columns: [],
+        rows: [],
+        empty: [
+          "this session has not written any files yet",
+          "a checkpoint appears once the session touches a file",
+        ],
+      }),
+    );
+    return;
+  }
+  // The points, newest last — the same order the Ink menu shows.
+  const cps = rows.map((c) => {
+    const raw = c as { files?: unknown[] };
+    const files = Array.isArray(raw.files) ? raw.files : [];
+    return {
+      id: String(fieldStr(c, ["id"])),
+      turn: fieldStr(c, ["userMessageIndex"], ""),
+      summary: fieldStr(c, ["summary"], "(no summary)"),
+      files: files.length,
+    };
+  });
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "checkpoints",
+      subtitle: "return to an earlier point",
+      note: `${cps.length} checkpoint(s)`,
+      noColor: nc,
+      columns: [
+        { header: "turn", min: 4 },
+        { header: "what you asked", flex: 3 },
+        { header: "files", min: 5 },
+      ],
+      rows: cps.map((c) => [
+        { text: c.turn, tone: "plain" },
+        { text: c.summary, tone: "plain" },
+        { text: String(c.files), tone: "muted" },
+      ]),
+      empty: [],
+    }),
+  );
+  const pickedCp = await choose(ctx, {
+    options: cps.map((c) => ({ label: `${c.turn}  ${c.summary}`, value: c.id })),
+    // The NEWEST point first — that is where a user who opened the
+    // menu by accident wants to land.
+    initial: 0,
+    title: "Which point?",
+    alt: "use /rewind <n> instead",
+  });
+  repaint(ctx);
+  if (pickedCp === null) return;
+
+  const pickedAction = await choose(ctx, {
+    options: CHECKPOINT_ACTIONS.map((a, i) => ({
+      label: `${i + 1}. ${CHECKPOINT_ACTION_INFO[a].label} — ${CHECKPOINT_ACTION_INFO[a].blurb}`,
+      value: a,
+    })),
+    initial: 0,
+    title: "What to do?",
+    alt: "use /rewind <n> instead",
+  });
+  repaint(ctx);
+  if (pickedAction === null) return;
+
+  const info = CHECKPOINT_ACTION_INFO[pickedAction];
+  if (!info.touchesCode && !info.touchesConversation) {
+    ctx.logAbove(colorize("  (· nothing changed)", C.dim, nc));
+    return;
+  }
+  if (pickedAction === "summarize_from_here" || pickedAction === "summarize_up_to_here") {
+    const s = await probe(ctx, "checkpoints/summarize", {
+      checkpointId: pickedCp,
+      mode: pickedAction === "summarize_from_here" ? "from" : "up_to",
+    } as RpcValue);
+    const v = (s.value ?? {}) as {
+      ok?: boolean;
+      reason?: string;
+      summarized?: number;
+      kept?: number;
+    };
+    ctx.logAbove(
+      s.ok && v.ok !== false
+        ? colorize(
+            `  ✓ summarised ${v.summarized ?? 0} message(s), kept ${v.kept ?? 0}`,
+            C.green,
+            nc,
+          )
+        : colorize(`  ✗ summarize failed: ${v.reason ?? s.reason ?? "unknown"}`, C.red, nc),
+    );
+    return;
+  }
+  const scope =
+    info.touchesCode && info.touchesConversation
+      ? "both"
+      : info.touchesCode
+        ? "code"
+        : "conversation";
+  const res = await probe(ctx, "checkpoints/restore", {
+    id: pickedCp,
+    scope,
+  } as RpcValue);
+  const v = (res.value ?? {}) as {
+    ok?: boolean;
+    reason?: string;
+    restored?: string[];
+    deleted?: string[];
+    skipped?: string[];
+    failed?: string[];
+  };
+  if (!res.ok || v.ok === false) {
+    ctx.logAbove(colorize(`  ✗ restore failed: ${v.reason ?? res.reason ?? "unknown"}`, C.red, nc));
+    return;
+  }
+  // Report what ACTUALLY happened, including the files that were NOT
+  // put back. A "restored" line that hides a skipped binary file is
+  // the silent-degradation shape.
+  const parts: string[] = [];
+  if (info.touchesCode) {
+    parts.push(
+      `${v.restored?.length ?? 0} restored` +
+        (v.deleted?.length ? `, ${v.deleted.length} deleted` : "") +
+        (v.skipped?.length ? `, ${v.skipped.length} skipped` : "") +
+        (v.failed?.length ? `, ${v.failed.length} FAILED` : ""),
+    );
+  }
+  ctx.logAbove(
+    colorize(
+      parts.length ? `  ✓ ${parts.join(" · ")}` : "  ✓ done",
+      v.failed?.length ? C.yellow : C.green,
+      nc,
+    ),
   );
 }
 
@@ -3886,6 +4135,12 @@ async function renderPanelSentinel(
     case "__TODO_BOARD__":
       panelTodos(ctx);
       return true;
+    // R388n: the checkpoint menu (Claude Code's /rewind menu). The line
+    // renderer has no useInput loop, so this is a two-step NUMBERED
+    // picker: pick the point, then pick the action.
+    case "__CHECKPOINT_MENU__":
+      await panelCheckpoints(ctx);
+      return true;
 
     // --- config ------------------------------------------------------
     case "__AGENT_PICK__":
@@ -4684,8 +4939,41 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
               // Otherwise the model sees only "line mode picked deny",
               // which does not tell it whether a retry could work.
               picked.reason,
+              // R388n: the "allow and switch to auto mode" pick also
+              // switches the session's mode.
+              picked.mode,
             ),
           );
+          // R388n: the mode change is a SEPARATE RPC, issued AFTER
+          // the reply — the reply is what unblocks the model, and a
+          // failed mode change must not delay or fail the approval.
+          //
+          // The daemon answers with the mode it ACTUALLY applied
+          // (`PermissionMode.valueOf` resolution), so the line says
+          // the daemon's word, never the client's request (R377).
+          if (picked.mode) {
+            const mr = (await client.request("setPermissionMode", {
+              mode: picked.mode,
+            })) as { ok?: boolean; mode?: string; error?: string } | null | undefined;
+            if (mr && mr.ok === false) {
+              logAbove(
+                colorize(
+                  `permission mode not changed — ${mr.error ?? "the daemon refused it"}`,
+                  C.red,
+                  noColor,
+                ),
+              );
+            } else {
+              const applied = mr?.mode ?? picked.mode;
+              logAbove(
+                colorize(
+                  `mode → ${applied}: ${permissionModeBlurb(applied)}. Run /mode to change again.`,
+                  C.cyan,
+                  noColor,
+                ),
+              );
+            }
+          }
         } catch (e) {
           logAbove(colorize(`permission reply failed: ${(e as Error).message}`, C.red, noColor));
         }
@@ -5209,14 +5497,24 @@ export async function runLineMode(opts: LineOptions): Promise<number> {
     );
     const decision = picked.decision;
     if (!rlClosed) lineInput.redraw();
-    const decisionLabel = (
-      {
-        allow: "1\u2003allow once",
-        always_allow: "2\u2003always for this session",
-        deny: "3\u2004deny once",
-        always_deny: "4\u2004always deny",
-      } as const
-    )[decision];
+    // R388n: the demo must name the OPTION the user picked, not the
+    // decision it produced. Two options now produce "allow" (option 1
+    // and option 5, which also switches the mode), so a label keyed by
+    // the decision alone would say "allow once" for a pick that
+    // switched the session to auto mode.
+    const decisionLabel = (() => {
+      if (picked.mode) {
+        return "5\u2003allow and switch to auto mode";
+      }
+      return (
+        {
+          allow: "1\u2003allow once",
+          always_allow: "2\u2003always for this session",
+          deny: "3\u2004deny once",
+          always_deny: "4\u2004always deny",
+        } as const
+      )[decision];
+    })();
     say(
       `(demo) you picked [${decisionLabel}] \u2014 ${decision === "allow" || decision === "always_allow" ? "tool allowed" : "tool denied"}`,
       C.cyan,

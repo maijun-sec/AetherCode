@@ -307,8 +307,25 @@ test("R388l: while the comment box is open the decision keys are SUSPENDED", () 
   // makes sure the ask is still there when Enter is pressed), and
   // matching that one truncates the branch before the reply — which
   // would make the "Enter must send" assertion pass vacuously.
+  //
+  // ★ R388n: the anchor moved from `replyPermission(client, ask,
+  // "allow"` to `resolveDecisionKey(`. ★
+  //
+  // The old anchor named a SPELLING — a literal call with a literal
+  // decision. R388n replaced the hand-written if-chain with a registry
+  // lookup, so the literal `"allow"` call no longer exists, and the
+  // pin went red on an IMPROVEMENT.
+  //
+  // → **Lesson 1233 — a CONTRACT pin must FOLLOW the implementation. A
+  // pin that names a method goes red on a RENAME (which is not a
+  // defect), and a pin that names a LOCATION goes red on a REFACTOR
+  // (which may make the code better). Pin the INVARIANT, not the
+  // spelling.**
+  //
+  // The invariant is unchanged: the decision branch is the one that
+  // RESOLVES a decision key, and it must come after the comment branch.
   const commentStart = code.indexOf("if (state.commentBox) {");
-  const decisionStart = code.indexOf('replyPermission(client, ask, "allow"');
+  const decisionStart = code.indexOf("resolveDecisionKey(");
   assert.ok(commentStart > 0, "tui.tsx must have a commentBox branch");
   assert.ok(decisionStart > 0, "tui.tsx must have a decision-key branch");
   assert.ok(
@@ -327,7 +344,7 @@ test("R388l: while the comment box is open the decision keys are SUSPENDED", () 
 test("R388l: Ctrl+<key> arms the decision in the Ink app", () => {
   const code = readCode("src/tui.tsx");
   const commentStart = code.indexOf("if (state.commentBox) {");
-  const decisionStart = code.indexOf('replyPermission(client, ask, "allow"');
+  const decisionStart = code.indexOf("resolveDecisionKey(");
   const branch = code.slice(commentStart, decisionStart);
   assert.match(branch, /key\.ctrl/, "the comment branch must handle the Ctrl modifier");
   assert.match(branch, /armDecision/, "the comment branch must arm the decision");
@@ -336,7 +353,7 @@ test("R388l: Ctrl+<key> arms the decision in the Ink app", () => {
 test("R388l: Enter sends the decision AND the comment; Esc cancels without answering", () => {
   const code = readCode("src/tui.tsx");
   const commentStart = code.indexOf("if (state.commentBox) {");
-  const decisionStart = code.indexOf('replyPermission(client, ask, "allow"');
+  const decisionStart = code.indexOf("resolveDecisionKey(");
   const branch = code.slice(commentStart, decisionStart);
   assert.match(branch, /key\.return/, "the comment branch must handle Enter");
   assert.match(branch, /key\.escape/, "the comment branch must handle Esc");

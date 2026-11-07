@@ -562,11 +562,56 @@ test("R388m: the timer registry is MODULE-level, not threaded through every call
   );
   // and the call sites keep their original shape — a decision call is
   // one line, so the R388l gate's anchor still resolves.
-  assert.match(
-    tui,
-    /replyPermission\(client, ask, "allow", dispatch\);/,
-    "the decision call must keep its one-line shape",
+  //
+  // ★ R388n: the anchor moved from `replyPermission(client, ask,
+  // "allow", dispatch);` to the CONSTRUCTION. ★
+  //
+  // The old anchor named a SPELLING — a literal call with a literal
+  // decision. R388n replaced the hand-written if-chain with a
+  // registry lookup, so the literal `"allow"` call no longer exists,
+  // and the pin went red on an IMPROVEMENT.
+  //
+  // → **Lesson 1233 — a CONTRACT pin must FOLLOW the implementation. A
+  // pin that names a method goes red on a RENAME (which is not a
+  // defect), and a pin that names a LOCATION goes red on a REFACTOR
+  // (which may make the code better). Pin the INVARIANT, not the
+  // spelling.**
+  //
+  // The invariant is unchanged: a decision call must not SPLAY.
+  //
+  // ★ R388n: the answer is now an OBJECT, so a call site CAN be more
+  // than one line — and that is the RIGHT shape. ★
+  //
+  // The old pin wanted "one line" because the call was six loose
+  // positional parameters, and the only way to keep it on one line was
+  // to truncate the arguments. R388n made the answer an object
+  // (`{ decision, rememberScope, mode }`), which is what a decision
+  // actually IS — one thing with parts. The call now reads as a
+  // sentence about ONE answer.
+  //
+  // The invariant that survives: the call must not sprawl over the
+  // arguments — it must pass an OBJECT, not a list of loose values.
+  // A call that grows a 5th loose positional argument is the defect
+  // this pin is about.
+  //
+  // ★ The FUNCTION DECLARATION is not a call site. ★ It is
+  // multi-line by design, and a pin that counted it would be
+  // measuring the signature, not the call sites.
+  const decisionCalls = [...tui.matchAll(/replyPermission\(([\s\S]*?)\);/g)].filter(
+    (m) => !/^\s*client:\s*JsonRpcClient/.test(m[1]),
   );
+  assert.ok(decisionCalls.length > 0, "there must be decision calls");
+  for (const call of decisionCalls) {
+    const args = call[1];
+    // The answer must be an OBJECT literal — not a list of loose
+    // positional values.
+    assert.match(
+      args,
+      /\{[\s\S]*decision\s*:/,
+      `a decision call must pass the answer as an OBJECT — loose positional ` +
+        `arguments let a call site pair a scope with the wrong decision:\n${call[0]}`,
+    );
+  }
 });
 
 test("R388m: the permission card renders the countdown", () => {

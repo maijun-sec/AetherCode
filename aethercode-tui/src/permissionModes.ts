@@ -117,6 +117,38 @@ export interface PermissionModeEntry {
   blurb: string;
   /** The pill's colour role. */
   tone: PermissionModeTone;
+  /**
+   * R388n: the PERSISTENT indicator — a literal phrase that says
+   * whether the mode asks and what it is.
+   *
+   * <p>Claude Code shows the permission mode as literal text:
+   * `⏸ manual mode on` / `⏵⏵ accept edits on` / `⏸ plan mode on` /
+   * `⏵⏵ auto mode on` / `⏵⏵ don't ask on` / `⏵⏵ bypass permissions on`.
+   *
+   * <p>The badge (`ASK`, `TASK`, `EDITS`, …) is an ACRONYM, and an
+   * acronym cannot say what the user needs to know:
+   *
+   * <ul>
+   *   <li>`DEFAULT` and `ASK_BEFORE_TOOL` both render as `ASK` — two
+   *       distinct daemon modes that are visually IDENTICAL;</li>
+   *   <li>an acronym never says whether the mode is still asking;</li>
+   *   <li>the word "mode" and the word "on" never appear, so the
+   *       indicator does not read as a STATE.</li>
+   * </ul>
+   *
+   * <p>So the indicator is a PHRASE. The leading glyph encodes the one
+   * thing the user must know at a glance — <b>does this mode still
+   * interrupt me?</b> — and the words name the mode.
+   *
+   * <p>★ The glyph is NOT decoration. ★ `⏸` means "this mode still
+   * asks"; `⏵⏵` means "this mode does not ask". A user who reads only
+   * the first character still gets the safety-relevant half.
+   *
+   * <p>This lives in the ONE catalog for the same reason the badge
+   * does: a second copy of the vocabulary is a second truth, and R385
+   * exists because six copies had already disagreed.
+   */
+  indicator: string;
 }
 
 /**
@@ -133,6 +165,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "ASK",
     blurb: "every tool call asks before running",
     tone: "ask",
+    indicator: "⏸ manual mode on",
   },
   {
     value: MODE.ASK_BEFORE_TOOL,
@@ -140,6 +173,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "ASK",
     blurb: "same as DEFAULT, under its discoverable name",
     tone: "ask",
+    indicator: "⏸ ask every call mode on",
   },
   {
     value: MODE.ACCEPT_TASK,
@@ -147,6 +181,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "TASK",
     blurb: "single task, no mid-task prompts (DEFAULT behaviour unless sub-task boundary)",
     tone: "allow",
+    indicator: "⏵⏵ auto mode on",
   },
   {
     value: MODE.ACCEPT_EDITS,
@@ -154,6 +189,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "EDITS",
     blurb: "file edits auto-allowed; bash / network still ask",
     tone: "allow",
+    indicator: "⏵⏵ accept edits on",
   },
   {
     value: MODE.AUTO_READ_ONLY,
@@ -161,6 +197,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "READ",
     blurb: "read-only tools auto-allowed; writes still ask",
     tone: "read",
+    indicator: "⏵⏵ auto mode on (reads only)",
   },
   {
     value: MODE.PLAN,
@@ -168,6 +205,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "PLAN",
     blurb: "plan mode — tools ask before running",
     tone: "plan",
+    indicator: "⏸ plan mode on",
   },
   {
     value: MODE.BYPASS_PERMISSIONS,
@@ -175,6 +213,7 @@ export const PERMISSION_MODES: readonly PermissionModeEntry[] = [
     badge: "BYPASS",
     blurb: "no prompts will be shown for any tool call",
     tone: "danger",
+    indicator: "⏵⏵ bypass permissions on",
   },
 ];
 
@@ -217,4 +256,40 @@ export function permissionModeBlurb(value: string): string {
   const entry = permissionModeEntry(value);
   if (entry) return entry.blurb;
   return `mode ${value} is in force, but this build has no description for it`;
+}
+
+/**
+ * R388n: does this mode STILL ASK the user?
+ *
+ * <p>★ This is the safety-relevant half of the indicator. ★
+ *
+ * <p>A user glancing at the header needs ONE fact: is this mode going to
+ * interrupt me? The indicator's leading glyph encodes it — `⏸` means
+ * "still asks", `⏵⏵` means "does not ask".
+ *
+ * <p>So this predicate and the glyph must agree, or the glyph lies. The
+ * R388n gate pins the two together: for every mode, the glyph the
+ * indicator starts with must match what this returns.
+ *
+ * <p>An UNKNOWN mode is treated as ASKING. A mode this build cannot
+ * describe is a mode whose behaviour is unknown, and the safe reading of
+ * "unknown" is "it might interrupt you".
+ */
+export function modeStillAsks(value: string): boolean {
+  const entry = permissionModeEntry(value);
+  if (!entry) return true;
+  return entry.indicator.startsWith("⏸");
+}
+
+/**
+ * R388n: the persistent indicator for a mode.
+ *
+ * <p>An UNKNOWN mode shows its own name — the catalog has nothing to
+ * call it, and inventing a phrase would be a claim about a mode the user
+ * just selected.
+ */
+export function permissionModeIndicator(value: string): string {
+  const entry = permissionModeEntry(value);
+  if (entry) return entry.indicator;
+  return `${value.toUpperCase()} mode on`;
 }

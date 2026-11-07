@@ -188,6 +188,7 @@ export type PanelId =
   | "update" // R374 — /update and /update-deps, one panel + a verb flag
   | "mode" // R385 — /mode, the picker only line mode used to have
   | "help" // R388k — /help as a filterable LIST, not a truncated wall of text
+  | "checkpoints" // R388n — /rewind, Claude Code's checkpoint menu
   | "worktrees"; // R388c — /worktree, the git isolation lifecycle
 
 /** Loading / error / notice triple shared by every panel. Drives
@@ -250,6 +251,14 @@ export interface ThreadRow {
   prompt: string;
   cwd: string;
   gitBranch?: string;
+  /**
+   * R388n: the session file's size in BYTES.
+   *
+   * <p>The daemon has always sent `sizeBytes` on `listSessions` — it is
+   * the source of the `messageCount` proxy. The TUI never read it, so
+   * the column was structurally incapable of being non-empty.
+   */
+  sizeBytes?: number;
 }
 
 /** One stored consent grant, normalised from `permission/list`.
@@ -804,6 +813,34 @@ export interface State {
    */
   agentPickerOpen: boolean;
   /**
+   * R388n: the checkpoints the checkpoint menu shows.
+   *
+   * <p>★ The menu's OPEN state is `activePanel === "checkpoints"`. ★
+   * There is deliberately no second `checkpointMenuOpen` flag: two
+   * holders of one fact is two truths, and they can disagree — the
+   * flag says open while the panel says closed, and the user gets a
+   * menu that is neither.
+   *
+   * <p>Fetched from the daemon's `checkpoints/list` when the menu
+   * opens. Empty means "the daemon has no checkpoints" — which is a
+   * different fact from "the fetch failed", and the menu says which.
+   */
+  checkpoints: Array<{
+    id: string;
+    userMessageIndex: number;
+    summary: string;
+    files: Array<{ path: string; name: string; restorable: boolean; created: boolean }>;
+  }>;
+  /**
+   * R388n: WHY the checkpoint list is empty, when the fetch FAILED.
+   *
+   * <p>Null = the list is genuinely empty. A string = the fetch failed,
+   * and the string says why. The two are different facts, and a menu
+   * that shows the same sentence for both sends the user looking for a
+   * problem that is in the wire.
+   */
+  checkpointsError: string | null;
+  /**
    * T-420: most recent agent-list fetch. The picker reads this
    * directly so we don't re-fetch every time it opens. Refreshed
    * on the `agent/list` RPC response.
@@ -873,6 +910,27 @@ export interface State {
    * panel closes, so it can never describe a panel that is not up.
    */
   panelCwdOnly: boolean;
+  /**
+   * R388n: the git branch of the CURRENT working directory.
+   *
+   * <p>The session picker's `Ctrl+B` filter ("only sessions on my
+   * current branch") needs a branch to compare against. The picker
+   * knows each SESSION's branch (the daemon sends it), but not the
+   * cwd's — so the host supplies it.
+   *
+   * <p>Empty means "unknown", and an unknown branch makes the filter
+   * a no-op: showing everything while claiming a filter would be a lie
+   * about the list.
+   */
+  currentGitBranch: string;
+  /**
+   * R388n: a counter the `refreshThreads` action bumps.
+   *
+   * <p>The list is re-fetched by an EFFECT, and an effect needs a
+   * dependency to re-run on. A counter is the honest dependency: it
+   * changes exactly when the list must be re-read, and nothing else.
+   */
+  threadsRefresh: number;
   /**
    * R362: `Date.now()` captured when the panel opened. Panels that
    * render relative timestamps (MemoryPanel's `now`) read this
@@ -1226,6 +1284,14 @@ export type Action =
       jarPath: string;
       contextWindow?: number;
       provider?: string;
+      /**
+       * R388n: the git branch of the session's cwd.
+       *
+       * <p>The session picker's `Ctrl+B` filter compares each row's
+       * branch against this one. Empty means "unknown" — the filter is
+       * then a no-op, and the panel says so.
+       */
+      gitBranch?: string;
     }
   | { type: "setInput"; text: string }
   | { type: "setHistory"; history: string[] }
@@ -1395,6 +1461,17 @@ export type Action =
   /* --- R362: Ink panel host ------------------------------------ */
   | { type: "openPanel"; id: PanelId; cwdOnly?: boolean; updateVerb?: UpdateVerb } // R362: mount a panel; R370: `cwdOnly` filters the session list to the active cwd; R374: `updateVerb` picks which update operation the panel is about
   | { type: "widenPanelScope" } // R388j: widen the session picker from "this cwd" to "every session" without closing it (the `a` key in the empty state)
+  // R388n: re-fetch the session list (after a rename changed a row's
+  // title). The picker shows what the STORE holds, so a rename has to
+  // be re-read — the local row list is a copy, and a stale copy would
+  // show the old name next to the new one.
+  | { type: "refreshThreads" }
+  // R388n: the checkpoint menu. `open` opens/closes it; `checkpoints`
+  // carries the fetched rows; `error` says why the list is empty when
+  // the fetch failed (an empty list and a failed fetch are DIFFERENT
+  // facts, and the menu must say which).
+  | { type: "setCheckpoints"; checkpoints: State["checkpoints"] }
+  | { type: "setCheckpointsError"; error: string | null }
   | { type: "closePanel" } // R362: unmount + restore the prompt draft
   | { type: "setPanelStatus"; status: PanelStatus } // R362: pending / error / notice
   | { type: "setMemoryTab"; tab: MemoryScopeId } // R362: switch tab (App re-fetches the scope)
@@ -1542,6 +1619,10 @@ export const INITIAL: State = {
   themePickerOpen: false,
   // T-420: agent picker + catalog + default.
   agentPickerOpen: false,
+  // R388n: the checkpoint menu's rows. The menu's OPEN state is
+  // `activePanel` — there is no second flag (see the field's comment).
+  checkpoints: [],
+  checkpointsError: null,
   agents: [],
   defaultAgent: null,
   // T-421: effort picker + catalog + default.
@@ -1557,6 +1638,12 @@ export const INITIAL: State = {
   // `cwdOnly: true`. No panel is open at boot, so false is the only
   // honest value here.
   panelCwdOnly: false,
+  // R388n: the cwd's branch. Empty until the host learns it; an empty
+  // branch makes the picker's branch filter a no-op (and the panel
+  // says so, rather than pretending to filter).
+  currentGitBranch: "",
+  // R388n: bumped by `refreshThreads` to re-run the list fetch.
+  threadsRefresh: 0,
   panelOpenedAt: 0,
   panelStatus: EMPTY_PANEL_STATUS,
   panelInputBefore: "",
@@ -1809,6 +1896,8 @@ export function reducer(state: State, action: Action): State {
         jarPath: action.jarPath,
         contextWindow: action.contextWindow ?? 0,
         provider: action.provider,
+        // R388n: the cwd's branch, for the picker's branch filter.
+        currentGitBranch: action.gitBranch ?? "",
         uptimeStartedAt: Date.now(),
         status: "ready",
         connected: true,
@@ -2635,8 +2724,27 @@ export function reducer(state: State, action: Action): State {
       };
     }
 
+    case "setCheckpoints":
+      // R388n: the fetched checkpoint rows.
+      return { ...state, checkpoints: [...action.checkpoints] };
+    case "setCheckpointsError":
+      // R388n: WHY the list is empty. An empty list and a failed fetch
+      // are different facts — a menu that says "no checkpoints yet" when
+      // the RPC failed would send the user looking for a problem that
+      // is in the wire.
+      return { ...state, checkpointsError: action.error };
+
+    case "refreshThreads":
+      // R388n: a rename changed a row's title in the STORE. The picker's
+      // row list is a local copy, so it has to be re-read — otherwise
+      // the row shows the OLD name next to the toast that says the new
+      // one.
+      //
+      // The counter is the effect's dependency: it changes exactly when
+      // the list must be re-fetched, and nothing else.
+      return { ...state, threadsRefresh: state.threadsRefresh + 1 };
+
     case "widenPanelScope":
-      // R388j: `/sessions` is scoped to the active cwd, and a
       // directory with no sessions yet shows an empty panel. The
       // empty state offers a keypress ("press 'a' to see every
       // session"), so the state has to be able to widen in place —

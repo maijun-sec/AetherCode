@@ -3195,3 +3195,85 @@ a gate. Both of those cost this round real time.
   **那一个常量**的截止时间;而且它的等待窗口被**加长**了 —— 60 秒的上限
   比 120 秒的倒计时**短**,会把它正在展示的那个功能自己截断。
   Doc: `docs/R388m-permission-deadline-and-cell-width.md`。
+- **R388n**(Claude Code 对标的四项:resume 选择器 / checkpoint 菜单 / 字面模式指示 /
+  「Yes, and switch to auto mode」):四项里有**一项是真的后端** ——
+  checkpoint 菜单。Claude Code 的六个 rewind 操作里,daemon 此前只实现了
+  **一个**(`rewind`,只回滚对话);「Restore code」和「Summarize from here」
+  **根本没有**。R388n 加了 `CodeCheckpointStore`(按**工具调用**推出的
+  「本次会话写过哪些文件」,快照这些文件的**改前**内容)、`Compactor.
+  summarizeNow`(**不受上下文窗口门槛约束** —— 用户显式要求必须总结)、
+  `restoreConversationTo` / `summarizeAtCheckpoint`,以及三个 RPC
+  (`checkpoints/list|restore|summarize`,stdio **和** HTTP 都接)。
+  **(1) 序号和位置是两种地址。** 引擎会写好几种**用户没打**的
+  `Role.USER` 消息(`session-anchor` / `compaction-side-note` /
+  `transcript-trim-side-note` / `todo-ask-llm` / `user-decision-resume`),
+  而既有的 `rewind(target)` 数的是**所有** `Role.USER`。所以压缩提示之后
+  「回到第 3 轮」会落在提示上而不是用户的第三条消息 —— **功能看起来能用,
+  实际上在破坏对话**。修法是**一条计数规则、一个地方**:
+  `CodeCheckpointStore.userTurnIndices` / `isRealUserTurn`,生产者和
+  消费者都走它;而**以 checkpoint 为锚**的两个操作**根本不重新推导**边界
+  —— 菜单说的是「回到这一点」,这一点是**位置**,不是序号。
+  **(2)「两者都恢复」是标志位,不是第三套实现。** 六个动作各自带
+  `touchesCode` / `touchesConversation`,派发读**标志**。若为「都恢复」
+  单独写一条分支,两半就会漂移:一边修了另一边不修,用户在同一个菜单的
+  两个条目里得到不同的结果。scope 上线也是**一次请求**
+  (`scope: code|conversation|both`)—— 两次请求意味着代码恢复成功、
+  对话恢复失败,而用户被告知「done」。
+  **(3) 快照必须在**轮次边界**取。** 工具跑完再取,取到的是「改后」,
+  恢复等于没恢复;提示入账之前取,又不知道属于哪一轮。所以
+  `QueryEngine` 加了 `setOnTurnBoundary` 钩子(预检压缩之后、提示入账
+  之前触发)。它是**第二个 setter**,不是 `setOnUserPrompt` 的第二个参数 ——
+  一个 setter 装两个东西,后装的会**静默顶掉**先装的。
+  **(4) 恢复代码的三种结果各有一种。** 原来存在 → 写回内容;**本次会话
+  建的** → **删掉**(写回空文件会在用户的树里留下一个 0 字节文件);
+  **二进制** → **跳过并报告**(写回坏字节比不恢复更糟)。
+  **(5) Esc Esc 是**第二次**。** Esc 已经是「关掉浮层 / 停掉运行 / 清掉
+  队列」,抢走**第一次**会让每个面板都要按两次 Esc 才关得掉。规则:
+  600ms 内的**第二次** Esc 开菜单,第一次照常走梯子。
+  **(6) 字面模式指示。** `ACCEPT_TASK` 对没读过源码的人毫无意义,于是每个
+  模式配一句人话(`⏸ manual mode on` / `⏵⏵ auto mode on` / …),
+  **字形承载唯一要紧的事实**:`⏸` = 还会问,`⏵⏵` = 不会。
+  **未知模式一律当「还会问」** —— 必须往安全的一边倒。
+  **(7) 权限卡的「Yes, and switch to auto mode」。** 此前六���答案
+  (A/T/P/U/D/N)**没有一个**改会话的权限模式;陷阱是 `P`/`U` **看起来**
+  像:它们装的是**工具/目标**的规则,不是 `PermissionMode`。用户读
+  「allow for this project」按 `P`,以为会话不再问了 —— 没有。
+  现在是第五个编号答案 `[M]`,`mode = ACCEPT_TASK`。**模式走线上自己的
+  字段**,并且 `setPermissionMode` 在 `permissionResponse` 之后**独立**发
+  (不 chain):**审批不能依赖装饰性后续** —— 模式变更失败不能拖垮/搞挂
+  用户已经批准的调用。`armedLabel` 现在按 decision+scope+**mode** 三者
+  匹配:两个答案产生同一 decision 时,按 decision 查会找错。
+  **编号是显式数据**(1..5),不是从数组顺序派生的 —— `t`/`y` 是同义词,
+  派生会造出 6/7/8 这些不存在和弦。
+  **(8) 决策键 handler 改成注册表驱动。** 键住在 `DECISION_KEYS`,但
+  Ink 的 handler 是**手写 if 链** —— 同一批键的**第二份列表**。新的 `M`
+  会住在注册表里(卡片能宣传它)而 if 链不知道它(按了没反应):
+  **键看起来是活的,其实是死的**。
+  **(9) 分支是**读文件**得到的,不是 spawn 子进程。** 五十行列表 × 一次
+  `git` 子进程就是五十个进程;`GitBranchReader` 直接读 `.git/HEAD`,
+  跟随 `.git` **文件**(worktree/submodule),按 git 目录缓存 2 秒。
+  **detached HEAD / remote ref / tag 一律返回 null** —— **错的标签比没标签
+  更糟**。
+  **(10) 重命名不能**搬走** session。** `SessionStore.touch()` 会一并写
+  `cwd`,而 session 列表已经在用它;拿它做重命名会把 session **改挂到
+  另一个目录**,session 从它本来属于的项目里消失。所以 `setTitle` 只写
+  **一列**。
+  **Lesson 1355 — 两个答案产生**同一 decision** 就是两个答案。** 按
+  outcome 查标签会找错(显示「allow once」而实际发的是「allow 并切模式」)。
+  **Lesson 1356 — 宣传了却没接线的键,比不存在的键更糟。** 吃掉用户一次
+  按键,并且教会 UI 会撒谎。
+  **Lesson 1357 — 审批不得依赖装饰性后续。** chain 住 `setPermissionMode`
+  会让模式变更失败拖垮/搞挂已批准的调用。
+  **Lesson 1358 — test runner 的子进程若不清 `NODE_TEST_CONTEXT`,失败
+  不会反映在退出码**(会永远「存活」);变异测试必须
+  `delete env.NODE_TEST_CONTEXT`。
+  **Lesson 1359 — 菜单项要写**操作**,写「标签」就检查不了。** 六个动作
+  各自命名它**执行**什么,同一个字符串就不能被复用于两个操作。
+  **Lesson 1360 —「两者都」是标志位,不是第三套实现。**
+  **Lesson 1361 — 序号和位置是两种地址;重新推导自己边界的恢复,是可能
+  落在别处的恢复。**
+  **Lesson 1362 — 快捷键不能抢走它共享的那个键的含义。**
+  **Lesson 1363 — 「必须包含这段调用」的检查若读**原始**源码,被注释掉
+  的调用也能满足它。** 读**剥掉注释**的源码。本轮变异测试正是靠这条
+  抓到门禁自己的缺陷:注释掉 `onTurnBoundary.accept(...)` 之后门禁仍然绿。
+  Doc: `docs/R388n-claude-code-parity.md`。

@@ -45,6 +45,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -247,10 +248,17 @@ public class AetherCodeMethods {
         m.put("getSkipStats",                          new String[]{TAG_READ, TAG_PERMISSION});
         // Session
         m.put("listSessions",                          new String[]{TAG_READ, TAG_SESSION});
+        // R388n: rename a session (set its display title).
+        m.put("session/rename",                        new String[]{TAG_WRITE, TAG_SESSION});
         // R379: per-session token accounting.
         m.put("session/tokens",                          new String[]{TAG_READ, TAG_SESSION});
         // R379: roll the transcript back to an earlier user message.
         m.put("rewind",                                  new String[]{TAG_WRITE, TAG_SESSION});
+        // R388n: the checkpoint surface — the FILES, not just the
+        // conversation.
+        m.put("checkpoints/list",                        new String[]{TAG_READ, TAG_SESSION});
+        m.put("checkpoints/restore",                     new String[]{TAG_WRITE, TAG_SESSION});
+        m.put("checkpoints/summarize",                   new String[]{TAG_WRITE, TAG_SESSION});
         m.put("loadSession",                           new String[]{TAG_READ, TAG_SESSION});
         m.put("createSession",                         new String[]{TAG_WRITE, TAG_SESSION});
         m.put("deleteSession",                         new String[]{TAG_WRITE, TAG_SESSION});
@@ -1754,10 +1762,21 @@ public class AetherCodeMethods {
         // can flip it on for production.
         dispatcher.register("setAutoRestart",        this::setAutoRestart);
         dispatcher.register("listSessions",          this::listSessions);
+        // R388n: rename a session (set its display title). Claude Code's
+        // `/resume` selector lets the user rename a session with Ctrl+R.
+        dispatcher.register("session/rename",        this::sessionRename);
         // R379: per-session token accounting.
         dispatcher.register("session/tokens",          this::sessionTokens);
         // R379: roll the transcript back to an earlier user message.
         dispatcher.register("rewind",                  this::rewind);
+        // R388n: the checkpoint surface — the files, not just the
+        // conversation. Claude Code's rewind menu offers "Restore code
+        // and conversation" / "Restore conversation" / "Restore code",
+        // and only the conversation half existed.
+        dispatcher.register("checkpoints/list",       this::checkpointsList);
+        dispatcher.register("checkpoints/restore",    this::checkpointsRestore);
+        // R388n: "summarize from here" / "summarize up to here".
+        dispatcher.register("checkpoints/summarize", this::checkpointsSummarize);
         dispatcher.register("loadSession",           this::loadSession);
         // mint a new session / delete an existing one. The
         // desktop's `createNewSession` action calls createSession
@@ -2714,6 +2733,25 @@ public class AetherCodeMethods {
         return r;
     }
 
+    /**
+     * R388n: the branch of the repository the engine's session is
+     * working in, or {@code null} when there is none.
+     *
+     * <p>Never throws — a branch is a decoration, and a decoration must
+     * not break the state read.
+     */
+    private static String currentBranchOf(AetherCodeEngine target) {
+        try {
+            java.nio.file.Path cwd = target.appState().cwd();
+            if (cwd == null) return null;
+            String branch = org.aethercode.core.context.GitBranchReader.branchFor(cwd);
+            return (branch == null || branch.isBlank()) ? null : branch;
+        } catch (Exception e) {
+            LOG.debug("R388n: current branch lookup failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public Object getState(Object params) {
         // resolve the target engine via
@@ -2751,6 +2789,20 @@ public class AetherCodeMethods {
         r.put("liveRunIds",       liveRunIds);
         r.put("model",           target.appState().mainLoopModel());
         r.put("permissionMode",  target.appState().permissionMode().name());
+        // R388n: the CURRENT branch — the repository the session is
+        // working in.
+        //
+        // The session picker's `Ctrl+B` filter ("only sessions on my
+        // current branch") needs a branch to compare the rows against.
+        // The rows carry their OWN branches (listSessions sends
+        // `gitBranch` per row), but the picker's reference point — the
+        // branch of the cwd the user is standing in — has to come from
+        // the daemon, because only the daemon knows the session's cwd.
+        //
+        // Null when the cwd is not a repository (or HEAD is detached) —
+        // an ABSENT branch, not an empty-string one, so the client can
+        // tell "no repo" from "empty branch".
+        r.put("gitBranch", currentBranchOf(target));
         r.put("toolCount",       target.appState().toolPool().size());
         r.put("tools",           target.appState().toolPool().stream().map(t -> t.name()).toList());
         r.put("transcriptSize",  target.appState().transcript().size());
@@ -5814,6 +5866,41 @@ public class AetherCodeMethods {
                 if (cwd != null) {
                     m.put("cwd", cwd);
                 }
+                // R388n: the repository's CURRENT BRANCH.
+                //
+                // The TUI's session picker already READS `gitBranch` off
+                // the wire (`normalizeThreadRow` in tui.tsx) and the
+                // ThreadSelector prop `showBranch` was declared for it —
+                // but the daemon never sent the field, so the column
+                // was structurally incapable of being non-empty.
+                // Claude Code's `/resume` selector shows the branch
+                // next to every row.
+                //
+                // ★ The branch is per-REPOSITORY, not per-session. ★
+                // A dozen sessions in one repo produce a dozen rows
+                // with the SAME branch, so the value is computed ONCE
+                // per distinct cwd (the reader caches by git dir) —
+                // never a subprocess per row.
+                //
+                // A session with no cwd cannot be attributed to a repo,
+                // so it carries no branch. An unknown branch is an
+                // ABSENT branch, not an empty-string one: the field is
+                // omitted so the client can tell "no repo" from
+                // "detached HEAD".
+                if (cwd != null && !cwd.isBlank()) {
+                    try {
+                        String branch = org.aethercode.core.context.GitBranchReader
+                                .branchFor(java.nio.file.Path.of(cwd));
+                        if (branch != null && !branch.isBlank()) {
+                            m.put("gitBranch", branch);
+                        }
+                    } catch (Exception branchEx) {
+                        // A branch is a decoration. It must never break
+                        // the session list.
+                        LOG.debug("R388n: git branch lookup for {} failed: {}",
+                                cwd, branchEx.getMessage());
+                    }
+                }
                 // optional preview extraction. The TUI
                 // session picker uses this to render a one-line
                 // title for each row ("Summarize README.md" /
@@ -5897,6 +5984,61 @@ public class AetherCodeMethods {
             LOG.warn("listSessions failed: {}", e.getMessage());
             return Map.of("sessions", List.of(), "current", engine.appState().sessionId(),
                     "error", e.getMessage());
+        }
+    }
+
+    /**
+     * R388n: rename a session — set its display title.
+     *
+     * <p>Claude Code's {@code /resume} selector lets the user rename a
+     * session with {@code Ctrl+R}. The TUI's {@code ThreadSelector} had
+     * a {@code showBranch} prop that was never used and no rename
+     * affordance at all, because the daemon had no way to accept a
+     * name.
+     *
+     * <p>The wire shape:
+     * <pre>
+     *   session/rename({ id, title }) -&gt; { ok, id, title }
+     * </pre>
+     *
+     * <p>★ The answer reports the title the STORE NOW HOLDS. ★ The
+     * daemon trims the name; echoing the raw request would claim a
+     * name the store does not have (R377's rule: report what the
+     * server did, not what the client asked for).
+     *
+     * <p>★ A rename never MOVES a session. ★ Only the title column is
+     * written — the session's cwd, worktree, model and first prompt
+     * are untouched.
+     */
+    public Object sessionRename(Object params) {
+        Map<String, Object> p = asMap(params);
+        String id = stringOrThrow(p, "id");
+        Object rawTitle = p.get("title");
+        String title = rawTitle == null ? "" : String.valueOf(rawTitle).trim();
+        if (title.isEmpty()) {
+            // An empty title is not a name. Clearing a session's name
+            // would fall back to the first prompt (the renderer's rule)
+            // — which is a legitimate state, but it is not a RENAME,
+            // and accepting it would make the RPC's answer ("renamed
+            // to ''") a lie about what the row will show.
+            return Map.of("ok", false, "id", id,
+                    "error", "title must not be empty");
+        }
+        var store = engine.sessionStore();
+        if (store == null) {
+            return Map.of("ok", false, "id", id,
+                    "error", "no session store is configured");
+        }
+        try {
+            boolean updated = store.rename(id, title);
+            if (!updated) {
+                return Map.of("ok", false, "id", id,
+                        "error", "no such session: " + id);
+            }
+            return Map.of("ok", true, "id", id, "title", title);
+        } catch (java.io.IOException e) {
+            LOG.warn("session/rename({}) failed: {}", id, e.getMessage());
+            return Map.of("ok", false, "id", id, "error", e.getMessage());
         }
     }
 
@@ -8365,6 +8507,219 @@ public class AetherCodeMethods {
         } catch (java.io.IOException e) {
             throw new JsonRpcProtocolException(
                     "rewind failed: " + e.getMessage(),
+                    JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
+        }
+    }
+
+    /**
+     * R388n: list the CODE checkpoints — the files, at each user turn.
+     *
+     * <p>Claude Code's rewind menu offers "Restore code and
+     * conversation" / "Restore conversation" / "Restore code". Only the
+     * conversation half existed ({@code rewind}); the code half had no
+     * backend at all — the pre-existing {@code CheckpointStore} stored
+     * messages and no files, and nothing referenced it.
+     *
+     * <p>The checkpoints are DERIVED from the transcript's tool calls, so
+     * there is no second bookkeeping path that could disagree with what
+     * actually happened.
+     *
+     * <p>Response: {@code {ok, checkpoints: [{id, userMessageIndex,
+     * summary, files: [...]}]}}.
+     */
+    public Object checkpointsList(Object params) {
+        Map<String, Object> p = asMap(params);
+        String sid = p.get("sessionId") instanceof String s && !s.isBlank() ? s : null;
+        AetherCodeEngine target = resolveRpcTarget(sid);
+        if (target == null) {
+            return Map.of("ok", false, "error", "no such sessionId: " + sid);
+        }
+        java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (var cp : target.codeCheckpoints()) {
+            java.util.List<Map<String, Object>> files = new java.util.ArrayList<>();
+            for (var fs : cp.files()) {
+                java.util.Map<String, Object> f = new java.util.LinkedHashMap<>();
+                f.put("path", fs.path().toString());
+                f.put("name", fs.label());
+                // `restorable` is false for a binary / unreadable file:
+                // the restore SKIPS it and says so, rather than writing
+                // mangled bytes back.
+                f.put("restorable", fs.content() != null || fs.created());
+                f.put("created", fs.created());
+                files.add(f);
+            }
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("id", cp.id());
+            row.put("userMessageIndex", cp.userMessageIndex());
+            row.put("transcriptIndex", cp.transcriptIndex());
+            row.put("summary", cp.summary() == null ? "" : cp.summary());
+            row.put("files", files);
+            out.add(row);
+        }
+        return Map.of("ok", true, "checkpoints", out);
+    }
+
+    /**
+     * R388n: restore the FILES to a checkpoint's state.
+     *
+     * <p>Only the code is restored — the transcript is the separate
+     * {@code rewind} RPC, and the menu offers the two separately for
+     * exactly that reason.
+     *
+     * <p>The answer reports WHAT HAPPENED: the files restored, the files
+     * deleted (the session created them, so they go), the files skipped
+     * (binary / unreadable), and the files that failed. A restore that
+     * claims success while silently leaving a file modified is the
+     * silent-degradation shape.
+     */
+    /**
+     * R388n: restore a checkpoint — the FILES, the CONVERSATION, or
+     * both.
+     *
+     * <p>Claude Code's rewind menu offers three restores: "Restore code
+     * and conversation", "Restore conversation", "Restore code". The
+     * daemon originally had only the files half, under a separate
+     * {@code rewind} RPC that took a user-message ORDINAL.
+     *
+     * <p>★ The ORDINAL and the CHECKPOINT are different addressing. ★
+     * An ordinal is re-derived from the transcript by counting
+     * user-role messages; a checkpoint records the transcript POSITION
+     * it was taken at. The menu says "checkpoint 3" — so it must be the
+     * checkpoint's own position, or a compaction notice that landed
+     * between two turns would shift the rewind by a message and the
+     * feature would look like it worked while corrupting the
+     * conversation.
+     *
+     * <p>Params: {@code {id, scope?}} where {@code scope} is
+     * {@code "code"} (the files only — the default), {@code
+     * "conversation"} (the transcript only), or {@code "both"}.
+     *
+     * <p>The answer reports WHAT HAPPENED: the files restored, the
+     * files deleted (the session created them, so they go), the files
+     * skipped (binary / unreadable), the files that failed, and how
+     * many messages the conversation rollback removed. A restore that
+     * claims success while silently leaving a file modified is the
+     * silent-degradation shape.
+     */
+    public Object checkpointsRestore(Object params) {
+        Map<String, Object> p = asMap(params);
+        String id = stringOrThrow(p, "id");
+        String scope = p.get("scope") instanceof String s && !s.isBlank()
+                ? s.trim().toLowerCase(Locale.ROOT)
+                : "code";
+        boolean touchesCode = "code".equals(scope) || "both".equals(scope);
+        boolean touchesConversation = "conversation".equals(scope) || "both".equals(scope);
+        if (!touchesCode && !touchesConversation) {
+            throw invalidParams("scope must be one of: code, conversation, both — got " + scope);
+        }
+        String sid = p.get("sessionId") instanceof String s && !s.isBlank() ? s : null;
+        AetherCodeEngine target = resolveRpcTarget(sid);
+        if (target == null) {
+            return Map.of("ok", false, "error", "no such sessionId: " + sid);
+        }
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("id", id);
+        out.put("scope", scope);
+        // The file outcome. Present only when the code was in scope —
+        // an empty list would read as "nothing was restored" when the
+        // code was never touched.
+        if (touchesCode) {
+            try {
+                var result = target.restoreCodeCheckpoint(id);
+                out.put("restored", result.restored());
+                out.put("deleted", result.deleted());
+                out.put("skipped", result.skipped());
+                out.put("failed", result.failed());
+                out.put("changed", result.changed());
+            } catch (IllegalArgumentException e) {
+                out.put("ok", false);
+                out.put("reason", e.getMessage());
+                return out;
+            }
+        }
+        // The conversation outcome. Same rule: present only when the
+        // conversation was in scope.
+        if (touchesConversation) {
+            try {
+                java.util.Map<String, Object> conv = target.restoreConversationTo(id);
+                out.put("conversation", conv);
+            } catch (IllegalArgumentException e) {
+                out.put("ok", false);
+                out.put("reason", e.getMessage());
+                return out;
+            } catch (java.io.IOException e) {
+                out.put("ok", false);
+                out.put("reason", "conversation rollback failed: " + e.getMessage());
+                return out;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * R388n: "summarize from here" / "summarize up to here".
+     *
+     * <p>Claude Code's rewind menu offers both. The daemon had NO
+     * summarisation of a transcript PREFIX: the {@code summary} RPC is
+     * a task-stats snapshot, and {@code compact} is the automatic,
+     * context-window-gated compaction. Neither is the user's explicit
+     * request.
+     *
+     * <p>Params: EITHER {@code {checkpointId, mode}} — the menu's
+     * path, anchored on the checkpoint's own transcript position — OR
+     * {@code {target, mode}}, the legacy path by user-turn ordinal.
+     *
+     * <p>{@code mode} is {@code "from"} (keep the tail) or {@code
+     * "up_to"} (keep the head). Response: {@code {ok, target,
+     * summarized, kept, transcriptSize}}.
+     */
+    public Object checkpointsSummarize(Object params) {
+        Map<String, Object> p = asMap(params);
+        String mode = p.get("mode") instanceof String s ? s.trim() : "from";
+        boolean keepAfter = !"up_to".equals(mode) && !"upto".equals(mode) && !"up-to".equals(mode);
+        String sid = p.get("sessionId") instanceof String ss && !ss.isBlank() ? ss : null;
+        AetherCodeEngine target2 = resolveRpcTarget(sid);
+        if (target2 == null) {
+            return Map.of("ok", false, "error", "no such sessionId: " + sid);
+        }
+        try {
+            // ★ The checkpoint path comes FIRST. ★ When both a
+            // checkpointId and a target are present, the checkpoint
+            // wins — it addresses a recorded position, the ordinal is
+            // re-derived, and the menu's "at this point" is the
+            // checkpoint's.
+            Object cpId = p.get("checkpointId");
+            if (cpId instanceof String cs && !cs.isBlank()) {
+                java.util.Map<String, Object> out = target2.summarizeAtCheckpoint(cs, keepAfter);
+                out.put("checkpointId", cs);
+                return out;
+            }
+            Object raw = p.get("target");
+            int target;
+            if (raw instanceof Number n) {
+                target = n.intValue();
+            } else if (raw instanceof String s) {
+                try {
+                    target = Integer.parseInt(s.trim());
+                } catch (NumberFormatException e) {
+                    throw invalidParams("target must be an integer, got " + s);
+                }
+            } else {
+                throw invalidParams("missing required field: checkpointId or target");
+            }
+            return target2.summarizeFrom(target, keepAfter);
+        } catch (IllegalArgumentException e) {
+            return Map.of("ok", false, "reason", e.getMessage());
+        } catch (IllegalStateException e) {
+            // The summariser refused — and the conversation was NOT
+            // changed. Saying so is the honest answer; a silent
+            // success would leave the user believing the transcript
+            // changed when it did not.
+            return Map.of("ok", false, "reason", e.getMessage());
+        } catch (java.io.IOException e) {
+            throw new JsonRpcProtocolException(
+                    "summarize failed: " + e.getMessage(),
                     JsonRpcError.of(JsonRpcError.ENGINE_ERROR, e.getMessage()));
         }
     }

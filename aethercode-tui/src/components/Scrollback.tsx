@@ -231,7 +231,7 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
               <Text color={t.warn}>{countdown}</Text>
             </>
           ) : null}
-          <Text dimColor> · A=allow T=task P=project U=user D=deny N=never</Text>
+          <Text dimColor> · A=allow T=task P=project U=user M=auto D=deny N=never</Text>
         </Text>
       </Box>
     );
@@ -302,6 +302,22 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
           [U]
         </Text>{" "}
         allow for this user (saved to ~/.aethercode/.../permissions.json)
+      </Text>
+      {/* R388n: "Yes, and switch to auto mode". Claude Code offers this
+          as ONE option: the call is approved AND the session stops
+          asking for this kind of call. Two separate presses (approve,
+          then /mode) is the same outcome — but the user has to know
+          that the second one exists, and has to remember it.
+
+          The label names the MODE it switches to, not just "auto" —
+          the mode's own name is the daemon's word, and the user can
+          change it afterwards with /mode. */}
+      <Text>
+        {" "}
+        <Text color={t.ok} bold>
+          [M]
+        </Text>{" "}
+        allow and switch to auto mode (ACCEPT_TASK)
       </Text>
       <Text>
         {" "}

@@ -216,7 +216,20 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       {
         id: "set-default",
         label: "Ctrl+S: set default",
-        tokens: ["ctrl", "s"],
+        // ★ R388n: the token is the CHORD, not the modifier. ★
+        //
+        // The table used to declare `["ctrl", "s"]` — two tokens for
+        // one chord. "ctrl" is a MODIFIER, not a key the user presses
+        // on its own, and the extractor now agrees: it emits
+        // "ctrl+s" for `key.ctrl && input === "s"`.
+        //
+        // The two lists disagreed about what a chord IS — one said
+        // "ctrl + s", the other said "ctrl+s" — and the gate compared
+        // them literally, so it could never have passed. It passed
+        // before only because the extractor emitted the bare modifier
+        // too. That was the extractor agreeing with itself (Lesson
+        // 1215).
+        tokens: ["ctrl+s"],
         via: "handler",
       },
       { id: "close", label: "Esc: close", tokens: ["esc"], via: "handler" },
@@ -244,6 +257,17 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       { id: "nav", label: "↑/↓: navigate", tokens: ["up", "down"], via: "handler" },
       { id: "select", label: "Enter: run", tokens: ["return"], via: "handler" },
       { id: "close", label: "Esc: close", tokens: ["esc"], via: "handler" },
+    ],
+  },
+  {
+    component: "components/CheckpointMenu.tsx",
+    separator: " ",
+    keys: [
+      { id: "nav", label: "↑/↓: move", tokens: ["up", "down"], via: "handler" },
+      { id: "switch", label: "Tab: switch list", tokens: ["tab"], via: "handler" },
+      { id: "quick", label: "1-6: action", tokens: ["1", "2", "3", "4", "5", "6"], via: "handler" },
+      { id: "choose", label: "Enter: choose", tokens: ["return"], via: "handler" },
+      { id: "cancel", label: "Esc: cancel", tokens: ["esc"], via: "handler" },
     ],
   },
   {
@@ -351,7 +375,10 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       {
         id: "reconnect",
         label: `${RECONNECT_KEY_LABEL}: reconnect`,
-        tokens: ["ctrl", "r"],
+        // ★ R388n: the token is the CHORD. ★ The modifier alone is
+        // not a key the user can press, and the extractor now agrees
+        // (see the AgentSelector entry for the same change).
+        tokens: ["ctrl+r"],
         via: "handler",
       },
       { id: "close", label: "Esc: close", tokens: ["esc"], via: "handler" },
@@ -443,6 +470,23 @@ export const COMPONENT_KEYS: readonly ComponentKeyTable[] = [
       // table — the hint must not promise keys the panel does not
       // bind, nor hide the ones it does.
       { id: "widen", label: "a: every session", tokens: ["a"], via: "handler" },
+      // R388n: the Claude Code `/resume` chords.
+      {
+        id: "pick",
+        label: "1–9: pick row",
+        tokens: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+        via: "handler",
+      },
+      { id: "preview", label: "Space: preview", tokens: ["space"], via: "handler" },
+      { id: "rename", label: "Ctrl+R: rename", tokens: ["ctrl+r"], via: "handler" },
+      { id: "branch", label: "Ctrl+B: this branch", tokens: ["ctrl+b"], via: "handler" },
+      { id: "all-projects", label: "Ctrl+A: every project", tokens: ["ctrl+a"], via: "handler" },
+      { id: "all-worktrees", label: "Ctrl+W: every worktree", tokens: ["ctrl+w"], via: "handler" },
+      // The rename field's own editing keys. They are bound by the
+      // SAME handler (the rename branch lives inside it), so the table
+      // must name them — a key the handler binds but the table hides
+      // is the other half of the same defect.
+      { id: "edit", label: "Backspace: delete", tokens: ["backspace", "delete"], via: "handler" },
     ],
   },
   {
