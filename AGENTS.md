@@ -3602,3 +3602,63 @@ a gate. Both of those cost this round real time.
   ★ **绿的门禁不是证据。被证明会红的门禁才是。**
   **Lesson 1396 — 边框可以满足一条关于它自己**内容**的断言。**
   Doc: `docs/R388q-file-changes-card.md`.
+
+- **R388r** (the card's advertised keys must DO something — and the gate had NO teeth):
+  R388q 的文件变更卡广告了三个动作 `查看文件 f` / `[撤销 u]` / `[审查 r]`,
+  **三个都不做任何事**。用户拍板语义:**撤销 = 打开回溯菜单**、**审查 = 展开文件清单**。
+  两个独立缺陷:`Scrollback` **没传任何回调**(卡片的 `onUndo`/`onReview` 是 undefined);
+  卡片的 `focused` 是**内部 `useState(false)`**,**从来没有任何东西把它设为 true** → key handler 是死代码。
+  ★ **实测:Ink 的 `useInput` 把按键送给**每一个** mounted hook** —— 探针输出
+  `["text:d","cmd:d"]`。所以**裸字母命令在用户打字时也会触发**(app 现有的 `d` 键
+  就是这样)。→ 卡片键必须是**命令模式键**:**仅当 prompt 为空时生效**。
+  (app 的 `d` 键碰撞是**既有**问题,本轮**不复制**它,也**不修**它。)
+  落盘:新增 `src/fileCardActions.ts`(纯 TS)—— `FILE_CARD_ACTIONS` /
+  `FILE_CARD_ACTION_INFO`(卡片的标签、app 的绑定、门禁**读同一张表**)/ `fileCardActionFor` /
+  ★ **`fileCardEffect` / `fileCardEffectFor`**;卡片改成**纯展示**(删掉自己的 stdin 监听
+  和内部 focus state,`focused`/`actionsLive` 变成 prop,不能触发的动作**变暗**);
+  `Scrollback.tsx` 接线;`tui.tsx` 加 `focusedFileCardTurnId`(用共享规则) + 三个动作函数;
+  `keybindings.ts` 加三条 registry 条目。
+  ★ **语义是一个**值**,不是一次 grep** —— app 的 `useInput` handler **没法单独 mount**,
+  所以第一版门禁只能 grep 源码,而 grep 不是检查(见下)。于是语义被提到纯模块里:
+  `FileCardEffect = {kind:"toggleFiles"|"openRewind"|"none"}`,app 变成**翻译器**
+  (`applyFileCardEffect` 一个地方把 effect 变成 dispatch),**键盘和卡片自己的回调都走它**
+  → 卡的键和卡的按钮不可能含义不同。
+  ★ **撤销只开菜单,不猜回退到哪个点** —— daemon 的 restore 是 **checkpoint 粒度**
+  (一批文件 + 一段对话),卡片是 **turn 粒度**;所以让用户自己选(和 `Esc Esc` 同一条路)。
+  ★★ **本轮真正的发现:变异门禁是**空的**,而且它「证明」自己有牙齿。**
+  第一版变异门禁把源码复制到临时沙箱再改,但**沙箱没有 `node_modules`**,
+  而门禁的探针要 bundle Ink 和 React。探针构建器**硬编码**了
+  `nodePaths: [join(ROOT, "node_modules")]` —— 那是**沙箱**的,不存在 →
+  探针死在 `Could not resolve "ink"` → **每个变异都红了,红在构建错误上**。
+  ★ **挂在构建错误上的门禁,会对**任何**改动变红,包括正确的改动。它不是有牙齿,
+  它是有一根绊线。** R388q 的门禁早就解决了这件事(读 `process.env.R388Q_NODE_PATHS`,
+  由调用方把**真**树的路径交过来);R388r **抄了机制,没抄修法**。
+  ★★ **修好探针之后,9 个变异里有 5 个让门禁**保持绿** —— 构建失败**掩盖**了断言的真实状态。**
+  绿的那 5 个:Scrollback 不传 undo 回调 / 撤销不再开回溯菜单 / 审查不再切换清单 /
+  卡片自己留一份标签 / Scrollback 自己留一份分组规则 —— **全都是同一个形状:
+  一条「字符串在文件里」的**存在性**检查,而那个字符串**同时满足别的检查**
+  (比如 grep `openPanel", id: "checkpoints"` **也被 `Esc Esc` 的 handler 满足**)。
+  ★ **一个 LOOKUP 能满足的检查,根本不是检查**(Lesson 1217 又一次落地)。
+  修法:**断言值**,并且**调用**被测代码 —— 语义变成值(`fileCardEffect`)、
+  app 的翻译被**双向**钉住、Scrollback 的接线按**接线**查(不是按 prop 名查)、
+  卡片和 app 的分组**跑同一批 turn 然后对比**(为此 `groupTurns` / `fileChangeOf`
+  必须**导出**,让探针**调用**它们而不是**重新实现**它们)。
+  ★ **探针自己的 fixture 也是测量的一部分** —— 分组探针一开始报告「**一个文件变更都没有**」:
+  fixture 用了 `path`,而 daemon 的 tool input 字段叫 **`file_path`** → `diffStatsFor`
+  对每个 turn 都返回 `null`。这个失败**长得和「共享规则坏了」一模一样**。
+  **Lesson 1402 — 探针报告「没有数据」时,先怀疑探针,再怀疑产品。**
+  门禁 `scripts/test/r388r-file-card-actions.test.mjs` **13/13**;
+  变异门禁 **11 个变异全红**,且每个都断言**红的原因是对的那条断言**
+  (输出里必须点名它),并额外断言**输出里不能出现构建失败**。
+  **Lesson 1397 — 死键比没有键更糟。** 用户被告知功能存在;缺键是**缺席**,
+  死键是**谎言**。
+  **Lesson 1398 — Ink 的 `useInput` 把按键送给每个 mounted hook。** 裸字母命令会在
+  用户打字时触发;裸字母必须**限定在空 prompt**。
+  **Lesson 1399 — 挂在构建错误上的门禁,是**因为错误的原因**红。**
+  **Lesson 1400 — 一个 LOOKUP 能满足的检查不是检查。** 断言值,或者**调用**代码。
+  **Lesson 1401 — 重新实现了被测规则的探针,量的是探针,不是产品。**
+  导出那个函数,然后调用它。
+  **Lesson 1403 — 一个绿色的变异门禁,在你亲眼看它**为正确的理由**变红之前,
+  什么都不能证明。** 而它第一次「为错误的理由」变红时,要先问的是「它到底红了没有」
+  —— 构建失败是一种**不带任何信息**的红。
+  Doc: `docs/R388r-file-card-actions.md`.

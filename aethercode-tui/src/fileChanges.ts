@@ -157,6 +157,74 @@ export function fileChangeFor(
 }
 
 /**
+ * The file change a TOOL TURN made, or null.
+ *
+ * <p>★ ONE RULE, USED BY BOTH SIDES ★ The card groups the turns and
+ * the app finds the focused card — and if the two used different
+ * rules, a key would act on a card the user is not looking at. So the
+ * rule lives here, once, and both read it.
+ *
+ * <p>The turn's shape is structural (it carries a role, a tool name
+ * and the tool's JSON args), so this takes the three fields rather
+ * than the whole `Turn` — that keeps this module free of the state
+ * module and importable by a gate.
+ *
+ * @param turn the turn's role
+ * @param toolName the turn's tool name
+ * @param toolArgs the turn's tool arguments (a JSON string)
+ * @returns the change, or null
+ */
+export function fileChangeOfTurnParts(
+  role: string | undefined,
+  toolName: string | undefined,
+  toolArgs: string | undefined,
+): FileChange | null {
+  if (role !== "tool") return null;
+  if (!toolArgs) return null;
+  let input: Record<string, unknown> | undefined;
+  try {
+    const parsed = JSON.parse(toolArgs);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      input = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // The args are not JSON — there is nothing to count.
+    return null;
+  }
+  return fileChangeFor(toolName, input);
+}
+
+/**
+ * The id of the group a turn belongs to, or null when the turn is not
+ * a file change.
+ *
+ * <p>★ THE GROUP IS A RUN OF CONSECUTIVE FILE CHANGES ★ A non-file
+ * turn (a bash command) BREAKS the group — otherwise two batches of
+ * writes would silently merge into one summary.
+ *
+ * <p>This walks the turns the same way `groupTurns` does in the
+ * Scrollback, so the card the app targets is the card the user sees.
+ *
+ * @param turns the turns, in order
+ * @param index the turn's index
+ * @returns the group's first turn id, or null
+ */
+export function fileChangeGroupIdAt(
+  turns: ReadonlyArray<{ id: number; role?: string; toolName?: string; toolArgs?: string }>,
+  index: number,
+): number | undefined {
+  const t = turns[index];
+  if (!t || !fileChangeOfTurnParts(t.role, t.toolName, t.toolArgs)) return undefined;
+  let start = index;
+  while (start > 0) {
+    const prev = turns[start - 1];
+    if (!fileChangeOfTurnParts(prev.role, prev.toolName, prev.toolArgs)) break;
+    start--;
+  }
+  return turns[start].id;
+}
+
+/**
  * The summary of every file change in a set of tool calls.
  *
  * <p>★ ONE CARD FOR MANY FILES ★ The desktop says "已编辑 19 个文件"

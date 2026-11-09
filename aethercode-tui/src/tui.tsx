@@ -211,6 +211,13 @@ import {
   type CheckpointAction,
   type CheckpointRow,
 } from "./components/CheckpointMenu.js";
+// R388r — the file-changes card's ACTIONS. The card renders this
+// table and the app binds its keys, so the card cannot advertise a
+// key that nothing handles.
+// R388r — the diff counts and the grouping, so the app can find the
+// card a key means.
+import { fileCardEffect, fileCardEffectFor, type FileCardEffect } from "./fileCardActions.js";
+import { fileChangeGroupIdAt, fileChangeOfTurnParts } from "./fileChanges.js";
 // R388k — `/help` as a filterable LIST projected from the one command
 // catalog, instead of a truncated wall of text.
 import { CommandHelpPanel } from "./components/CommandHelpPanel.js";
@@ -4527,6 +4534,48 @@ const App: React.FC<{
       if (last) dispatch({ type: "toggleTurn", id: last.id });
       return;
     }
+    // R388r — the FILE-CHANGES card's actions.
+    //
+    // ★ THE PROMPT MUST BE EMPTY ★ Ink's `useInput` delivers a
+    // keystroke to EVERY mounted hook — measured: a letter typed into
+    // the prompt also reaches this handler. So a bare-letter command
+    // fires while the user is typing, and the app's own `d` key has
+    // exactly that behaviour today (a pre-existing collision this
+    // binding does NOT copy).
+    //
+    // The card's keys are COMMAND-MODE keys: they fire only when the
+    // prompt is empty, which is the REPL convention and what the user
+    // expects from a label that reads "[撤销 u]". While the prompt has
+    // text the card DIMS its actions, so the user learns why the key
+    // did nothing instead of concluding the feature is broken.
+    //
+    // ★ ONE BINDING, THREE ACTIONS ★ The action is looked up in the
+    // ONE action table (`fileCardActions.ts`), so the card's label
+    // and the app's binding cannot disagree about which key does what.
+    //
+    // ★ AND THE EFFECT IS RESOLVED BY THE SHARED MODULE ★ The app
+    // does not decide what an action MEANS — `fileCardEffectFor` does,
+    // and it is the same function the gate reads. So "what does `u`
+    // do?" has ONE answer, and it is a value the gate can assert on.
+    {
+      const effect = fileCardEffectFor(
+        input,
+        state.input.trim().length === 0,
+        focusedFileCardTurnId,
+      );
+      if (effect) {
+        if (effect.kind === "none") {
+          dispatch({
+            type: "pushToast",
+            kind: "warn",
+            text: "no file changes to act on",
+          });
+          return;
+        }
+        applyFileCardEffect(effect);
+        return;
+      }
+    }
     if (input === "d" || input === "D") {
       // 'd' on a tool turn toggles the full-content "details"
       // view. We toggle the most recent tool turn. The user can
@@ -4549,6 +4598,90 @@ const App: React.FC<{
       return;
     }
   });
+
+  /**
+   * R388r — the file-changes card a key means.
+   *
+   * <p>★ THE MOST RECENT GROUP, LIKE EVERY OTHER CARD KEY ★ The app's
+   * `d` key acts on the most recent tool turn; `Ctrl+E` on the most
+   * recent turn. So the card's keys act on the most recent
+   * file-changes GROUP — and a group is identified by its FIRST
+   * turn's id, because that is what the card renders and what the
+   * group's expansion state hangs off.
+   *
+   * <p>★ AND THE GROUPING IS THE SAME RULE THE CARD USES ★ The card
+   * groups CONSECUTIVE file-changing turns, and a non-file turn
+   * breaks the group. If the app picked a different group than the
+   * card shows, a key would act on a card the user is not looking at.
+   * So the app derives the group the same way: walk the turns
+   * backwards, and the first file-changing turn that is not preceded
+   * by a run of file-changing turns is the group's first turn.
+   *
+   * @returns the group's first turn id, or null when there is no card
+   */
+  const focusedFileCardTurnId = React.useMemo<number | undefined>(() => {
+    const turns = state.turns;
+    // Walk backwards to the most recent file-changing turn, then ask
+    // the SHARED rule for that turn's group. ★ ONE RULE, USED BY BOTH
+    // SIDES ★ — if the app and the card grouped differently, a key
+    // would act on a card the user is not looking at.
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (fileChangeOfTurnParts(turns[i].role, turns[i].toolName, turns[i].toolArgs)) {
+        return fileChangeGroupIdAt(turns, i);
+      }
+    }
+    return undefined;
+  }, [state.turns]);
+
+  /**
+   * R388r — the card's three actions, ONE implementation.
+   *
+   * <p>★ THE APP HANDLES THE KEY, AND THE CARD CALLS THE SAME
+   * FUNCTION ★ R388q's card advertised three keys and did nothing
+   * with them. The fix is not "the card listens for keys" — it is that
+   * the app and the card call the SAME functions, so a key that the
+   * card shows is a key that acts.
+   *
+   * <p>★ AND THE EFFECT IS THE TESTABLE PART ★ The semantics live in
+   * `fileCardActions.ts` as a VALUE (`fileCardEffect`), and the app
+   * only carries the value out. A gate cannot mount the app's
+   * `useInput` handler, but it CAN assert on the value — so a gate
+   * that greps the source for `openPanel", id: "checkpoints"` (which
+   * the `Esc Esc` handler also contains, and which therefore passes
+   * even when the card's undo does something else) is replaced by one
+   * that reads the effect.
+   *
+   * <p>★ AND THE CARD'S CALLBACKS GO THROUGH THE SAME EFFECT ★ So
+   * the card's key and the card's own button cannot mean different
+   * things — they are the same effect, carried out the same way.
+   */
+  const onShowFileCardFiles = (turnId: number): void => {
+    applyFileCardEffect(fileCardEffect("showFiles", turnId));
+  };
+  const onUndoFileCard = (turnId: number): void => {
+    applyFileCardEffect(fileCardEffect("undo", turnId));
+  };
+  const onReviewFileCard = (turnId: number): void => {
+    applyFileCardEffect(fileCardEffect("review", turnId));
+  };
+
+  /**
+   * R388r — carry out a card effect.
+   *
+   * <p>★ ONE PLACE TURNS AN EFFECT INTO A DISPATCH ★ Every path into
+   * the card's behaviour — the keyboard and the card's own callbacks —
+   * goes through here, so the card's key and the card's button cannot
+   * mean different things.
+   *
+   * @param effect the effect
+   */
+  const applyFileCardEffect = (effect: FileCardEffect): void => {
+    if (effect.kind === "openRewind") {
+      dispatch({ type: "openPanel", id: "checkpoints" });
+    } else if (effect.kind === "toggleFiles") {
+      dispatch({ type: "toggleTurn", id: effect.turnId });
+    }
+  };
 
   const showWelcome = state.connected && state.turns.length === 0;
 
@@ -5829,6 +5962,16 @@ const App: React.FC<{
                     permissionAsk={state.permissionAsk}
                     decisionCardExpanded={state.decisionCardExpanded}
                     terminalWidth={cols}
+                    /* R388r: the file-changes card's actions. The
+                       APP owns the keys (a letter typed into the
+                       prompt is TEXT, so the card's keys are live
+                       only when the prompt is empty) and this
+                       component reports which card is the target. */
+                    focusedFileCardTurnId={focusedFileCardTurnId}
+                    fileCardActionsLive={state.input.trim().length === 0}
+                    onShowFileCardFiles={onShowFileCardFiles}
+                    onUndoFileCard={onUndoFileCard}
+                    onReviewFileCard={onReviewFileCard}
                   />
                   {/* inline subagent spawn cards. The host
                     also calls onOpen to switch the active

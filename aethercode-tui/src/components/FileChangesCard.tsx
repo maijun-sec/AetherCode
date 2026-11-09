@@ -71,6 +71,14 @@
  * characters are 15 cells), and the parts are dropped in priority
  * order until the row fits: first the actions, then the link, and
  * only then — as a last resort — the title's tail.
+ *
+ * <p>★ R388r: THE CARD IS PURE PRESENTATION ★ R388q gave the card its
+ * own key handler, gated on an internal `focused` flag that nothing
+ * ever set — so the advertised `[撤销 u]` could never fire. The card
+ * now renders what the app will do and takes the focus as a PROP; the
+ * app owns the keys. An action that cannot fire is DIMMED, so the
+ * user learns why the key did nothing instead of concluding the
+ * feature is broken.
  */
 
 import React from "react";
@@ -78,6 +86,8 @@ import { Box, Text } from "ink";
 import { t, icon } from "../theme.js";
 import { cellWidth, fitCells } from "../cellWidth.js";
 import type { FileChangeSummary } from "../fileChanges.js";
+// R388r: the card's ACTIONS — one table, read by the card AND by the app.
+import { FILE_CARD_ACTION_INFO } from "../fileCardActions.js";
 
 export interface FileChangesCardProps {
   /** The aggregated changes. */
@@ -86,6 +96,25 @@ export interface FileChangesCardProps {
   width: number;
   /** The per-file detail is expanded. */
   expanded?: boolean;
+  /**
+   * Is this card the focused one?
+   *
+   * <p>★ R388r: the focus is a PROP, not internal state. ★ R388q made
+   * it internal (`useState(false)`) and nothing ever set it to true,
+   * so the card's key handler was dead code — the card advertised
+   * `[撤销 u]` and the key could never fire. The focus now comes from
+   * the app, which owns which card is targeted.
+   */
+  focused?: boolean;
+  /**
+   * Are the card's keys live right now?
+   *
+   * <p>★ They are live only when the PROMPT IS EMPTY. ★ A letter
+   * typed into the prompt is TEXT. The card dims its actions when they
+   * cannot fire, so the user learns WHY the key did nothing instead of
+   * concluding the feature is broken.
+   */
+  actionsLive?: boolean;
   /** Called when the user asks to see the files. */
   onShowFiles?: () => void;
   /** Called when the user asks to undo the changes. */
@@ -115,48 +144,27 @@ export const FileChangesCard: React.FC<FileChangesCardProps> = ({
   summary,
   width,
   expanded = false,
+  focused = false,
+  actionsLive = true,
   onShowFiles,
   onUndo,
   onReview,
 }) => {
-  // ★ THE CARD OWNS ITS KEYS ★
+  // ★ THE CARD HANDLES NO KEYS ITSELF ★
   //
-  // Ink 5.2.1 has no `onPress` and no mouse support, so an action that
-  // only LOOKS pressable would be a lie. The card listens for the keys
-  // itself: `f` shows the files, `u` undoes, `r` reviews.
+  // R388q had the card listen on `process.stdin` for "f", "u" and "r",
+  // gated on an internal `focused` flag that nothing ever set — so the
+  // handler never ran. R388r moves the handling to the APP's key
+  // handler, which is where every other binding in the app lives and
+  // where the "the prompt is empty" guard can be applied once.
   //
-  // ★ THE KEYS ARE ONLY LIVE WHEN THE CARD IS FOCUSED ★ A card in the
-  // scrollback is not necessarily the thing the user is looking at, and
-  // a card that swallows `u` and `r` while the user is typing would be
-  // terrible. So the card is only interactive when it is focused.
-  const [focused, setFocused] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!focused) return;
-    const onKey = (e: KeyboardEvent): void => {
-      const k = e.key.toLowerCase();
-      if (k === "f") {
-        e.preventDefault();
-        onShowFiles?.();
-      } else if (k === "u") {
-        e.preventDefault();
-        onUndo?.();
-      } else if (k === "r") {
-        e.preventDefault();
-        onReview?.();
-      } else if (k === "escape") {
-        e.preventDefault();
-        setFocused(false);
-      }
-    };
-    // ★ CAPTURE ON THE WINDOW, NOT ON A FOCUSED INPUT ★ The card lives
-    // in the scrollback, and the prompt has the focus — so a keydown
-    // on the prompt must still reach the card.
-    process.stdin.on("keydown", onKey);
-    return () => {
-      process.stdin.off("keydown", onKey);
-    };
-  }, [focused, onShowFiles, onUndo, onReview]);
+  // The card is therefore PURE PRESENTATION: it shows what the app
+  // will do and reports whether the user asked for it.
+  //
+  // ★ THE APP CALLS BACK IN ★ The callbacks are the card's whole
+  // interaction surface, and they are optional — a card with no
+  // callbacks shows its actions dimmed, because an action that cannot
+  // happen must not look pressable.
 
   // ★ NOTHING TO SAY ★ A card with no files is not a card. The caller
   // must not render one — and if it does, it must not claim that zero
@@ -181,8 +189,15 @@ export const FileChangesCard: React.FC<FileChangesCardProps> = ({
   const countsW = cellWidth(countsText);
   const titleW = cellWidth(title);
   const sepW = 3; // " │ "
-  const linkW = cellWidth(" 查看文件 f ");
-  const actionW = cellWidth("[撤销 u] [审查 r]") + 1; // + the space between
+  // ★ THE WIDTHS COME FROM THE ACTION TABLE ★ So a label that grows
+  // (or shrinks) in the table moves the budget with it — a second
+  // copy of the label in the layout is a second truth (Lesson 1207).
+  const showFiles = FILE_CARD_ACTION_INFO.showFiles;
+  const undo = FILE_CARD_ACTION_INFO.undo;
+  const review = FILE_CARD_ACTION_INFO.review;
+  const linkW = cellWidth(` ${showFiles.label} ${showFiles.key} `);
+  const actionW =
+    cellWidth(`[${undo.label} ${undo.key}]`) + cellWidth(`[${review.label} ${review.key}]`) + 1; // + the space between
 
   // The row's content budget: the card's width, minus the border's two
   // columns and the card's own one-cell horizontal padding on each side.
@@ -200,6 +215,12 @@ export const FileChangesCard: React.FC<FileChangesCardProps> = ({
   const showActions = wantsActions;
   const showLink = wantsLink;
   const showSeparator = showLink || showActions;
+
+  // ★ THE ACTIONS ARE DIMMED WHEN THEY CANNOT FIRE ★ An action the
+  // user cannot trigger must not LOOK triggerable. `actionsLive` is
+  // false when the prompt has text (the letters are text then) or
+  // when the card has no callback for it.
+  const live = actionsLive;
 
   // The title may have to be shortened. It is shortened ONLY as a last
   // resort, and never so far that it loses the file count — the count
@@ -233,12 +254,12 @@ export const FileChangesCard: React.FC<FileChangesCardProps> = ({
         {addedText ? <Text color={t.ok}>{addedText}</Text> : null}
         {removedText ? <Text color={t.err}>{removedText}</Text> : null}
         {showSeparator ? <Text dimColor> │ </Text> : null}
-        {showLink ? <Text dimColor> 查看文件 f </Text> : null}
+        {showLink ? <Text dimColor>{` ${showFiles.label} ${showFiles.key} `}</Text> : null}
         {showActions ? (
           <Text>
             {" "}
-            <CardAction label="撤销" keyHint="u" active={focused} />{" "}
-            <CardAction label="审查" keyHint="r" active={focused} />
+            <CardAction label={undo.label} keyHint={undo.key} active={focused && live} />{" "}
+            <CardAction label={review.label} keyHint={review.key} active={focused && live} />
           </Text>
         ) : null}
       </Box>

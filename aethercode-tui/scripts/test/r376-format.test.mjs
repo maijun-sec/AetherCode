@@ -46,7 +46,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,10 +59,61 @@ const CODE_DIRS = ["src", "scripts"];
 const CODE_EXT = /\.(ts|tsx|mjs|js)$/;
 const ROOT_JSON = /\.json$/;
 
-function walk(dir, out = []) {
+// ★ THE IGNORE FILE IS PART OF THE SCOPE ★ The formatter reads
+// `.prettierignore`, so the gate must read it too — otherwise the
+// gate checks a set the formatter does not.
+//
+// R388r: the gate fixtures are TEMPLATES. They carry BARE placeholder
+// module specifiers (`import { x } from __ACTIONS__;`) which are
+// substituted with real absolute paths at BUILD time. They are not
+// valid modules, so prettier cannot parse them — and a file the
+// formatter cannot read must be EXCLUDED from the formatter, not
+// rewritten to satisfy it.
+//
+// A hard-coded exclusion here would have been a SECOND copy of the
+// formatter's scope (Lesson 1207's shape). So the ignore file is read
+// once, and it is the same file prettier reads.
+const IGNORE_FILE = join(root, ".prettierignore");
+
+/**
+ * The patterns in `.prettierignore`, minus comments and blanks.
+ *
+ * @returns {string[]}
+ */
+function ignorePatterns() {
+  if (!existsSync(IGNORE_FILE)) return [];
+  return readFileSync(IGNORE_FILE, "utf-8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+}
+
+/**
+ * Is this path excluded by the ignore file?
+ *
+ * <p>Only DIRECTORY patterns are supported — which is all the file
+ * needs, and a partial implementation that SILENTLY ignored
+ * unrecognised patterns would be worse than none.
+ *
+ * @param {string} absPath the absolute path
+ * @param {string[]} patterns the ignore patterns
+ * @returns {boolean}
+ */
+function isIgnored(absPath, patterns) {
+  const rel = relative(root, absPath).split(sep).join("/");
+  for (const pattern of patterns) {
+    const clean = pattern.replace(/^\.\//, "").replace(/\/$/, "");
+    if (rel === clean) return true;
+    if (rel.startsWith(clean + "/")) return true;
+  }
+  return false;
+}
+
+function walk(dir, out = [], patterns = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
-    if (entry.isDirectory()) walk(p, out);
+    if (isIgnored(p, patterns)) continue;
+    if (entry.isDirectory()) walk(p, out, patterns);
     else if (CODE_EXT.test(entry.name)) out.push(p);
   }
   return out;
@@ -70,10 +121,13 @@ function walk(dir, out = []) {
 
 /** Every file the formatter is responsible for. */
 function scopeFiles() {
+  const patterns = ignorePatterns();
   const files = [];
-  for (const d of CODE_DIRS) files.push(...walk(join(root, d)));
+  for (const d of CODE_DIRS) files.push(...walk(join(root, d), [], patterns));
   for (const name of readdirSync(root)) {
-    if (ROOT_JSON.test(name) && statSync(join(root, name)).isFile()) files.push(join(root, name));
+    const p = join(root, name);
+    if (isIgnored(p, patterns)) continue;
+    if (ROOT_JSON.test(name) && statSync(p).isFile()) files.push(p);
   }
   return files.sort();
 }

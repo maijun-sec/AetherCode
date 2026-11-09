@@ -307,6 +307,33 @@ export const KEYBINDINGS: ReadonlyArray<Keybinding> = [
     group: "editing",
     when: "no permission prompt is on screen",
   },
+  // R388r — the FILE-CHANGES card's three actions.
+  //
+  // ★ THE KEYS ARE COMMAND-MODE KEYS ★ They fire only when the prompt
+  // is EMPTY: a letter typed into the prompt is TEXT. (Measured: Ink's
+  // useInput delivers a keystroke to EVERY mounted hook, so a bare
+  // letter command fires while the user is typing.)
+  {
+    keys: ["f"],
+    label: "f",
+    desc: "list the files the last file-changing turn changed",
+    group: "editing",
+    when: "the prompt is empty and a file-changing turn is on screen",
+  },
+  {
+    keys: ["u"],
+    label: "u",
+    desc: "open the rewind menu to undo the last file change",
+    group: "editing",
+    when: "the prompt is empty and a file-changing turn is on screen",
+  },
+  {
+    keys: ["r"],
+    label: "r",
+    desc: "show the per-file detail of the last file-changing turn",
+    group: "editing",
+    when: "the prompt is empty and a file-changing turn is on screen",
+  },
   {
     text: "/",
     label: "/",

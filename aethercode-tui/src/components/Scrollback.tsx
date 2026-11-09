@@ -82,7 +82,7 @@ import { Markdown } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 // R388q: the FILE-CHANGES card — one card for the turn's file changes.
 import { FileChangesCard } from "./FileChangesCard.js";
-import { fileChangeFor, summarizeFileChanges, type FileChange } from "../fileChanges.js";
+import { fileChangeOfTurnParts, summarizeFileChanges, type FileChange } from "../fileChanges.js";
 import { PlanList } from "./PlanList.js";
 import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/SummaryFooter.js";
 // R383: the shared stop-kind type — one definition, not one per component.
@@ -138,6 +138,35 @@ interface Props {
   /** the live terminal width. Used to keep the reading column
    *  centred and never wider than the viewport. */
   terminalWidth?: number;
+  /**
+   * R388r: the file-changes card's actions.
+   *
+   * <p>★ THE CARD'S KEYS ARE THE APP'S KEYS ★ R388q shipped a card
+   * that advertised `[撤销 u]` and `[审查 r]` and did nothing with
+   * them — the card had its own key handler gated on an internal
+   * `focused` flag that nothing ever set, and this component passed
+   * no callbacks at all.
+   *
+   * <p>So the APP owns the keys and this component reports which card
+   * is the target. The callbacks below are the card's whole
+   * interaction surface.
+   */
+  /** The id of the turn whose card is focused, if any. */
+  focusedFileCardTurnId?: number;
+  /**
+   * Are the card's keys live right now?
+   *
+   * <p>★ FALSE WHILE THE PROMPT HAS TEXT ★ A letter typed into the
+   * prompt is TEXT. The card dims its actions then, so the user
+   * learns why the key did nothing.
+   */
+  fileCardActionsLive?: boolean;
+  /** The user asked to see the files a card changed. */
+  onShowFileCardFiles?: (turnId: number) => void;
+  /** The user asked to undo a card's changes. */
+  onUndoFileCard?: (turnId: number) => void;
+  /** The user asked to review a card's changes. */
+  onReviewFileCard?: (turnId: number) => void;
 }
 
 // R388h: `fmtTime` is GONE. The old transcript prefixed every turn
@@ -163,8 +192,11 @@ function truncate(s: string, n: number): string {
  * per-file detail behind an expander. The other tool calls (a bash
  * command, a glob) keep their own cards — they are not file changes
  * and they are worth seeing individually.
+ *
+ * <p>★ EXPORTED ★ `groupTurns` is exported so a gate can run the
+ * card's REAL grouping and compare it with the app's.
  */
-interface TurnGroup {
+export interface TurnGroup {
   /** The turn to render. The FIRST of the group. */
   turn: Turn;
   /** The file changes in this group (empty for a non-file-change). */
@@ -176,32 +208,39 @@ interface TurnGroup {
 /**
  * The file change a tool turn made, or null.
  *
+ * <p>★ ONE RULE, USED BY BOTH SIDES ★ R388r: the app also needs to
+ * know which card a key means, and it asks the SAME module. If the
+ * card and the app grouped the turns differently, a key would act on
+ * a card the user is not looking at.
+ *
+ * <p>★ EXPORTED, SO A GATE CAN CALL IT ★ The Scrollback's copy of the
+ * rule was previously un-exercised: a mutation that replaced it with
+ * `return null` — the exact defect the shared rule exists to prevent
+ * — left the gate GREEN, because the gate only checked that the
+ * shared rule's NAME appeared in the file. Exporting it lets the probe
+ * run the card's REAL rule and compare it with the app's.
+ *
  * @param turn the turn
  */
-function fileChangeOf(turn: Turn): FileChange | null {
-  if (turn.role !== "tool") return null;
-  if (!turn.toolArgs) return null;
-  let input: Record<string, unknown> | undefined;
-  try {
-    const parsed = JSON.parse(turn.toolArgs);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      input = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // The args are not JSON — there is nothing to count.
-    return null;
-  }
-  return fileChangeFor(turn.toolName, input);
+export function fileChangeOf(turn: Turn): FileChange | null {
+  return fileChangeOfTurnParts(turn.role, turn.toolName, turn.toolArgs);
 }
 
 /**
  * Group the turns so that consecutive file-changing tool turns
  * collapse into one card.
  *
+ * <p>★ EXPORTED, SO A GATE CAN RUN IT ★ The card's grouping is one
+ * half of "the card and the app target the same group". The app's
+ * half was measured, and the card's half was not — so a mutation that
+ * broke the card's grouping left the gate GREEN. Exporting it lets
+ * the probe run the card's REAL grouping and compare it with the
+ * app's.
+ *
  * @param turns the visible turns
  * @returns the groups, in order
  */
-function groupTurns(turns: ReadonlyArray<Turn>): TurnGroup[] {
+export function groupTurns(turns: ReadonlyArray<Turn>): TurnGroup[] {
   const groups: TurnGroup[] = [];
   let pending: TurnGroup | null = null;
   for (const turn of turns) {
@@ -587,6 +626,11 @@ export const Scrollback: React.FC<Props> = ({
   permissionAsk,
   decisionCardExpanded,
   terminalWidth,
+  focusedFileCardTurnId,
+  fileCardActionsLive = true,
+  onShowFileCardFiles,
+  onUndoFileCard,
+  onReviewFileCard,
 }) => {
   // R388o: `height` is a ROW budget now, not a turn count. The
   // slice below keeps the LAST `height` TURNS as a first approximation
@@ -729,10 +773,20 @@ export const Scrollback: React.FC<Props> = ({
             {group.changes.length > 0 ? (
               // ★ THE FILE-CHANGES CARD ★ One card for the whole group:
               // the count, the diff totals, and the actions.
+              //
+              // ★ R388r: THE CARD IS WIRED ★ The callbacks are the
+              // card's whole interaction surface, and the focus is a
+              // PROP — so the card cannot show a key that nothing
+              // handles, and the app knows which card a key means.
               <FileChangesCard
                 summary={summarizeFileChanges(group.changes)}
                 width={Math.max(20, columnWidth - 2)}
                 expanded={!group.turn.collapsed}
+                focused={focusedFileCardTurnId === group.turn.id}
+                actionsLive={fileCardActionsLive}
+                onShowFiles={() => onShowFileCardFiles?.(group.turn.id)}
+                onUndo={() => onUndoFileCard?.(group.turn.id)}
+                onReview={() => onReviewFileCard?.(group.turn.id)}
               />
             ) : (
               <TurnLine

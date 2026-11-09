@@ -1,0 +1,18 @@
+# The gate fixtures use BARE placeholder module specifiers:
+#
+#     import { fileCardActionFor } from __ACTIONS__;
+#
+# They are substituted with real absolute paths at BUILD time by the
+# gate (the placeholder is replaced with `JSON.stringify(path)`, which
+# already carries its own quotes). A quoted placeholder would double
+# them.
+#
+# ★ They cannot be parsed, so prettier cannot format them. ★ They are
+# not valid modules — they are TEMPLATES, and a template that a
+# formatter cannot read is exactly the kind of file that must be
+# excluded from the formatter rather than rewritten to satisfy it.
+#
+# The R376 format gate runs `prettier --check` over
+# `scripts/**/*.{ts,tsx,mjs,js}`, so without this the format gate
+# would fail on a file that is SUPPOSED to be unparseable.
+scripts/test/fixtures/

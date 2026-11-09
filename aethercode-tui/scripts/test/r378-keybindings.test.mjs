@@ -104,6 +104,21 @@ const FLAGS = { escape: "esc", tab: "tab", upArrow: "up", downArrow: "down", ret
 const DECISION_KEYS = (await loadTsModule(root, "src/permissionComment.ts")).DECISION_KEYS;
 
 /**
+ * R388r: the ONE file-changes-card action table, loaded from the real
+ * module.
+ *
+ * <p>The card's three actions (`f`, `u`, `r`) are resolved
+ * through that table, so the chord extractor has to know what it
+ * carries — exactly like the permission keys above. Otherwise a
+ * registry-driven binding reads as "no binding at all", and the gate
+ * reports a false failure on an improvement (Lesson 1233: a CONTRACT
+ * pin must FOLLOW the implementation).
+ */
+const FILE_CARD_ACTIONS = (await loadTsModule(root, "src/fileCardActions.ts")).FILE_CARD_ACTIONS;
+const FILE_CARD_ACTION_INFO = (await loadTsModule(root, "src/fileCardActions.ts"))
+  .FILE_CARD_ACTION_INFO;
+
+/**
  * The bodies of every `useInput` handler in a source file.
  *
  * @param {string} src
@@ -190,6 +205,30 @@ function chordsIn(body) {
     for (const entry of DECISION_KEYS) {
       tokens.add(entry.key.toLowerCase());
       if (typeof entry.number === "number") tokens.add(String(entry.number));
+    }
+  }
+
+  // ★ R388r: the file-changes card's registry-driven bindings. ★
+  //
+  // The card's three actions are looked up in ONE table, so the
+  // handler binds exactly the keys the table carries. The table is
+  // loaded from the real module — not re-implemented here (a second
+  // copy is a second truth).
+  //
+  // ★ BOTH ENTRY POINTS COUNT ★ The app resolves a keystroke through
+  // `fileCardEffectFor` (which resolves the action AND its effect),
+  // while `fileCardActionFor` resolves the action alone. Either one
+  // means "this handler is driven by the card's table" — and pinning
+  // only the older spelling made the gate go red on an improvement
+  // (Lesson 1233: a CONTRACT pin must FOLLOW the implementation).
+  if (
+    /fileCardEffectFor\(/.test(body) ||
+    /fileCardActionFor\(/.test(body) ||
+    /FILE_CARD_ACTIONS/.test(body)
+  ) {
+    for (const action of FILE_CARD_ACTIONS) {
+      const info = FILE_CARD_ACTION_INFO[action];
+      if (info?.key) tokens.add(info.key.toLowerCase());
     }
   }
 
