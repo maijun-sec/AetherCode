@@ -260,6 +260,49 @@ export interface TuiOptions {
   noColor?: boolean;
 }
 
+/**
+ * The tool's INPUT map, as a JSON string.
+ *
+ * <p>★ THE MAP IS KEPT AS A MAP ★ The diff counts are derived from the
+ * input's FIELDS — `content`, `old_string`, `new_string` — so the
+ * structure has to survive. A stringified blob would have to be
+ * re-parsed to get at those fields, and a truncated or re-serialized
+ * blob would give the wrong counts.
+ *
+ * @param input the wire value
+ * @returns the JSON text, or undefined when there is no input
+ */
+function serializeToolInput(input: unknown): string | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input === "string") return input;
+  try {
+    return JSON.stringify(input);
+  } catch {
+    // A value that cannot be serialized (a cycle, a BigInt) must not
+    // take the whole turn down.
+    return undefined;
+  }
+}
+
+/**
+ * The tool's RESULT, as text.
+ *
+ * <p>The daemon sends the result under `content`, and it may be a
+ * string or a structured value. Both are accepted.
+ *
+ * @param content the wire value
+ * @returns the text, or undefined when there is no result
+ */
+function serializeToolResult(content: unknown): string | undefined {
+  if (content === undefined || content === null) return undefined;
+  if (typeof content === "string") return content;
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return undefined;
+  }
+}
+
 function handleStreamEvent(dispatch: (a: Action) => void, ev: Record<string, unknown>): void {
   const t = ev.type as string | undefined;
   switch (t) {
@@ -270,18 +313,31 @@ function handleStreamEvent(dispatch: (a: Action) => void, ev: Record<string, unk
       dispatch({ type: "streamText", text: String(ev.text ?? "") });
       break;
     case "tool_use_start":
+      // ★ THE FIELD IS `input`, NOT `args` ★
+      //
+      // The daemon's `eventToMap` sends {type, id, name, input}. The
+      // Ink renderer read `ev.args` — a field the daemon NEVER sends —
+      // so every tool card was a nearly empty box with the tool's
+      // name and nothing else. The line renderer read `ev.input`
+      // correctly, which is why only the Ink path was broken.
+      //
+      // Both spellings are accepted, because a daemon that predates
+      // the fix may send the other one — and a card that shows
+      // nothing is worse than one that shows the wrong field.
       dispatch({
         type: "streamToolStart",
         name: String(ev.name ?? "?"),
-        args: ev.args ? String(JSON.stringify(ev.args)) : undefined,
+        args: serializeToolInput(ev.input ?? ev.args),
       });
       break;
     case "tool_result":
+      // ★ AND THE RESULT FIELD IS `content` ★ (the daemon sends
+      // {type, id, content, isError}).
       dispatch({
         type: "streamToolEnd",
         name: String(ev.id ?? "?"),
         isError: Boolean(ev.isError),
-        result: ev.result ? String(ev.result) : undefined,
+        result: serializeToolResult(ev.content ?? ev.result),
       });
       break;
     case "run_end":

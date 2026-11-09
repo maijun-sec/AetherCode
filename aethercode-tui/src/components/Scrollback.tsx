@@ -80,6 +80,9 @@ import type { Turn, PermissionAsk } from "../state.js";
 import { t, icon } from "../theme.js";
 import { Markdown } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
+// R388q: the FILE-CHANGES card — one card for the turn's file changes.
+import { FileChangesCard } from "./FileChangesCard.js";
+import { fileChangeFor, summarizeFileChanges, type FileChange } from "../fileChanges.js";
 import { PlanList } from "./PlanList.js";
 import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/SummaryFooter.js";
 // R383: the shared stop-kind type — one definition, not one per component.
@@ -146,6 +149,80 @@ interface Props {
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, Math.max(0, n - 1)) + "…";
+}
+
+/**
+ * R388q: a turn, grouped with the file changes it carries.
+ *
+ * <p>★ ONE CARD FOR MANY FILES ★ The desktop shows "已编辑 19 个文件"
+ * — NINETEEN files, ONE card. The TUI rendered one card per tool
+ * call, so a nineteen-file turn was nineteen near-empty boxes.
+ *
+ * <p>So the file-changing tool turns are GROUPED: consecutive turns
+ * that each changed a file collapse into ONE card, carrying the
+ * per-file detail behind an expander. The other tool calls (a bash
+ * command, a glob) keep their own cards — they are not file changes
+ * and they are worth seeing individually.
+ */
+interface TurnGroup {
+  /** The turn to render. The FIRST of the group. */
+  turn: Turn;
+  /** The file changes in this group (empty for a non-file-change). */
+  changes: FileChange[];
+  /** How many tool turns this group covers. */
+  count: number;
+}
+
+/**
+ * The file change a tool turn made, or null.
+ *
+ * @param turn the turn
+ */
+function fileChangeOf(turn: Turn): FileChange | null {
+  if (turn.role !== "tool") return null;
+  if (!turn.toolArgs) return null;
+  let input: Record<string, unknown> | undefined;
+  try {
+    const parsed = JSON.parse(turn.toolArgs);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      input = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // The args are not JSON — there is nothing to count.
+    return null;
+  }
+  return fileChangeFor(turn.toolName, input);
+}
+
+/**
+ * Group the turns so that consecutive file-changing tool turns
+ * collapse into one card.
+ *
+ * @param turns the visible turns
+ * @returns the groups, in order
+ */
+function groupTurns(turns: ReadonlyArray<Turn>): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  let pending: TurnGroup | null = null;
+  for (const turn of turns) {
+    const change = fileChangeOf(turn);
+    if (change) {
+      if (pending) {
+        pending.changes.push(change);
+        pending.count += 1;
+        continue;
+      }
+      pending = { turn, changes: [change], count: 1 };
+      groups.push(pending);
+      continue;
+    }
+    // A non-file-change turn ENDS the group — so a bash command in
+    // the middle of a batch of writes does not silently merge the
+    // writes on either side of it into one summary.
+    pending = null;
+    groups.push({ turn, changes: [], count: 1 });
+  }
+  return groups;
 }
 
 /** format the input dict of a permission ask into a single
@@ -565,6 +642,9 @@ export const Scrollback: React.FC<Props> = ({
   const columnWidth = Math.max(24, Math.min(CHAT_COLUMN_WIDTH, cols - COLUMN_INSET * 2));
   const leftPad = Math.max(0, Math.floor((cols - columnWidth) / 2));
 
+  // R388q: the file-changing turns collapse into ONE card per group.
+  const groups = groupTurns(visible);
+
   // R388o: the transcript is BOUNDED BY ROWS, not by turns.
   //
   // `height` used to be 1000 — a turn COUNT, used as if it were a
@@ -644,9 +724,22 @@ export const Scrollback: React.FC<Props> = ({
         {errorCard ? <Box marginBottom={1}>{errorCard}</Box> : null}
         {banner ? <Box marginBottom={1}>{banner}</Box> : null}
         {permCard ? <Box marginBottom={1}>{permCard}</Box> : null}
-        {visible.map((turn, idx) => (
-          <Box key={turn.id} flexDirection="column" marginTop={idx === 0 ? 0 : 1}>
-            <TurnLine turn={turn} effectiveCollapsed={collapseAll || turn.collapsed} />
+        {groups.map((group, idx) => (
+          <Box key={group.turn.id} flexDirection="column" marginTop={idx === 0 ? 0 : 1}>
+            {group.changes.length > 0 ? (
+              // ★ THE FILE-CHANGES CARD ★ One card for the whole group:
+              // the count, the diff totals, and the actions.
+              <FileChangesCard
+                summary={summarizeFileChanges(group.changes)}
+                width={Math.max(20, columnWidth - 2)}
+                expanded={!group.turn.collapsed}
+              />
+            ) : (
+              <TurnLine
+                turn={group.turn}
+                effectiveCollapsed={collapseAll || group.turn.collapsed}
+              />
+            )}
           </Box>
         ))}
       </Box>
