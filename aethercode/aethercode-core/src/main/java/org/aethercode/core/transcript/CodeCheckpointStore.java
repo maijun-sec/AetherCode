@@ -145,6 +145,48 @@ public final class CodeCheckpointStore {
     }
 
     /**
+     * What restoring one file would change.
+     *
+     * <p>★ THE UNKNOWN CASE IS A FACT, NOT A ZERO ★ A binary file, a
+     * file that cannot be read, a path that is now a directory — the
+     * restore SKIPS those, so the honest answer is "I do not know",
+     * and saying "0 lines" would be a lie the user could act on.
+     *
+     * @param name the file's label
+     * @param linesNow the file's current line count (-1 = unknown)
+     * @param linesDelta how many lines differ from the snapshot
+     * @param created the session CREATED the file
+     * @param note why the preview is unknown, when it is
+     */
+    public record FilePreview(
+            String name,
+            int linesNow,
+            int linesDelta,
+            boolean created,
+            String note) {
+
+        /** A preview we could compute. */
+        public static FilePreview of(String name, int linesNow, int linesDelta, boolean created) {
+            return new FilePreview(name, linesNow, linesDelta, created, null);
+        }
+
+        /** A preview we could NOT compute — and why. */
+        public static FilePreview unknown(String name, String note) {
+            return new FilePreview(name, -1, -1, false, note);
+        }
+
+        /** Is this preview known? */
+        public boolean isKnown() {
+            return note == null;
+        }
+
+        /** Would restoring this file change it? */
+        public boolean wouldChange() {
+            return isKnown() && linesDelta > 0;
+        }
+    }
+
+    /**
      * The checkpoints, oldest first.
      *
      * <p>★ A LINKED HASH MAP IS AN ACCESS-ORDERED QUEUE ★
@@ -370,6 +412,104 @@ public final class CodeCheckpointStore {
             }
         }
         return new RestoreResult(restored, deleted, skipped, failed);
+    }
+
+    /**
+     * What a restore of this checkpoint would change, compared with the
+     * files as they are NOW.
+     *
+     * <p>★ WHY THE PREVIEW LIVES HERE ★ The store holds BOTH sides of
+     * the comparison: the snapshot it took at that point, and the live
+     * file on disk. So it is the only place that can answer "what would
+     * restoring this point undo?" without a second copy of the file
+     * state somewhere else.
+     *
+     * <p>★ AND THE COUNTS ARE LINE COUNTS, NOT A DIFF ★ A full diff
+     * needs a line-matching algorithm. The daemon already has one
+     * ({@code org.aethercode.code.DiffUtils}), but it lives in a
+     * different module and this store deliberately depends on nothing —
+     * so the preview reports the honest, computable fact: how many LINES
+     * differ between the snapshot and the file now. That is a bound on
+     * the change, not a diff, and the label says so.
+     *
+     * <p>★ AND IT NEVER THROWS ★ A file that vanished, turned into a
+     * directory, or cannot be read is reported as "unknown", not as an
+     * exception that would take the whole menu down. The preview is
+     * decoration on a menu; it must never be the reason the menu fails.
+     *
+     * @param cp the checkpoint
+     * @return the per-file preview, in the checkpoint's own order
+     */
+    public List<FilePreview> preview(Checkpoint cp) {
+        List<FilePreview> out = new ArrayList<>();
+        if (cp == null) return out;
+        for (FileState fs : cp.files()) {
+            out.add(previewOne(fs));
+        }
+        return out;
+    }
+
+    /**
+     * One file's preview: how many lines differ between the snapshot and
+     * the file as it is now.
+     *
+     * @param fs the file's saved state
+     * @return the preview
+     */
+    private FilePreview previewOne(FileState fs) {
+        if (fs.created()) {
+            // The session CREATED it, so it did not exist before. If it
+            // exists now, restoring DELETES it — which is a change, and
+            // the file's whole length is what would go.
+            try {
+                if (!Files.exists(fs.path())) {
+                    return FilePreview.unknown(fs.label(), "already gone");
+                }
+                return FilePreview.of(fs.label(), linesOf(fs.path()), 0, true);
+            } catch (IOException | RuntimeException e) {
+                return FilePreview.unknown(fs.label(), "unreadable");
+            }
+        }
+        if (fs.content() == null) {
+            // Binary or unreadable — the restore SKIPS it, so it changes
+            // nothing and there is nothing to preview.
+            return FilePreview.unknown(fs.label(), "not restorable");
+        }
+        try {
+            if (!Files.exists(fs.path())) {
+                // The file is gone now. Restoring would bring it BACK,
+                // so the change is the whole snapshot.
+                return FilePreview.of(fs.label(), countLines(fs.content()), 0, false);
+            }
+            int now = linesOf(fs.path());
+            int then = countLines(fs.content());
+            return FilePreview.of(fs.label(), now, Math.abs(now - then), false);
+        } catch (IOException | RuntimeException e) {
+            return FilePreview.unknown(fs.label(), "unreadable");
+        }
+    }
+
+    /** How many lines a file on disk has. */
+    private static int linesOf(Path p) throws IOException {
+        byte[] bytes = Files.readAllBytes(p);
+        if (isBinary(bytes)) return -1;
+        return countLines(new String(bytes, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * How many lines a string spans.
+     *
+     * <p>★ THE SAME RULE AS THE TUI'S ★ An empty string is ZERO lines,
+     * and a trailing newline does not start a new one — so "a\n" is ONE
+     * line, not two. The rule lives in two languages here, and the gate
+     * pins them to each other, because a preview that counts lines
+     * differently from the card that reported the change would show the
+     * user two different numbers for the same file.
+     */
+    private static int countLines(String s) {
+        if (s == null || s.isEmpty()) return 0;
+        String normalised = s.replace("\r\n", "\n");
+        return normalised.split("\n", -1).length - (normalised.endsWith("\n") ? 1 : 0);
     }
 
     /**

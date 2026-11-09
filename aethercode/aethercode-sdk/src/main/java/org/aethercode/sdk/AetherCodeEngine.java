@@ -2848,6 +2848,32 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     }
 
     /**
+     * R388s: what restoring each checkpoint would change, compared with
+     * the files as they are NOW.
+     *
+     * <p>★ WHY THE DAEMON COMPUTES IT ★ The store holds BOTH sides of
+     * the comparison — the snapshot it took at that point and the live
+     * file — so it is the only place that can answer "what would
+     * restoring this point undo?" The renderer cannot: it never had the
+     * snapshot.
+     *
+     * <p>★ AND THE COUNTS ARE LINE COUNTS ★ A full diff needs a
+     * line-matching algorithm, and a second implementation of one in a
+     * second language is a second truth. The preview reports the honest,
+     * computable fact: how many LINES differ between the snapshot and
+     * the file now.
+     *
+     * @param checkpointId the checkpoint
+     * @return the per-file preview, in the checkpoint's own order
+     */
+    public java.util.List<org.aethercode.core.transcript.CodeCheckpointStore.FilePreview>
+            previewCodeCheckpoint(String checkpointId) {
+        return codeCheckpoints.get(checkpointId)
+                .map(codeCheckpoints::preview)
+                .orElseGet(java.util.List::of);
+    }
+
+    /**
      * R388p: how many checkpoints have been EVICTED from the store.
      *
      * <p>★ WHY THE CALLER NEEDS THIS ★ The store is bounded (each

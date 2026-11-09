@@ -8548,12 +8548,53 @@ public class AetherCodeMethods {
                 f.put("created", fs.created());
                 files.add(f);
             }
+            // ★ R388s: THE PREVIEW GOES ON THE WIRE ★
+            //
+            // The user asked what a point would undo BEFORE choosing it,
+            // and the renderer cannot answer that on its own: it never
+            // had the snapshot. So the daemon — which holds both the
+            // snapshot and the live file — computes it.
+            //
+            // The preview is a LIST of per-file facts, and each one may
+            // be UNKNOWN. That is not a zero: a binary file, an
+            // unreadable path, a file that is now a directory — the
+            // restore skips those, and "I do not know" is the honest
+            // answer. Reporting 0 would be a number the user could act
+            // on and it would be wrong.
+            java.util.List<Map<String, Object>> preview = new java.util.ArrayList<>();
+            int changedFiles = 0;
+            int changedLines = 0;
+            boolean anyUnknown = false;
+            for (var pv : target.previewCodeCheckpoint(cp.id())) {
+                java.util.Map<String, Object> pm = new java.util.LinkedHashMap<>();
+                pm.put("name", pv.name());
+                pm.put("linesNow", pv.linesNow());
+                pm.put("linesDelta", pv.linesDelta());
+                pm.put("created", pv.created());
+                pm.put("known", pv.isKnown());
+                pm.put("note", pv.note());
+                preview.add(pm);
+                if (!pv.isKnown()) {
+                    anyUnknown = true;
+                    continue;
+                }
+                if (pv.wouldChange()) {
+                    changedFiles++;
+                    changedLines += pv.linesDelta();
+                }
+            }
             java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("id", cp.id());
             row.put("userMessageIndex", cp.userMessageIndex());
             row.put("transcriptIndex", cp.transcriptIndex());
             row.put("summary", cp.summary() == null ? "" : cp.summary());
             row.put("files", files);
+            row.put("preview", preview);
+            row.put("changedFiles", changedFiles);
+            row.put("changedLines", changedLines);
+            // The user must be able to tell "nothing would change" from
+            // "we could not tell". So the flag is on the wire.
+            row.put("previewComplete", !anyUnknown);
             out.add(row);
         }
         // ★ THE EVICTED COUNT GOES ON THE WIRE ★

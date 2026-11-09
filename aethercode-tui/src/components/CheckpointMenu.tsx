@@ -51,6 +51,13 @@ import { Box, Text, useInput } from "ink";
 import { PanelBody, fitRow, blank } from "./PanelBody.js";
 import { listWindow, moveSelection } from "../listWindow.js";
 import { terminalSize } from "../terminalGeometry.js";
+// R388s: the checkpoint PREVIEW — what a restore of this point would change.
+import {
+  checkpointPreviewOf,
+  previewSummaryLine,
+  previewFileLine,
+  type CheckpointPreview,
+} from "../checkpointPreview.js";
 
 /**
  * The six operations the menu offers.
@@ -164,6 +171,16 @@ export interface CheckpointRow {
   summary: string;
   /** The files this checkpoint covers. */
   files: Array<{ path: string; name: string; restorable: boolean; created: boolean }>;
+  /**
+   * R388s: what a restore of this point would change.
+   *
+   * <p>★ NULL IS A DIFFERENT FACT FROM "NOTHING WOULD CHANGE" ★ A
+   * checkpoint with no preview (an older daemon) is not a point where
+   * nothing would change — it is a point we know nothing about. So the
+   * absent case is null, and the menu says "no preview" rather than
+   * showing a zero.
+   */
+  preview?: CheckpointPreview | null;
 }
 
 export interface CheckpointMenuProps {
@@ -316,19 +333,34 @@ export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
             // is numbered by the checkpoint's own turn ordinal, so the
             // numbering does not shift as the window moves.
             const i = win.start + vi;
+            const selected = i === checkpointIdx;
+            // ★ R388s: THE FOOTPRINT GOES ON THE ROW ★ The preview is
+            // what helps the user CHOOSE a point, so it cannot live in
+            // a pane that only appears after the choice. Every row
+            // carries its own.
+            const preview = previewSummaryLine(c.preview ?? null);
             return (
-              <Text
-                key={c.id}
-                color={focus === "checkpoint" && i === checkpointIdx ? "cyan" : undefined}
-                bold={i === checkpointIdx}
-              >
-                {fitRow(
-                  ` ${i === checkpointIdx ? "▶" : " "} #${c.userMessageIndex + 1}  ${
-                    c.summary || "(no summary)"
-                  }`,
-                  width,
-                )}
-              </Text>
+              <Box key={c.id} flexDirection="column">
+                <Text
+                  color={focus === "checkpoint" && selected ? "cyan" : undefined}
+                  bold={selected}
+                >
+                  {fitRow(
+                    ` ${selected ? "▶" : " "} #${c.userMessageIndex + 1}  ${
+                      c.summary || "(no summary)"
+                    }`,
+                    width,
+                  )}
+                </Text>
+                {preview ? (
+                  // ★ THE FOOTPRINT IS ITS OWN LINE ★ The row's summary
+                  // is the user's own words and can be long; putting
+                  // the footprint on the same line would truncate one
+                  // of them. And the summary is what the row is
+                  // FOR — so the footprint goes under it, dimmed.
+                  <Text dimColor>{fitRow(`      ${preview}`, width)}</Text>
+                ) : null}
+              </Box>
             );
           })}
           {win.hiddenAfter > 0 ? (
@@ -354,18 +386,41 @@ export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
           {cp && cp.files.length > 0 ? (
             <>
               <Text>{blank(width)}</Text>
-              <Text dimColor>{fitRow(" files at this point:", width)}</Text>
-              {cp.files.slice(0, 6).map((f) => (
-                <Text key={f.path} dimColor>
-                  {fitRow(
-                    `   ${f.name}${f.created ? " (new)" : ""}${f.restorable ? "" : " (binary)"}`,
-                    width,
-                  )}
-                </Text>
-              ))}
-              {cp.files.length > 6 ? (
-                <Text dimColor>{fitRow(`   … and ${cp.files.length - 6} more`, width)}</Text>
-              ) : null}
+              {/* ★ R388s: THE DETAIL PANE SHOWS WHAT WOULD CHANGE ★
+                  The old pane listed the file NAMES — which tells the
+                  user what the session touched, not what a restore
+                  would DO. Now each file says what restoring this
+                  point would do to it. The file list is still there
+                  for the names the preview does not cover. */}
+              <Text dimColor>{fitRow(" what restoring this point would do:", width)}</Text>
+              {cp.preview && cp.preview.files.length > 0 ? (
+                <>
+                  {cp.preview.files.slice(0, 8).map((f) => (
+                    <Text key={"pv-" + f.name} dimColor>
+                      {fitRow(`   ${previewFileLine(f)}`, width)}
+                    </Text>
+                  ))}
+                  {cp.preview.files.length > 8 ? (
+                    <Text dimColor>
+                      {fitRow(`   … and ${cp.preview.files.length - 8} more`, width)}
+                    </Text>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  {cp.files.slice(0, 6).map((f) => (
+                    <Text key={f.path} dimColor>
+                      {fitRow(
+                        `   ${f.name}${f.created ? " (new)" : ""}${f.restorable ? "" : " (binary)"}`,
+                        width,
+                      )}
+                    </Text>
+                  ))}
+                  {cp.files.length > 6 ? (
+                    <Text dimColor>{fitRow(`   … and ${cp.files.length - 6} more`, width)}</Text>
+                  ) : null}
+                </>
+              )}
             </>
           ) : null}
         </>

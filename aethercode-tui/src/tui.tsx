@@ -218,6 +218,8 @@ import {
 // card a key means.
 import { fileCardEffect, fileCardEffectFor, type FileCardEffect } from "./fileCardActions.js";
 import { fileChangeGroupIdAt, fileChangeOfTurnParts } from "./fileChanges.js";
+// R388s — the checkpoint PREVIEW: what restoring a point would change.
+import { checkpointPreviewOf } from "./checkpointPreview.js";
 // R388k — `/help` as a filterable LIST projected from the one command
 // catalog, instead of a truncated wall of text.
 import { CommandHelpPanel } from "./components/CommandHelpPanel.js";
@@ -998,6 +1000,11 @@ function normalizeCheckpointRow(raw: unknown): CheckpointRow {
         created: Boolean(fr.created),
       };
     }),
+    // R388s: the PREVIEW — what restoring this point would change.
+    // Absent is null, and null is NOT "nothing would change": it is a
+    // point we know nothing about (an older daemon, or a fetch that
+    // predates R388s).
+    preview: checkpointPreviewOf(raw),
   };
 }
 

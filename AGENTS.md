@@ -3662,3 +3662,68 @@ a gate. Both of those cost this round real time.
   什么都不能证明。** 而它第一次「为错误的理由」变红时,要先问的是「它到底红了没有」
   —— 构建失败是一种**不带任何信息**的红。
   Doc: `docs/R388r-file-card-actions.md`.
+
+- **R388s** (回溯菜单的预览 —— 选中**之前**就知道回退会做什么):
+  R388n 的回溯菜单把文件清单放在面板**底部**、只显示**当前选中**的那个点,
+  而且只列**文件名**。所以:预览只在用户**已经移动了选择之后**才可见 ——
+  而预览正是用来**帮用户选**的;而且它说的是「这回合碰过哪些文件」,
+  不是「回退这个点会**做什么**」。
+  ★ **daemon 本来就有两边**:`CodeCheckpointStore` 存着每个 checkpoint 的
+  **完整文件内容**(`FileState.content`,即「那时」的状态),而活文件在磁盘上。
+  渲染器**只有一半**(名字),所以它**算不出来** —— 由 daemon 算,再上 wire:
+  `CodeCheckpointStore.preview(Checkpoint)` + `FilePreview(name, linesNow,
+  linesDelta, created, note)`;引擎加 `previewCodeCheckpoint(id)`;
+  `checkpoints/list` 带上 `preview` / `changedFiles` / `changedLines` /
+  `previewComplete`。
+  ★ **「不知道」不是 0** —— 二进制文件、读不了的路径、现在是目录的文件,
+  restore 会**跳过**它们,所以诚实的答案是「不知道」,`FilePreview.note` 说明原因。
+  报 0 等于给用户一个 daemon 根本没有的**数字**,而用户可能照着它行动。
+  ★ **足迹写在每一行上**(不是选中之后):预览是用来**帮选择**的,所以它不能
+  住在一个「选完之后才出现」的面板里。行形态是:
+  `▶ #12  refactor the checkpoint store` / `      3 files · ~12 lines`。
+  足迹**单独一行** —— summary 是用户自己的话,可能很长,挤一行会截掉其中一个。
+  细节面板说的是**会做什么**:`a.ts — ~12 lines differ (now 40)` /
+  `b.ts — unchanged` / `logo.png — unknown (not restorable)` /
+  `new.ts — would be deleted (30 lines)`。
+  ★★ **没有实现 diff,这是刻意的** —— diff 需要行匹配算法;daemon 有
+  (`DiffUtils`,LCS),但 TUI 是 TypeScript 引不到,移植一份就是**两个语言里的
+  两份算法**,那是最会漂的形状(Lesson 1207 的形状再往外一步)。所以预览报的是
+  **可算的事实:多少行不同**,而且措辞是「lines」不是「diff」。
+  将来真要 diff,**必须由 daemon 拥有**并把 hunk 发上 wire,不要在渲染器里
+  长出第二个 diff 引擎。
+  ★ **数行的规则在两侧都被钉住** —— daemon 算数字、渲染器显示数字,
+  所以「怎么算行数」必须是**同一条规则**:空串是 **0 行**,结尾换行**不**另起一行,
+  所以 `"a\n"` 是 **1 行**不是 2 行;两侧都实现它,门禁**两侧都钉**
+  (还钉了 daemon 的 CRLF 归一化,免得 Windows 文件和 TUI 数得不一样)。
+  门禁 `scripts/test/r388s-checkpoint-preview.test.mjs` **9/9** ——
+  ★ **门禁渲染真实菜单并量它的帧**:grep `linesDelta` 只证明**源码里有这个字符串**,
+  不证明**终端里画出来是什么**。量的九件事:每个点都带**自己的**足迹
+  (且**别的点的数字不能顶替它**)/ 没有预览的点**不显示 0** /
+  什么都不会变的点用**词**说「no change」/ **不完整**的预览必须说出来
+  (「no change」不能掩盖「我们不知道」)/ 细节面板说每个文件**会怎样** /
+  读不了的文件说 **unknown** 绝不写「unchanged」/ session **新建**的文件说
+  **会被删除** / 渲染器与 daemon **数行数的方式相同**(两侧都钉) /
+  门禁**不空洞**(没有预览时足迹确实不出现)。
+  变异门禁 **7 个变异**:足迹从行上消失、缺失预览变成 0、unknown 变成
+  unchanged、「no change」掩盖不完整、daemon 侧丢结尾换行修正、TUI 侧丢
+  结尾换行修正、created 不再报删除 —— 全部让门禁**变红**,且断言**红的原因是对的**。
+  ★★ **变异门禁又踩了 R388r 那个坑** —— 沙箱没有 `node_modules`,
+  而门禁把 **esbuild 的位置硬编码成了沙箱的** → 探针**构建不了**
+  (`Cannot find module '...\node_modules\esbuild'`) → **每个**变异都红在
+  **构建错误**上。挂在构建错误上的门禁会对**任何**改动变红,包括正确的改动 ——
+  它是一根绊线,不是牙齿。修法与 R388r 相同:**构建器的位置来自环境变量**,
+  由调用方把**真**树的路径交过来。
+  ★ **沙箱里的同级 Java 树必须放在门禁真正会读的那个位置** ——
+  门禁按 `join(ROOT, "..", "aethercode", …)` 找 daemon 的源码,而沙箱的 ROOT
+  是临时目录,所以 `ROOT/..` 是**临时目录**而不是工作区:副本必须落在
+  `dir/../aethercode/…`,否则断言死在「文件不存在」上(又是为错误的原因红)。
+  而且那个同级目录**按沙箱命名**,不能让两个沙箱共用一个 `Temp/aethercode`
+  —— 一个崩掉的沙箱的残留会变成下一个沙箱的输入。
+  既有 checkpoint 门禁 `r388p` + `r388n` **37/37 绿**(菜单的渲染变了)。
+  **Lesson 1404 — 沙箱没有 `node_modules`,就会把每个变异变成一次构建失败,
+  而构建失败是一种**不带任何信息**的红。构建器的位置必须来自环境变量。**
+  **Lesson 1405 — 只在选中之后才出现的预览,没法帮用户做选择。**
+  **Lesson 1406 — 「不知道」不是 0。** daemon 读不了的数字不能编。
+  **Lesson 1407 — 两个语言里的 diff 是两个真相。** 要 diff 就让 daemon 拥有它。
+  **Lesson 1408 — 两个语言都实现的规则,必须**两侧都**钉住。**
+  Doc: `docs/R388s-checkpoint-preview.md`.
