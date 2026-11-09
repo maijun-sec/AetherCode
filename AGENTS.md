@@ -3425,3 +3425,79 @@ a gate. Both of those cost this round real time.
   一个上。** 锚在不承重的 prop 上,门禁会永远绿,并且什么也不证明。
   Doc: `docs/R388o-terminal-geometry.md`。
 
+- **R388p**(rewind 菜单:列表装不下、↓ 是死键、两个 summarize 读起来一样、
+  后端的 checkpoint store **无界增长**):四个缺陷,全部**先量再改**。
+  **(A) 列表没有窗口。** 实测 40 个 checkpoint 渲染出 **53 帧行**(40 行终端装不下),
+  而且**选中项也可能被挤出屏幕**。现在列表有窗口(新模块
+  `src/listWindow.ts`:`listWindow()` + `moveSelection()`),
+  并且菜单**说出**「上面还有 N 个 / 下面还有 N 个」——**静默的截断看起来像列表到头了**。
+  修完:40 个 checkpoint → **22 帧行 / 8 行可见**。
+  **(B) ↓ 键是死键。** 菜单**开在最新的那一条**(index = length-1),而旧代码
+  `Math.min(checkpoints.length - 1, i + 1)` **夹住**它 —— 所以**打开后第一次按 ↓
+  什么都不发生**。实测:连按 3 次 ↓,标记仍在 `▶ #40`。
+  → **Lesson 1383 — 一个什么都不做的键,比一个不存在的键更糟。** 用户分不清
+  「这条不适用」和「这里坏了」,于是不再试这个功能。列表选择必须**回绕**:
+  顶部按 ↑ 到最新,底部按 ↓ 到最旧,两个方向**永远有意义**。
+  **(C) 两个 summarize 读起来一模一样** —— 而我**第一次改错了**。
+  两个条目原本共用同一句 blurb。我第一版按菜单的**名字**推断它们是**相反**的
+  操作("from" 留尾巴 / "up_to" 留头),并把它写进代码和门禁。
+  **读引擎的源码才发现是反的**:`summarizeAtTranscriptIndex` 里
+  `int split = keepAfter ? boundaryIndex : boundaryIndex + 1;`,
+  注释明说 **「the head is what gets summarised; the tail is what survives」**
+  —— **两个动作都总结头部、保留尾部**,唯一的差别是**分界线落在那条消息之前还是之后**
+  (`up_to` 把那条消息本身也折进总结)。于是 blurb 改成
+  「summarize everything BEFORE this point, keep what follows」/
+  「summarize up to AND INCLUDING this point, keep what follows」。
+  → **Lesson 1382 — 对另一个系统行为的描述是**主张**,而主张不能自证。**
+  门禁现在**读引擎自己的分界规则**和**菜单自己的 blurb**,检查两者一致。
+  **钉住一个「故事」而不是「行为」的门禁,是让代码去说谎来迎合门禁。**
+  **(D) 后端的 store 无界 —— 这条不是 UI 问题。** `CodeCheckpointStore` 用一个
+  裸的 `LinkedHashMap` 存**全部** checkpoint,而**每个 checkpoint 存的是会话
+  **至今碰过的每个文件的完整内容副本**。于是内存是
+  **turns × 碰过的文件数 × 文件大小** —— **随会话长度平方增长**,每一轮都更糟。
+  长会话会把堆撑爆,daemon 最后死于 `OutOfMemoryError`,而用户**看不到任何
+  可以行动的现象**。现在 `MAX_CHECKPOINTS = 64`,**FIFO 淘汰**(旧的先走 —— 用户
+  要回退的是最近的),淘汰数**上到线上**(`checkpoints/list` → `evicted`),菜单
+  **说出来** —— 一份从「point 40」开始的列表,看起来像 daemon 丢了历史。
+  门禁 `scripts/test/r388p-checkpoint-menu.test.mjs` **14/14**:列表装得下、
+  帧不随列表增长、**选中项永远在屏幕上**、菜单说出藏了多少、**↓ 不是死键**、
+  两个方向相反地移动、**回绕**、两个 summarize 读起来不同、blurb **与引擎一致**、
+  **引擎真的保留尾部**、store **有界**、`listWindow` 保证选中可见、
+  **空列表**、`moveSelection` 回绕。
+  ★ 探针**渲染真实组件并发送真实按键** —— 缺陷 2 在静态渲染里**根本看不见**。
+  ★ **Ink 在 'readable' 事件上读输入**:它的 `App.js` 做
+  `stdin.on('readable', handleReadable)` 然后
+  `while ((chunk = stdin.read()) !== null)`。所以假 stdin 必须**缓冲**字节并从
+  `read()` **交还**;发 `'data'` **完全没用** —— Ink 根本不听它。一个发
+  `'data'` 的探针量的是「按键不工作的组件」,然后把**组件的按键**报成坏的。
+  ★ 而且 `read()` 必须在**构造之后**覆盖 —— `Writable` 原型上有自己的
+  `read()`,对象字面量里的方法会被**原型遮蔽**,Ink 拿到的是原型那个
+  (返回 `null`,什么都收不到)。
+  变异测试 `scripts/test/r388p-checkpoint-menu-mutation.test.mjs` **7/7**:
+  列表不设窗口、选中项可以跑出窗口、↓ 回到夹住、↑ 回到夹住、菜单不说藏了多少、
+  两个 summarize 读起来一样、store 的上限被去掉 —— 全部让门禁**变红**。
+  每个变异**改完回读文件**,断言目标文本**已经不在**(否则量的是没被改过的代码);
+  副本放 **OS 临时目录**(junction 会解析回原树)。
+  **Lesson 1384 — 假 stdin 要实现**读**的那一侧,不是写的那一侧。**
+  **Lesson 1385 — 「列表有界」是关于**行**的主张,不是关于**帧**的主张。**
+  加了窗口之后,短列表的帧反而**多两行**(「上面还有 N 个 / 下面还有 N 个」两行标记) ——
+  第一版门禁量的是帧,于是对着**正确的代码**报红。
+  **Lesson 1386 — 无界的快照 store 是平方级泄漏,而且它不是 UI 缺陷。**
+  上限属于 **store**,不属于渲染器;被丢掉的**数量**必须**到达用户**。
+  **Lesson 1387 — 固定延时的探针测的是「机器够不够快」,不是产品。**
+  R388o 的 console 门禁(真实 bundle 跑在真实 conhost 里)在这一轮**红了**,
+  断言是「the bundle produced no output at all」—— 而 bundle **一个字节没改**,
+  **直接跑**时渲染完全正常。根因:shim 用 `setTimeout(exit, 4000)` 决定何时退出,
+  而 `runTui` 是 **`await client.request("ping")` 之后才 `render()`** ——
+  **Ink 在 daemon 回答之前不画第一帧**,冷启动的 JVM 比 4000ms 慢,于是进程在
+  **第一帧之前**就退出了,门禁量到的是**空屏**。实测:4000ms → **0 字节**;
+  20000ms → **55738 字节**。差别**不是**修复,是 **daemon 起来没有**。
+  现在 shim **监视 stdout,看见第一帧就退出**(用**字节数**当信号,conhost 自己的
+  启动清屏只有几个字节),45s 兜底。
+  ★ 改完之后**重新证明门禁还能变红**:把 bundle 换成**什么都不渲染**的 stub,
+  门禁必须**变红** —— 它确实红了。「等久一点」很容易把门禁改成**空洞通过**。
+  **Lesson 1388 — 钉住一个「故事」而不是「行为」的门禁,会让代码去说谎来迎合它。**
+  (Lesson 1382 的重述,因为它让本轮**先改错了一次**。) 两个 summarize 的第一版修法
+  断言它们是**相反**的操作 —— 那是按菜单的**名字**推的,不是读 daemon 推的。
+  引擎在**两个**动作里都是**总结头部、保留尾部**。
+  Doc: `docs/R388p-checkpoint-window.md`。

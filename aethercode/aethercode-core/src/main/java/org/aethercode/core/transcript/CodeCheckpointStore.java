@@ -144,7 +144,83 @@ public final class CodeCheckpointStore {
         }
     }
 
+    /**
+     * The checkpoints, oldest first.
+     *
+     * <p>★ A LINKED HASH MAP IS AN ACCESS-ORDERED QUEUE ★
+     * {@link LinkedHashMap} with {@code accessOrder=false} keeps
+     * INSERTION order, and the oldest entry is the FIRST one — so the
+     * eviction below can drop the oldest without a second structure.
+     */
     private final Map<String, Checkpoint> checkpoints = new LinkedHashMap<>();
+
+    /**
+     * How many checkpoints are kept.
+     *
+     * <p>★ WHY THE STORE MUST BE BOUNDED ★
+     *
+     * <p>A checkpoint holds a FULL COPY of the content of every file
+     * the session has touched so far. So the memory a session's
+     * checkpoints take is
+     *
+     * <pre>
+     *   turns x files-touched x file-size
+     * </pre>
+     *
+     * <p>— quadratic in the session's length, and every turn makes it
+     * worse. A long session that edits a handful of files would grow
+     * the heap without bound, and the daemon would eventually die of
+     * {@code OutOfMemoryError} rather than of anything the user could
+     * see or act on.
+     *
+     * <p>★ WHY 64 ★ The rewind menu's window shows at most a dozen
+     * entries at a time, so a user can only SEE about a dozen
+     * checkpoints anyway. Keeping 64 gives them far more history than
+     * any menu can show, while bounding the memory to a fixed
+     * multiple of the working set. The eviction is FIFO — the OLDEST
+     * checkpoint goes first — because the newest ones are the ones a
+     * user rewinds to ("undo the last few things"), and because the
+     * oldest is the one whose files are least likely to have changed
+     * since.
+     */
+    public static final int MAX_CHECKPOINTS = 64;
+
+    /**
+     * Drop the oldest checkpoints until the store is within its bound.
+     *
+     * <p>★ SILENTLY, BUT COUNTED ★ The eviction is not logged (the
+     * store has no logger) but it IS visible through {@link #size()}
+     * and {@link #evictedCount()}, so the daemon can report it rather
+     * than have the user discover it as a menu that mysteriously
+     * starts at "point 40".
+     */
+    private void evictIfNeeded() {
+        while (checkpoints.size() > MAX_CHECKPOINTS) {
+            String oldest = checkpoints.keySet().iterator().next();
+            checkpoints.remove(oldest);
+            evicted++;
+        }
+    }
+
+    /** How many checkpoints have been dropped because the store was full. */
+    private long evicted;
+
+    /** How many checkpoints the store currently holds. */
+    public int size() {
+        return checkpoints.size();
+    }
+
+    /**
+     * How many checkpoints have been EVICTED over this store's life.
+     *
+     * <p>★ WHY THE USER SHOULD BE TOLD ★ A menu that silently starts
+     * at "point 40" with no explanation looks like the daemon lost the
+     * history. The number is what lets the caller say "the 12 oldest
+     * points are no longer available" instead of pretending.
+     */
+    public long evictedCount() {
+        return evicted;
+    }
 
     /**
      * The tools that changed files, discovered from the transcript.
@@ -228,6 +304,10 @@ public final class CodeCheckpointStore {
         }
         Checkpoint cp = new Checkpoint(id, transcriptIndex, userMessageIndex, summary, files);
         checkpoints.put(id, cp);
+        // ★ BOUND THE STORE ★ Every checkpoint holds a full copy of
+        // every file the session has touched, so an unbounded store is
+        // a quadratic memory leak (see MAX_CHECKPOINTS).
+        evictIfNeeded();
         return cp;
     }
 
@@ -241,7 +321,14 @@ public final class CodeCheckpointStore {
         return new ArrayList<>(checkpoints.values());
     }
 
-    /** Forget every checkpoint. */
+    /**
+     * Forget every checkpoint.
+     *
+     * <p>★ THE EVICTION COUNT SURVIVES THE CLEAR ★ The counter says
+     * "how many points this session has lost", and a clear does not
+     * un-lose them: the memory was freed, and the user still cannot
+     * go back to those points.
+     */
     public void clear() {
         checkpoints.clear();
     }

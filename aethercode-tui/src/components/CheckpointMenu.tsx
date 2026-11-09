@@ -49,6 +49,8 @@ import { hintFor } from "../componentKeys.js";
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { PanelBody, fitRow, blank } from "./PanelBody.js";
+import { listWindow, moveSelection } from "../listWindow.js";
+import { terminalSize } from "../terminalGeometry.js";
 
 /**
  * The six operations the menu offers.
@@ -117,13 +119,30 @@ export const CHECKPOINT_ACTION_INFO: Readonly<Record<CheckpointAction, Checkpoin
   },
   summarize_from_here: {
     label: "Summarize from here",
-    blurb: "replace what came before with a summary, keep what follows",
+    // ★ WHAT ACTUALLY DIFFERS BETWEEN THE TWO SUMMARIZE ACTIONS ★
+    //
+    // Both summarise the HEAD (everything before the point) and keep
+    // the TAIL (everything after it). The daemon's boundary is the
+    // point's own message: `from` splits BEFORE it and `up_to` splits
+    // AFTER it, so `up_to` folds the point's own message into the
+    // summary and `from` keeps it.
+    //
+    // (An earlier version of this file claimed the two were OPPOSITE
+    // — "keep what follows" vs "keep what came before". That was
+    // wrong: it was read off the menu's NAMES, not off the daemon.
+    // The engine summarises the head and keeps the tail in BOTH
+    // cases; see `summarizeAtTranscriptIndex`.)
+    //
+    // Both entries used to carry the SAME blurb, so the user could
+    // not tell them apart — and one of the two descriptions was wrong
+    // for the action it described.
+    blurb: "summarize everything BEFORE this point, keep what follows",
     touchesCode: false,
     touchesConversation: true,
   },
   summarize_up_to_here: {
     label: "Summarize up to here",
-    blurb: "replace what came before with a summary, keep what follows",
+    blurb: "summarize up to AND INCLUDING this point, keep what follows",
     touchesCode: false,
     touchesConversation: true,
   },
@@ -158,7 +177,29 @@ export interface CheckpointMenuProps {
   width?: number;
   /** The panel's title. */
   title?: string;
+  /**
+   * How many checkpoint rows the list may show at once.
+   *
+   * <p>★ WHY IT IS A PROP ★ The panel cannot know how much room it
+   * has: the same menu is rendered inside the TUI's panel column (whose
+   * height depends on the terminal) and inside the line renderer. So
+   * the caller decides, and the default is a number that fits a
+   * 30-row terminal.
+   */
+  maxRows?: number;
+  /**
+   * How many checkpoints the daemon has EVICTED (its store is bounded).
+   *
+   * <p>★ WHY THE MENU SAYS SO ★ The list is not the session's whole
+   * history. A menu that silently starts at "point 40" looks as
+   * though the daemon lost the history — so the menu says that the
+   * older points are gone, instead of pretending they never existed.
+   */
+  evicted?: number;
 }
+
+/** The default number of checkpoint rows the list shows. */
+export const DEFAULT_CHECKPOINT_ROWS = 8;
 
 export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
   checkpoints,
@@ -166,6 +207,8 @@ export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
   onClose,
   width = 76,
   title = "Rewind",
+  maxRows = DEFAULT_CHECKPOINT_ROWS,
+  evicted = 0,
 }) => {
   // Which list is highlighted: the CHECKPOINT (top) or the ACTION
   // (bottom). Claude Code's menu picks the point first, then the
@@ -176,6 +219,13 @@ export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
   const [focus, setFocus] = useState<"checkpoint" | "action">("action");
 
   const cp = checkpoints[checkpointIdx];
+
+  // ★ THE WINDOW ★ Only `maxRows` checkpoints are shown, and the
+  // window FOLLOWS the selection. Before this, every checkpoint was
+  // rendered: 40 checkpoints made a 53-row frame — taller than the
+  // terminal, so the panel ran off the screen.
+  const win = listWindow(checkpoints.length, checkpointIdx, maxRows);
+  const visible = checkpoints.slice(win.start, win.end + 1);
 
   useInput((input, key) => {
     if (key.escape) {
@@ -189,17 +239,28 @@ export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
     }
     if (key.upArrow) {
       if (focus === "action") {
-        setActionIdx((i) => (i - 1 + CHECKPOINT_ACTIONS.length) % CHECKPOINT_ACTIONS.length);
+        setActionIdx((i) => moveSelection(CHECKPOINT_ACTIONS.length, i, -1));
       } else {
-        setCheckpointIdx((i) => Math.max(0, i - 1));
+        // ★ THE SELECTION WRAPS ★
+        //
+        // The old rule CLAMPED at both ends, and the list opened with
+        // the selection on the NEWEST entry — so the very first press
+        // of the down arrow did nothing: the selection was already at
+        // the bottom and the clamp kept it there. A key that does
+        // nothing is worse than a key that is absent: the user
+        // concludes the feature is broken.
+        //
+        // Wrapping also means the up arrow at the top reaches the
+        // newest entry, so both directions are always meaningful.
+        setCheckpointIdx((i) => moveSelection(checkpoints.length, i, -1));
       }
       return;
     }
     if (key.downArrow) {
       if (focus === "action") {
-        setActionIdx((i) => (i + 1) % CHECKPOINT_ACTIONS.length);
+        setActionIdx((i) => moveSelection(CHECKPOINT_ACTIONS.length, i, 1));
       } else {
-        setCheckpointIdx((i) => Math.min(checkpoints.length - 1, i + 1));
+        setCheckpointIdx((i) => moveSelection(checkpoints.length, i, 1));
       }
       return;
     }
@@ -234,20 +295,45 @@ export const CheckpointMenu: React.FC<CheckpointMenuProps> = ({
       ) : (
         <>
           <Text dimColor>{fitRow(" point to return to:", width)}</Text>
-          {checkpoints.map((c, i) => (
-            <Text
-              key={c.id}
-              color={focus === "checkpoint" && i === checkpointIdx ? "cyan" : undefined}
-              bold={i === checkpointIdx}
-            >
-              {fitRow(
-                ` ${i === checkpointIdx ? "▶" : " "} #${c.userMessageIndex + 1}  ${
-                  c.summary || "(no summary)"
-                }`,
-                width,
-              )}
+          {/* ★ THE EVICTED NOTICE ★ The daemon's store is bounded, so
+              the oldest points are GONE. Saying so is the difference
+              between "the daemon forgot" and "the daemon kept the
+              recent history and dropped the rest". */}
+          {evicted > 0 ? (
+            <Text dimColor>
+              {fitRow(`   (the ${evicted} oldest point(s) are no longer available)`, width)}
             </Text>
-          ))}
+          ) : null}
+          {/* ★ THE "MORE ABOVE" MARKER ★ A window hides entries, and a
+              silent truncation looks like the list ENDS there. The
+              marker says how many are above, so the user knows the
+              list continues and which direction to scroll. */}
+          {win.hiddenBefore > 0 ? (
+            <Text dimColor>{fitRow(`   ⋮ ${win.hiddenBefore} earlier point(s) above`, width)}</Text>
+          ) : null}
+          {visible.map((c, vi) => {
+            // The window's own index — NOT the visible index. The list
+            // is numbered by the checkpoint's own turn ordinal, so the
+            // numbering does not shift as the window moves.
+            const i = win.start + vi;
+            return (
+              <Text
+                key={c.id}
+                color={focus === "checkpoint" && i === checkpointIdx ? "cyan" : undefined}
+                bold={i === checkpointIdx}
+              >
+                {fitRow(
+                  ` ${i === checkpointIdx ? "▶" : " "} #${c.userMessageIndex + 1}  ${
+                    c.summary || "(no summary)"
+                  }`,
+                  width,
+                )}
+              </Text>
+            );
+          })}
+          {win.hiddenAfter > 0 ? (
+            <Text dimColor>{fitRow(`   ⋮ ${win.hiddenAfter} later point(s) below`, width)}</Text>
+          ) : null}
           <Text>{blank(width)}</Text>
           <Text dimColor>{fitRow(" what to do:", width)}</Text>
           {CHECKPOINT_ACTIONS.map((a, i) => {

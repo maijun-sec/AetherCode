@@ -2848,6 +2848,23 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     }
 
     /**
+     * R388p: how many checkpoints have been EVICTED from the store.
+     *
+     * <p>★ WHY THE CALLER NEEDS THIS ★ The store is bounded (each
+     * checkpoint holds a full copy of every touched file, so an
+     * unbounded store is a quadratic memory leak). The eviction is
+     * FIFO — the OLDEST goes first — so the rewind menu does not show
+     * the session's whole history. A renderer that does not know this
+     * would show a list that mysteriously starts at "point 40" and
+     * look as though the daemon had lost the history.
+     *
+     * @return the number of checkpoints dropped so far
+     */
+    public long codeCheckpointsEvicted() {
+        return codeCheckpoints.evictedCount();
+    }
+
+    /**
      * R388n: put the files back to a checkpoint's state.
      *
      * <p>Only the CODE is restored — the transcript is a separate

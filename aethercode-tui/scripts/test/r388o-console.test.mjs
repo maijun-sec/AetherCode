@@ -135,24 +135,58 @@ function runInConsole(cols, rows) {
       `
 process.stdout.columns = ${cols};
 process.stdout.rows = ${rows};
-await import("file:///" + ${JSON.stringify(BUNDLE)}.replace(/\\\\/g, "/"));
-// ★ EXIT AFTER THE FRAME IS DRAWN ★ The bundle is a TUI: it renders
-// and then WAITS FOR INPUT, forever. Without this the console gate
-// would sit on \`spawnSync\`'s timeout and leave the whole conhost
-// tree orphaned — which is how a test turns into a process leak.
+
+// ★ THE SHIM WAITS FOR THE FIRST FRAME, NOT FOR A GUESSED DELAY ★
 //
-// 4000ms, not 2500: the bundle has to boot the daemon, resolve the
-// provider and settle its first frame. Under the full suite the
-// machine is busier, and a too-short delay lets the process exit
-// BEFORE the first real frame — which then measured an empty
-// screen rather than the product.
-setTimeout(() => process.exit(0), 4000);
+// The bundle is a TUI: it renders and then WAITS FOR INPUT, forever.
+// Without an exit the console gate would sit on \`spawnSync\`'s timeout
+// and leave the whole conhost tree orphaned — which is how a test
+// turns into a process leak.
+//
+// ★ BUT THE DELAY MUST NOT BE A GUESS ★ The bundle does NOT render
+// until the daemon answers its \`ping\` (runTui awaits the ping before
+// calling render). A cold JVM start takes LONGER than a fixed
+// timeout, so a fixed delay is a RACE: on a fast machine the frame
+// lands, on a busy one the process exits first and the gate measures
+// an EMPTY screen.
+//
+// Measured: a 4000ms delay produced "the bundle produced no output at
+// all"; a 20000ms delay produced 55738 bytes. The difference was not
+// the fix — it was whether the daemon had booted yet.
+//
+// So the shim watches stdout and exits as soon as it has seen a
+// frame, with a generous ceiling for the case where the daemon never
+// comes up at all.
+let seen = 0;
+const origWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, ...rest) => {
+  seen += String(chunk).length;
+  return origWrite(chunk, ...rest);
+};
+
+const DEADLINE_MS = 45000;
+const started = Date.now();
+const timer = setInterval(() => {
+  // A frame is a few kilobytes; the console's own startup clear is a
+  // handful of bytes. 2000 bytes means Ink has painted.
+  if (seen > 2000 || Date.now() - started > DEADLINE_MS) {
+    clearInterval(timer);
+    process.exit(0);
+  }
+}, 250);
+
+await import("file:///" + ${JSON.stringify(BUNDLE)}.replace(/\\\\/g, "/"));
 `,
       "utf8",
     );
     const run = spawnSync(CONHOST, ["--headless", "--", "cmd", "/c", "node", shim], {
       encoding: "utf8",
-      timeout: 60_000,
+      // ★ THE TIMEOUT MUST COVER THE DAEMON'S COLD START ★
+      // The bundle spawns a JVM and waits for its `ping` before it
+      // renders. A cold JVM start on a busy machine is tens of
+      // seconds, so the timeout has to be well above the shim's own
+      // 45s ceiling.
+      timeout: 120_000,
       env: { ...process.env, FORCE_COLOR: "0" },
     });
     const raw = (run.stdout ?? "") + (run.stderr ?? "");

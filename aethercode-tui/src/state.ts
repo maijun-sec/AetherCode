@@ -841,6 +841,19 @@ export interface State {
    */
   checkpointsError: string | null;
   /**
+   * R388p: how many checkpoints the daemon has EVICTED.
+   *
+   * <p>★ WHY THE RENDERER NEEDS THIS ★ The daemon's checkpoint store
+   * is BOUNDED — every checkpoint holds a full copy of every file the
+   * session has touched, so an unbounded store is a quadratic memory
+   * leak. The oldest checkpoints are dropped when the bound is reached.
+   *
+   * <p>So the list is NOT the whole history. Without this number the
+   * menu silently starts at "point 40" and looks as though the daemon
+   * lost the session's history.
+   */
+  checkpointsEvicted: number;
+  /**
    * T-420: most recent agent-list fetch. The picker reads this
    * directly so we don't re-fetch every time it opens. Refreshed
    * on the `agent/list` RPC response.
@@ -1470,7 +1483,7 @@ export type Action =
   // carries the fetched rows; `error` says why the list is empty when
   // the fetch failed (an empty list and a failed fetch are DIFFERENT
   // facts, and the menu must say which).
-  | { type: "setCheckpoints"; checkpoints: State["checkpoints"] }
+  | { type: "setCheckpoints"; checkpoints: State["checkpoints"]; evicted?: number }
   | { type: "setCheckpointsError"; error: string | null }
   | { type: "closePanel" } // R362: unmount + restore the prompt draft
   | { type: "setPanelStatus"; status: PanelStatus } // R362: pending / error / notice
@@ -1623,6 +1636,7 @@ export const INITIAL: State = {
   // `activePanel` — there is no second flag (see the field's comment).
   checkpoints: [],
   checkpointsError: null,
+  checkpointsEvicted: 0,
   agents: [],
   defaultAgent: null,
   // T-421: effort picker + catalog + default.
@@ -2726,7 +2740,13 @@ export function reducer(state: State, action: Action): State {
 
     case "setCheckpoints":
       // R388n: the fetched checkpoint rows.
-      return { ...state, checkpoints: [...action.checkpoints] };
+      // R388p: and how many the daemon has EVICTED (its store is
+      // bounded, so the list is not the whole history).
+      return {
+        ...state,
+        checkpoints: [...action.checkpoints],
+        checkpointsEvicted: action.evicted ?? 0,
+      };
     case "setCheckpointsError":
       // R388n: WHY the list is empty. An empty list and a failed fetch
       // are different facts — a menu that says "no checkpoints yet" when

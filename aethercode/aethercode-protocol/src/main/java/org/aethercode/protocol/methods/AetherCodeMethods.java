@@ -8556,7 +8556,23 @@ public class AetherCodeMethods {
             row.put("files", files);
             out.add(row);
         }
-        return Map.of("ok", true, "checkpoints", out);
+        // ★ THE EVICTED COUNT GOES ON THE WIRE ★
+        //
+        // The store is BOUNDED (CodeCheckpointStore.MAX_CHECKPOINTS) —
+        // each checkpoint holds a full copy of every file the session
+        // has touched, so an unbounded store is a quadratic memory
+        // leak. The oldest checkpoints are dropped when the bound is
+        // reached.
+        //
+        // So the list the user sees is NOT the whole history, and a
+        // menu that silently starts at "point 40" looks like the
+        // daemon lost the session's history. The count lets the
+        // renderer say so.
+        java.util.Map<String, Object> res = new java.util.LinkedHashMap<>();
+        res.put("ok", true);
+        res.put("checkpoints", out);
+        res.put("evicted", target.codeCheckpointsEvicted());
+        return res;
     }
 
     /**

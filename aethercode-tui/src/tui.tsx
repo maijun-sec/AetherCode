@@ -2160,9 +2160,14 @@ const App: React.FC<{
           }
           const arr = (raw as { checkpoints?: unknown[] })?.checkpoints;
           const rows = Array.isArray(arr) ? arr : [];
+          // R388p: the daemon's store is BOUNDED, so the list is not
+          // the whole history — it carries how many were evicted.
+          const evictedRaw = (raw as { evicted?: unknown })?.evicted;
+          const evicted = typeof evictedRaw === "number" ? evictedRaw : 0;
           dispatch({
             type: "setCheckpoints",
             checkpoints: rows.map((r) => normalizeCheckpointRow(r)),
+            evicted,
           });
           dispatch({ type: "setCheckpointsError", error: null });
           done();
@@ -2170,7 +2175,7 @@ const App: React.FC<{
         .catch((e: unknown) => {
           if (cancelled) return;
           const msg = e instanceof Error ? e.message : String(e);
-          dispatch({ type: "setCheckpoints", checkpoints: [] });
+          dispatch({ type: "setCheckpoints", checkpoints: [], evicted: 0 });
           dispatch({ type: "setCheckpointsError", error: msg });
           fail("checkpoints/list", e);
         });
@@ -4521,6 +4526,19 @@ const App: React.FC<{
   // that guessed would be right exactly until the terminal was
   // resized.
   const panelContentWidth = Math.max(20, panelWidth - 4);
+  // R388p: how many checkpoint rows the rewind menu may show.
+  //
+  // ★ THE MENU'S OTHER ROWS COME FIRST ★ The menu is not only the
+  // checkpoint list: it also shows the caption, the action list (six
+  // rows), the file list and the hint. So the checkpoints get what is
+  // LEFT over, and the list's own window follows the selection inside
+  // that budget.
+  //
+  // ★ WHY IT IS DERIVED FROM THE TERMINAL ★ A fixed number is right
+  // on a 30-row terminal and wrong on a 12-row one — and a menu that
+  // does not fit the terminal is the R388o defect all over again: the
+  // frame grows, Ink wipes the screen, and the panel stacks.
+  const checkpointRows = Math.max(3, Math.min(12, rows - 18));
   const meta = state.activePanel ? PANEL_META[state.activePanel] : null;
   const closePanel = () => dispatch({ type: "closePanel" });
   const setNotice = (n: string) =>
@@ -5288,6 +5306,8 @@ const App: React.FC<{
         return (
           <CheckpointMenu
             width={panelContentWidth}
+            maxRows={checkpointRows}
+            evicted={state.checkpointsEvicted}
             checkpoints={state.checkpoints}
             onClose={closePanel}
             onChoose={(action: CheckpointAction, checkpoint: CheckpointRow) => {
