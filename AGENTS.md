@@ -4249,3 +4249,70 @@ a gate. Both of those cost this round real time.
   `listSessions` agrees, and the rendered rail has ONE group and no
   "未关联项目". R392 fixed it; the earlier sighting was an OLD
   (cwd=NULL, already trashed) session. Nothing to fix.
+
+## Watch out for (R396 additions)
+
+- **live repro 必须先开一次性会话**（R396）。R394 的 repro 脚本直接往
+  **当时活动的**会话里打字回车 —— 那正是用户自己的 RAG 会话，于是 21
+  行测试内容出现在他的对话末尾。产品的行为是对的（消息发给当前会话），
+  错的是工作流。⇒ 动手前先开一个用完即弃的会话：
+
+  ```powershell
+  node scripts/oneshot-session.mjs open --cwd D:\tmp\abc_1   # 记基线 + 建一次性会话
+  #   ... 跑 repro ...
+  node scripts/oneshot-session.mjs verify                     # 逐条比对既有会话有没有变长
+  node scripts/oneshot-session.mjs drop <sessionId>           # 删掉，并还原活动会话
+  ```
+
+  **Lesson 1468 — 「测试内容不该进主流程」有两条根因，一条是我的，一条
+  是产品的；只修自己那条，等于把问题留给下一个用户。** 这次就是这样：
+  我的 repro 往活动会话打字（工作流错），而**聊天区从头到尾没显示过
+  会话名**（产品缺口）—— 用户的 7 个会话共用同一个 cwd，所以连用户
+  自己都分不清消息会进哪个会话。⇒ 「测试漏进主流程」和「用户分不清
+  会话」是**同一个根因的两面**。
+  **Lesson 1469 — 一个身份信息必须出现在「提问发生的地方」，而不是
+  「管理它的地方」。** 会话名只在左栏 ⇒ 切会话时看不到；输入条上只有
+  `📂 cwd` ⇒ cwd 相同的会话分不开。⇒ 会话名现在住在 **header**：
+  `✦ AetherCode › 🗂 会话名 › task` —— 这才是真实层级（app › session ›
+  task），而且 task 每次提问都变、会话不变 ⇒ **稳的那个在前**。
+  **Lesson 1470 — 兜底要「短 id」，不能「借一个名字」。** 左栏列表是
+  异步刷新的：`currentSessionId` 可能指向一个**还不在 `sessions` 里**的
+  会话。此时显示**别的会话的 title** 比什么都不显示更糟 —— 用户会以为
+  消息要去一个它不去的地方。⇒ 显示自己的短 id（`sess-1`），永远不借用。
+  **Lesson 1471 — 一条 pin 读整块的 `textContent`，可能量的是旁边
+  的静态标签。** 我的 R396 断言读的是整块会话元素的 `textContent`，而
+  元素里还有静态字形 `🗂` ⇒ 名字置空（M6）时断言照样绿。
+  **是变异台抓出来的，不是 review 抓出来的** ⇒ 断言要读**被测的那个
+  元素本身**。
+  **Lesson 1472 — 变异台的比对口径本身会被量具坑到。** 第一版比对用
+  `it()` 标题的**全等**，而实际标题带破折号后半句 ⇒ 8 个变异全被判
+  「MISSING red」，可红的**条数**其实逐条相符 ⇒ 改成**前缀唯一匹配**
+  （一个针脚落在两处 = 没测到东西）。
+  **Lesson 1473 — 「红集合为空」和「量具口径不对」都表现为「没红」，
+  但修的方向相反** ⇒ 先打印**红了几条**，再谈哪条没红。
+  **Lesson 1474 — 写工具要照着 RPC 清单写，跑过一遍才算写对。**
+  `createSession`（legacy 单引擎路径）**会把活动会话切到新会话**，于是
+  daemon 拒删（"cannot delete the active session"）⇒ `drop` 必须先
+  `loadSession` 切回原来的会话再删。这一条是实跑才暴露的。
+  **Lesson 1475 — 「我记错了」也要写下来。** 上一轮我记过「要清
+  localStorage 缓存」，**那是错的**：消息缓存早已退休。第一版探针用
+  `String(x)` 匹配对象，是**空针**（`String({})` = `"[object Object]"`）
+  ⇒ 修正成 `JSON.stringify` 后复查，结论才成立。
+  **Lesson 1476 — 同名不同目录的两个 DB 查错地方 ⇒ 「没有残留」的假
+  阴性**：记忆层 `~/.aethercode/sessions.db`（`SessionMemoryStore`）与
+  会话库 `~/.aethercode/sessions/sessions.db` 同名不同目录。
+  **Lesson 1477 — 「放哪儿」是量出来的，不是想出来的。** 第一版把会话名
+  放进**输入条**（紧挨 cwd、视线所在）—— 代码写完、测试写完、变异台也绿
+  了，**然后被实测否决**：那条输入条**已经排满**（内容 971px / 容器
+  1110px，但 flex item 的**基线是 max-content 宽度**，不是当前宽），加一个
+  组就把别组挤到**换行** ⇒ 输入条从 26px 撑到 42px（`🧠 思考` 正好 69px，
+  挤 2px 就换行）。试了 8 个方案（标签措辞 × 名字上限 × 收缩优先级）全
+  FAIL。⇒ **量法**：在**正在跑的旧版**上用 CDP 注入同样的 CSS + markup
+  直接量布局 —— 比等一次 9 分钟的重建快得多，而且**正是这次量测否决了
+  第一版设计**。⇒ 第二个候选（header）一量：`.header-left` 1015px 宽、
+  内容只占 223px ⇒ **790px 余量**，零布局代价。
+  **Lesson 1478 — 「0 例跑」和「0 条红」长得一样，含义却相反。** 变异把
+  元素移到 `<header>` 外面时，JSX 出现两个根节点 ⇒ 文件编译失败 ⇒ **0
+  个用例**跑了 —— 看起来像「变异没生效」，其实是「实验坏了」。⇒ 变异台
+  现在显式把 `total === 0` 判为 BAD，并报「变异把构建搞坏了」。
+  Doc: `docs/R396-which-conversation-am-i-typing-into.md`.

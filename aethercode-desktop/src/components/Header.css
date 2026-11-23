@@ -20,6 +20,20 @@
   color: var(--accent);
 }
 .header-sep { color: var(--text-dim); opacity: 0.5; }
+/* R396: the session this window is showing. Dimmer than the task
+ * name on purpose — the task is what you are DOING right now, the
+ * session is the container it happens in. `overflow: hidden` also
+ * gives the flex item an automatic minimum size of 0, so a long
+ * name shrinks with an ellipsis instead of pushing the task name
+ * out of the bar. The tooltip carries the full name + the id. */
+.header-session-name {
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
 .header-task-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px; }
 /* R350 (UX P1-3): session-switch fade transition. When the
    active label changes (user picked a different session from

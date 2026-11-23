@@ -128,11 +128,30 @@ export function Header({
     // not nagged forever.
     lastFailedStopReason, lastFailedAt,
     pickCwd, cwd,
+    // R396: WHICH conversation is this window showing? The
+    // header carried the TASK name and the input bar carried the
+    // CWD — but never the SESSION. With several sessions under
+    // one project (the user's 7 sessions all shared one cwd), the
+    // cwd does not tell you which conversation a message lands in.
+    // That gap is how a test turn ended up inside the user's own
+    // conversation: neither the user nor I could tell.
+    sessions, currentSessionId,
     // Theme state; setTheme() mirrors the value onto <html data-theme="...">, with the preference persisted to prefs.theme.
     theme, setTheme,
   } = useStore();
   const currentTask = tasks.find((t) => t.id === currentTaskId);
   const activeSubagent = currentTask ?? tasks.find((t) => t.status === 'running');
+
+  // R396: the session this window is showing. The title is the
+  // model's own 5-15 char summary (R393), so it reads like a name.
+  // A session that has not been titled yet falls back to a short
+  // id — an identity the user can match against the rail. ★ We
+  // never borrow ANOTHER session's title: showing the wrong name
+  // is worse than showing no name, because the user would believe
+  // their message goes somewhere it does not. ★
+  const activeSession = sessions.find((s) => s.id === currentSessionId);
+  const sessionLabel = activeSession?.title?.trim()
+    || (currentSessionId ? currentSessionId.slice(0, 8) : null);
   // The current query takes precedence over the Subagent as the "active" indicator; the two aren't mutually exclusive (a Subagent can run inside a query), and the query is more prominent in the header.
   const active = currentQuery ?? activeSubagent;
 
@@ -355,6 +374,26 @@ export function Header({
       <div className="header-left">
         <span className="header-brand">✦ AetherCode</span>
         <span className="header-sep">›</span>
+        {/* R396: the conversation this window is showing. It sits
+            between the brand and the task name because that is the
+            real hierarchy — app › session › task — and the task
+            name changes on every query while the session does not.
+            ★ The header has ~790px of free width (measured), so
+            this costs no layout pressure. ★ It used to live in the
+            input bar instead, but that strip is FULL: adding a
+            group there squeezed the others until their labels
+            wrapped and the bar grew from 26px to 42px. */}
+        {sessionLabel ? (
+          <>
+            <span
+              className="header-session-name"
+              title={`当前会话: ${sessionLabel}${activeSession?.title ? '' : '（尚未命名）'} · id ${currentSessionId ?? ''}`}
+            >
+              🗂 {sessionLabel}
+            </span>
+            <span className="header-sep">›</span>
+          </>
+        ) : null}
         <span
           className={`header-task-name header-fade header-fade-${phase}`}
           title={currentQuery ? 'Current query' : activeLabel}
