@@ -1096,6 +1096,131 @@ export function groupStepsBySubTask(
   return { bySub, pre };
 }
 
+/**
+ * One entry of the chat timeline.
+ *
+ * <p>Exported at module level (R394) so the RULES below can be tested
+ * directly instead of being pinned as strings in the source — the
+ * same discipline R391 applied to {@link groupStepsBySubTask}.
+ */
+export type TimelineEvent =
+  | { kind: 'user'; ts: number; message: ChatMessage }
+  | { kind: 'system'; ts: number; message: ChatMessage }
+  | { kind: 'preamble'; ts: number; steps: ChatStep[]; isLive: boolean }
+  | { kind: 'subtask'; ts: number; subTask: ChatSubTask; steps: ChatStep[]; isLive: boolean };
+
+/**
+ * R394: build the chat's chronological timeline.
+ *
+ * <p>★ WHY A STAGE WITH NO OUTPUT IS NOT A STAGE ★
+ * A sub-task card stands for "the work of this stage". A card that owns
+ * NO step is not work — it is a PLAN ITEM, and the plan already has a
+ * home: the right panel's "Plan" tab (`AgentTasksPanel`).
+ *
+ * <p>So the chat used to show the whole framework as a stack of
+ * title-only cards. The user's report (real machine, a task that was
+ * MODIFIED rather than started fresh):
+ *
+ * <pre>
+ *   [ 13392 chars of real work ]        ← one preamble block
+ *   实现 SortOrder 枚举与排序方向参数      ← empty card
+ *   新增 ByteArrayView / DescendingArrayView 视图   ← empty card
+ *   ArraySorter / SortAlgorithm / Sorters 接入…    ← empty card
+ *   … 7 cards, every one of them empty
+ * </pre>
+ *
+ * <p>★ WHY THE CARDS WERE EMPTY ★ The model declared the plan at the
+ * END of the turn (one `todo_write` with all seven items marked
+ * completed). Every work step was therefore opened BEFORE the plan
+ * existed, so no step could be attributed to a stage — the work stayed
+ * in the preamble bucket and the seven cards had nothing to show.
+ *
+ * <p>So a stage now appears in the chat only once it has produced
+ * something (or is live, or failed). The framework is not painted in
+ * the chat up front; the stages reveal themselves as they deliver —
+ * which is what the user asked for.
+ *
+ * <p>★ THE PLAN IS NOT LOST ★ The todo list lives in the right
+ * panel's "Plan" tab; this only stops the CHAT from repeating it as
+ * empty headings.
+ */
+export function buildTimeline(
+  messages: ChatMessage[],
+  steps: ChatStep[],
+  subTasks: ChatSubTask[],
+  currentSubTaskId: string | null,
+  isStreaming: boolean,
+): TimelineEvent[] {
+  const events: TimelineEvent[] = [];
+  // 1. User + system messages use their own timestamp.
+  for (const m of messages) {
+    if (m.role === 'user') events.push({ kind: 'user', ts: m.timestamp, message: m });
+    else if (m.role === 'system') events.push({ kind: 'system', ts: m.timestamp, message: m });
+  }
+  // 2. Group steps by sub-task.
+  const { bySub, pre } = groupStepsBySubTask(steps, subTasks);
+  // 3. Each sub-task is one event, timestamped to the first
+  //    step's start (or the sub-task's startedAt if no step
+  //    ran yet).
+  for (const st of subTasks) {
+    const own = bySub[st.id] ?? [];
+    const ts = own[0]?.startedAt ?? st.startedAt;
+    const isLive = isStreaming && st.id === currentSubTaskId && !st.summary;
+    // ★ R394: no output ⇒ no card. ★
+    // A FAILED stage stays visible even with no output — a failure
+    // the user cannot see is a failure the user cannot act on. A
+    // 'skipped' stage stays hidden: R391 already decided that an item
+    // the model dropped out of the plan leaves no card behind.
+    if (own.length === 0 && !isLive && st.status !== 'failed') continue;
+    events.push({ kind: 'subtask', ts, subTask: st, steps: own, isLive });
+  }
+  // 4. Preamble runs (no sub-task) — R278 splits by
+  //    `queryId` so each user prompt gets its own preamble
+  //    block, even when two consecutive prompts both
+  //    produce subTaskId=null steps. Without the split,
+  //    every step landed in one `pre[]` bucket and the
+  //    timeline emitted a single preamble event with the
+  //    FIRST step's ts — so the second prompt's user
+  //    bubble sorted AFTER the merged content (the user's
+  //    "second-prompt leak"). Steps without a queryId
+  //    (legacy / pre-R278) fall into the empty-string
+  //    bucket so they group together rather than scatter
+  //    one per step.
+  if (pre.length > 0) {
+    const preByQuery: Record<string, ChatStep[]> = {};
+    for (const s of pre) {
+      const qid = s.queryId ?? '';
+      (preByQuery[qid] ||= []).push(s);
+    }
+    for (const qSteps of Object.values(preByQuery)) {
+      const ts = qSteps[0].startedAt;
+      // Live when this preamble's last step is the
+      // currently-streaming one and the model hasn't
+      // declared any sub-task yet. The simple "subTasks
+      // empty" check is too coarse (a previous prompt's
+      // preamble can never be live once a later preamble
+      // has any steps) but it's the same heuristic the
+      // previous round used; the R278 split is what fixes
+      // the layout, not this live flag.
+      const isLive = isStreaming && subTasks.length === 0
+        && qSteps.some((s) => !s.done);
+      events.push({ kind: 'preamble', ts, steps: qSteps, isLive });
+    }
+  }
+  // 5. Sort ascending. Ties: keep user messages first
+  //    (they're prompts the model is responding to),
+  //    then sub-task blocks, then system messages on top
+  //    of where the model reacted.
+  const order: Record<TimelineEvent['kind'], number> = {
+    user: 0, preamble: 1, subtask: 1, system: 2,
+  };
+  events.sort((a, b) => {
+    if (a.ts !== b.ts) return a.ts - b.ts;
+    return order[a.kind] - order[b.kind];
+  });
+  return events;
+}
+
 export function MessageList() {
   const { messages, isStreaming, steps, subTasks, currentSubTaskId, currentSessionId } = useStore();
   // R713: defer the messages list so the input / scroll
@@ -1595,83 +1720,10 @@ export function MessageList() {
   // the chat reads top-to-bottom = oldest-to-newest, just
   // like a transcript. The streaming cursor still lives
   // on the last in-flight event (preamble or current sub-task).
-  type TimelineEvent =
-    | { kind: 'user'; ts: number; message: ChatMessage }
-    | { kind: 'system'; ts: number; message: ChatMessage }
-    | { kind: 'preamble'; ts: number; steps: ChatStep[]; isLive: boolean }
-    | { kind: 'subtask'; ts: number; subTask: ChatSubTask; steps: ChatStep[]; isLive: boolean };
-
-  const timeline = useMemo<TimelineEvent[]>(() => {
-    const events: TimelineEvent[] = [];
-    // 1. User + system messages use their own timestamp.
-    // R713: iterate over the deferred messages list so a
-    // 1-line text input update doesn't rebuild the
-    // 180-message timeline every keystroke. The cost of
-    // useDeferredValue is the timeline will lag the
-    // input by one paint, but for a 180-message session
-    // that's invisible (1 paint ≈ 16 ms) and the input
-    // feels instant.
-    for (const m of deferredMessages) {
-      if (m.role === 'user') events.push({ kind: 'user', ts: m.timestamp, message: m });
-      else if (m.role === 'system') events.push({ kind: 'system', ts: m.timestamp, message: m });
-    }
-    // 2. Group steps by sub-task.
-    const { bySub, pre } = groupStepsBySubTask(steps, subTasks);
-    // 3. Each sub-task is one event, timestamped to the first
-    //    step's start (or the sub-task's startedAt if no step
-    //    ran yet).
-    for (const st of subTasks) {
-      const own = bySub[st.id] ?? [];
-      const ts = own[0]?.startedAt ?? st.startedAt;
-      const isLive = isStreaming && st.id === currentSubTaskId && !st.summary;
-      events.push({ kind: 'subtask', ts, subTask: st, steps: own, isLive });
-    }
-    // 4. Preamble runs (no sub-task) — R278 splits by
-    //    `queryId` so each user prompt gets its own preamble
-    //    block, even when two consecutive prompts both
-    //    produce subTaskId=null steps. Without the split,
-    //    every step landed in one `pre[]` bucket and the
-    //    timeline emitted a single preamble event with the
-    //    FIRST step's ts — so the second prompt's user
-    //    bubble sorted AFTER the merged content (the user's
-    //    "second-prompt leak"). Steps without a queryId
-    //    (legacy / pre-R278) fall into the empty-string
-    //    bucket so they group together rather than scatter
-    //    one per step.
-    if (pre.length > 0) {
-      const preByQuery: Record<string, ChatStep[]> = {};
-      for (const s of pre) {
-        const qid = s.queryId ?? '';
-        (preByQuery[qid] ||= []).push(s);
-      }
-      for (const qSteps of Object.values(preByQuery)) {
-        const ts = qSteps[0].startedAt;
-        // Live when this preamble's last step is the
-        // currently-streaming one and the model hasn't
-        // declared any sub-task yet. The simple "subTasks
-        // empty" check is too coarse (a previous prompt's
-        // preamble can never be live once a later preamble
-        // has any steps) but it's the same heuristic the
-        // previous round used; the R278 split is what fixes
-        // the layout, not this live flag.
-        const isLive = isStreaming && subTasks.length === 0
-          && qSteps.some((s) => !s.done);
-        events.push({ kind: 'preamble', ts, steps: qSteps, isLive });
-      }
-    }
-    // 5. Sort ascending. Ties: keep user messages first
-    //    (they're prompts the model is responding to),
-    //    then sub-task blocks, then system messages on top
-    //    of where the model reacted.
-    const order: Record<TimelineEvent['kind'], number> = {
-      user: 0, preamble: 1, subtask: 1, system: 2,
-    };
-    events.sort((a, b) => {
-      if (a.ts !== b.ts) return a.ts - b.ts;
-      return order[a.kind] - order[b.kind];
-    });
-    return events;
-  }, [messages, steps, subTasks, currentSubTaskId, isStreaming]);
+  const timeline = useMemo<TimelineEvent[]>(
+    () => buildTimeline(deferredMessages, steps, subTasks, currentSubTaskId, isStreaming),
+    [messages, steps, subTasks, currentSubTaskId, isStreaming],
+  );
 
   return (
     // R713: wrap the whole message-list in an error boundary

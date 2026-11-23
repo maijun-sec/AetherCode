@@ -4152,3 +4152,42 @@ a gate. Both of those cost this round real time.
   了**：模型偶尔把请求原文当答案，那种标题写进 `title` 之后空槽守卫会永远
   保护它 ⇒ 派生值的守卫要**在写之前**拒掉明显不合格的形态（本轮：标题是 prompt
   的字面前缀 ⇒ 拒绝）。
+- **R394** (an empty card is not a stage): the user reported that a MODIFIED
+  task came back as "split into several big stages, and only the first one
+  shows content" — the chat showed one blob of work and SEVEN title-only
+  cards. The DOM probe: 9 blocks, 7 of them `has-subtask` with 18–52
+  characters each (the heading and nothing else). The transcript explains
+  it: the model declared the plan with ONE `todo_write` at the END of the
+  turn, so every work step was opened BEFORE the plan existed and nothing
+  could be attributed — the work stayed in the preamble bucket and the
+  seven cards had no output. **Lesson 1456 — 一张卡片代表的是「那一段的产出」，
+  不是一个计划项**：a stage with no output does not enter the chat; the
+  plan has its own home (the right panel's "Plan" tab / `AgentTasksPanel`),
+  and the chat must not repeat it as empty headings. Two things still
+  show: a LIVE stage (the streaming cursor needs a home) and a FAILED one
+  (a failure the user cannot see is a failure the user cannot act on);
+  'skipped' stays hidden per R391. **Lesson 1457 — 归属的前提是「计划先于
+  产出」**：a plan declared at the END leaves nothing to attribute, so the
+  stages can only be empty shells ⇒ the fix is a RULE (no output ⇒ no
+  card), not a re-attribution guess. **Lesson 1458 — 「更好的重构」会让按位置
+  pin 的断言变红**：R278's pin sliced MessageList.tsx between
+  `const timeline = useMemo` and the deps list; R394 moved that body into
+  the exported `buildTimeline`, so the pin went red on a refactor that made
+  the code BETTER ⇒ it was rewritten as a BEHAVIOUR test (two prompts ⇒ two
+  preamble blocks ⇒ order `user, preamble, user, preamble`), and
+  mutation-checked (single-bucket grouping ⇒ exactly 1 red). Doc:
+  `docs/R394-empty-stage-cards.md`.
+  **Lesson 1459 — 「杀掉还没就绪的子进程」是一条静默的失败路径。**
+  The desktop gives the daemon a 15s health window and then `child.kill()`s
+  it — under load (a maven build was running) the daemon missed the window,
+  so the app came up with NO daemon and only said "● Disconnected". A
+  TIMEOUT that tells the user nothing is indistinguishable from "it never
+  started" ⇒ timeouts must speak, and the budget must be sized for the
+  worst load, not an idle machine. (Found while deploying R394; NOT fixed
+  here — it needs the user's call.)
+  **Lesson 1460 — 单测证明规则，真机证明「模型会不会那样做」。**
+  "The model writes the plan at the END" cannot be staged by a unit test
+  (a stub client never writes a todo). So R394's final evidence is a
+  REAL-MACHINE A/B: the same prompt, both builds, real DOM readings —
+  6 stage cards / 5 empty before ⇒ 1 stage card / 0 empty after.
+  Doc: `docs/R394-empty-stage-cards.md`.
