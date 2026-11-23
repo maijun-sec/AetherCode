@@ -22,10 +22,10 @@ import { useState } from 'react';
 import { useStore, permissionModeLabel } from '../store';
 import './StatusBar.css';
 
-function shortenPath(p: string, max: number = 30): string {
-  if (p.length <= max) return p;
-  return '…' + p.slice(p.length - (max - 1));
-}
+// R395: `shortenPath` is GONE with the pre-warm chip that was its
+// only caller. The pre-warm design (R199) was retired in R361; the
+// chip it fed could never render, because the slot it read was
+// always null.
 
 /** R347: export the current session's chat timeline as Markdown
  *  and copy it to the clipboard. Power-user follow-up to the
@@ -110,7 +110,7 @@ async function exportSessionToClipboard(
 export function StatusBar() {
   const {
     connectionState, daemonInfo, engineState, tools, tasks,
-    isStreaming, preWarm, engineStats, subagent, skipStats,
+    isStreaming, engineStats, subagent, skipStats,
     steps,
     // pull `loopWarn` so the StatusBar can show a
     // persistent "⚠ loop detected" badge when the engine
@@ -442,18 +442,6 @@ export function StatusBar() {
               <span className="status-auto-approve-count"> {autoApprovedElevatedCount}</span>
             )}
           </button>
-        )}
-        {/* R82+ Issue 3: a pre-warmed sibling daemon means a
-            cwd switch into its directory is sub-second. Show
-            its target in the status bar so the user knows the
-            hot spare is armed. */}
-        {preWarm && (
-          <span
-            className="status-item prewarm"
-            title={`Pre-warmed daemon on port ${preWarm.info.port} for ${preWarm.cwd}. Switching to this directory is sub-second.`}
-          >
-            ⚡ pre-warm {shortenPath(preWarm.cwd)}
-          </span>
         )}
         {/* live subagent status. Mirrors the TUI
             StatusBar's inline indicator — shows the most

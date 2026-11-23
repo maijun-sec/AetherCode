@@ -33,7 +33,6 @@ import {
   MetricsSnapshot,
   TraceSummary,
   DaemonInfo,
-  PreWarmInfo,
 } from '../lib/methods';
 // re-export TaskInfo so components can
 // import it from the store (matches the pattern
@@ -1726,12 +1725,6 @@ interface AppState {
    *  badge in the activity indicator so the user sees the work
    *  in flight, not just the post-hoc summary. */
   compactionInProgress: boolean;
-  /** R82+ Issue 3: sibling daemon kept warm so a cwd switch into
-   *  its directory is sub-second. `cwd` is the directory it serves;
-   *  `info` is the DaemonInfo (port etc.) so we can swap it into
-   *  the primary slot without re-spawning. `lastSwappedAt` records
-   *  the last successful swap (for debugging / UI). */
-  preWarm: { cwd: string; info: PreWarmInfo; since: number } | null;
   /** per-todo adaptive control. When the engine hits the
    *  max-bumps limit, the run pauses with stop reason
    *  "awaiting_user_decision" and we surface a special input
@@ -2400,14 +2393,6 @@ interface AppState {
   resetDaemon: () => Promise<void>;
   setActivity: (a: AppState['currentActivity']) => void;
   clearActivity: () => void;
-  /** R82+ Issue 3: pre-warm a sibling cwd. Resolves to true if
-   *  a fresh daemon was spawned, false if there was already one
-   *  warm for that cwd (no-op). */
-  preWarmCwd: (path: string) => Promise<boolean>;
-  /** R82+ Issue 3: drop the pre-warmed daemon. Called on app exit
-   *  or when the user switches to a different cwd (the pre-warm
-   *  cwd is no longer "next likely target"). */
-  discardPreWarm: () => Promise<void>;
   /** dismiss the awaiting-decision prompt without sending
    *  a continuation. Used when the user wants to abandon the
    *  current task. */
@@ -4590,7 +4575,6 @@ export const useStore = create<AppState>((set, get) => {
     // completed". Renders a "compacting…" pill in the activity
     // indicator so the user sees the work in flight.
     compactionInProgress: false,
-    preWarm: null,
     awaitingUserDecision: null,
     // live subagent snapshot. Populated by the
     // `subagent_event` subscription above. See
@@ -4744,10 +4728,6 @@ export const useStore = create<AppState>((set, get) => {
                 connectionState: 'awaiting-cwd' as ConnectionState,
                 isConnected: false,
                 daemonInfo: null,
-                // Clear any pre-warm; the user is about to
-                // pick a folder, and the existing pre-warm
-                // (for a now-irrelevant cwd) is dead weight.
-                preWarm: null,
               });
               return;
             }
@@ -5214,15 +5194,6 @@ export const useStore = create<AppState>((set, get) => {
           rpcEventUnsubscribe = rpc.onRpcEvent((e) => {
             get().recordRpcEvent(e);
           });
-          // R82+ Issue 3: pre-warm a sibling cwd for sub-second
-          // switch. Best-effort; failure just means next setCwd
-          // pays the full 1-2s JVM startup cost.
-          try {
-            const sibling = suggestSibling(info.cwd || get().cwd);
-            if (sibling) await get().preWarmCwd(sibling);
-          } catch (e) {
-            console.warn('[store] pre-warm on initialize failed:', e);
-          }
           // respect the user's default-open-behaviour
           // preference. 'new' mints a fresh session so the
           // previous session's cwd / context doesn't leak
@@ -7891,8 +7862,6 @@ export const useStore = create<AppState>((set, get) => {
         cwdSwitchInProgress: true, transitionPhase: 'killing-old',
       });
       try {
-        try { await invoke('discard_pre_warm'); } catch {}
-        set({ preWarm: null });
         const cur = get().cwd;
         const real = await rpc.setCwd(cur ?? '.');
         set({ cwd: real.cwd, daemonInfo: null, transitionPhase: 'spawning-jvm' });
@@ -7902,29 +7871,6 @@ export const useStore = create<AppState>((set, get) => {
       } finally {
         set({ cwdSwitchInProgress: false, transitionPhase: 'idle' });
       }
-    },
-
-    preWarmCwd: async (path: string) => {
-      if (!path) return false;
-      const cur = get().preWarm;
-      if (cur && await samePath(cur.cwd, path)) return false; // already warm
-      // Drop the previous pre-warm if any.
-      if (cur) { try { await invoke('discard_pre_warm'); } catch {} }
-      try {
-        const info = await invoke<PreWarmInfo>('pre_warm_daemon', { path });
-        set({ preWarm: { cwd: path, info, since: Date.now() } });
-        console.log(`[store] pre-warmed daemon for ${path} (port=${info.port})`);
-        return true;
-      } catch (e) {
-        console.warn(`[store] pre_warm_daemon failed for ${path}:`, e);
-        set({ preWarm: null });
-        return false;
-      }
-    },
-
-    discardPreWarm: async () => {
-      try { await invoke('discard_pre_warm'); } catch {}
-      set({ preWarm: null });
     },
 
     dismissAwaitingUserDecision: () => set({ awaitingUserDecision: null }),
@@ -8825,33 +8771,16 @@ export function __test_handleLogNotification(params: any): void {
 // in the return object; this comment just records
 // that the interface must declare it.)
 
-// Path comparison that tolerates Windows case-insensitivity and
-// trailing separators. Both inputs are normalized through
-// `path.normalize`-equivalent (Windows is case-insensitive but
-// forward/back slashes are interchangeable; we lower-case + use
-// forward slashes).
-async function samePath(a: string, b: string): Promise<boolean> {
-  const na = a.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  const nb = b.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  return na === nb;
-}
-
-// Pick a sensible "sibling" cwd to pre-warm: the parent of the
-// current cwd, so a one-level-up switch is sub-second. If the
-// current cwd is a drive root (e.g. C:/) or equal to its parent,
-// skip …the user can re-trigger preWarmCwd manually if they want
-// a different target.
-function suggestSibling(cwd: string | null): string {
-  if (!cwd) return '';
-  const norm = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
-  const parent = norm.includes('/') ? norm.slice(0, norm.lastIndexOf('/')) : '';
-  if (!parent || parent === norm) return '';
-  // On Windows, ensure leading slash is preserved (e.g. C:/Users/foo
-  // →parent C:/Users, not C:). The path 'C:/' becomes '' which we
-  // reject above.
-  return parent.replace(/\//g, '\\');
-}
-
+// R395: the pre-warm helpers (`samePath` / `suggestSibling`) are
+// GONE. They belonged to the R199 "keep a sibling daemon warm so a
+// cwd switch is sub-second" design, which R361 retired: there is
+// ONE daemon, and a cwd switch is a single `switchProject` RPC
+// inside it. The Rust commands they called (`pre_warm_daemon` /
+// `discard_pre_warm`) were deleted with the rest of that dance, so
+// every launch was logging "pre_warm_daemon failed: Command
+// pre_warm_daemon not found" — a dead branch that only ever
+// produced noise.
+//
 // --- Streaming-stale watchdog -------------------------------------------
 // If `isStreaming` is true but no chunk has arrived in STREAM_STALE_MS,
 // the daemon is wedged (e.g. network blip without a clean WS close).

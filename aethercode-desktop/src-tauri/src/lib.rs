@@ -69,8 +69,49 @@ use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::connect_async;
 
-const DAEMON_HEALTH_TIMEOUT_MS: u64 = 15_000;
+/// R395: how long we wait for a freshly-spawned daemon to answer
+/// `/healthz` before we stop it and report a failure.
+///
+/// R395 rationale — the old bound was 15s, which was only ever
+/// enough on an IDLE machine. The daemon's startup is JVM boot +
+/// engine assembly + the HTTP bind: ~7s on a quiet box, but
+/// 20-35s when the machine is busy (one Maven build in another
+/// window is enough). At 15s the desktop killed a daemon that was
+/// two seconds away from answering; the retry then killed the
+/// next one, and so on — a silent loop the user could only see
+/// as "Disconnected".
+///
+/// Every OTHER failure mode is still caught in well under a
+/// second (the JVM exits at once on a port conflict or a broken
+/// jar), so raising this bound only ever affects the "the JVM is
+/// alive but slow" case — which is exactly the case worth
+/// surviving.
+///
+/// Override with `AETHERCODE_DAEMON_HEALTH_TIMEOUT_MS` (ms).
+const DAEMON_HEALTH_TIMEOUT_MS: u64 = 60_000;
 const DAEMON_HEALTH_POLL_MS: u64 = 200;
+
+/// R395: the effective health window. The env var wins so an
+/// operator on a very slow box (or a CI runner) can widen or
+/// narrow it without a rebuild.
+///
+/// R395: out-of-range values are IGNORED, not clamped — a typo
+/// must not turn into a 0ms window that kills every daemon the
+/// instant it is spawned.
+fn parse_health_timeout(raw: Option<&str>) -> Option<u64> {
+    let n = raw?.trim().parse::<u64>().ok()?;
+    if (1_000..=600_000).contains(&n) {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+/// R395: read the env override, fall back to the default.
+fn daemon_health_timeout_ms() -> u64 {
+    let raw = std::env::var("AETHERCODE_DAEMON_HEALTH_TIMEOUT_MS").ok();
+    parse_health_timeout(raw.as_deref()).unwrap_or(DAEMON_HEALTH_TIMEOUT_MS)
+}
 // R705: trimmed to a single port. The pre-R361 design spawned
 // a JVM on every port in `DESKTOP_DAEMON_PORTS` in parallel,
 // kept one alive, and killed the other 5 — pure waste once
@@ -401,6 +442,12 @@ async fn spawn_daemon(
     // came up first, kill the rest". On a healthy machine that drops
     // the cold-start cost from ~75s to ~15s.
     //
+    // R395: with a single port left (R705 trimmed the list) the
+    // parallel race is moot, but the window it waits out is NOT: it is
+    // now 60s, because the one case the window covers is "the JVM is
+    // alive but slow", and killing a daemon that was about to answer is
+    // worse than waiting.
+    //
     // Each per-port task owns its own Child; if a sibling wins the race
     // we get the losing tasks' Child handles out of the result channel
     // and kill them. We don't abort the tokio task — abort would orphan
@@ -457,7 +504,126 @@ async fn spawn_daemon(
     }
     match winner {
         Some((port, child)) => Ok((DaemonInfo::from_port(port, true, jar, cwd), child)),
-        None => Err(format!("Failed to spawn daemon: {}", last_err)),
+        // R395: `last_err` is already a human-readable sentence —
+        // it names the port, says what happened, and quotes the
+        // daemon's own log. Prefixing it with "Failed to spawn
+        // daemon:" only buried the useful part.
+        None if !last_err.is_empty() => Err(last_err),
+        None => Err(format!(
+            "daemon did not start on port {}: no daemon could be launched",
+            ports.first().copied().unwrap_or(22888)
+        )),
+    }
+}
+
+/// R395: the desktop writes its OWN banner as the first line of the
+/// daemon's log ("===== prior round daemon spawn port=… ====="). That
+/// line is not the daemon's voice, so quoting it back as "what the
+/// log says" would be a lie — the user would read our own bookkeeping
+/// as the daemon's diagnosis. Lines carrying this marker are skipped;
+/// if that leaves nothing, the message says so honestly.
+const DAEMON_LOG_BANNER_MARKER: &str = "daemon spawn port=";
+
+/// R395: the daemon's own log is the ONLY place that says WHY it
+/// failed. The desktop redirects the child's stdout+stderr into
+/// `%TEMP%/aethercode-daemon-port<port>.log`, so when the spawn
+/// fails we can copy the reason out of it instead of handing the
+/// user "port 22888: never came up".
+///
+/// R395: we return the most informative line — the LAST line that
+/// looks like an error, or (when there is none) the last non-empty
+/// line. Stack-trace frames (`at com.foo.Bar.baz(Bar.java:42)`) are
+/// noise; the exception line above them is the reason. Returning
+/// "the last line" instead would hand the user a stack frame.
+fn daemon_log_tail(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const MAX_BYTES: u64 = 16 * 1024;
+    const MAX_LINE_CHARS: usize = 300;
+
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    if len == 0 {
+        return None;
+    }
+    let start = len.saturating_sub(MAX_BYTES);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.trim_end())
+        .filter(|l| !l.trim().is_empty())
+        // R395: the desktop's own banner is not the daemon's voice.
+        .filter(|l| !l.contains(DAEMON_LOG_BANNER_MARKER))
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    // R395: when we read only the TAIL of a big file, the first line
+    // we got is a fragment (the seek landed mid-line). Drop it —
+    // a half-line is worse than no line.
+    if start > 0 && lines.len() > 1 {
+        lines.remove(0);
+    }
+    let looks_like_error = |l: &str| {
+        let low = l.to_ascii_lowercase();
+        low.contains("exception")
+            || low.contains("error")
+            || low.contains("caused by")
+            || low.contains("fatal")
+            || low.contains("failed")
+            || low.contains("cannot ")
+            || low.contains("unable ")
+            || low.contains("refused")
+    };
+    let picked = lines
+        .iter()
+        .rev()
+        .find(|l| looks_like_error(l))
+        .copied()
+        .or_else(|| lines.last().copied())?;
+    let mut s = picked.trim().to_string();
+    if s.chars().count() > MAX_LINE_CHARS {
+        s = s.chars().take(MAX_LINE_CHARS).collect::<String>() + "…";
+    }
+    Some(s)
+}
+
+/// R395: build the message the user actually reads.
+///
+/// The old strings ("port 22888: never came up") named an internal
+/// detail and stopped there. The new one says what happened, quotes
+/// the daemon's own last word on the subject, and names the log
+/// file so the user can go read the rest of it.
+fn daemon_start_failure(port: u16, log_path: &Path, headline: &str) -> String {
+    let mut msg = format!("daemon did not start on port {}: {}\n", port, headline);
+    match daemon_log_tail(log_path) {
+        Some(line) => {
+            msg.push_str(&format!(
+                "Its log ({}) says:\n  {}\n",
+                log_path.display(),
+                line
+            ));
+        }
+        None => {
+            msg.push_str(&format!(
+                "Its log ({}) has nothing from the daemon — it produced no output.\n",
+                log_path.display()
+            ));
+        }
+    }
+    msg
+}
+
+/// R395: a one-line description of how the JVM exited. `ExitStatus`
+/// has no `Display` impl, and `code()` is `None` when the process was
+/// killed by a signal — which is exactly the case worth spelling
+/// out instead of printing "None".
+fn describe_exit(status: std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(c) => format!("exit code {}", c),
+        None => "it was terminated without an exit code".to_string(),
     }
 }
 
@@ -474,7 +640,9 @@ async fn spawn_daemon(
 ///   - spawn failed (e.g. java not on PATH, jar missing)
 ///   - JVM exited within 300 ms of spawn (e.g. port-bind failure)
 ///   - JVM stayed alive but never answered `/healthz` within
-///     `DAEMON_HEALTH_TIMEOUT_MS` (15s)
+///     `DAEMON_HEALTH_TIMEOUT_MS` (60s by default — R395; the old
+///     15s killed daemons that were about to come up on a busy
+///     machine)
 ///   - JVM died mid-startup after the 300 ms grace
 async fn spawn_daemon_on_port(
     port: u16,
@@ -599,25 +767,53 @@ async fn spawn_daemon_on_port(
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => return Err(format!("port {}: spawn failed: {}", port, e)),
+        // R395: say it in words the user can act on. "spawn failed:
+        // program not found" means "java is not on PATH"; the user
+        // needs to know THAT, not the errno spelling.
+        Err(e) => {
+            return Err(format!(
+                "daemon did not start on port {}: the JVM could not be launched ({})\nLog: {}",
+                port,
+                e,
+                log_path.display()
+            ))
+        }
     };
 
     tokio::time::sleep(Duration::from_millis(300)).await;
     if let Ok(Some(status)) = child.try_wait() {
-        return Err(format!("port {}: exited immediately with {:?}", port, status));
+        return Err(daemon_start_failure(
+            port,
+            &log_path,
+            &format!("it exited immediately ({})", describe_exit(status)),
+        ));
     }
-    let deadline = Instant::now() + Duration::from_millis(DAEMON_HEALTH_TIMEOUT_MS);
+    // R395: the window is read through the env-aware accessor so an
+    // operator can widen it; the default is `DAEMON_HEALTH_TIMEOUT_MS`.
+    let timeout_ms = daemon_health_timeout_ms();
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     while Instant::now() < deadline {
         if is_healthy(port).await {
             return Ok(child);
         }
         if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!("port {}: died mid-startup with {:?}", port, status));
+            return Err(daemon_start_failure(
+                port,
+                &log_path,
+                &format!("it crashed while starting up ({})", describe_exit(status)),
+            ));
         }
         tokio::time::sleep(Duration::from_millis(DAEMON_HEALTH_POLL_MS)).await;
     }
     let _ = child.kill();
-    Err(format!("port {}: never came up", port))
+    Err(daemon_start_failure(
+        port,
+        &log_path,
+        &format!(
+            "it did not answer /healthz within {}s, so it was stopped",
+            timeout_ms / 1000
+        ),
+    ))
 }
 
 /// R328: kill any orphan `java` process holding the given
@@ -1739,6 +1935,174 @@ mod desktop_state_tests {
         save_persisted_cwd_to(&path, &cwd).unwrap();
         let tmp = path.with_extension("json.tmp");
         assert!(!tmp.exists(), "tmp file should be gone after rename");
+    }
+}
+
+// ---- R395: the daemon's start-up window, and what the user is told
+// when it fails ----
+
+#[cfg(test)]
+mod daemon_start_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let base = std::env::temp_dir().join("aethercode-tests").join(name);
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    #[test]
+    fn the_health_window_outlasts_a_busy_machine() {
+        // R395: the whole point of raising the window is that a
+        // daemon on a loaded box needs 20-35s. Pin the FLOOR, not
+        // the exact number — the requirement is "long enough for a
+        // slow start", and a future round may widen it further.
+        assert!(
+            DAEMON_HEALTH_TIMEOUT_MS >= 30_000,
+            "the daemon health window must outlast a slow start (got {}ms)",
+            DAEMON_HEALTH_TIMEOUT_MS
+        );
+    }
+
+    #[test]
+    fn the_health_window_override_is_parsed_not_guessed() {
+        assert_eq!(parse_health_timeout(Some("45000")), Some(45_000));
+        assert_eq!(parse_health_timeout(Some(" 45000 ")), Some(45_000));
+        // out of range / garbage → None, so the DEFAULT wins.
+        // A typo must not become a 0ms window that kills every
+        // daemon the instant it is spawned.
+        assert_eq!(parse_health_timeout(Some("0")), None);
+        assert_eq!(parse_health_timeout(Some("999")), None);
+        assert_eq!(parse_health_timeout(Some("600001")), None);
+        assert_eq!(parse_health_timeout(Some("abc")), None);
+        assert_eq!(parse_health_timeout(None), None);
+    }
+
+    #[test]
+    fn the_log_tail_picks_the_reason_not_the_stack_frame() {
+        // R395: the user must be shown WHY. A stack frame
+        // ("at com.foo.Bar.baz(Bar.java:42)") is not why.
+        let dir = make_temp_dir("log-tail");
+        let log = dir.join("daemon.log");
+        fs::write(
+            &log,
+            b"===== daemon spawn port=22888 =====\n\
+              INFO starting up\n\
+              ERROR java.lang.OutOfMemoryError: Java heap space\n\
+              \tat com.foo.Bar.baz(Bar.java:42)\n",
+        )
+        .unwrap();
+        let tail = daemon_log_tail(&log).expect("a log line");
+        assert!(
+            tail.contains("OutOfMemoryError"),
+            "the tail must quote the exception, got: {}",
+            tail
+        );
+        assert!(
+            !tail.contains("Bar.java"),
+            "the tail must not be a stack frame, got: {}",
+            tail
+        );
+    }
+
+    #[test]
+    fn the_log_tail_falls_back_to_the_last_line() {
+        let dir = make_temp_dir("log-tail-plain");
+        let log = dir.join("daemon.log");
+        fs::write(&log, b"first\nsecond\nlast thing\n").unwrap();
+        assert_eq!(daemon_log_tail(&log).as_deref(), Some("last thing"));
+    }
+
+    #[test]
+    fn the_log_tail_is_none_for_a_missing_or_empty_log() {
+        let dir = make_temp_dir("log-tail-missing");
+        assert_eq!(daemon_log_tail(&dir.join("nope.log")), None);
+        let empty = dir.join("empty.log");
+        fs::write(&empty, b"").unwrap();
+        assert_eq!(daemon_log_tail(&empty), None);
+    }
+
+    #[test]
+    fn the_log_tail_does_not_quote_our_own_banner() {
+        // R395: the desktop writes its own banner as the first line
+        // of the daemon's log. Quoting it back as "what the log says"
+        // would present the desktop's bookkeeping as the daemon's
+        // diagnosis. A timeout with no daemon output must therefore
+        // say "nothing", not recite our own banner.
+        let dir = make_temp_dir("log-tail-banner");
+        let log = dir.join("daemon.log");
+        fs::write(
+            &log,
+            b"===== prior round daemon spawn port=22888 pid=???? jar=C:\\x cwd=D:\\tmp =====\n",
+        )
+        .unwrap();
+        assert_eq!(
+            daemon_log_tail(&log),
+            None,
+            "our own banner must not be quoted back as the daemon's words"
+        );
+    }
+
+    #[test]
+    fn the_failure_message_says_what_happened_and_where_to_look() {
+        let dir = make_temp_dir("failure-msg");
+        let log = dir.join("daemon.log");
+        fs::write(&log, b"ERROR Address already in use\n").unwrap();
+        let msg = daemon_start_failure(22888, &log, "it exited immediately (exit code 1)");
+        assert!(msg.contains("22888"), "the port must be named: {}", msg);
+        assert!(
+            msg.contains("it exited immediately"),
+            "the headline must survive: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Address already in use"),
+            "the reason must be quoted: {}",
+            msg
+        );
+        assert!(
+            msg.contains(&log.display().to_string()),
+            "the log path must be given: {}",
+            msg
+        );
+        assert!(
+            !msg.contains("never came up"),
+            "the old opaque string must be gone: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn the_failure_message_survives_a_log_with_nothing_in_it() {
+        let dir = make_temp_dir("failure-msg-empty");
+        let log = dir.join("daemon.log");
+        fs::write(&log, b"").unwrap();
+        let msg = daemon_start_failure(22888, &log, "it did not answer /healthz within 60s");
+        assert!(msg.contains("22888"), "the port must be named: {}", msg);
+        assert!(msg.contains("60s"), "the headline must survive: {}", msg);
+        assert!(
+            msg.contains(&log.display().to_string()),
+            "the log path must be given even with an empty log: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn describe_exit_names_the_code() {
+        #[cfg(windows)]
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "exit 3"])
+            .status()
+            .unwrap();
+        #[cfg(not(windows))]
+        let status = std::process::Command::new("sh")
+            .args(["-c", "exit 3"])
+            .status()
+            .unwrap();
+        assert_eq!(describe_exit(status), "exit code 3");
     }
 }
 

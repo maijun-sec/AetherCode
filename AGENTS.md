@@ -4072,11 +4072,13 @@ a gate. Both of those cost this round real time.
   而库里明明有 6 个 `trashed_at` 非空。**Lesson 1446 — 变红的集合要分清
   「该红的」与「理应不红的」**：护栏不红不是漏洞，是护栏的定义。
   Doc: `docs/R392-session-library-and-cwd.md`.
-  **已知遗留（本轮未动）**：`initialize()` 仍会调 `preWarmCwd(suggestSibling(...))`
+  **已知遗留 ⇒ 已在 R395 清掉**：`initialize()` 曾调 `preWarmCwd(suggestSibling(...))`
   ⇒ 每次启动打一条 `[store] pre_warm_daemon failed for <父目录>: Command
   pre_warm_daemon not found`。R361 已把 Rust 侧的 pre-warm 整个撤掉，
-  **store 里的调用是死代码**；它无害（被 catch 住），但会在排查启动问题时
-  误导人。清理它值得单独一轮。
+  **store 里的调用是死代码**；R395 把 TS 半边整条删掉（状态槽 / 两个 action /
+  两个辅助函数 / StatusBar 的指示器与样式 / `PreWarmInfo` 类型），并补了一条
+  **跨文件门禁**：渲染层每个 `invoke('X')` 在 Rust 侧都必须有
+  `#[tauri::command] fn X`。
 - **R393**（用户：「我看现在取的标题，好像是我完整的prompt内容，能不能概括一下，
   比如让模型给你取个 5-15个字的标题来使用？」）：session 的标题**就是**第一条
   prompt 原文 —— `listSessions` 的解析顺序是
@@ -4183,11 +4185,67 @@ a gate. Both of those cost this round real time.
   so the app came up with NO daemon and only said "● Disconnected". A
   TIMEOUT that tells the user nothing is indistinguishable from "it never
   started" ⇒ timeouts must speak, and the budget must be sized for the
-  worst load, not an idle machine. (Found while deploying R394; NOT fixed
-  here — it needs the user's call.)
+  worst load, not an idle machine. (Found while deploying R394; FIXED in
+  R395 — see the R395 entry below.)
   **Lesson 1460 — 单测证明规则，真机证明「模型会不会那样做」。**
   "The model writes the plan at the END" cannot be staged by a unit test
   (a stub client never writes a todo). So R394's final evidence is a
   REAL-MACHINE A/B: the same prompt, both builds, real DOM readings —
   6 stage cards / 5 empty before ⇒ 1 stage card / 0 empty after.
   Doc: `docs/R394-empty-stage-cards.md`.
+
+- **R395** (the daemon must start, and say why when it does not): two
+  defects, one on each side of the wire.
+  **(1) The desktop killed the daemon it had just started.** The health
+  window was **15s**; startup is JVM boot + engine assembly + the HTTP
+  bind, i.e. ~7s on an idle box but **20-35s under load** (one maven
+  build in another window was enough). At 15s the desktop `child.kill()`s
+  a daemon that was two seconds away from answering, the retry kills
+  the next one — a silent kill/restart loop whose only symptom was
+  "● Disconnected" and a log holding nothing but a spawn banner. The
+  window is now **60s** (`AETHERCODE_DAEMON_HEALTH_TIMEOUT_MS` overrides
+  it; out-of-range values are IGNORED, never clamped).
+  **Lesson 1461 — 一个「超时」如果不给用户任何话，它和「没启动」在用户
+  眼里是同一件事。** The message now names the port, quotes the
+  daemon's OWN last word (`daemon_log_tail` picks the last ERROR-ish
+  line — a stack frame is not a reason), and names the log file.
+  **Lesson 1462 — 窗口要按「最慢的那个合法情形」定，不是按「平均」。**
+  Every ILLEGAL failure (crash, port conflict, broken jar) is detected
+  sub-second, so a wider window only ever affects the "alive but slow"
+  case — the only one worth waiting for.
+  **(2) The renderer called a command that no longer exists.** R361
+  retired the pre-warm design (one daemon; a cwd switch is one
+  `switchProject` RPC inside it) and deleted the Rust commands
+  `pre_warm_daemon` / `discard_pre_warm` — **but the TS half stayed**,
+  so every launch called a missing command and logged one
+  `console.warn` nobody reads.
+  **Lesson 1463 — 「这个命令不存在」不会自己变成 bug，它只是一条没人看
+  的 warning。** A dead call can live in the tree for dozens of rounds,
+  because its failure shape is "a log line", not "a red test". The
+  whole surface is gone now, and a NEW cross-file gate keeps it gone:
+  every `invoke('X')` in `src/**` must have a `#[tauri::command] fn X`.
+  **Lesson 1464 — 一条「这个名字不许出现」的 pin，会把解释它为什么消失
+  的那段话也一起禁掉。** Two pins went red on the very comments that
+  explained the removal ⇒ the fix is to read CODE, not prose:
+  `src/test-support/strip-comments.ts` (12-case self-test; it must not
+  be fooled by `//` inside a string, and it tells a Rust LIFETIME
+  `State<'_, AppState>` from a char literal `'a'`).
+  **Lesson 1465 — 事实住在两处时，pin 必须读两处。** One-place facts get
+  an invariant pin (the window is pinned by its FLOOR, ≥ 30s, not by its
+  spelling); two-place facts get a CROSS-CHECK, because a one-sided pin
+  goes green on a rename.
+  **Lesson 1466 — 「红集合为空」的第一嫌疑永远是量具，不是被测物。** The
+  first mutation harness reported "0 red" for all 7 mutations: `npx` is
+  a `.cmd` shim on Windows, `execFileSync` could not launch it, and the
+  exception was swallowed — an empty red set and a working pin look
+  identical. Final: 7/7 mutations red exactly as designed (M5 red twice
+  — one defect, two gates). Doc: `docs/R395-daemon-startup-truth.md`.
+  **Lesson 1467 — 引用一份日志时，先分清「谁写的」。** The live run quoted the
+  desktop's OWN banner back to the user as "what the log says" — our
+  bookkeeping, dressed up as the daemon's diagnosis. Filter our own lines out;
+  if nothing is left, say so honestly instead of quoting something else.
+  **待办 ② 的核实结果：「＋」新建的会话没有再落到「未关联项目」** — the
+  DB shows every live session with `cwd = D:\tmp\abc_1`, the daemon's
+  `listSessions` agrees, and the rendered rail has ONE group and no
+  "未关联项目". R392 fixed it; the earlier sighting was an OLD
+  (cwd=NULL, already trashed) session. Nothing to fix.

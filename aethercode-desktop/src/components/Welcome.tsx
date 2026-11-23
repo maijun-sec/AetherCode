@@ -87,12 +87,20 @@ export function Welcome({ error, onRetry, awaitingCwd }: WelcomeProps) {
     return (
       <div className="welcome error">
         <h1>⚠ Connection failed</h1>
-        <p className="welcome-error-msg">{error}</p>
+        {/* R395: the daemon's start-up failure is a MULTI-LINE
+            message: what happened, then the daemon's own last word
+            on the subject, then where its log is. Rendering it as
+            one collapsed paragraph (the old default) buried the
+            reason — which is the only part the user can act on.
+            The CSS keeps the line breaks; this box just carries
+            them. */}
+        <pre className="welcome-error-msg">{error}</pre>
         {onRetry && <button className="primary" onClick={onRetry}>Retry</button>}
         <p className="welcome-hint">
-          The Tauri Rust core auto-spawns the R80 daemon from <code>resources/aethercode.jar</code> or
-          <code>..\aethercode\dist\aethercode-*.jar</code>. If the daemon can't bind a port,
-          another instance may be using it.
+          The desktop auto-spawns the daemon from <code>resources/aethercode.jar</code>. If the
+          message above names a log file, that file has the daemon's own output — the reason is
+          usually the last thing it printed. If the daemon can't bind a port, another instance may
+          be using it.
         </p>
       </div>
     );

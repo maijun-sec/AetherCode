@@ -298,6 +298,12 @@
   border-radius: 4px;
   max-width: 600px;
   word-break: break-word;
+  /* R395: the daemon's start-up failure is multi-line (what
+     happened / the daemon's last word / where its log is).
+     Without pre-wrap the browser collapses it into one run-on
+     paragraph and the reason disappears into the middle. */
+  white-space: pre-wrap;
+  text-align: left;
   margin: 4px 0 12px 0;
 }
 

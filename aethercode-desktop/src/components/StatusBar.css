@@ -166,15 +166,9 @@
   cursor: help;
 }
 
-.status-item.prewarm {
-  color: #f0b95a;
-  font-weight: 500;
-  background: rgba(240, 185, 90, 0.08);
-  padding: 2px 6px;
-  border-radius: 3px;
-  border: 1px solid rgba(240, 185, 90, 0.25);
-  max-width: 240px;
-}
+/* R395: the `.status-item.prewarm` rule is GONE with the chip it
+   styled (see StatusBar.tsx). The pre-warm design was retired in
+   R361; the chip could never render. */
 
 /* subagent live indicator. Four tones — running
  * (cyan / accent), success (green, completed), error

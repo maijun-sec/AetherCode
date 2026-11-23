@@ -443,18 +443,12 @@ export interface DaemonInfo {
   cwd?: string;
 }
 
-/** R82+ Issue 3: info about a pre-warmed "sibling" daemon kept
- *  hot for a sub-second cwd swap. Same shape as DaemonInfo but
- *  with a guaranteed `cwd` field (used to match against
- *  setCwd requests). */
-export interface PreWarmInfo {
-  port: number;
-  wsUrl: string;
-  httpUrl: string;
-  spawned: boolean;
-  jarPath: string;
-  cwd: string;
-}
+// R395: the `PreWarmInfo` interface is GONE. It described the
+// R199 "keep a sibling daemon warm" design, which R361 retired
+// (one daemon; a cwd switch is a single `switchProject` RPC
+// inside it) and whose Rust commands were deleted with it. The
+// renderer kept the type (and the slot that held it) long after
+// the feature it described was gone.
 
 export interface ModelInfo {
   id: string;

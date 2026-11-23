@@ -107,23 +107,20 @@ export async function installTauriMock(page: Page): Promise<void> {
         // return value, not { ok, value }.
         return await handler(params);
       }
-      // Non-RPC Tauri commands (`ensure_daemon`,
-      // `discard_pre_warm`, `start_pre_warm`,
-      // `pre_warm_daemon`, `app_state`, etc.). The
-      // default for the renderer is a sane empty for
-      // everything except the daemon-spawn commands,
-      // which the store treats as a DaemonInfo with cwd
-      // + port (the daemonInfo.port, info.port, etc.
-      // accesses blow up on null otherwise).
+      // Non-RPC Tauri commands (`ensure_daemon`, `set_cwd`,
+      // `get_cwd`, `app_state`, etc.). The default for the
+      // renderer is a sane empty for everything except the
+      // daemon-spawn commands, which the store treats as a
+      // DaemonInfo with cwd + port (the daemonInfo.port,
+      // info.port, etc. accesses blow up on null otherwise).
+      //
+      // R395: the pre-warm mocks (`pre_warm_daemon`,
+      // `discard_pre_warm`) are GONE with the feature — the
+      // renderer no longer asks for a command the Rust side
+      // deleted in R361.
       console.log('[mock] invoke', cmd, args);
       if (cmd === 'ensure_daemon') {
         return { cwd: null, port: 17888, version: '0.0.0-mock' };
-      }
-      if (cmd === 'pre_warm_daemon') {
-        // store/index.ts line 5184 reads `info.port`
-        // after the pre-warm; null would crash the
-        // initialize() flow.
-        return { cwd: args?.path ?? null, port: 17889 };
       }
       // Default RPC responses: a couple of common ones
       // return shaped objects so the store doesn't NPE on

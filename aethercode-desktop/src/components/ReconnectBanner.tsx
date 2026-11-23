@@ -71,10 +71,16 @@ export function ReconnectBanner() {
 
   let label = '';
   let detail = '';
+  // R395: the daemon's start-up failure is a MULTI-LINE message
+  // (what happened / the daemon's own last word / where its log
+  // is). This banner is a ONE-LINE strip (the CSS clamps it to a
+  // single ellipsised row), so it shows the headline — the first
+  // line — and the full message lives in the Welcome error panel.
+  const headline = (initError ?? '').split('\n')[0].trim();
   if (isError) {
     label = '⚠ Disconnected';
-    detail = initError
-      ? `${reconnectAttempts} reconnect attempts failed. Last error: ${initError}`
+    detail = headline
+      ? `${reconnectAttempts} reconnect attempts failed. Last error: ${headline}`
       : `${reconnectAttempts} reconnect attempts failed.`;
   } else if (cwdSwitchInProgress) {
     // User-initiated cwd switch: show the target + current phase
@@ -86,7 +92,7 @@ export function ReconnectBanner() {
     label = reconnectAttempts > 0
       ? `↻ Reconnecting (attempt ${reconnectAttempts})…`
       : '↻ Connecting to daemon…';
-    detail = initError ? `Last error: ${initError}` : '';
+    detail = headline ? `Last error: ${headline}` : '';
   } else {
     label = `Connection: ${connectionState}`;
   }
