@@ -55,7 +55,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       .map((s) => ({
         kind: 'session' as const,
         id: s.id,
-        label: s.name?.trim() || `Session ${s.id.slice(-8)}`,
+        label: s.title?.trim() || `Session ${s.id.slice(-8)}`,
         meta: s.lastUsedAt
           ? `${relativeTime(s.lastUsedAt)} · ${s.messageCount ?? 0} msg`
           : `${s.messageCount ?? 0} msg`,

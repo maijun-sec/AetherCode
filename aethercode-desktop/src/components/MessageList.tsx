@@ -1069,6 +1069,33 @@ return (
   return null;
 }
 
+/**
+ * R391: split the run's steps into "owned by a sub-task" and "preamble
+ * (no owner)".
+ *
+ * <p>A step names the sub-task it belongs to, but the sub-task it
+ * names may no longer EXIST: the model dropped that todo item from
+ * its plan and the store removed the card (see the store's
+ * {@code sub_task_end} handler). Such a step must not vanish — it
+ * falls back to the preamble bucket so its output stays visible.
+ *
+ * <p>Exported so the rule can be tested directly instead of being
+ * pinned as a string in the source.
+ */
+export function groupStepsBySubTask(
+  steps: ChatStep[],
+  subTasks: ChatSubTask[],
+): { bySub: Record<string, ChatStep[]>; pre: ChatStep[] } {
+  const bySub: Record<string, ChatStep[]> = {};
+  const pre: ChatStep[] = [];
+  const knownSubTaskIds = new Set(subTasks.map((st) => st.id));
+  for (const s of steps) {
+    if (s.subTaskId && knownSubTaskIds.has(s.subTaskId)) (bySub[s.subTaskId] ||= []).push(s);
+    else pre.push(s);
+  }
+  return { bySub, pre };
+}
+
 export function MessageList() {
   const { messages, isStreaming, steps, subTasks, currentSubTaskId, currentSessionId } = useStore();
   // R713: defer the messages list so the input / scroll
@@ -1589,12 +1616,7 @@ export function MessageList() {
       else if (m.role === 'system') events.push({ kind: 'system', ts: m.timestamp, message: m });
     }
     // 2. Group steps by sub-task.
-    const bySub: Record<string, ChatStep[]> = {};
-    const pre: ChatStep[] = [];
-    for (const s of steps) {
-      if (s.subTaskId) (bySub[s.subTaskId] ||= []).push(s);
-      else pre.push(s);
-    }
+    const { bySub, pre } = groupStepsBySubTask(steps, subTasks);
     // 3. Each sub-task is one event, timestamped to the first
     //    step's start (or the sub-task's startedAt if no step
     //    ran yet).

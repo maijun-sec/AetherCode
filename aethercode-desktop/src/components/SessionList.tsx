@@ -57,11 +57,16 @@ function formatLastUsed(ts?: number): string {
 }
 
 function sessionLabel(s: SessionInfo): string {
-  // Prefer the engine-provided name; fall back to the
+  // Prefer the engine-provided title; fall back to the
   // first-user-message preview (prior round), then to the id's
   // tail (last 8 chars) so the user can tell two anonymous
   // sessions apart at a glance.
-  if (s.name && String(s.name).trim()) return String(s.name);
+  //
+  // R390: the field is `title`, not `name`. The daemon sends
+  // `title` (and always has); this file read `name`, which the
+  // daemon never sent — so the branch was dead code and every
+  // row fell through to the preview.
+  if (s.title && String(s.title).trim()) return String(s.title);
   // the daemon's listSessions can populate a
   // `preview` field (first user message, capped at 200
   // chars) when called with { withPreview: true }. The
@@ -74,10 +79,16 @@ function sessionLabel(s: SessionInfo): string {
   // (Chinese-friendly — Array.from(text) iterates by code
   // point, not UTF-16 code unit, so a Chinese char is one
   // item not two). The daemon's extractSessionPreview is
-  // still the first user message; the LLM-generated
-  // "10-char summary" is a future round (R223+ candidate). For
-  // now we truncate the preview so the user at least
-  // sees "Fix Cwe252..." instead of the full sentence.
+  // still the first user message.
+  //
+  // R393: the LLM-generated summary is no longer a future
+  // round — the daemon now asks the model for a 5-15 character
+  // title and persists it, so the branch ABOVE (`s.title`) is
+  // the normal path. This truncation is the last-resort
+  // fallback for a session whose title has not been written
+  // yet (the model call is on a background thread, so there
+  // is a short window where only the prompt is known) and for
+  // a session whose model call failed.
   if (s.preview && String(s.preview).trim()) {
     return shortSummary(String(s.preview).trim());
   }

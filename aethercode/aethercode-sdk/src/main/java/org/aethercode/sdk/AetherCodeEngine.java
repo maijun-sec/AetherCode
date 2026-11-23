@@ -3375,6 +3375,36 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 for (Message m : t.messages()) appState.transcript().add(m);
             }
             this.currentTranscript = t;
+            // R390: register the session row NOW — with its cwd.
+            //
+            // The desktop's "+ New Session" goes through the
+            // `createEngine` RPC, which builds a fresh engine for a
+            // fresh session id. pre-R390 the row only appeared in the
+            // SQLite index after the FIRST message landed (the
+            // append listener's touch), so a session that had just
+            // been created was invisible to `listSessions` — and
+            // therefore invisible in the LeftPanel's project groups.
+            // The SDK's own `createSession(cwd)` already did this
+            // eager upsert (R361) precisely because of that gap, so
+            // the eager touch is the ESTABLISHED behaviour on one path
+            // and the createEngine path was the odd one out.
+            //
+            // The cwd is written here so the session is grouped under
+            // the right project from its very first frame — the
+            // "new session shows up under 未关联项目" symptom was a
+            // missing cwd, not a missing row.
+            try {
+                String sid = appState.sessionId();
+                if (sid != null) {
+                    sessionStore.touch(sid,
+                            appState.cwd() != null ? appState.cwd().toString() : null,
+                            null, null, null, null, 0);
+                }
+            } catch (java.io.IOException touchEx) {
+                // Non-fatal — the JSONL + sidecar path still works, and
+                // the append listener will retry on the first message.
+                LOG.debug("R390: attachSessionStore touch failed: {}", touchEx.getMessage());
+            }
             // Install the listener that mirrors every new message
             // to the file. The listener holds a reference to the
             // current Transcript, so when loadSession swaps the
@@ -3411,9 +3441,33 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                     try {
                         String sid = appState.sessionId();
                         if (sid != null) {
+                            // R390: offer the message as the
+                            // session's FIRST PROMPT. The store
+                            // keeps the FIRST non-null value it is
+                            // given (the SQLite upsert resolves it),
+                            // so a later message can never rewrite
+                            // the session's identity.
+                            //
+                            // Only USER-AUTHORED text qualifies: the
+                            // engine writes user-role messages of
+                            // its own (the R719 session anchor, the
+                            // post-compact re-injection, the
+                            // todo-continuation directive), and one
+                            // of those becoming the session's title
+                            // is exactly the bug this round fixes.
+                            String firstPrompt = null;
+                            if (org.aethercode.core.transcript.UserAuthoredText
+                                    .isUserAuthored(msg)) {
+                                String text = msg.textContent();
+                                if (text != null && !text.isBlank()) {
+                                    firstPrompt = text.length() > 2000
+                                            ? text.substring(0, 2000) + "…"
+                                            : text;
+                                }
+                            }
                             sessionStore.touch(sid, appState.cwd() != null
                                     ? appState.cwd().toString() : null,
-                                    null, null, null, null,
+                                    null, null, firstPrompt, null,
                                     approximateJsonlBytes(msg));
                         }
                     } catch (java.io.IOException bumpEx) {

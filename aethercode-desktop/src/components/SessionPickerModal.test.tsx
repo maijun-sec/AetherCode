@@ -114,11 +114,13 @@ describe('R111: Session picker modal', () => {
     expect(src).toMatch(/'Escape'/);
   });
 
-  it('SessionPickerModal filters by query (label + id + name)', () => {
+  it('SessionPickerModal filters by query (label + id + title)', () => {
     const src = read('src/components/SessionPickerModal.tsx');
     expect(src).toMatch(/labelFor\(s\)\.toLowerCase\(\)\.includes\(q\)/);
     expect(src).toMatch(/s\.id\.toLowerCase\(\)\.includes\(q\)/);
-    expect(src).toMatch(/s\.name && s\.name\.toLowerCase\(\)\.includes\(q\)/);
+    // R390: the field is `title` — the daemon sends `title`, and the
+    // old `name` branch matched a field that never existed on the wire.
+    expect(src).toMatch(/s\.title && s\.title\.toLowerCase\(\)\.includes\(q\)/);
   });
 
   it('SessionPickerModal always shows the + new session row', () => {

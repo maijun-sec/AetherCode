@@ -114,15 +114,19 @@ export function TaskSummary() {
         )}
       </div>
       {/* Optional second row: only when there's a
-       *  user-friendly session name (from the session list)
+       *  user-friendly session title (from the session list)
        *  or an uptime number worth showing. Keeps the
-       *  default state to ONE row. */}
-      {(currentSession?.name || metrics?.uptime) && (
+       *  default state to ONE row.
+       *
+       *  R390: the field is `title`, not `name` — the daemon
+       *  sends `title` (and always has), so reading `name`
+       *  here meant the pill NEVER rendered. */}
+      {(currentSession?.title || metrics?.uptime) && (
         <div className="task-summary-row task-summary-row-secondary">
-          {currentSession?.name && (
-            <span className="task-pill task-pill-name" title={currentSession.name}>
+          {currentSession?.title && (
+            <span className="task-pill task-pill-name" title={currentSession.title}>
               <span className="task-pill-label">name</span>
-              <span className="task-pill-value">{currentSession.name}</span>
+              <span className="task-pill-value">{currentSession.title}</span>
             </span>
           )}
           {metrics?.uptime != null && (

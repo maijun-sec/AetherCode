@@ -85,10 +85,23 @@ describe('R104: Tools & Permission panel', () => {
     expect(src).toMatch(/setShowTools/);
   });
 
-  it('Header.tsx has a tools button (🔧)', () => {
+  it('Header.tsx no longer carries a tools button (R347 moved it out)', () => {
+    // ★ The pin used to require the 🔧 icon in Header.tsx. ★
+    // R347 moved the Telemetry / Session-details / Tools icon
+    // buttons out of the Header, and the Header kept only the
+    // (now optional) `onToolsClick` PROP for callers that still
+    // wire it. So the 🔧 the test was looking for stopped being
+    // rendered — the gate went stale and stayed red.
+    //
+    // The panel is still reachable: the input box's config toggle
+    // (MessageInput.tsx) and the Ctrl/Cmd+T chord both open it,
+    // and the test above pins the chord.
     const src = readFileSync(join(root, 'src', 'components', 'Header.tsx'), 'utf-8');
-    expect(src).toMatch(/onToolsClick/);
-    expect(src).toMatch(/🔧/);
+    expect(src).toMatch(/onToolsClick\?/);
+    expect(src).not.toMatch(/🔧/);
+
+    const input = readFileSync(join(root, 'src', 'components', 'MessageInput.tsx'), 'utf-8');
+    expect(input).toMatch(/setShowTools\(!showTools\)/);
   });
 
   it('store/index.ts adds toolActions to the initial state', () => {

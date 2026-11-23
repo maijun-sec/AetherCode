@@ -130,7 +130,14 @@ public final class SessionStore {
             List<SessionInfo> out = new ArrayList<>(rows.size());
             for (var row : rows) {
                 Path file = Path.of(row.rawPath);
-                out.add(new SessionInfo(row.id, file, row.lastUsedAt, row.sizeBytes, row.cwd, row.trashedAt));
+                // R390: carry the persisted identity facts (the user's
+                // rename, the first prompt, the real message count) up
+                // to the callers. The daemon's listSessions used to
+                // re-derive all three from the transcript on every
+                // call — which is where the "session has no name"
+                // symptom came from.
+                out.add(new SessionInfo(row.id, file, row.lastUsedAt, row.sizeBytes, row.cwd, row.trashedAt,
+                        row.title, row.firstPrompt, row.messageCount));
             }
             return out;
         } catch (SQLException sqle) {
@@ -201,6 +208,24 @@ public final class SessionStore {
      * upsert. Empty sessions (no message yet) are
      * acceptable — they're persisted with {@code
      * message_count = 0}.
+     *
+     * <p>★ R390: a {@code null} means "THIS CALLER DOES NOT KNOW". ★
+     * It must never erase a value another caller wrote. The engine's
+     * per-message append path passes {@code worktree=null,
+     * model=null, firstPrompt=null, title=null} — it owns none of
+     * those facts — and pre-R390 the first message append deleted the
+     * session's title and first prompt. So:
+     *
+     * <ul>
+     *   <li>{@code cwd} / {@code worktree} / {@code model} / {@code title}
+     *       — a non-null value REPLACES the stored one (they are set
+     *       explicitly by a caller that knows the new value), a null
+     *       keeps it;</li>
+     *   <li>{@code firstPrompt} — a CANDIDATE that only fills an
+     *       empty slot. The engine offers every user message, so the
+     *       store decides which one was first: the FIRST
+     *       non-blank one, forever.</li>
+     * </ul>
      */
     public void touch(String id, String cwd, String worktree, String model,
                      String firstPrompt, String title, long byteDelta) throws IOException {
@@ -210,11 +235,30 @@ public final class SessionStore {
             Optional<SessionStoreSqlite.Metadata> existing = meta.get(id);
             SessionStoreSqlite.Metadata m = existing.orElseGet(SessionStoreSqlite.Metadata::new);
             m.id = id;
-            m.cwd = cwd;
-            m.worktree = worktree;
-            m.model = model;
-            m.firstPrompt = firstPrompt;
-            m.title = title;
+            // R390: a caller that does not know a value must not ERASE
+            // the value another caller wrote.
+            //
+            // The engine's per-message append path calls this with
+            // `worktree=null, model=null, firstPrompt=null, title=null`
+            // — it owns none of those facts. pre-R390 the nulls were
+            // written straight through, so the first message append
+            // deleted the session's title and first prompt.
+            //
+            // `m` was loaded from the row, so `m.<field>` IS the stored
+            // value; keeping it when the caller passes null is what
+            // "this caller does not know" has to mean.
+            m.cwd = cwd != null ? cwd : m.cwd;
+            m.worktree = worktree != null ? worktree : m.worktree;
+            m.model = model != null ? model : m.model;
+            m.title = title != null ? title : m.title;
+            // ★ The FIRST prompt wins. ★ The engine offers EVERY
+            // user message as a candidate (it cannot know which one
+            // was the first), so the store decides — and only fills an
+            // EMPTY slot. The SQL upsert resolves the same rule
+            // atomically for concurrent writers.
+            if (m.firstPrompt == null || m.firstPrompt.isBlank()) {
+                m.firstPrompt = firstPrompt;
+            }
             m.rawPath = raw.toString();
             if (m.compactedPath == null) {
                 Path compacted = compactedPathFor(id);
@@ -262,6 +306,57 @@ public final class SessionStore {
             return meta.setTitle(id, title);
         } catch (SQLException sqle) {
             throw new IOException("rename failed for " + id, sqle);
+        }
+    }
+
+    /**
+     * R393: fill the {@code title} column ONLY when it is still empty.
+     *
+     * <p>★ WHY ★ The {@code title} column holds the user's own rename.
+     * A model-written title ({@link SessionTitleSummarizer}) must never
+     * overwrite it. The "only if empty" rule lives in the SQL so it is
+     * atomic — a rename that lands while the model call is in flight
+     * still wins.
+     *
+     * @return {@code true} when a row was updated
+     */
+    public boolean setTitleIfAbsent(String id, String title) throws IOException {
+        if (id == null || id.isBlank()) return false;
+        try {
+            return meta.setTitleIfAbsent(id, title);
+        } catch (SQLException sqle) {
+            LOG.debug("SessionStore.setTitleIfAbsent({}) failed: {}", id, sqle.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * R390: remember the prompt a session started from, when the
+     * index does not know it yet.
+     *
+     * <p>★ WHY THE STORE IS ALLOWED TO WRITE ON A READ PATH ★ The
+     * daemon's {@code listSessions} scans the transcript for the
+     * session's first USER-AUTHORED message when the index has no
+     * {@code first_prompt} — which is the case for every session
+     * created before R390. Writing that fact back makes the title a
+     * PERSISTED one from then on: it survives the next compaction (which
+     * is what destroyed it before), and the list no longer has to scan
+     * the transcript on every call.
+     *
+     * <p>It fills an EMPTY slot only — the first prompt still wins,
+     * and a rename is never touched. The update touches ONE column,
+     * so it does not bump {@code last_used_at} (a back-filled session
+     * must not jump to the top of the list).
+     *
+     * @return {@code true} when a row was updated
+     */
+    public boolean backfillFirstPrompt(String id, String firstPrompt) throws IOException {
+        if (id == null || id.isBlank()) return false;
+        try {
+            return meta.setFirstPromptIfEmpty(id, firstPrompt);
+        } catch (SQLException sqle) {
+            LOG.debug("SessionStore.backfillFirstPrompt({}) failed: {}", id, sqle.getMessage());
+            return false;
         }
     }
 
@@ -407,7 +502,8 @@ public final class SessionStore {
             List<SessionInfo> out = new ArrayList<>(rows.size());
             for (var row : rows) {
                 Path file = Path.of(row.rawPath);
-                out.add(new SessionInfo(row.id, file, row.trashedAt, row.sizeBytes, row.cwd, row.trashedAt));
+                out.add(new SessionInfo(row.id, file, row.trashedAt, row.sizeBytes, row.cwd, row.trashedAt,
+                        row.title, row.firstPrompt, row.messageCount));
             }
             return out;
         } catch (SQLException sqle) {
@@ -446,7 +542,8 @@ public final class SessionStore {
             trashed = new ArrayList<>(rows.size());
             for (var row : rows) {
                 Path file = Path.of(row.rawPath);
-                trashed.add(new SessionInfo(row.id, file, row.trashedAt, row.sizeBytes, row.cwd, row.trashedAt));
+                trashed.add(new SessionInfo(row.id, file, row.trashedAt, row.sizeBytes, row.cwd, row.trashedAt,
+                        row.title, row.firstPrompt, row.messageCount));
             }
         } catch (SQLException sqle) {
             throw new IOException("SessionStore.emptyTrash: list failed: " + sqle.getMessage(), sqle);
@@ -572,12 +669,45 @@ public final class SessionStore {
      * under AetherCode even though cwd is abc_5" bug.
      * Putting cwd on this record lets the per-daemon
      * SessionStore (updated on every message append + every
-     * setCwd) be the primary source. */
-    public record SessionInfo(String id, Path file, long lastModified, long sizeBytes, String cwd, long trashedAt) {
+     * setCwd) be the primary source.
+     *
+     * <p>R390: the record now also carries {@code title} (the user's
+     * own rename), {@code firstPrompt} (the prompt the session
+     * started from) and {@code messageCount} (the REAL persisted
+     * count). pre-R390 the daemon had to re-derive a session's title
+     * from the transcript on every {@code listSessions} call — which
+     * is why a compacted session showed "[PostCompact re-injection]"
+     * as its name, why the title vanished as soon as a later message
+     * append overwrote the stored {@code first_prompt} with NULL, and
+     * why the message count was a {@code sizeBytes / 800} guess. The
+     * persisted facts are the truth; the transcript is a fallback. */
+    public record SessionInfo(String id, Path file, long lastModified, long sizeBytes, String cwd, long trashedAt,
+                              String title, String firstPrompt, long messageCount) {
+        /**
+         * R390: back-compatible constructor for callers written before
+         * the {@code title} / {@code firstPrompt} / {@code messageCount}
+         * components existed. Lesson 514 — a record component is a
+         * breaking change to add — so the old 6-arg shape is kept as a
+         * delegating constructor rather than removed. Callers that do
+         * not know the new facts get the "unknown" values (null title,
+         * null first prompt, zero messages).
+         */
+        public SessionInfo(String id, Path file, long lastModified, long sizeBytes, String cwd, long trashedAt) {
+            this(id, file, lastModified, sizeBytes, cwd, trashedAt, null, null, 0L);
+        }
         public String shortId() { return id.length() > 16 ? id.substring(0, 16) + "…" : id; }
         /** R710: true iff this session has been soft-deleted. The
          *  JSONL files are still on disk and the row can be
          *  brought back via {@link #restore(String)}. */
         public boolean isTrashed() { return trashedAt > 0; }
+        /**
+         * R390: the session's display title, as PERSISTED. This is
+         * the user's own rename (written by
+         * {@link SessionStoreSqlite#setTitle}) — never a value
+         * re-derived from the transcript, because a transcript's
+         * first line can be a machine-written anchor, a post-compact
+         * re-injection, or a todo-continuation directive.
+         */
+        public String displayTitle() { return title; }
     }
 }

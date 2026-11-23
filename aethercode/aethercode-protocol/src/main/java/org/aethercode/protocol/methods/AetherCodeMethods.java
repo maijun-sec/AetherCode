@@ -127,6 +127,15 @@ public class AetherCodeMethods {
      *  newCwd, atMs }. */
     public static final String NOTIFY_CWD_CHANGED        = "cwd_changed";
     /**
+     * R393: a session got a SHORT, model-written title (the session
+     * list used to show the user's whole first prompt).
+     *
+     * <p>The title is computed on a background thread, so the list
+     * cannot simply re-read it — the renderer is told instead, and
+     * updates that one row. Payload: { sessionId, title, atMs }.
+     */
+    public static final String NOTIFY_SESSION_TITLE      = "session_title";
+    /**
      * a low-risk tool call was auto-approved by
      * the daemon (the user had {@code autoApproveLowRisk}
      * enabled, default true). Payload: { tool, input,
@@ -649,6 +658,50 @@ public class AetherCodeMethods {
      */
     private volatile SddOrchestrator sddOrchestrator;
 
+    /**
+     * R393: the coordinator that gives a session a SHORT, model-written
+     * title.
+     *
+     * <p>It is created lazily-ish (the constructor) and does its work on
+     * a background thread, so {@code listSessions} never waits for the
+     * model. When the title lands it notifies the renderer with
+     * {@code session_title} so the row updates without a refresh.
+     */
+    private final org.aethercode.core.transcript.SessionTitleCoordinator titleCoordinator;
+
+    /**
+     * R393: is the model-written session title switched ON?
+     *
+     * <p>★ WHY IT IS OFF BY DEFAULT ★ The trigger lives on
+     * {@code listSessions}, and a default-built engine DOES carry a
+     * {@code SpringAiChatClient} — so with the feature on, every unit
+     * test that lists sessions would fire a REAL model call with the
+     * test's prompt text. On a machine that has an API key set, that
+     * call would SUCCEED and overwrite the title the test is asserting
+     * on; on one that has not, it would still send the prompt to an
+     * external endpoint. Neither belongs in a unit test.
+     *
+     * <p>So the daemon — the only caller that has a real provider and
+     * a real user behind it — switches it on explicitly, and the tests
+     * that WANT it switch it on explicitly too.
+     */
+    private volatile boolean sessionTitleSummariesEnabled = false;
+
+    /**
+     * R393: switch the model-written session title on or off.
+     *
+     * @param enabled {@code true} to let the daemon ask the model for a
+     *                short title for sessions that have none
+     */
+    public void setSessionTitleSummariesEnabled(boolean enabled) {
+        this.sessionTitleSummariesEnabled = enabled;
+        LOG.info("R393: model-written session titles {}", enabled ? "enabled" : "disabled");
+    }
+
+    public boolean sessionTitleSummariesEnabled() {
+        return sessionTitleSummariesEnabled;
+    }
+
     public AetherCodeMethods(AetherCodeEngine engine,
                               Consumer<JsonRpcNotification> notifier) {
         this(engine, null, notifier);
@@ -695,6 +748,38 @@ public class AetherCodeMethods {
         }
         this.continuationDispatcher = new EngineContinuationDispatcher(engine, this);
         this.continuationHook = new org.aethercode.hooks.builtin.TodoContinuationHook(continuationDispatcher);
+        // R393: the session-title coordinator. It asks the model for a
+        // short title when a session has none, writes it into the EMPTY
+        // title slot (never over the user's own rename), and notifies
+        // the renderer when it lands.
+        this.titleCoordinator = new org.aethercode.core.transcript.SessionTitleCoordinator(
+                // The store is installed AFTER this object is built, so
+                // it has to be resolved lazily — a value captured here
+                // would be null forever.
+                () -> engine.sessionStore(),
+                // The chat client of the session that owns the id, falling
+                // back to the daemon's primary engine. A session that is
+                // not loaded has no engine of its own — the primary one
+                // speaks to the same provider.
+                sid -> {
+                    AetherCodeEngine own = resolveRpcTarget(sid);
+                    if (own != null) return own.chatClient();
+                    AetherCodeEngine primary = currentEngine();
+                    return primary != null ? primary.chatClient() : null;
+                },
+                ev -> {
+                    try {
+                        notifier.accept(new JsonRpcNotification(
+                                JsonRpcMessage.VERSION, NOTIFY_SESSION_TITLE,
+                                Map.of(
+                                        "sessionId", ev.sessionId(),
+                                        "title", ev.title(),
+                                        "atMs", System.currentTimeMillis()
+                                )));
+                    } catch (RuntimeException ignore) {
+                        // A failing notifier must never break a title.
+                    }
+                });
         // wire the engine's skip-confirmation consumption
         // listener to a JSON-RPC notification so the TUI / Desktop
         // status bar updates immediately. Done at construction so
@@ -5756,13 +5841,21 @@ public class AetherCodeMethods {
                 // without a follow-up RPC. Zero for active rows
                 // (matches the SessionInfo.isTrashed() predicate).
                 m.put("trashedAt", info.trashedAt());
-                // The file size gives a rough message-count proxy
-                // for the LeftPanel's `n msg` label. A more
-                // accurate count would require reading the JSONL
-                // lines; we keep the cheap proxy for now and let
-                // the user click into the session to see the real
-                // count.
-                m.put("messageCount", Math.max(1, (int) (info.sizeBytes() / 800L)));
+                // R390: the REAL message count, from the SQLite
+                // index. The old value was `sizeBytes / 800` — a
+                // GUESS that over-reported a long session by ~4x
+                // (the user's 16 MB transcript reported "18145
+                // msg" while the index knew 4783). The index has
+                // counted every append since R361; the guess was a
+                // leftover from before the counter existed.
+                long realCount = info.messageCount();
+                if (realCount > 0) {
+                    m.put("messageCount", (int) realCount);
+                } else {
+                    // Legacy / migrated rows carry no counter — fall
+                    // back to the size proxy rather than showing 0.
+                    m.put("messageCount", Math.max(1, (int) (info.sizeBytes() / 800L)));
+                }
                 // legacy: pull the session's bound cwd.
                 //
                 // Two sources, in priority order:
@@ -5901,16 +5994,41 @@ public class AetherCodeMethods {
                                 cwd, branchEx.getMessage());
                     }
                 }
+                // R390: the TITLE is a PERSISTED fact, not a value
+                // re-derived from the transcript on every call.
+                //
+                // The order is deliberate:
+                //   1. the user's own rename (`session/rename`)
+                //   2. the prompt the session started from
+                //      (`first_prompt`, captured by the engine when
+                //       the first USER-AUTHORED message is appended)
+                //   3. the transcript scan (a fallback for rows
+                //      written before first_prompt was persisted)
+                //
+                // pre-R390 the daemon put the TRANSCRIPT-DERIVED
+                // preview into `title` and threw the persisted title
+                // away — so a rename was invisible, and a compacted
+                // session's title became "[PostCompact re-injection]
+                // The transcript was just compacted…".
+                String persistedTitle = info.title();
+                String firstPrompt = info.firstPrompt();
+                // R393: the prompt we would hand to the title model. It
+                // is `first_prompt` when the index knows it, and the
+                // transcript scan when it does not (see below).
+                String promptForTitle = firstPrompt;
                 // optional preview extraction. The TUI
                 // session picker uses this to render a one-line
                 // title for each row ("Summarize README.md" /
-                // "Fix Cwe252 unchecked return" / ...). The
-                // extraction is bounded: we read at most the
-                // first 4 KB of the file and stop as soon as we
-                // see the first user-role JSONL line. A session
+                // "Fix Cwe252 unchecked return" / ...). A session
                 // that hasn't been loaded yet (empty file)
                 // returns an empty preview, which the TUI
                 // renders as "Untitled session".
+                //
+                // R390: the scan is bounded (400 lines / 256 KB) and
+                // skips the messages the ENGINE wrote in the user's
+                // voice — so it cannot turn the session list into a
+                // 16 MB read, and it cannot name a session after a
+                // machine message.
                 if (withPreview) {
                     // try the live transcript first; if
                     // it's empty (the session was just created
@@ -5923,19 +6041,41 @@ public class AetherCodeMethods {
                     // title in the LeftPanel — not "New Session" /
                     // "Untitled session" / `Session xxx`.
                     String preview = extractSessionPreview(info);
-                    if ((preview == null || preview.isBlank()) && memoryStore != null) {
-                        try {
-                            var msRow = memoryStore.sessionStore().loadSession(info.id());
-                            if (msRow.isPresent() && msRow.get().firstPrompt() != null
-                                    && !msRow.get().firstPrompt().isBlank()) {
-                                preview = msRow.get().firstPrompt();
-                            }
-                        } catch (Exception msEx) {
-                            LOG.debug("R224: loadSession({}) for preview fallback failed: {}",
-                                    info.id(), msEx.getMessage());
-                        }
+                    if ((preview == null || preview.isBlank()) && firstPrompt != null) {
+                        preview = firstPrompt;
                     }
                     m.put("preview", preview == null ? "" : preview);
+                    // R390: remember the prompt we just found.
+                    //
+                    // The scan above is the ONLY way to learn the
+                    // first prompt of a session created before the
+                    // engine started persisting it. Writing it back
+                    // makes the title a PERSISTED fact from then on:
+                    // it survives the next compaction (which is what
+                    // destroyed it before — a compacted transcript no
+                    // longer carries the original prompt), and the
+                    // list stops scanning the transcript on every
+                    // call.
+                    //
+                    // It fills an EMPTY slot only, and it touches one
+                    // column — so the first prompt still wins, a
+                    // rename is never overwritten, and the session's
+                    // position in the list does not change.
+                    if (!preview.isBlank()
+                            && (firstPrompt == null || firstPrompt.isBlank())) {
+                        // R393: the scan found the prompt the index did
+                        // not know — that is the prompt to summarise.
+                        // Set it BEFORE the write, so a failed
+                        // back-fill still leaves us something to work
+                        // with.
+                        promptForTitle = preview;
+                        try {
+                            store.backfillFirstPrompt(info.id(), preview);
+                        } catch (Exception bfEx) {
+                            LOG.debug("R390: backfillFirstPrompt({}) failed: {}",
+                                    info.id(), bfEx.getMessage());
+                        }
+                    }
                     // R270 (2026-09-15): also surface the most
                     // recent agent activity as `lastAgentEvent`
                     // so the desktop SessionListRow can render
@@ -5959,22 +6099,38 @@ public class AetherCodeMethods {
                         m.put("lastAgentEvent", "");
                     }
                     // R266-desktop-session-title (2026-09-13):
-                    // also surface the same text as `title` so
-                    // the desktop's SessionListRow gets a real
-                    // title out of the box. R204 wired the row
-                    // to fall back from `title` -> `preview` ->
-                    // "新会话" but the daemon never actually
-                    // populated the `title` field, so every
-                    // session rendered as "新会话" until the
-                    // user manually renamed it. We treat the
-                    // first user prompt as the canonical title
-                    // (capped at 200 chars to match the preview
-                    // field); the desktop will further truncate
-                    // to 60 chars on render. When the user
-                    // renames a session via setTitle (TODO
-                    // R267), that explicit name wins because the
-                    // frontend takes the `title` field verbatim.
-                    m.put("title", preview == null ? "" : preview);
+                    // the desktop's SessionListRow gets a real title
+                    // out of the box. R390 changed WHERE the title
+                    // comes from: the persisted facts win, and the
+                    // transcript scan is only the last resort.
+                    m.put("title", firstNonBlank(persistedTitle, firstPrompt, preview));
+                } else {
+                    // The title is a persisted fact — it costs
+                    // nothing to serve it even when the caller
+                    // does not want the (expensive) transcript scan.
+                    m.put("title", firstNonBlank(persistedTitle, firstPrompt, ""));
+                }
+                // R393: give the session a SHORT, model-written title.
+                //
+                // The title falls back to `first_prompt` — the user's
+                // WHOLE first request — and that is what the rail used
+                // to show. So when the title slot is still EMPTY and we
+                // know the prompt, ask the model for a 5-15 character
+                // summary in the background.
+                //
+                // ★ WHY THIS IS HERE ★ This is the one place that knows
+                // "this session has no title" AND "this is its prompt".
+                // It covers new sessions and pre-existing ones with ONE
+                // path. The call is asynchronous (the model takes
+                // seconds; the list must not wait), it is rate-limited
+                // by the coordinator's cooldown, and it writes into the
+                // EMPTY title slot only — so the user's own rename is
+                // never overwritten.
+                if (titleCoordinator != null
+                        && sessionTitleSummariesEnabled
+                        && (persistedTitle == null || persistedTitle.isBlank())) {
+                    titleCoordinator.maybeSummarize(
+                            info.id(), promptForTitle, false);
                 }
                 out.add(m);
             }
@@ -6042,6 +6198,27 @@ public class AetherCodeMethods {
         }
     }
 
+    /**
+     * R390: how far the preview scan may read into a transcript.
+     *
+     * <p>A session's first user prompt lives at the HEAD of the file, so
+     * a small budget finds it. The budget matters for the sessions where
+     * it does NOT: a compacted transcript no longer carries the original
+     * prompt, so the scan runs to its limit and gives up — and that must
+     * not turn into reading a 16 MB file on every {@code listSessions}.
+     */
+    private static final int PREVIEW_SCAN_MAX_LINES = 400;
+    private static final int PREVIEW_SCAN_MAX_CHARS = 256 * 1024;
+
+    /**
+     * R390: how far back from the END of a transcript the
+     * "last agent event" scan may read.
+     *
+     * <p>The last assistant message is always near the end, so a tail
+     * read finds it without loading the whole file.
+     */
+    private static final int LAST_EVENT_TAIL_BYTES = 256 * 1024;
+
     /** extract a one-line preview from a session
      *  transcript. The transcript is JSONL; we read up to
      *  4 KB and stop at the first line whose
@@ -6053,13 +6230,43 @@ public class AetherCodeMethods {
      *  deliberately cheap (no full JSON parse) — we
      *  just look for a text block in the first user
      *  line and string-trim it. A 4 KB cap keeps the
-     *  cost bounded even for huge sessions. */
+     *  cost bounded even for huge sessions.
+     *
+     *  <p>★ R390: the first USER-AUTHORED line, not the first
+     *  user-role line. ★ The engine writes user-role messages of its
+     *  own (the session anchor, the post-compact re-injection, the
+     *  todo-continuation directive); picking one of those produced a
+     *  session titled "[PostCompact re-injection] …". The scan is
+     *  also bounded, so a compacted transcript cannot turn the session
+     *  list into a 16 MB read. */
     private static String extractSessionPreview(
             org.aethercode.core.transcript.SessionStore.SessionInfo info) {
         if (info == null || info.file() == null
                 || !java.nio.file.Files.exists(info.file())) {
             return "";
         }
+        // R390: BOUNDED scan + skip the engine's own user-role
+        // messages.
+        //
+        // (a) The bound. pre-R390 this read the file until it found
+        //     the first user-role line. For a COMPACTED session — the
+        //     original prompt is gone — that meant reading the whole
+        //     transcript on every listSessions call. Measured on the
+        //     live daemon: 297-455 ms with withPreview, 24-30 ms
+        //     without, on a 16 MB transcript. The scan now stops at
+        //     PREVIEW_SCAN_MAX_LINES / PREVIEW_SCAN_MAX_CHARS, and
+        //     the persisted first_prompt covers what it cannot reach.
+        //
+        // (b) The skip. The first user-role line is very often a
+        //     message the ENGINE wrote in the user's voice — the
+        //     R719 session anchor, the post-compact re-injection, the
+        //     todo-continuation directive. Showing one of those as
+        //     the session's name is the "long task finishes and the
+        //     session still has no name" symptom. The rule lives in
+        //     ONE place (UserAuthoredText) and is shared with the
+        //     engine's own capture path.
+        int lines = 0;
+        int chars = 0;
         try (java.io.BufferedReader br = java.nio.file.Files.newBufferedReader(
                 info.file(), java.nio.charset.StandardCharsets.UTF_8)) {
             // The transcript lines look like:
@@ -6069,47 +6276,67 @@ public class AetherCodeMethods {
             // from any line that contains role":"user".
             String line;
             while ((line = br.readLine()) != null) {
+                if (++lines > PREVIEW_SCAN_MAX_LINES) break;
+                chars += line.length();
+                if (chars > PREVIEW_SCAN_MAX_CHARS) break;
                 if (line.isEmpty()) continue;
                 if (line.length() > 4096) {
                     // first 4 KB is enough
                     line = line.substring(0, 4096);
                 }
-                if (line.contains("\"role\":\"user\"")) {
-                    int textIdx = line.indexOf("\"text\"");
-                    if (textIdx < 0) return "";
-                    int colonIdx = line.indexOf(':', textIdx);
-                    if (colonIdx < 0) return "";
-                    int quoteIdx = line.indexOf('"', colonIdx + 1);
-                    if (quoteIdx < 0) return "";
-                    // R388j: find the closing quote by SCANNING, and
-                    // skip the ESCAPED ones.
-                    //
-                    // The naive `indexOf('"', quoteIdx + 1)` stopped at
-                    // the first quote of ANY kind — including the
-                    // `\"` inside the text. A user message of
-                    // `say "hi" now` was truncated to `say \`, and
-                    // the session list showed a title that had been
-                    // cut in half.
-                    //
-                    // A JSON string ends at a quote that is NOT
-                    // preceded by an odd number of backslashes.
-                    int endQuote = findClosingQuote(line, quoteIdx + 1);
-                    if (endQuote < 0) return "";
-                    String text = line.substring(quoteIdx + 1, endQuote);
-                    // Unescape the JSON escapes so the title reads
-                    // as the user typed it.
-                    text = unescapeJsonText(text);
-                    // Trim and cap to 200 chars for the TUI
-                    // picker.
-                    text = text.replaceAll("\\s+", " ").trim();
-                    if (text.length() > 200) text = text.substring(0, 197) + "…";
-                    return text;
+                if (!line.contains("\"role\":\"user\"")) continue;
+                String text = firstTextValueOf(line);
+                if (text == null || text.isBlank()) continue;
+                if (!org.aethercode.core.transcript.UserAuthoredText.isUserAuthored(
+                        org.aethercode.core.transcript.UserAuthoredText.metadataKindOf(line),
+                        text)) {
+                    // an engine-written user-role message — keep
+                    // looking for the one the user actually typed.
+                    continue;
                 }
+                // Trim and cap to 200 chars for the TUI
+                // picker.
+                text = text.replaceAll("\\s+", " ").trim();
+                if (text.length() > 200) text = text.substring(0, 197) + "…";
+                return text;
             }
         } catch (Exception ignored) {
             // best-effort preview; never fail the list
         }
         return "";
+    }
+
+    /**
+     * R390: the first {@code "text":"…"} value on a raw JSONL line,
+     * unescaped.
+     *
+     * <p>Same contract as the R388j path (find the CLOSING quote by
+     * scanning, then unescape) — it used to live inline in
+     * {@link #extractSessionPreview}, and it is now shared with the
+     * synthetic-message check, which needs the text before it can
+     * decide whether the line is the user's.
+     */
+    private static String firstTextValueOf(String line) {
+        int textIdx = line.indexOf("\"text\"");
+        if (textIdx < 0) return null;
+        int colonIdx = line.indexOf(':', textIdx);
+        if (colonIdx < 0) return null;
+        int quoteIdx = line.indexOf('"', colonIdx + 1);
+        if (quoteIdx < 0) return null;
+        // R388j: find the closing quote by SCANNING, and skip the
+        // ESCAPED ones.
+        //
+        // The naive `indexOf('"', quoteIdx + 1)` stopped at the
+        // first quote of ANY kind — including the `\"` inside the
+        // text. A user message of `say "hi" now` was truncated to
+        // `say \`, and the session list showed a title that had been
+        // cut in half.
+        //
+        // A JSON string ends at a quote that is NOT preceded by an
+        // odd number of backslashes.
+        int endQuote = findClosingQuote(line, quoteIdx + 1);
+        if (endQuote < 0) return null;
+        return unescapeJsonText(line.substring(quoteIdx + 1, endQuote));
     }
 
     /**
@@ -6234,11 +6461,20 @@ public class AetherCodeMethods {
             return "";
         }
         try {
-            // Read all lines — transcripts are < 1 MB even
-            // for long sessions; the per-line 4 KB cap below
-            // keeps the regex scan bounded.
-            java.util.List<String> lines = java.nio.file.Files.readAllLines(
-                    info.file(), java.nio.charset.StandardCharsets.UTF_8);
+            // R390: TAIL read, not a whole-file read.
+            //
+            // pre-R390 this called Files.readAllLines() — it loaded the
+            // ENTIRE transcript into memory as a List<String> and then
+            // walked it backwards. On the user's 16 MB long-running
+            // session that is a 16 MB read (and a 30-60 MB heap spike)
+            // on EVERY listSessions call, for a value that lives in the
+            // last few lines.
+            //
+            // The last assistant message is always near the END, so we
+            // read the last LAST_EVENT_TAIL_BYTES and scan that. The
+            // cost is now proportional to the TAIL, not to the
+            // transcript's age.
+            java.util.List<String> lines = readTailLines(info.file(), LAST_EVENT_TAIL_BYTES);
             for (int i = lines.size() - 1; i >= 0; i--) {
                 String line = lines.get(i);
                 if (line == null || line.isEmpty()) continue;
@@ -6270,6 +6506,85 @@ public class AetherCodeMethods {
             // fails listSessions.
         }
         return "";
+    }
+
+    /**
+     * R390: read the LAST {@code maxBytes} of a text file, as lines.
+     *
+     * <p>★ THE FIRST LINE ★ When the read starts mid-file, the first
+     * chunk is usually a PARTIAL line — unless the byte just before the
+     * window is a newline, in which case it is a complete line and is
+     * kept. (The byte is read to decide; it is not part of the result.)
+     *
+     * <p>★ THE LAST LINE ★ It is KEPT even when the file does not end
+     * with a newline. The file may be appended to while we read it, so
+     * the last chunk can be a half-written message — but a truncated
+     * JSON line simply fails the {@code "role":"assistant"} probe (or
+     * yields an empty text), and the scan keeps walking backwards. A
+     * transcript that legitimately has no trailing newline (every test
+     * fixture writes one that way) must not lose its last message.
+     */
+    private static java.util.List<String> readTailLines(java.nio.file.Path file, int maxBytes)
+            throws java.io.IOException {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        long size = java.nio.file.Files.size(file);
+        if (size <= 0) return out;
+        long start = Math.max(0L, size - maxBytes);
+        int want = (int) (size - start);
+        // When the window does not start at byte 0, read ONE extra byte
+        // BEFORE it: that byte tells us whether the window starts at a
+        // line boundary (the byte is a newline) or mid-line (the first
+        // chunk is partial and must be dropped).
+        boolean aligned = true;
+        byte[] buf = new byte[want];
+        int read = 0;
+        try (java.nio.channels.FileChannel ch =
+                     java.nio.channels.FileChannel.open(file, java.nio.file.StandardOpenOption.READ)) {
+            java.nio.ByteBuffer bb;
+            long pos;
+            int skip;
+            if (start > 0) {
+                bb = java.nio.ByteBuffer.allocate(want + 1);
+                pos = start - 1;
+                skip = 1;
+            } else {
+                bb = java.nio.ByteBuffer.allocate(want);
+                pos = 0;
+                skip = 0;
+            }
+            while (bb.hasRemaining()) {
+                int n = ch.read(bb, pos);
+                if (n <= 0) break;
+                pos += n;
+            }
+            read = bb.position();
+            if (skip == 1) {
+                aligned = read > 0 && bb.array()[0] == '\n';
+                if (read > 1) {
+                    System.arraycopy(bb.array(), 1, buf, 0, Math.min(want, read - 1));
+                    read = Math.min(want, read - 1);
+                } else {
+                    read = 0;
+                }
+            } else {
+                System.arraycopy(bb.array(), 0, buf, 0, read);
+            }
+        }
+        if (read < want) {
+            // the file shrank under us — use what we got.
+            byte[] shrunk = new byte[read];
+            System.arraycopy(buf, 0, shrunk, 0, read);
+            buf = shrunk;
+        }
+        String text = new String(buf, java.nio.charset.StandardCharsets.UTF_8);
+        String[] parts = text.split("\n", -1);
+        int from = 0;
+        // A partial FIRST line (the window started mid-line) is not a line.
+        if (!aligned && parts.length > 0) from = 1;
+        for (int i = from; i < parts.length; i++) {
+            out.add(parts[i]);
+        }
+        return out;
     }
 
     /** Find the first {@code tool_use} block in a line and
@@ -6400,6 +6715,21 @@ public class AetherCodeMethods {
         s = s.replaceAll("\\s+", " ").trim();
         if (s.length() <= max) return s;
         return s.substring(0, Math.max(0, max - 1)) + "…";
+    }
+
+    /**
+     * R390: the first of the candidates that is actually usable.
+     *
+     * <p>Used to resolve a session's title from its three sources in a
+     * fixed order (the user's rename → the first prompt → the
+     * transcript scan). A blank string counts as absent — an empty
+     * rename must not mask a real first prompt.
+     */
+    private static String firstNonBlank(String... candidates) {
+        for (String c : candidates) {
+            if (c != null && !c.isBlank()) return c;
+        }
+        return "";
     }
 
     @SuppressWarnings("unchecked")
@@ -6664,6 +6994,27 @@ public class AetherCodeMethods {
                     LOG.warn("R201: upsertSession({}) failed: {}",
                             newId, msEx.getMessage());
                 }
+            }
+            // R390: write the first prompt to the SessionStore's OWN
+            // SQLite index too.
+            //
+            // The memory store's `session_info` row is a SECOND copy
+            // of the same fact, and it is SHARED across daemons — so
+            // it is stale by construction (every daemon has a
+            // "default" session and the last writer wins). The
+            // per-daemon SessionStore is the authoritative index, and
+            // it is what listSessions reads. Without this write the
+            // first prompt only reached the shared copy, so a
+            // session created through this RPC had no title until its
+            // first message landed.
+            try {
+                var store = engine.sessionStore();
+                if (store != null && firstPrompt != null && !firstPrompt.isBlank()) {
+                    store.touch(newId, resolvedCwd, null, null, firstPrompt, null, 0);
+                }
+            } catch (Exception stEx) {
+                LOG.warn("R390: SessionStore.touch({}) failed: {}",
+                        newId, stEx.getMessage());
             }
             // R388b: the response carries the ISOLATION
             // VERDICT for the worktree this session is

@@ -288,6 +288,11 @@ export function LeftPanel() {
             <ProjectGroupList
               sessions={all}
               currentSessionId={currentSessionId}
+              // R392: the project the user is standing in. The group
+              // list always renders a group for it — even when it holds
+              // no sessions — so the "＋" button (the only in-panel way
+              // to create a session) is always reachable.
+              currentCwd={useStore((s) => s.cwd)}
               onNewSession={onNewSessionInCwd}
               onSoftDelete={softDeleteSession}
             />

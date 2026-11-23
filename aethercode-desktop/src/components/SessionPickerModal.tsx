@@ -247,7 +247,8 @@ export function SessionPickerModal({
 }
 
 function labelFor(s: SessionInfo): string {
-  if (s.name && s.name.trim()) return s.name;
+  // R390: `title`, not `name` — the daemon sends `title`.
+  if (s.title && s.title.trim()) return s.title;
   return `Session ${s.id.slice(-8)}`;
 }
 
@@ -261,11 +262,11 @@ function whenFor(s: SessionInfo): string {
 }
 
 /** case-insensitive substring match on label, id,
- *  and (if present) the engine-provided name. Empty query
+ *  and (if present) the engine-provided title. Empty query
  *  matches everything. */
 function matches(s: SessionInfo, q: string): boolean {
   if (labelFor(s).toLowerCase().includes(q)) return true;
   if (s.id.toLowerCase().includes(q)) return true;
-  if (s.name && s.name.toLowerCase().includes(q)) return true;
+  if (s.title && s.title.toLowerCase().includes(q)) return true;
   return false;
 }

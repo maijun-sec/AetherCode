@@ -199,6 +199,15 @@ public class QueryEngine {
      *  scratch. */
     private final java.util.Map<String, String> lastSubTaskStatus = new java.util.HashMap<>();
 
+    /** R391: the last-seen TEXT of each sub-task, keyed exactly like
+     *  {@link #lastSubTaskStatus}. The model rewrites a todo's
+     *  wording as its plan evolves ("运行 mvn test 直到全绿" →
+     *  "mvn clean test 从零全量验证"), and the sub-task id is
+     *  POSITIONAL for the synthesised flat-todo shape — so without
+     *  this the card's title froze at the first wording and the
+     *  user saw a step whose title no longer matched the plan. */
+    private final java.util.Map<String, String> lastSubTaskContent = new java.util.HashMap<>();
+
     /** the most recent "in_progress" sub-task id, formatted as
      *  {@code "taskIdx:subTaskId"} (the same key shape as
      *  {@link #lastSubTaskStatus}). Updated by
@@ -1488,6 +1497,7 @@ public class QueryEngine {
                     }
                 }
                 lastSubTaskStatus.clear();
+                lastSubTaskContent.clear();
             }
             // with the todo list cleared, no sub-task is in
             // scope. Reset the executor's tracking so the next
@@ -1528,37 +1538,7 @@ public class QueryEngine {
                     String summary = strOr(sm.get("summary"), null);
                     String key = t + ":" + id;
                     seen.add(key);
-                    String prev = lastSubTaskStatus.get(key);
-                    boolean isTerminal = "completed".equals(status) || "failed".equals(status) || "skipped".equals(status);
-                    if (prev == null) {
-                        // First sight. Always emit Start so the UI can
-                        // anchor the card; if the initial status is
-                        // already terminal, follow up with an End so
-                        // the renderer shows the summary card right
-                        // away.
-                        action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
-                        if (isTerminal) {
-                            action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
-                        }
-                    } else if (!prev.equals(status)) {
-                        // Status changed. The interesting transitions:
-                        //   any -> terminal   → emit End
-                        //   * -> in_progress  → emit Start (re-open OR
-                        //                          first activation; the
-                        //                          UI needs the in_progress
-                        //                          signal to switch the
-                        //                          active card).
-                        // The reverse (in_progress -> pending) is rare and
-                        // treated as silent — the engine still updates
-                        // lastSubTaskStatus so subsequent transitions are
-                        // correct, but no event fires.
-                        if (isTerminal) {
-                            action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
-                        } else if ("in_progress".equals(status)) {
-                            action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
-                        }
-                    }
-                    lastSubTaskStatus.put(key, status);
+                    emitSubTaskTransitionsFor(action, t, id, key, content, status, summary);
                     if (activeKey == null && "in_progress".equals(status)) {
                         activeKey = key;
                     }
@@ -1581,20 +1561,7 @@ public class QueryEngine {
                 String key = t + ":" + id;
                 seen.add(key);
                 String prev = lastSubTaskStatus.get(key);
-                boolean isTerminal = "completed".equals(status) || "failed".equals(status) || "skipped".equals(status);
-                if (prev == null) {
-                    action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
-                    if (isTerminal) {
-                        action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
-                    }
-                } else if (!prev.equals(status)) {
-                    if (isTerminal) {
-                        action.accept(new StreamEvent.SubTaskEnd(t, id, status, summary));
-                    } else if ("in_progress".equals(status)) {
-                        action.accept(new StreamEvent.SubTaskStart(t, id, content, status));
-                    }
-                }
-                lastSubTaskStatus.put(key, status);
+                emitSubTaskTransitionsFor(action, t, id, key, content, status, summary);
                 if (activeKey == null && "in_progress".equals(status)) {
                     activeKey = key;
                 }
@@ -1619,6 +1586,7 @@ public class QueryEngine {
             } catch (NumberFormatException ignored) {}
         }
         lastSubTaskStatus.keySet().retainAll(seen);
+        lastSubTaskContent.keySet().retainAll(seen);
         // push the new active sub-task to the executor. The
         // next permission check with a different subTaskId (e.g.
         // a fresh in_progress sub-task just started) will be
@@ -1627,6 +1595,87 @@ public class QueryEngine {
             currentSubTaskKey = activeKey;
             pushSubTaskKeyToExecutor();
         }
+    }
+
+    /**
+     * R391: emit the {@link StreamEvent.SubTaskStart} /
+     * {@link StreamEvent.SubTaskEnd} pair for ONE sub-task and keep the
+     * engine's per-sub-task tracker in sync.
+     *
+     * <p>BOTH shapes go through here — the model-declared one
+     * ({@code todo.subtasks[]}, whose id the model chooses) and the
+     * synthesised flat-todo one (R740's {@code auto-{t}}, whose id is
+     * POSITIONAL). They used to carry two hand-written copies of the
+     * same state machine, and they had already drifted: only the flat
+     * copy noticed when the model re-worded a todo.
+     *
+     * <p>Three things can fire:
+     * <ul>
+     *   <li><b>first sight</b> — emit Start so the renderer can anchor
+     *       the card; if the status is already terminal, follow up with
+     *       End so the summary card shows right away;</li>
+     *   <li><b>a status change</b> — End for a terminal status, Start
+     *       for {@code in_progress} (the renderer switches the active
+     *       card on it);</li>
+     *   <li><b>a text change</b> (R391) — emit Start again carrying the
+     *       new text, so the card's title follows the plan. The status
+     *       in that Start is the PREVIOUS one: a re-worded item is not
+     *       a re-opened item, and re-announcing {@code in_progress}
+     *       would drag a finished item back into the active slot.</li>
+     * </ul>
+     */
+    private void emitSubTaskTransitionsFor(java.util.function.Consumer<? super StreamEvent> action,
+                                           int taskIdx, String subTaskId, String key,
+                                           String content, String status, String summary) {
+        String prev = lastSubTaskStatus.get(key);
+        String prevContent = lastSubTaskContent.get(key);
+        boolean isTerminal = "completed".equals(status) || "failed".equals(status) || "skipped".equals(status);
+        boolean contentChanged = !java.util.Objects.equals(prevContent, content);
+        if (prev == null) {
+            // First sight. Always emit Start so the UI can anchor the
+            // card; if the initial status is already terminal, follow
+            // up with an End so the renderer shows the summary card
+            // right away.
+            action.accept(new StreamEvent.SubTaskStart(taskIdx, subTaskId, content, status));
+            if (isTerminal) {
+                action.accept(new StreamEvent.SubTaskEnd(taskIdx, subTaskId, status, summary));
+            }
+        } else {
+            boolean statusChanged = !prev.equals(status);
+            if (contentChanged && statusChanged && "in_progress".equals(status)) {
+                // Both the text and the status moved, and the item is
+                // now the active one. ONE Start carries both — two
+                // Starts would announce the same card twice.
+                action.accept(new StreamEvent.SubTaskStart(taskIdx, subTaskId, content, status));
+            } else {
+                if (contentChanged) {
+                    // R391: the model re-worded this todo. Re-announce it
+                    // with the PREVIOUS status so the renderer updates the
+                    // title without reopening the card.
+                    action.accept(new StreamEvent.SubTaskStart(taskIdx, subTaskId, content, prev));
+                }
+                if (statusChanged) {
+                    // Status changed. The interesting transitions:
+                    //   any -> terminal   → emit End
+                    //   * -> in_progress  → emit Start (re-open OR
+                    //                          first activation; the
+                    //                          UI needs the in_progress
+                    //                          signal to switch the
+                    //                          active card).
+                    // The reverse (in_progress -> pending) is rare and
+                    // treated as silent — the engine still updates
+                    // lastSubTaskStatus so subsequent transitions are
+                    // correct, but no event fires.
+                    if (isTerminal) {
+                        action.accept(new StreamEvent.SubTaskEnd(taskIdx, subTaskId, status, summary));
+                    } else if ("in_progress".equals(status)) {
+                        action.accept(new StreamEvent.SubTaskStart(taskIdx, subTaskId, content, status));
+                    }
+                }
+            }
+        }
+        lastSubTaskStatus.put(key, status);
+        lastSubTaskContent.put(key, content);
     }
 
     /** forward {@link #currentSubTaskKey} to the streaming
@@ -2061,6 +2110,7 @@ public class QueryEngine {
         // that was in_progress at the end of the previous query
         // would never get a fresh Start.
         lastSubTaskStatus.clear();
+        lastSubTaskContent.clear();
         // each new query starts with no active sub-task, so
         // the first permission ask in a new sub-task is treated
         // as a fresh boundary. Reset the executor's tracking too.

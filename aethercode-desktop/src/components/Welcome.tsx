@@ -257,7 +257,7 @@ export function Welcome({ error, onRetry, awaitingCwd }: WelcomeProps) {
           <div className="welcome-tile-title">最近 session</div>
           <div className="welcome-tile-desc">
             {recent.length > 0
-              ? recent[0].name?.trim() ||
+              ? recent[0].title?.trim() ||
                 `Session ${recent[0].id.slice(-8)}`
               : '没有历史 — 新建一个'}
           </div>
@@ -277,12 +277,12 @@ export function Welcome({ error, onRetry, awaitingCwd }: WelcomeProps) {
                 <button
                   className="welcome-recent-chip"
                   onClick={() => void switchSession(s.id)}
-                  title={`${s.name?.trim() || s.id.slice(-8)} · ${
+                  title={`${s.title?.trim() || s.id.slice(-8)} · ${
                     s.messageCount ?? 0
                   } turns · ${fmtRelative(s.lastUsedAt ?? 0)}`}
                 >
                   <span className="welcome-recent-chip-name">
-                    {s.name?.trim() || `session ${s.id.slice(-8)}`}
+                    {s.title?.trim() || `session ${s.id.slice(-8)}`}
                   </span>
                   <span className="welcome-recent-chip-meta">
                     {s.messageCount ?? 0}t · {fmtRelative(s.lastUsedAt ?? 0)}

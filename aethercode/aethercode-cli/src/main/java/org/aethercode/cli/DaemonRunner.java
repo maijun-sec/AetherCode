@@ -264,6 +264,17 @@ final class DaemonRunner {
                 worktreeSourceRepo);
         methods.registerAll(server.dispatcher());
 
+        // R393: let the daemon ask the model for a SHORT session title
+        // (the user's whole first prompt used to be the title).
+        //
+        // ★ WHY THE DAEMON SWITCHES IT ON AND NOTHING ELSE DOES ★
+        // The trigger is on `listSessions`, and a default-built engine
+        // carries a SpringAiChatClient — so with the feature on, every
+        // unit test that lists sessions would fire a REAL model call
+        // with the test's prompt text. The daemon is the only caller
+        // that has a real provider and a real user behind it.
+        methods.setSessionTitleSummariesEnabled(true);
+
         // R388k — install the SDD orchestrator on the STDIO path too.
         //
         // It was installed on the HTTP path only (runHttp), so the five
@@ -741,6 +752,10 @@ final class DaemonRunner {
                             java.nio.file.Path.of(System.getProperty("user.home"))
                                     .resolve(".aethercode"));
             http.methods().setMemoryStore(httpMemoryStore);
+            // R393: same switch as the stdio path — the daemon asks the
+            // model for a short session title. (See the stdio path for
+            // why this is an explicit opt-in.)
+            http.methods().setSessionTitleSummariesEnabled(true);
             // R720: install the matching MemoryMethods on the HTTP
             // server so the hand-rolled dispatch switch can route
             // memory/* RPCs. Without this the HTTP+WS daemon returns

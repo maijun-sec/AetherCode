@@ -139,6 +139,17 @@ struct AppState {
     /// which both updates the in-memory slot and rewrites the
     /// file so a restart restores the user's last project.
     persisted_cwd: TokioMutex<Option<PathBuf>>,
+    /// R392: the daemon's session-store directory.
+    ///
+    /// It used to be derived from the CURRENT project
+    /// (`<cwd>/.aethercode/sessions`), which meant that switching
+    /// projects MOVED the whole session library — the user's
+    /// history vanished every time they opened another folder.
+    /// A session is not owned by a project (the desktop groups them
+    /// by their OWN `cwd`), so the library now lives at ONE fixed
+    /// place, persisted once in `desktop-state.json`
+    /// (`sessionsDir`) so it survives project switches.
+    sessions_dir: TokioMutex<Option<PathBuf>>,
 }
 
 impl Default for AppState {
@@ -154,6 +165,10 @@ impl Default for AppState {
             // renderer needing to manage persistence. The file
             // is read once on startup; set_cwd rewrites it.
             persisted_cwd: TokioMutex::new(load_persisted_cwd()),
+            // R392: resolve the session-store directory ONCE. It is
+            // pinned here (and persisted) so that switching projects
+            // cannot move the library.
+            sessions_dir: TokioMutex::new(resolve_sessions_dir()),
         }
     }
 }
@@ -315,7 +330,18 @@ async fn ensure_daemon(
 
     let java = find_java().ok_or_else(|| "java executable not found on PATH".to_string())?;
 
-    let (info, child) = spawn_daemon(&app, &jar, &java, &cwd, DESKTOP_DAEMON_PORTS).await?;
+    // R392: the session store lives at ONE pinned location, NOT under
+    // the current project. See `resolve_sessions_dir`.
+    let sessions_dir = state
+        .sessions_dir
+        .lock()
+        .await
+        .clone()
+        .or_else(default_sessions_dir)
+        .unwrap_or_else(|| cwd.join(".aethercode").join("sessions"));
+
+    let (info, child) =
+        spawn_daemon(&app, &jar, &java, &cwd, &sessions_dir, DESKTOP_DAEMON_PORTS).await?;
     *state.daemon_handle.lock().await = Some(child);
     let tx = open_ws(&info.ws_url, app.clone()).await?;
     *ws_guard = Some(tx);
@@ -347,6 +373,7 @@ async fn spawn_daemon(
     jar: &Path,
     java: &str,
     cwd: &Path,
+    sessions_dir: &Path,
     ports: &[u16],
 ) -> Result<(DaemonInfo, std::process::Child), String> {
     // R333 follow-up: the sweep is now performed by the
@@ -385,9 +412,10 @@ async fn spawn_daemon(
         let jar = jar.to_path_buf();
         let java = java.to_string();
         let cwd = cwd.to_path_buf();
+        let sessions_dir = sessions_dir.to_path_buf();
         let result_tx = result_tx.clone();
         tokio::spawn(async move {
-            let res = spawn_daemon_on_port(port, &jar, &java, &cwd).await;
+            let res = spawn_daemon_on_port(port, &jar, &java, &cwd, &sessions_dir).await;
             // Best-effort: ignore send error (receiver dropped when we
             // already won the race and dropped our sender clone).
             let _ = result_tx.send((port, res)).await;
@@ -453,6 +481,12 @@ async fn spawn_daemon_on_port(
     jar: &Path,
     java: &str,
     cwd: &Path,
+    // R392: the PINNED session-store location. Threaded down from
+    // `spawn_daemon` because the `--sessions-dir` argument lives in
+    // THIS function's command builder, while the pin lives in
+    // `AppState` (one location for the whole app, not one per
+    // project).
+    sessions_dir: &Path,
 ) -> Result<std::process::Child, String> {
     // R83 debug: capture daemon stdout/stderr to a per-port log
     // file in %TEMP% so we can diagnose why stream_event
@@ -549,11 +583,16 @@ async fn spawn_daemon_on_port(
         // createSession / loadSession / deleteSession RPCs
         // return ENGINE_ERROR (gracefully, but the desktop
         // multi-session stack falls back to localStorage
-        // instead of using real disk persistence). The path
-        // is `<cwd>/.aethercode/sessions`; the daemon creates
-        // the directory on first use.
+        // instead of using real disk persistence).
+        //
+        // R392: the path is the PINNED session-store location
+        // (`~/.aethercode/sessions`), NOT `<cwd>/.aethercode/sessions`.
+        // It used to follow the current project, which meant that
+        // switching projects swapped the user's whole session
+        // history for an empty one. The daemon creates the
+        // directory on first use.
         .arg("--sessions-dir")
-        .arg(cwd.join(".aethercode").join("sessions").to_string_lossy().to_string())
+        .arg(sessions_dir.to_string_lossy().to_string())
         .current_dir(cwd)
         .stdout(stdout_io)
         .stderr(stderr_io)
@@ -747,6 +786,14 @@ async fn set_cwd(
 #[tauri::command]
 async fn get_cwd(state: State<'_, AppState>) -> Result<Option<String>, String> {
     if let Some(c) = state.cwd.lock().await.clone() {
+        return Ok(Some(c.to_string_lossy().to_string()));
+    }
+    // R392: the PERSISTED last-project comes before the process's
+    // current directory. The daemon is spawned with the persisted
+    // cwd, so `current_dir` (the folder the .exe happened to be
+    // launched from) is NOT the project's directory — reporting it
+    // made the desktop show a cwd the daemon was not using.
+    if let Some(c) = state.persisted_cwd.lock().await.clone() {
         return Ok(Some(c.to_string_lossy().to_string()));
     }
     Ok(std::env::current_dir()
@@ -1452,13 +1499,84 @@ fn save_persisted_cwd_to(path: &Path, cwd: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let body = serde_json::json!({ "lastCwd": cwd.to_string_lossy() });
+    // R392: MERGE, do not replace. The same file also carries
+    // `sessionsDir` (the pinned session-store location). A
+    // single-key rewrite would wipe it — the very class of bug R390
+    // fixed on the Java side ("a persisted fact that a NULL-overwrite
+    // can delete is not persisted").
+    let mut body: serde_json::Value = std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    body["lastCwd"] = serde_json::json!(cwd.to_string_lossy());
     let bytes = serde_json::to_vec_pretty(&body)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &bytes)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// R392: where the daemon's session store lives.
+///
+/// One FIXED place for the whole installation — `~/.aethercode/sessions`
+/// — so that switching projects cannot move the library. (It used to be
+/// `<cwd>/.aethercode/sessions`, which meant every project switch
+/// swapped the entire session history for an empty one.)
+fn default_sessions_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?;
+    Some(home.join(".aethercode").join("sessions"))
+}
+
+/// R392: read the pinned session-store directory out of
+/// `desktop-state.json`. Returns `None` when the file is missing,
+/// unreadable, or the key is absent.
+fn load_persisted_sessions_dir_from(path: &Path) -> Option<PathBuf> {
+    let bytes = std::fs::read(path).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let s = v.get("sessionsDir")?.as_str()?;
+    Some(PathBuf::from(s))
+}
+
+/// R392: persist the pinned session-store directory (merge, so
+/// `lastCwd` survives).
+fn save_persisted_sessions_dir_to(path: &Path, dir: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut body: serde_json::Value = std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    body["sessionsDir"] = serde_json::json!(dir.to_string_lossy());
+    let bytes = serde_json::to_vec_pretty(&body)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// R392: resolve the session-store directory ONCE, and pin it.
+///
+/// The pinned value is written to `desktop-state.json` on first use so
+/// that a later change of the default (or a second project) cannot move
+/// an existing library.
+fn resolve_sessions_dir() -> Option<PathBuf> {
+    let path = desktop_state_path()?;
+    if let Some(d) = load_persisted_sessions_dir_from(&path) {
+        return Some(d);
+    }
+    let d = default_sessions_dir()?;
+    // best-effort: if the state file cannot be written we still use the
+    // default for this run (the directory itself is created by the
+    // daemon on first use).
+    let _ = save_persisted_sessions_dir_to(&path, &d);
+    Some(d)
 }
 
 #[cfg(test)]
@@ -1517,6 +1635,82 @@ mod desktop_state_tests {
         save_persisted_cwd_to(&path, &cwd).unwrap();
         // Don't create cwd. Load should refuse.
         assert!(load_persisted_cwd_from(&path).is_none());
+    }
+
+    // ---- R392: the pinned session-store location ----
+
+    #[test]
+    fn saving_the_cwd_does_not_wipe_the_pinned_sessions_dir() {
+        // R392: `desktop-state.json` now carries TWO facts —
+        // `lastCwd` (which project) and `sessionsDir` (where the
+        // session library lives). A single-key rewrite would drop
+        // the second one, which is the same class of bug R390 fixed
+        // on the Java side: a persisted fact that an overwrite can
+        // delete is not persisted.
+        let dir = make_temp_dir("merge-cwd");
+        let path = dir.join("desktop-state.json");
+        let sessions = dir.join("global-sessions");
+        let cwd = dir.join("proj");
+        fs::create_dir_all(&cwd).unwrap();
+
+        save_persisted_sessions_dir_to(&path, &sessions).unwrap();
+        save_persisted_cwd_to(&path, &cwd).unwrap();
+
+        assert_eq!(
+            load_persisted_sessions_dir_from(&path),
+            Some(sessions.clone()),
+            "saving the cwd must not wipe the pinned sessions dir"
+        );
+        assert_eq!(load_persisted_cwd_from(&path), Some(cwd));
+    }
+
+    #[test]
+    fn saving_the_sessions_dir_does_not_wipe_the_cwd() {
+        let dir = make_temp_dir("merge-sessions");
+        let path = dir.join("desktop-state.json");
+        let sessions = dir.join("global-sessions");
+        let cwd = dir.join("proj");
+        fs::create_dir_all(&cwd).unwrap();
+
+        save_persisted_cwd_to(&path, &cwd).unwrap();
+        save_persisted_sessions_dir_to(&path, &sessions).unwrap();
+
+        assert_eq!(load_persisted_cwd_from(&path), Some(cwd));
+        assert_eq!(load_persisted_sessions_dir_from(&path), Some(sessions));
+    }
+
+    #[test]
+    fn sessions_dir_is_pinned_once_and_never_moves() {
+        // The whole point of R392: the session library must NOT
+        // follow the project. Pin it, then resolve again — it must
+        // come back as the SAME path even though the "project"
+        // changed.
+        let dir = make_temp_dir("pinned");
+        let path = dir.join("desktop-state.json");
+        let pinned = dir.join("pinned-sessions");
+        let other_project = dir.join("other-project");
+        fs::create_dir_all(&other_project).unwrap();
+
+        save_persisted_sessions_dir_to(&path, &pinned).unwrap();
+        save_persisted_cwd_to(&path, &other_project).unwrap();
+
+        // Re-read the way `resolve_sessions_dir` does: the pinned
+        // value wins, the project is irrelevant.
+        let resolved = load_persisted_sessions_dir_from(&path);
+        assert_eq!(resolved, Some(pinned));
+    }
+
+    #[test]
+    fn default_sessions_dir_is_under_the_user_profile() {
+        // The default must be INSIDE the user's home (not the
+        // project), which is what makes it project-independent.
+        let d = default_sessions_dir().expect("home dir must resolve");
+        assert!(d.ends_with("sessions"), "unexpected default: {:?}", d);
+        assert!(
+            !d.to_string_lossy().contains(".aethercode\\sessions\\sessions"),
+            "the default must not nest itself: {:?}",
+            d
+        );
     }
 
     #[test]

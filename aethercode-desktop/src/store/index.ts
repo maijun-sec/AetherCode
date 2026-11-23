@@ -3027,7 +3027,12 @@ export const useStore = create<AppState>((set, get) => {
           const existing = s.subTasks.find((st) => st.id === compositeId);
           const subTasks = existing
             ? s.subTasks.map((st) => st.id === compositeId
-                ? { ...st, status: status as ChatSubTask['status'] }
+                // R391: the model REWRITES a todo's text as the plan
+                // evolves ("运行 mvn test 直到全绿" → "mvn clean test
+                // 从零全量验证"). The card's title used to freeze at
+                // the first wording, so the user saw a title that no
+                // longer matched the plan. Take the latest text.
+                ? { ...st, status: status as ChatSubTask['status'], content: content || st.content }
                 : st)
             : [...s.subTasks, {
                 id: compositeId,
@@ -3059,11 +3064,21 @@ export const useStore = create<AppState>((set, get) => {
         const summary = (ev as any).summary;
         const compositeId = `${tId}:${subId}`;
         set((s) => {
-          const subTasks = s.subTasks.map((st) =>
-            st.id === compositeId
-              ? { ...st, status: status as ChatSubTask['status'], summary, endedAt: Date.now() }
-              : st,
-          );
+          // R391: the engine closes a sub-task with
+          // "sub-task removed from todo list" when the model DROPPED
+          // that item from its plan. The card is then a ghost: the
+          // work it described is no longer in the plan, so keeping a
+          // "结果 skipped" footer on it made the chat look like the
+          // last step failed for no reason. Drop the card instead —
+          // the plan it belonged to is simply shorter now.
+          const removedFromPlan = summary === 'sub-task removed from todo list';
+          const subTasks = removedFromPlan
+            ? s.subTasks.filter((st) => st.id !== compositeId)
+            : s.subTasks.map((st) =>
+                st.id === compositeId
+                  ? { ...st, status: status as ChatSubTask['status'], summary, endedAt: Date.now() }
+                  : st,
+              );
           return {
             subTasks,
             currentSubTaskId: s.currentSubTaskId === compositeId ? null : s.currentSubTaskId,
@@ -3131,7 +3146,17 @@ export const useStore = create<AppState>((set, get) => {
           if (currentStepId && !prevEventWasText) {
             // close previous step + open a fresh one for this text
             const prev = steps.find((st) => st.id === currentStepId);
-            const parentSubTaskId = prev?.subTaskId ?? null;
+            // R391: the sub-task is declared DURING the run, so the
+            // snapshot the run_start handler took is almost always
+            // null (no todo list existed yet). Inheriting the
+            // previous step's owner therefore pinned EVERY step of
+            // the run to "no sub-task" — the whole turn's output
+            // landed in the preamble block and every sub-task card
+            // stayed empty. Follow the CURRENT sub-task instead;
+            // fall back to the previous step's owner for the gap
+            // between one sub-task closing and the next opening, so
+            // the output does not scatter.
+            const parentSubTaskId = s.currentSubTaskId ?? prev?.subTaskId ?? null;
             const newStepId = newId('step');
             steps = [
               ...steps.map((st) => st.id === currentStepId
@@ -3567,6 +3592,18 @@ export const useStore = create<AppState>((set, get) => {
         // failed refreshSummary leaves the
         // previous cached value in place.
         void get().refreshSummary().catch(() => {});
+        // R390: refresh the session list when the run ENDS.
+        //
+        // The LeftPanel's session rows show the session's title and
+        // its message count — both of which change as the task runs.
+        // pre-R390 nothing re-read the list at the end of a turn, so
+        // a long task finished with the sidebar still showing the
+        // state it had before the task started: no title (the daemon
+        // had not persisted one yet), and a stale message count.
+        //
+        // This is the "task done, but the session still shows no
+        // name" symptom, and the refresh is what closes it.
+        void get().refreshSessions().catch(() => {});
         // drop the synthetic "current query" task. The
         // user's message is now done; the Header reverts to
         // "Idle" / "No active task" until the next sendMessage.
@@ -4148,6 +4185,28 @@ export const useStore = create<AppState>((set, get) => {
     void get().refreshMemory('PROJECT');
   });
 
+  // R393: the daemon gave a session a SHORT, model-written title.
+  //
+  // The title used to be the user's whole first prompt, which is what
+  // the rail showed. The daemon now asks the model for a 5-15 character
+  // summary — but it does that on a BACKGROUND thread, so the list
+  // cannot simply re-read it. The daemon tells us instead, and we
+  // patch that one row in place. Without this the short title would
+  // only appear on the next full refresh (or never).
+  rpc.on('session_title', (params: any) => {
+    const p = params as { sessionId?: string; title?: string; atMs?: number };
+    if (!p || typeof p.sessionId !== 'string' || typeof p.title !== 'string') return;
+    if (!p.title.trim()) return;
+    const id = p.sessionId;
+    const title = p.title;
+    set((s) => ({
+      sessions: s.sessions.map((x) => (x.id === id ? { ...x, title } : x)),
+      // The trash tab keeps its OWN list — a session that was
+      // summarised while in the trash must be patched there too.
+      trashedSessions: s.trashedSessions.map((x) => (x.id === id ? { ...x, title } : x)),
+    }));
+  });
+
   // daemon-driven todo list. AetherCodeMethods emits a
   // `task_state` JSON-RPC notification whenever the engine's
   // AppState publishes a new todo list (the model just called
@@ -4703,7 +4762,7 @@ export const useStore = create<AppState>((set, get) => {
             // an empty list, the panel renders an empty state.
             rpc.listToolActions().catch(() => ({ tools: [] })),
             rpc.listSessions().catch(() => ({ sessions: [] })),
-            rpc.listProjects().catch(() => ({ projects: [] })),
+            rpc.listProjects().catch(() => ({ projects: [], current: null })),
             rpc.listTasks().catch(() => ({ tasks: [] })),
             rpc.getMetrics().catch(() => null),
             rpc.getTraces(20).catch(() => ({ traces: [], inFlight: 0, completed: 0 })),
@@ -4753,6 +4812,16 @@ export const useStore = create<AppState>((set, get) => {
             currentSessionId: state?.sessionId ?? null,
             projects: projects.projects ?? [],
             currentProjectId: projects.projects?.find((p) => p.active)?.id ?? null,
+            // R392: restore the renderer-side cwd from the daemon.
+            // The daemon KNOWS which project it is bound to
+            // (`listProjects` → `current`); the store's `cwd` was
+            // only ever written by the `cwd_changed` notification
+            // (which fires on a CHANGE) and by setCwd / bindSessionCwd.
+            // So at start-up it stayed null: the header showed an
+            // empty cwd, there was no project in the rail, the "new
+            // session" button had nothing to bind to, and a session
+            // created that way landed under "未关联项目".
+            cwd: projects.current ?? null,
             tasks: tasks.tasks ?? [],
             metrics,
             traces: traces.traces ?? [],
@@ -5337,16 +5406,16 @@ export const useStore = create<AppState>((set, get) => {
               currentInput: '',
               // Push the new session into the local list
               // right away so the LeftPanel can show the
-              // row. The title (`name`) is not known yet;
-              // it lands in `preview` from listSessions on
-              // the refreshSessions() call below. We set
+              // row. The title is not known yet — it lands in
+              // `title` from listSessions on the
+              // refreshSessions() call below. We set
               // `messageCount: 0` to match what the daemon
               // reports for a brand-new session.
               sessions: [
                 ...get().sessions,
                 {
                   id: sid,
-                  name: undefined,
+                  title: undefined,
                   preview: input.slice(0, 200),
                   lastUsedAt: Date.now(),
                   messageCount: 0,
@@ -5460,10 +5529,19 @@ export const useStore = create<AppState>((set, get) => {
         // `lastUsedAt` when the daemon omits it.
         // localStorage merge is retired; the
         // daemon's listSessions is authoritative.
+        //
+        // R390: this goes through refreshSessions() instead of a
+        // bare rpc.listSessions() + wholesale replace. Two reasons:
+        // (1) refreshSessions MERGES the daemon's rows with the ones
+        // it did not return, so a session belonging to another
+        // project's daemon stays in the list; a wholesale replace
+        // dropped it. (2) refreshSessions asks for withPreview, so
+        // the rows carry the session's TITLE — a bare listSessions
+        // relied on the daemon's default and then replaced the
+        // whole array.
         try {
-          const { sessions } = await rpc.listSessions();
-          const list = sessions ?? [];
-          set({ sessions: list });
+          await get().refreshSessions();
+          const list = get().sessions ?? [];
           if (!get().currentSessionId && list.length > 0) {
             const newest = [...list].sort(
               (a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0),
@@ -6021,7 +6099,7 @@ export const useStore = create<AppState>((set, get) => {
           currentInput: '',
           sessions: [
             ...get().sessions,
-            { id: newId, name: undefined, lastUsedAt: Date.now(), messageCount: 0 },
+            { id: newId, title: undefined, lastUsedAt: Date.now(), messageCount: 0 },
           ],
           pendingNewSession: null,
         });
@@ -6096,7 +6174,7 @@ export const useStore = create<AppState>((set, get) => {
             set((s) => ({
               messages: [...s.messages, {
                 id: newId('system'), role: 'system',
-                content: `[Session trashed] "${row.name || sessionId}" is now in Trash. Open the Trash tab to restore.`,
+                content: `[Session trashed] "${row.title || sessionId}" is now in Trash. Open the Trash tab to restore.`,
                 timestamp: Date.now(),
               }],
             }));
@@ -6147,7 +6225,7 @@ export const useStore = create<AppState>((set, get) => {
             set((s) => ({
               messages: [...s.messages, {
                 id: newId('system'), role: 'system',
-                content: `[Session restored] "${row.name || sessionId}" is back in the active list.`,
+                content: `[Session restored] "${row.title || sessionId}" is back in the active list.`,
                 timestamp: Date.now(),
               }],
             }));

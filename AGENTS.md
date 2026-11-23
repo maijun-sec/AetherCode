@@ -3727,3 +3727,428 @@ a gate. Both of those cost this round real time.
   **Lesson 1407 — 两个语言里的 diff 是两个真相。** 要 diff 就让 daemon 拥有它。
   **Lesson 1408 — 两个语言都实现的规则,必须**两侧都**钉住。**
   Doc: `docs/R388s-checkpoint-preview.md`.
+- **R389** (the chat column is the desktop's DOCUMENT, drawn in a
+  terminal): the user said the TUI was "太丑了" and asked for the
+  desktop's middle section — R388h had already fixed the CHROME
+  (flat transcript, accent bar, one-line empty state) but the
+  CONTENT STRUCTURE was still the TUI's own: a dim `Assistant` label
+  above every reply, a dim `Thinking` label above every think, a
+  BORDERED BOX around every tool call, and **no sub-task grouping at
+  all** — the daemon's `sub_task_start` / `sub_task_end` events
+  (`AetherCodeMethods.java:8955/8961`) were dropped on the floor
+  (zero occurrences of `sub_task` in the whole TUI source). The
+  desktop's centre column is NOT a stack of cards: it is a flat
+  markdown document whose first FOUR layers are DOM-free — the block
+  model (`MessageList.tsx:631` `buildBlocks`), the fold policy
+  (`:693` `defaultOpenFor`), the diff (`:305`/`:395`), and only then
+  the renderer (`:711` `<ReactMarkdown>` + `<details>`). So R389
+  took the desktop's RULES and wrote a terminal renderer:
+  `aethercode-tui/src/chat/blocks.ts` is a pure module (no Ink, no
+  DOM) holding `buildTimeline` / `resolveOpen` / `summarizeDiff` /
+  `buildEditSnippetFromInput`, and `ChatBlocks.tsx` draws it. The
+  fold policy is the desktop's verbatim — the heading / result /
+  file-changes summary always open, the FINAL think always open
+  (R276), the live tail open — with ONE addition: a terminal has no
+  `<details>`, so the fold lives on the TURN's own `collapsed` flag
+  and the user's choice wins except for the two blocks the desktop
+  refuses to hide; `Ctrl-E` now folds the last **foldable** block
+  (a think or a tool), not the last turn, which used to be the
+  answer. The file-change grouping went from TWO algorithms that
+  happened to agree (`fileChangeGroupIdAt` walked backwards,
+  `groupTurns` forwards) to ONE (`fileChangeRuns`) with THREE
+  callers (the app's targeting, the card's grouping, the chat
+  column's). Two older gates were UPDATED, not deleted, because the
+  invariant held and only its LOCATION moved (`phase-6-t6-14` reads
+  the chat column now; `r388r` checks the CHAIN Scrollback →
+  ChatBlocks → card). **Lesson 1409 — a renderer never decides on
+  its own what the transcript IS; the rule belongs in a layer both
+  renderers can read.** **Lesson 1410 — a gate's fixture must be
+  able to FAIL the rule: the first R389 fixture had ONE think per
+  sub-task, and that think is by definition the FINAL one, so the
+  fixture could not tell "a think is folded" from "the final think
+  is open" — the fixture was what was wrong, not the rule.**
+  **Lesson 1411 — "it looks like the desktop" is a SHAPE, and a shape
+  can be measured: the complaint was visual, and what made it
+  actable was noticing the desktop's rules are DOM-free, so "the
+  same look" reduced to "the same rules + a different renderer";
+  `aethercode-tui/scripts/preview-r389.mjs` renders the real
+  Scrollback with a realistic transcript so the question has a
+  picture attached instead of a guess.** Still open: the desktop does
+  not import `chat/blocks.ts` yet; the `## Summary` block is still
+  extracted into a footer instead of left in the markdown; the
+  transient `⚠ auto-summary pending` line is still noise the desktop
+  does not have. Doc: `docs/R389-tui-chat-column.md`.
+- **R389g** (the gates the R389 change broke, and the THREE defects
+  the suite was hiding): the full TUI suite reported 61 failures after
+  R389. A pristine `git worktree` at HEAD ran the SAME gate files and
+  showed that **58 of the 61 are BASELINE failures** (the `docs/*`
+  structure gates, the StatusBar gates, R33/R35/R77-R79/R94-R95,
+  `line-runend`, `r194-end-to-end`, `T-457`) — they are red on an
+  untouched tree and were red before this round started. Only 3 were
+  R389's own, and all 3 were the same shape: a **mutation gate whose
+  anchor no longer exists**. R389 moved the card's rendering, so
+  `FileChangesCard.tsx` no longer contains the literal
+  `<CardAction label="撤销" ... />` that `r388q`'s mutation replaced —
+  and the mutation test reported "the anchor occurs 0 times", i.e. the
+  gate had been BLIND since R388r. **Lesson 1412 — a mutation gate
+  reports "the anchor moved" and "the gate has no teeth" in the same
+  sentence, and the first one is the honest one: re-point the anchor
+  at the NEW home of the defect, and keep the mutation's INTENT
+  ("the run never breaks") rather than its SPELLING.**
+  **Lesson 1413 — a gate that greps for `pending = null;` is a LOOKUP,
+  and a lookup can be satisfied without the rule holding.** R389's
+  `r388q` grouping assertion was exactly that; it now CALLS
+  `fileChangeRuns` on real turns and asserts on the runs
+  (`[[1,2],[4]]` — the bash turn breaks the group). And the grouping
+  itself is now genuinely ONE algorithm: `groupTurns` (the card) reads
+  `fileChangeRuns` instead of carrying its own second scan, so the doc
+  claim stopped being a claim. **Lesson 1414 — a doc that says "one
+  algorithm, three callers" is an ASSERTION; check the code before
+  repeating it.** Two more pre-existing defects surfaced while
+  verifying: (1) `r388n-auto-mode-mutation` mutated the REAL
+  `src/permissionComment.ts` / `tui.tsx` / `line.ts` /
+  `Scrollback.tsx` and restored them afterwards — so it could eat
+  uncommitted work if the process died mid-run, and it made the suite
+  FLAKY (the parallel `r388n-auto-mode` gate read a mutated
+  `permissionComment.ts` and failed with `'deny' !== 'allow'` against
+  a perfectly good tree). It now mutates a SANDBOX copy (with
+  `node_modules` as a junction), like the other mutation batteries.
+  **Lesson 1415 — a mutation test that edits the working tree is a
+  landmine in both directions: it can DESTROY uncommitted work, and it
+  makes every OTHER test's result depend on the scheduler.** (2)
+  `r388q` and `r388s` both put their sandbox's sibling tree at
+  `<tmp>/aethercode` — and `r388s` DELETES that path when it is done,
+  so `r388q`'s wire-contract assertion died with ENOENT, red for the
+  wrong reason, and only when the two files ran in parallel. Each
+  sandbox now has a parent of its own. **Lesson 1416 — a shared
+  MUTABLE path between two test files is a race, and a race is a
+  flake: give each sandbox a unique parent.** And prettier broke one
+  more gate for the classic reason: `phase-6-t6-14` matched the
+  literal `Tab to expand`, and the formatter reflowed it to `Tab\n to
+  expand`. The regex is now whitespace-tolerant. **Lesson 1417 — a
+  gate's needle must survive the formatter; assert the INVARIANT
+  (`Tab\s+to\s+expand`), not the line's spelling.** And one more stale
+  literal: `r388r`'s mutation battery checks that the gate went red for
+  the RIGHT reason, and that right-reason regex said "the way the card
+  does" while the gate's own message says "the way the rule says" — so
+  the mutation went red for exactly the right reason and the battery
+  called it the wrong one. **Lesson 1418 — a "right reason" needle is a
+  needle too, and it goes stale like any other.** And the full-suite
+  re-run brought back **3 new failures** that all said "the mutation
+  did not apply" — but the mutation DID apply: the gate had been
+  KILLED by the battery's 300-second `spawnSync` timeout, and
+  `run.status` was `null`, which the code mapped onto the
+  "did not apply" sentinel. The durations said it (287s / 294s /
+  301s / 302s against a 300s bound). **Lesson 1419 — a timeout bound
+  that sits ON the observed runtime is a coin flip, not a bound; and
+  its error message lies, because a killed child looks like a failed
+  regex. Check the DURATION first.** The bound is now 600s in
+  `r388o` / `r388q` / `r388r` / `r388s` / `r388p`. Doc:
+  `docs/R389-tui-chat-column.md`.
+- **R390** (the session's name must be the user's words, and it must
+  be a FACT): the user reported "the left rail's project / session /
+  session list are always wrong, and after a LONG task the session
+  still shows no name". Five defects, each found by reading the WIRE
+  against the running daemon (not by reading the renderer):
+  (1) the desktop's `SessionInfo` declared `name?: string` — a field
+  the daemon has NEVER sent (it sends `title`; the TUI has always
+  read `title`) ⇒ every `if (s.name)` guard was dead code in five
+  places (SessionList / TaskSummary / CommandPalette /
+  SessionPickerModal / Welcome), and the "Current Session" card's
+  name pill NEVER rendered; (2) the daemon re-derived the title from
+  the transcript's FIRST `"role":"user"` line — and the engine writes
+  user-role messages of its OWN (the R719 anchor, the post-compact
+  re-injection, the `<system-directive type="todo-continuation">`
+  prompt), so a compacted session was titled "[PostCompact
+  re-injection] …"; (3) `SessionStoreSqlite.upsert` wrote
+  `excluded.first_prompt` / `excluded.title` over the stored value,
+  and every `touch()` caller passes `null` for the fields it does not
+  own ⇒ **the first message append DELETED the session's title**;
+  (4) the desktop's `createNewSession` goes through `createEngine`,
+  which never wrote a cwd ⇒ a new session landed in 未关联项目; (5)
+  `case 'run_end'` never called `refreshSessions()`, and
+  `SessionList`'s own `useEffect` returns early when `propItems` is
+  set (the LeftPanel always sets it) ⇒ nothing re-read the list when
+  a task ended. Fixed by: the title is now a PERSISTED fact resolved
+  in a fixed order (the user's rename → the persisted `first_prompt` →
+  the transcript scan as a LAST resort); `upsert` resolves the two
+  families in OPPOSITE directions (`cwd` = last non-null wins,
+  `first_prompt`/`title` = FIRST non-null wins, so the first prompt
+  wins atomically and a rename survives every later touch); ONE
+  shared rule for "did the user write this?" (`UserAuthoredText`,
+  used by BOTH the engine's capture path and the daemon's scan —
+  deliberately NOT `CodeCheckpointStore.isRealUserTurn`, which answers
+  a different question and errs the other way on an unknown kind);
+  the engine writes the session row + cwd at attach time; and the two
+  scans are bounded (the preview stops at 400 lines / 256 KB; the
+  "last agent event" reads the last 256 KB instead of the WHOLE file
+  — it was `Files.readAllLines`, and the live daemon measured
+  297-455 ms with `withPreview` vs 24-30 ms without, on a 16 MB
+  transcript: the list got slower as the session got LONGER). The
+  desktop now reads `title` everywhere and re-reads the list on
+  `run_end`. **Lesson 1420 — a field the sender never sends is not a
+  "fallback branch"; it is dead code that looks like a feature.**
+  **Lesson 1421 — "prefer X, fall back to Y" hides a third
+  possibility: Y is what actually happens, always.**
+  **Lesson 1422 — a persisted fact that a NULL-overwrite can delete
+  is not persisted.**
+  **Lesson 1423 — the direction of a COALESCE follows from WHO
+  WRITES THE COLUMN: "last non-null wins" for a column an explicit
+  writer replaces (`cwd`, `title`), "first non-null wins" for one
+  FILLED ONCE from a stream of candidates (`first_prompt`). The
+  existing `upsertIsIdempotent` test correctly refused the
+  one-direction-for-both version (a rename must stay replaceable).**
+  **Lesson 1424 — the first user-role LINE is not the first user
+  turn.**
+  **Lesson 1425 — a rule that answers two questions needs two
+  answers, not one compromise.**
+  **Lesson 1426 — a scan that reads the whole file to find the LAST
+  thing in it is a performance bug that only shows up on the sessions
+  that matter.**
+  **Lesson 1427 — a refresh hook that the parent disables is not a
+  refresh hook.**
+  **Lesson 1428 — the render path is the only path that counts** (two
+  session-row components existed; the one reading the right field was
+  NOT on the LeftPanel's path). **Lesson 1429 — a read path that LEARNS
+  a fact should be allowed to write it down, when the write is narrow
+  and one-shot** (the daemon's scan now back-fills `first_prompt` into
+  the index — one column, only while it is empty, no `last_used_at`
+  bump — so an existing session's title survives the next compaction
+  instead of being re-derived from a transcript that no longer holds
+  it). Doc:
+  `docs/R390-session-title-truth.md`.
+
+## R390 deploy
+
+- Deployed into `dist/aethercode-green-r388/`: the new shaded jar
+  (`resources/aethercode.jar`, SHA256 `5A549DB6…`) and the rebuilt
+  renderer (`aethercode-desktop.exe`, SHA256 `861AB7D7…`). The
+  previous artifacts are kept beside them as `*.bak-r390`.
+  **Lesson 1430 — the daemon's `--sessions-dir` is NOT the process
+  cwd.** `spawn_daemon` derives it from `cwd.join(".aethercode")`,
+  and `cwd` comes from `state.cwd` OR the PERSISTED last-project
+  (`~/.aethercode/desktop-state.json` → `lastCwd`) — the folder you
+  launched the exe from is consulted NOWHERE. Launching from the
+  wrong directory therefore does not move the sessions dir; it
+  silently changes WHICH sessions the daemon sees (and the renderer's
+  project tree follows the session rows, so the tree changed too).
+  **Lesson 1431 — a BOM is a silent parse failure.** PowerShell
+  5.1's `Set-Content -Encoding UTF8` writes a BOM; `serde_json::
+  from_slice` rejects it, so `load_persisted_cwd` returned `None` →
+  `ensure_daemon` answered `NEEDS_CWD` → the daemon never spawned.
+  The only symptom was "nothing is listening on 22888", with no
+  error anywhere — the renderer just showed the folder picker. Write
+  such a file with `[System.IO.File]::WriteAllText(path, text,
+  UTF8Encoding($false))`. **A file read by a strict parser must be
+  written by a byte-exact writer, never by a shell text cmdlet whose
+  default encoding you have not checked.**
+  **Lesson 1432 — the renderer is inspectable.** WebView2 exposes a
+  DevTools endpoint (`--remote-debugging-port=9222`); a plain Node
+  script over the CDP WebSocket can read `document.body.innerText`
+  and invoke Tauri commands, so "what does the UI actually show?" is
+  answerable without a screenshot — and it is the fastest way to tell
+  "the backend is broken" from "the frontend never called the
+  backend".
+- **R391** (the output belongs to NO sub-task; a re-worded plan
+  froze its title; a dropped todo left a "skipped" ghost card): the
+  desktop opened a step at `run_start` and stamped it with
+  `currentSubTaskId` — but the plan does not exist yet at
+  `run_start`, so the stamp was ALWAYS null, and every later step
+  inherited it. The whole turn therefore fell into the preamble
+  bucket (measured in the live renderer: ONE 15 696-char block) and
+  every sub-task card stayed title-only. The daemon side tracked a
+  sub-task's STATUS but not its TEXT, while the synthesised flat-todo
+  id is POSITIONAL (`auto-{t}`) — so a re-worded plan produced no
+  event and the card's title froze at the first wording; the desktop
+  did not update `content` on an existing card either. And the
+  engine's "sub-task removed from todo list" close was rendered like
+  any other terminal status, leaving a `结果 skipped` footer on the
+  LAST card — a failure that had nothing to do with the last step.
+  Fixed by: one shared emitter (`emitSubTaskTransitionsFor`) for
+  BOTH sub-task shapes, tracking the TEXT beside the STATUS and
+  re-announcing with the PREVIOUS status (a re-worded item is not a
+  re-opened one); the desktop's new step taking the CURRENT
+  sub-task (`s.currentSubTaskId ?? prev?.subTaskId ?? null`); the
+  card taking the latest `content`; a dropped todo DROPPING the card
+  instead of painting "skipped"; and the step→card grouping
+  extracted into `groupStepsBySubTask`, where a step naming a
+  removed card falls back to the preamble so its output cannot
+  evaporate. **Lesson 1433 — a snapshot taken at the moment its
+  subject does not exist yet is not "no information", it is a
+  permanent "no owner" mark.** **Lesson 1434 — ownership follows
+  "now", not "last time"**: inheriting the previous step's owner
+  copies one expired snapshot N times. **Lesson 1435 — when the id
+  is POSITIONAL and the entity is CONTENT, tracking only the status
+  cannot describe the entity: the shape of the id decides what else
+  must be tracked.** **Lesson 1436 — "removed from the plan" and
+  "failed" are different things; one field carrying two meanings must
+  be split by MEANING at the receiver, not by field.** **Lesson 1437
+  — two hand-written copies of a state machine drift** (only the flat
+  copy noticed a re-worded todo). **Lesson 1438 — when a card is
+  removed, its steps must not evaporate with it.** **Lesson 1439 — a
+  renderer can fix a wrong PRESENTATION, but it cannot invent
+  information the engine never had**: the model did not advance its
+  todo list for 3 minutes, so no renderer could have split that
+  output across 6 sub-tasks. **Lesson 1440 — "switching project" must
+  not take the session list with it**: the daemon's session store
+  lives at `<cwd>/.aethercode/sessions` and the cwd comes from the
+  PERSISTED last-project, so switching projects moves the whole
+  library and the old sessions vanish (found while deploying R391 —
+  the 6 historical sessions had to be copied and their absolute
+  `raw_path` re-pointed). Doc:
+  `docs/R391-subtask-attribution.md`.
+  R391 also added an END-TO-END desktop test that drives the REAL
+  store through the REAL `stream_event` handler (the `AetherCodeRpc`
+  handler map is reachable, so no module mocking is needed), plus two
+  mutation checks: reverting the ownership fix to
+  `prev?.subTaskId ?? null` turns 2 cases red, and forcing
+  `removedFromPlan = false` turns 2 more red. The deployed build is
+  `dist/aethercode-green-r388/` (exe SHA256 `8F1EEC87…`, jar
+  56935399 bytes); the previous artifacts are kept as `*.bak-r391`.
+- **R392**（用户问「现在我怎么创建个 session，或者一个任务？」+「`--session-dir`
+  可以顺带着修」）：那一轮**答案是：创建不了** —— 不是藏得深，是**按钮根本
+  不存在**。截图是 `CURRENT SESSION / 📂 —` + `Active 0 sessions`，没有项目
+  分组、没有「＋」。**三个互相独立的缺陷**叠在一起才凑出这张空白的左栏：
+  **(A) 渲染层的 `cwd` 从不恢复。** store 的 `cwd` 只有三个写入点
+  （`cwd_changed` 通知 / `bindSessionCwd` / `setCwd`），**`initialize()` 一个
+  都没碰** ⇒ 每次重启 `store.cwd` 都是 null。而 daemon 其实知道：
+  `listProjects` 返回 `{projects, current}`，其中 `current` =
+  `System.getProperty("user.dir")` = daemon 被 spawn 进去的目录 =
+  桌面端持久化的上次项目。**渲染层把这一半扔了**（`methods.ts` 连类型都没
+  声明 `current`）。修法：`methods.ts` 补 `current?: string | null`，
+  `initialize()` 写 `cwd: projects.current ?? null`。
+  **fallback 必须同形**（`.catch(() => ({ projects: [], current: null }))`）——
+  否则 `projects.current` 是联合类型上的编译错误，退化成运行期 undefined。
+  **(B)「＋ 新会话」按钮挂在**由会话派生的分组**里 —— 这才是「没法建 session」
+  的真凶。** `ProjectGroupList` 的分组只从**已有会话**派生
+  （`for (const s of sessions) groups.set(s.cwd, …)`），而「＋」只存在于分组
+  头部 ⇒ **没有会话 → 没有分组 → 没有「＋」→ 建不出第一个会话**：一个鸡生蛋。
+  用户那次正好一个活跃会话都没有（他自己挪进了回收站），按钮**彻底消失**。
+  修法：**当前项目恒有分组**（`if (currentKey && !groups.has(currentKey))
+  groups.set(currentKey, [])`），且**当前项目排第一**（否则空分组的
+  `lastUsedAt=0` 会被排到最后，用户还得往下滚才看得见那个按钮）。
+  接线走 **prop**（`currentCwd={useStore((s) => s.cwd)}`）而不是让组件直接读
+  store —— 行为测试可以自己喂 `currentCwd`，不必动全局 store。
+  **没有**在顶部加回总按钮：用户上一轮明确说过「project 和 session 之间
+  没必要再加一层 sessions」，本轮尊重那个决定 —— 动作仍是「每项目一个 ＋」，
+  只是保证当前项目那个 ＋ **永远在**。
+  **(C) `--sessions-dir` 与 cwd 解耦。** 它一直是 `cwd.join(".aethercode")
+  .join("sessions")` ⇒ **切项目 = 换一整个会话库**（R391 部署时撞到过）。
+  现在钉死在 `%USERPROFILE%\.aethercode\sessions`，持久化在
+  `desktop-state.json` 的 `sessionsDir` 键里，**第一次写入后不再变**
+  （`resolve_sessions_dir()`）。`spawn_daemon` 多带一个 `sessions_dir`
+  参数，一路穿到真正拼命令行的 `spawn_daemon_on_port`。
+  **状态文件必须「合并写」**：两个键共用一个文件，原来 `save_persisted_cwd_to`
+  是**整体替换** ⇒ `sessionsDir` 会被一次 cwd 写入删掉 ⇒ 这是 R390 在 Java
+  侧的同一条教训的 Rust 版（**能被一次 NULL 覆盖删掉的持久事实，不算持久**）。
+  顺带修 `get_cwd`：**persisted_cwd 优先于 `current_dir`** —— daemon 是用
+  persisted cwd spawn 的，进程的 `current_dir`（exe 被双击时所在的目录）
+  不是项目目录，报出它会让桌面端显示一个 daemon 根本没在用的目录。
+  **迁移**：动数据之前先把**三个**库都读了一遍（全局旧库 1 行 / `abc_1` 活库
+  6 行 / `RAG` 原件 6 行），脚本 `.aethercode/r392-migrate.mjs` 的顺序是
+  **先备份 → 再拷贝 → 最后重指**（`UPDATE sessions SET raw_path = replace(...)`
+  把 6 行的绝对路径改到新位置），并在最后**逐行验证 `raw_path` 在磁盘上存在**，
+  不存在就退出码 1。**不删任何东西**：旧项目侧库与全局库的 legacy 目录原地保留。
+  **测试**：桌面端 `projectGroupR392.test.tsx`（5 例，**真渲染真点击**：0 会话时
+  分组在不在、「＋」在不在、点了传的是不是当前项目的 cwd、当前项目排不排
+  第一）+ `cwdRestoreR392.test.ts`（9 例契约）+ Rust `desktop_state_tests`
+  （4 例）。**变异验证**：把「当前项目补全」改成 `if (false && …)` ⇒ **5 例里
+  红 3 例**，另 2 例是回归护栏（理应不红）；恢复后 12/12 绿。
+  **实机验证**（CDP 只读 + 真点「＋」）：daemon 命令行已是
+  `--sessions-dir C:\Users\maijun\.aethercode\sessions`；左栏显示
+  `📂 D:\tmp\abc_1` + 分组 `abc_1(0)` + **「＋」按钮在**（title
+  `新建 session (cwd: D:\tmp\abc_1)`）；点它**真的弹出** R331 模式选择器
+  （普通 / SDD 规范化 / Workflow / 取消），取消后无副作用。
+  **「任务」不用建**：任务（sub-task）由模型用 `todo_write` 声明，界面渲染成
+  子任务卡片（标题 = todo 的 `content`），右侧 Plan 面板看全貌 —— R391 已修
+  归属。**Lesson 1441 — 真相源在 daemon 侧，别在渲染层自己推导。**
+  **Lesson 1442 — 状态文件要合并写，不要整体替换**（两个键共用一个文件时，
+  一个写者整体替换就把另一个删了）。**Lesson 1443 — 会话库不该跟着项目走**：
+  session 不属于项目，把它挂在「上次打开的项目」下面等于把用户的上下文绑死在
+  一次目录切换上。**Lesson 1444 — 一个动作的入口挂在「由该动作的产物派生的
+  容器」里，就是死锁**：入口必须挂在一个**不依赖该动作结果**的地方。
+  **Lesson 1445 — 不存在的列和 NULL 值，从外面看一模一样**：查 SQLite 前先读
+  schema —— 第一版导出查 `deleted_at`（**不存在**），读出来「一个都没删」，
+  而库里明明有 6 个 `trashed_at` 非空。**Lesson 1446 — 变红的集合要分清
+  「该红的」与「理应不红的」**：护栏不红不是漏洞，是护栏的定义。
+  Doc: `docs/R392-session-library-and-cwd.md`.
+  **已知遗留（本轮未动）**：`initialize()` 仍会调 `preWarmCwd(suggestSibling(...))`
+  ⇒ 每次启动打一条 `[store] pre_warm_daemon failed for <父目录>: Command
+  pre_warm_daemon not found`。R361 已把 Rust 侧的 pre-warm 整个撤掉，
+  **store 里的调用是死代码**；它无害（被 catch 住），但会在排查启动问题时
+  误导人。清理它值得单独一轮。
+- **R393**（用户：「我看现在取的标题，好像是我完整的prompt内容，能不能概括一下，
+  比如让模型给你取个 5-15个字的标题来使用？」）：session 的标题**就是**第一条
+  prompt 原文 —— `listSessions` 的解析顺序是
+  `firstNonBlank(用户改名, first_prompt, transcript 扫描)`，而 `first_prompt` 存的是
+  原文（最多 2000 字符）。R390 把标题做成了「持久化事实」，但它选的第一兜底
+  仍然是 prompt 原文 —— 那能当兜底（至少是**这个会话**的语义），但不是**标题**。
+  代码库里早就预告过这件事：`aethercode-desktop/src/components/SessionList.tsx`
+  里有一句「the LLM-generated "10-char summary" is a future round (R223+
+  candidate)」—— 本轮就是那一轮（那段注释已更新）。
+  **(1) 触发点选在 `listSessions`。** 那是**唯一**同时知道「这个 session 没有标题」
+  和「它的第一条 prompt 是什么」的地方；读路径上写 store 已有先例（R390 的
+  `backfillFirstPrompt`，`SessionStore` 的 javadoc 里写着「★ WHY THE STORE IS
+  ALLOWED TO WRITE ON A READ PATH ★」）。**一条路径覆盖新老 session**。
+  **(2) 必须异步。** 模型要几秒，`listSessions` 不能等 ⇒ 先返回旧标题，
+  模型答完再推 `session_title` 通知，渲染层就地改那一行。
+  `SessionTitleCoordinator`（core）决定**何时花钱**：已有标题不问 / 无 prompt
+  不问 / **10 分钟冷却**（provider 挂掉时不会每次刷新都打一次）/ 后台 daemon 线程
+  （非 daemon 的池会拖住 JVM 不退出）。
+  **(3) 长度规则不是「一个数」。** 「5-15 个字」是**中文形状**的规则 —— 15 个拉丁
+  字符只有三个词。故按形状分：CJK 主导 ≤ 15，拉丁主导 ≤ 60；下限统一 5 个字符
+  （2 个字是噪音，宁可退回长 prompt）。「CJK 主导」的判定照 R737，但阈值要改：
+  R737 的「CJK ≥ 12」是对**整段 prompt** 说的，对 6 个字的中文标题会判成英文。
+  **(4) ★ 本轮最值得记的一处 ★ 默认开启会外溢到别人测试里。** 触发点在
+  `listSessions`，而**默认构造的 engine 自带 `SpringAiChatClient`** ⇒
+  「默认开启」意味着**每个列出 session 的单元测试都会拿测试里的 prompt 文本去打
+  真实的模型接口**：没 key 时那是一次注定失败的外部请求；有 key 时它会**成功**，
+  然后把测试正在断言的那个标题改掉 —— 测试变成「取决于外部服务会不会成功」。
+  两条都不可接受 ⇒ 做成**显式 opt-in**（`AetherCodeMethods.setSessionTitleSummariesEnabled`），
+  **daemon 开**（`DaemonRunner` 的 stdio 与 http 两条路），**测试要测就自己开**。
+  **(5)「空槽」判定必须在 SQL 里，不能在 Java 里。** 新增
+  `SessionStore.setTitleIfAbsent`（与 R390 的 `setFirstPromptIfEmpty` 同形）：
+  `UPDATE sessions SET title = ? WHERE id = ? AND (title IS NULL OR TRIM(title) = '')`。
+  先读后写有竞态 —— 模型调用在飞的这几秒里用户可能刚改名。**改名保护有两道
+  独立的门**（触发门：标题非空就不问；写入门：SQL 的 WHERE）⇒ 任何一道单独失效，
+  用户的名字都还在。**(6) 模型会答非中文**：指令是英文的，而 MiniMax-M3 这类模型
+  **跟随 prompt 的语言** ⇒ 显式写「中文请求 ⇒ 中文标题」（与 R737 同一个失败模式）。
+  **(7) 清洗要处理模型的装饰**：引号（`"` `“”` `「」` `『』` `《》` `【】`）、
+  markdown（`**` `__` `` ` `` `*` `_` `~`）、列表符号、结尾标点、**只取第一行**
+  （模型有时在第二行加解释）。**(8) 渲染层**：store 加 `rpc.on('session_title', …)`，
+  **回收站是另一份数组**（只改 `sessions` 的话 Trash 页还是长 prompt）。
+  左栏行只渲染 `sessionLabel(s)`，其第一分支就是 `s.title` ⇒ 短标题直接显示，
+  没有第二行 preview。
+  测试：core `SessionTitleSummarizerR393Test`（19）+ `SessionTitleCoordinatorR393Test`（6）、
+  protocol `AetherCodeMethodsR393SessionTitleTest`（4）、desktop `sessionTitleR393.test.ts`（4）。
+  **两处变异验证**：(a) 桌面端处理器失效 ⇒ 4 例红 2（另 2 条是畸形输入护栏，
+  **理应不红**）；(b) ★ 写守卫失效（SQL 加 `OR 1 = 1`）⇒ **恰好 2 条红**
+  （两条直接测第 2 道门的 core 用例）—— 而**协议层那条没有变红**，因为它有
+  **第二道独立的门**（触发时 `hasTitle` 就拦住了）⇒ 若只测协议层，这条变异会
+  「全绿」，那就是一个恒真断言。**Lesson 1447 — 一个在读路径上触发外部调用的
+  功能，必须是显式 opt-in**：默认开启会外溢到别人测试里，而下一个写测试的人
+  不会知道自己付了账。**Lesson 1448 — 「空槽」判定必须在 SQL 里**：Java 侧的
+  读与写之间有窗口，而模型的调用在飞。**Lesson 1449 — 派生事实可以在读路径上
+  物化，但要有「物化过」的标记**，否则每次刷新都重算。
+  **Lesson 1450 — 「5-15 个字」是中文形状的规则，不是长度规则**（15 个拉丁字符
+  只有三个词）。**Lesson 1451 — 模型会答非中文，而指令是英文的**（与 R737 同一个
+  失败模式）。**Lesson 1452 — 后台任务活得比请求久**：它锁着 SQLite 文件，
+  JUnit 删临时目录会失败，而那个失败**长得像一个断言失败**（实读 surefire 报告：
+  `Tests run: 4, Failures: 0, Errors: 1`）。Doc:
+  `docs/R393-model-written-session-title.md`.
+- **R393b** (the FIRST real deployment wrote the model's REASONING
+  preamble as the title): MiniMax-M3 is a REASONING model and its
+  `<think>…</think>` notes arrive in the SAME text stream as the answer — so
+  the rail showed `<think>We need title only Chinese 5-15 chars, summarize`.
+  The unit tests could not see it (the stub client feeds a clean answer);
+  only a REAL call shows the shape. **Lesson 1453 — 单测里的假客户端不会告诉你
+  真实模型的答案长什么样**：凡是「把模型输出直接当数据用」的功能，单测绿了
+  不算数，要有一处真的问一次模型的验证；而**已知形状要复用仓库既有做法** —
+  `aethercode-evals` 的 `BenchmarkLlmAgent` 早就剥同一个 provider 的同一个
+  `<think>` 块。**Lesson 1454 — 清洗的顺序会决定清洗是否还有意义**：
+  「先取第一行再剥推理块」会得到一个**空的第一行**，于是标题退回整条 prompt，
+  也就是这个功能本来要消灭的东西 —— 推理块在**流**里，所以要**先在流上剥**、
+  再在行上取。**Lesson 1455 — 一个派生值一旦落进「只写空槽」的槽位，就再也出不来
+  了**：模型偶尔把请求原文当答案，那种标题写进 `title` 之后空槽守卫会永远
+  保护它 ⇒ 派生值的守卫要**在写之前**拒掉明显不合格的形态（本轮：标题是 prompt
+  的字面前缀 ⇒ 拒绝）。

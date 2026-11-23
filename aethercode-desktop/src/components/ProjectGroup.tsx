@@ -145,6 +145,20 @@ interface ProjectGroupListProps {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   onNewSession: (cwd: string | null) => void;
+  /** R392: the cwd of the project the user is CURRENTLY in
+   *  (the store's `cwd`). The group list ALWAYS renders a group
+   *  for it — even when it holds no sessions yet.
+   *
+   *  R392 rationale: the "create a session" affordance ("＋") lived
+   *  ONLY inside a project group header, and the groups were derived
+   *  purely from the sessions that already existed. So the very first
+   *  session of a fresh install had no button to click: no session →
+   *  no group → no "＋" → still no session. The user reported exactly
+   *  this ("现在我怎么创建个 session？") with an empty left rail.
+   *
+   *  The current project is the one the user is standing in, so it is
+   *  the one that must always have a group. */
+  currentCwd?: string | null;
   /** R710-B (2026-10-17): optional per-row soft-delete
    *  handler. When set, the inner SessionList is
    *  rendered with `onSoftDelete` so each row gets a
@@ -164,7 +178,7 @@ interface ProjectGroupListProps {
  * that project. A session with no cwd is grouped under
  * "Unlinked Project".
  */
-export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId, onNewSession, onSoftDelete }: ProjectGroupListProps) {
+export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId, onNewSession, currentCwd, onSoftDelete }: ProjectGroupListProps) {
   // Group sessions by cwd. We use a Map to preserve
   // insertion order (the daemon returns sessions
   // most-recently-used first, so the groups appear in
@@ -176,17 +190,30 @@ export function ProjectGroupList({ sessions, currentSessionId: _currentSessionId
     arr.push(s);
     groups.set(key, arr);
   }
-  // Sort groups: most-recently-used session in each group
-  // (already first since `sessions` is sorted). The
-  // unlinked group goes last.
+  // R392: the CURRENT project always gets a group, even when it
+  // holds no sessions. Without this the "＋" button (the only
+  // in-panel way to create a session) disappears exactly when the
+  // user needs it. The group is inserted with an EMPTY list —
+  // `ProjectGroup` renders "这个项目下没有 session" for it.
+  const currentKey = currentCwd && currentCwd.trim() ? currentCwd : null;
+  if (currentKey && !groups.has(currentKey)) {
+    groups.set(currentKey, []);
+  }
+  // Sort groups: the CURRENT project first (it is the one the user
+  // is standing in), then the rest by most-recently-used session,
+  // and the unlinked group last.
   const entries = Array.from(groups.entries()).sort(([a, aArr], [b, bArr]) => {
     if (a === null) return 1;
     if (b === null) return -1;
+    // R392: the current project wins the sort even when it has no
+    // sessions (its recency would otherwise be 0 → last).
+    if (a === currentKey) return -1;
+    if (b === currentKey) return 1;
     const aRecent = aArr[0]?.lastUsedAt ?? 0;
     const bRecent = bArr[0]?.lastUsedAt ?? 0;
     return bRecent - aRecent;
   });
-  // The first group (most-recent project) is open by
+  // The first group (the current project) is open by
   // default; the rest are collapsed so the user sees the
   // current project expanded. Once the user manually
   // toggles, the choice persists (the ProjectGroup

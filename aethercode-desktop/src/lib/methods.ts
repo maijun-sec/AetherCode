@@ -274,7 +274,32 @@ export interface AgentMeta {
 
 export interface SessionInfo {
   id: string;
-  name?: string;
+  /**
+   * R390: the session's display title.
+   *
+   * ★ ONE field name, and it is the one the DAEMON sends. ★
+   *
+   * pre-R390 this declared `name?: string` while the daemon sent
+   * `title` — so every reader of `s.name` read `undefined`, always.
+   * The LeftPanel's session rows fell back to the id, the
+   * "Current Session" card's name pill never rendered, and the
+   * command palette's session entries were blank. The daemon and
+   * the TUI both already spoke `title`; the desktop was the only
+   * copy that disagreed.
+   *
+   * The daemon resolves it in this order:
+   *   1. the user's own rename (`session/rename`)
+   *   2. the prompt the session started from (persisted
+   *      `first_prompt`)
+   *   3. the transcript's first USER-AUTHORED message (fallback)
+   *
+   * R393: the daemon now asks the MODEL for a short (5-15
+   * character) title and persists it, so (1) is usually the
+   * model's summary rather than the prompt. It lands on a
+   * background thread and arrives as a `session_title`
+   * notification, so the row updates without a refresh.
+   */
+  title?: string;
   /** cwd the session is bound to. Sessions on
    *  the same cwd share project-level memory. The
    *  LeftPanel groups sessions by cwd so the user
@@ -284,6 +309,10 @@ export interface SessionInfo {
   cwd?: string;
   createdAt?: number;
   lastUsedAt?: number;
+  /** The REAL message count, from the daemon's session index.
+   *  R390: pre-R390 this was a `sizeBytes / 800` GUESS on the wire
+   *  (a 16 MB transcript reported "18145 msg" while the index knew
+   *  4783). */
   messageCount?: number;
   /** R710-A (2026-10-17): unix-ms timestamp at which the
    *  session was soft-deleted (0 = active). Populated
@@ -934,7 +963,13 @@ export class AetherCodeRpc {
   // a different format (tool-call derived) and was
   // replaced; the new shape matches the engine's
   // TaskRegistry output.
-  listProjects(): Promise<{ projects: ProjectInfo[] }> { return this.call('listProjects'); }
+  // R392: `current` is the daemon's CURRENT working directory (the
+  // project the desktop is bound to). The renderer needs it at
+  // start-up to restore its own `cwd` — without it the desktop showed
+  // an empty cwd and the user had no project (and therefore no
+  // "new session" button) even though the daemon was perfectly
+  // healthy.
+  listProjects(): Promise<{ projects: ProjectInfo[]; current?: string | null }> { return this.call('listProjects'); }
   switchProject(projectId: string): Promise<{ ok: true; project: ProjectInfo }> { return this.call('switchProject', { projectId }); }
   permissionResponse(requestId: string, allow: boolean): Promise<{ ok: true }> {
     return this.call('permissionResponse', { requestId, decision: allow ? 'allow' : 'deny' });

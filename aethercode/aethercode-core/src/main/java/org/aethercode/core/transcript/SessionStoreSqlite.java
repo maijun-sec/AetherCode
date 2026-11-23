@@ -184,11 +184,45 @@ public final class SessionStoreSqlite {
                  "  raw_path, compacted_path, message_count, size_bytes, created_at, last_used_at, trashed_at) " +
                  "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                  "ON CONFLICT(id) DO UPDATE SET " +
-                 "  cwd = excluded.cwd, " +
-                 "  worktree = excluded.worktree, " +
-                 "  model = excluded.model, " +
-                 "  first_prompt = excluded.first_prompt, " +
-                 "  title = excluded.title, " +
+                 // R390: a NULL must NEVER destroy a persisted value.
+                 //
+                 // pre-R390 these five were plain `excluded.<col>`, i.e.
+                 // the proposed row won outright — and every caller of
+                 // SessionStore.touch() passes `null` for the fields it
+                 // does not own (the engine's per-message append path
+                 // passes firstPrompt=null, title=null, worktree=null,
+                 // model=null). So the FIRST message append wiped the
+                 // session's first_prompt and title, and the session
+                 // list had nothing left to show. The symptom was
+                 // "the session never gets a name, no matter how long
+                 // the task runs".
+                 //
+                 // ★ THE COLUMNS MOVE IN OPPOSITE DIRECTIONS, AND
+                 // THE REASON IS WHAT WRITES THEM. ★
+                 //
+                 //   cwd / worktree / model / title
+                 //       → COALESCE(excluded.<col>, <col>)
+                 //         The LAST non-null value wins. These are set
+                 //         EXPLICITLY by a caller that knows the new
+                 //         value (setCwd replaces the cwd; a rename
+                 //         replaces the title), and a `null` means
+                 //         "this caller does not know" — which must
+                 //         never erase what another caller wrote.
+                 //
+                 //   first_prompt
+                 //       → COALESCE(<col>, excluded.first_prompt)
+                 //         The FIRST non-null value wins. The engine
+                 //         offers EVERY user message as a candidate
+                 //         (it does not know which one was first), so
+                 //         the winner has to be decided by the
+                 //         STORE. Resolving it in SQL — rather than
+                 //         in the caller — makes it atomic: two
+                 //                         concurrent appends cannot both win.
+                 "  cwd = COALESCE(excluded.cwd, cwd), " +
+                 "  worktree = COALESCE(excluded.worktree, worktree), " +
+                 "  model = COALESCE(excluded.model, model), " +
+                 "  first_prompt = COALESCE(first_prompt, excluded.first_prompt), " +
+                 "  title = COALESCE(excluded.title, title), " +
                  "  raw_path = excluded.raw_path, " +
                  "  compacted_path = excluded.compacted_path, " +
                  // R361: size_bytes / message_count are
@@ -448,6 +482,59 @@ public final class SessionStoreSqlite {
                  "UPDATE sessions SET title = ? WHERE id = ?"
              )) {
             ps.setString(1, title);
+            ps.setString(2, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /**
+     * R393: fill the {@code title} column ONLY when it is still empty.
+     *
+     * <p>★ WHY A DEDICATED STATEMENT ★ The {@code title} column holds
+     * the user's OWN rename. A model-written title must never overwrite
+     * it — the user typed that name on purpose. The guard has to be in
+     * the SQL, not in a read-then-write in Java: a rename that lands
+     * while the model call is in flight would otherwise be clobbered.
+     *
+     * <p>Same shape as {@link #setFirstPromptIfEmpty(String, String)}:
+     * one column, one statement, and only when the slot is empty.
+     *
+     * @return {@code true} when a row was updated
+     */
+    public boolean setTitleIfAbsent(String id, String title) throws SQLException {
+        if (title == null || title.isBlank()) return false;
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                 "UPDATE sessions SET title = ? "
+                         + "WHERE id = ? AND (title IS NULL OR TRIM(title) = '')"
+             )) {
+            ps.setString(1, title);
+            ps.setString(2, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
+    /**
+     * R390: fill the {@code first_prompt} column ONLY when it is
+     * still empty.
+     *
+     * <p>★ WHY A DEDICATED STATEMENT ★ A plain upsert would also
+     * bump {@code last_used_at} (a back-filled session would jump to
+     * the top of the list) and would race with a concurrent writer.
+     * This touches one column, and only when it is empty — so the
+     * FIRST prompt still wins, and a rename / a real prompt is never
+     * overwritten.
+     *
+     * @return {@code true} when a row was updated
+     */
+    public boolean setFirstPromptIfEmpty(String id, String firstPrompt) throws SQLException {
+        if (firstPrompt == null || firstPrompt.isBlank()) return false;
+        try (Connection conn = open();
+             PreparedStatement ps = conn.prepareStatement(
+                 "UPDATE sessions SET first_prompt = ? "
+                         + "WHERE id = ? AND (first_prompt IS NULL OR first_prompt = '')"
+             )) {
+            ps.setString(1, firstPrompt);
             ps.setString(2, id);
             return ps.executeUpdate() > 0;
         }
