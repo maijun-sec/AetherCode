@@ -358,6 +358,12 @@ final class DaemonRunner {
         // up automatically.
         ensureSessionStore(engine, sessionManager, "stdio");
 
+        // R398: put the user back in the session they were in, so a
+        // daemon restart does not drop them on the startup session
+        // (the literal "default" — which is ALSO the id of a real
+        // on-disk session, and in the live case a TRASHED one).
+        restoreActiveSession(engine, "stdio");
+
         // wire the 3-layer memory facade. The base
         // directory defaults to ~/.aethercode; the chat
         // client for the LLM-driven project-memory
@@ -734,6 +740,13 @@ final class DaemonRunner {
         // share the store with the SessionManager so
         // factory-built engines pick it up.
         ensureSessionStore(engine, sessionManager, "http");
+        // R398: put the user back in the session they were in. The
+        // HTTP+WS daemon is what the desktop talks to, and the
+        // desktop ADOPTS the daemon's current session on start (and
+        // on reconnect — the reconnect path re-runs initialize()).
+        // So restoring here fixes both "the desktop was restarted"
+        // and "the daemon crashed under a running desktop".
+        restoreActiveSession(engine, "http");
         // R266-desktop-session-title (2026-09-13): install
         // the LayeredMemoryStore on the HTTP path's
         // AetherCodeMethods so listSessions can fall back
@@ -1371,6 +1384,129 @@ final class DaemonRunner {
         if (v == null) return false;
         v = v.trim().toLowerCase(java.util.Locale.ROOT);
         return v.equals("1") || v.equals("true") || v.equals("yes");
+    }
+
+    /**
+     * R398: choose the session the daemon should start on.
+     *
+     * <p>THE SYMPTOM. A daemon restart brought the engine back on its
+     * STARTUP session id (the literal {@code "default"}), so
+     * {@code listSessions.current} said {@code "default"} and the
+     * desktop adopted it — the user was dropped into a session that
+     * was not theirs. In the live case it was worse than wrong: the
+     * id {@code "default"} is ALSO the id of a real on-disk session
+     * (the user's old RAG conversation), and that one had been
+     * TRASHED. The next message would have been written into the
+     * trash.
+     *
+     * <p>THE ORDER OF THE CHOICES.
+     * <ol>
+     *   <li><b>The recorded pointer</b> — the session the user was in.
+     *       Recorded by {@code SessionStore.markActive}, which the
+     *       engine calls from the places its session id changes
+     *       ({@code loadSession} and {@code createSession}).</li>
+     *   <li><b>The startup session</b>, if it is not trashed. This is
+     *       the pre-R398 behaviour and it is right for a fresh
+     *       install (no sessions at all).</li>
+     *   <li><b>The most-recently-used alive session</b> — the fallback
+     *       for the case that made the bug visible: the startup
+     *       session is a TRASHED real session, and the user has other
+     *       live ones. Without this, the very first start after the
+     *       upgrade would still drop the user into the trash (there
+     *       is no pointer yet), and the fix would look like it did
+     *       not work.</li>
+     * </ol>
+     *
+     * <p>WHY THE POINTER IS ITS OWN FACT. The index already tracks
+     * {@code last_used_at}, but that records the last time a session
+     * was <em>written</em>, not the last time it was <em>opened</em>
+     * — so "switch to an old session and read it" would still restore
+     * the wrong one.
+     *
+     * <p>WHY THE TRASH IS EXCLUDED. A pointer may name a session that
+     * has since been trashed or deleted. Restoring that would put the
+     * daemon — and the desktop that follows it — inside the trash,
+     * and the next message would land there. A pointer that names a
+     * dead session is FORGOTTEN rather than retried forever.
+     *
+     * <p>Best-effort by contract: a failed restore leaves the daemon
+     * on its startup session, which is exactly where it was before
+     * this method existed. It must never prevent the daemon from
+     * starting.
+     */
+    static void restoreActiveSession(AetherCodeEngine engine, String pathHint) {
+        org.aethercode.core.transcript.SessionStore store = engine.sessionStore();
+        if (store == null) {
+            LOG.info("R398: no SessionStore wired ({}), nothing to restore", pathHint);
+            return;
+        }
+        // ── 1. the recorded pointer ────────────────────────────────────
+        java.util.Optional<String> recorded = store.activeSessionId();
+        if (recorded.isPresent()) {
+            String sessionId = recorded.get();
+            org.aethercode.core.transcript.SessionStore.SessionState state = store.sessionState(sessionId);
+            if (state == org.aethercode.core.transcript.SessionStore.SessionState.ALIVE) {
+                if (loadSessionQuietly(engine, sessionId)) {
+                    LOG.info("R398: restored the active session {} ({})", sessionId, pathHint);
+                    return;
+                }
+            } else if (state == org.aethercode.core.transcript.SessionStore.SessionState.UNKNOWN) {
+                // The index could not be read. We do not know whether
+                // the session is alive, and we must not clear a
+                // pointer we could not check — the next start will
+                // look again.
+                LOG.warn("R398: could not tell whether the recorded session {} is alive — leaving it recorded", sessionId);
+            } else {
+                LOG.info("R398: the recorded session {} is gone (trashed or deleted) — forgetting it", sessionId);
+                store.clearActive();
+            }
+        } else {
+            LOG.info("R398: no active session recorded ({}), starting on the startup session", pathHint);
+        }
+        // ── 2. the startup session must at least not be in the trash ──
+        String startup = engine.appState().sessionId();
+        if (startup == null || startup.isBlank()) return;
+        if (store.sessionState(startup) != org.aethercode.core.transcript.SessionStore.SessionState.TRASHED) {
+            // ALIVE / GONE / UNKNOWN ⇒ keep the startup session. That
+            // is the pre-R398 behaviour and it is right for a fresh
+            // install (the startup session has no row at all).
+            return;
+        }
+        // ── 3. the startup session is TRASHED ⇒ pick a live one ───────
+        // `list()` returns the ACTIVE rows, most-recently-written
+        // first. (It is only reached when the index IS readable —
+        // otherwise step 2 would have returned UNKNOWN — so the list
+        // is the SQLite one, not the directory-scan fallback.)
+        try {
+            for (org.aethercode.core.transcript.SessionStore.SessionInfo info : store.list()) {
+                if (loadSessionQuietly(engine, info.id())) {
+                    LOG.info("R398: the startup session {} is in the trash — started on {} instead",
+                            startup, info.id());
+                    return;
+                }
+            }
+        } catch (java.io.IOException ioe) {
+            LOG.warn("R398: could not list the sessions for a fallback: {}", ioe.getMessage());
+        }
+        LOG.info("R398: the startup session {} is in the trash and there is no live session to fall back to",
+                startup);
+    }
+
+    /**
+     * R398: load a session, swallowing the failure.
+     *
+     * <p>A restore must never prevent the daemon from starting: a
+     * failure here leaves the daemon on whatever session it was on,
+     * which is exactly where it was before R398.
+     */
+    private static boolean loadSessionQuietly(AetherCodeEngine engine, String sessionId) {
+        try {
+            engine.loadSession(sessionId);
+            return true;
+        } catch (Exception e) {
+            LOG.warn("R398: could not restore the active session {}: {}", sessionId, e.getMessage());
+            return false;
+        }
     }
 
     /**

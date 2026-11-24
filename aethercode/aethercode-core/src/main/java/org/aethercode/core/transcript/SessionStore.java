@@ -26,8 +26,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -47,6 +50,7 @@ import java.util.stream.Stream;
  *     &lt;id&gt;.compacted.jsonl    # compressed transcript (optional, written by Compactor)
  *     &lt;id&gt;.cwd                # legacy cwd sidecar (read on first launch for migration)
  *     &lt;id&gt;.metadata.json      # legacy metadata sidecar (same)
+ *     active-session.txt        # R398: which session was active (see markActive)
  * </pre>
  *
  * <p>The {@code sessions.db} file holds the metadata index
@@ -107,6 +111,134 @@ public final class SessionStore {
 
     public Path dir() { return dir; }
     public SessionStoreSqlite metaDb() { return meta; }
+
+    // -----------------------------------------------------------------
+    // R398: WHICH session was active.
+    //
+    // The symptom this fixes: after a daemon restart the engine came
+    // back on its STARTUP session id (the literal "default"), so
+    // `listSessions.current` said "default" and the desktop adopted
+    // it — the user was dropped into a session that was not theirs
+    // (in the live case: one that had been TRASHED).
+    //
+    // `last_used_at` is NOT the answer: it records the last time a
+    // session was WRITTEN, not the last time it was OPENED. Switching
+    // to an old session to read it does not bump it. So the fact we
+    // need ("the session the user was in") has to be recorded
+    // explicitly, at the places where it changes — the engine's
+    // `loadSession` and `createSession`.
+    // -----------------------------------------------------------------
+
+    /** The file inside the sessions dir that holds the active id. */
+    public static final String ACTIVE_SESSION_FILE = "active-session.txt";
+
+    /**
+     * R398: record the session the user is in.
+     *
+     * <p>Written atomically (temp file + rename) so a crash mid-write
+     * cannot leave a half-written id behind — a truncated id would
+     * name a session that does not exist, and the restore would then
+     * have to decide what to do with it.
+     *
+     * <p>Best-effort by contract: the caller treats a failure here as
+     * "the pointer is stale", never as a reason to fail the operation
+     * that was really being asked for (switching sessions).
+     */
+    public void markActive(String sessionId) throws IOException {
+        if (sessionId == null || sessionId.isBlank()) return;
+        ensure();
+        Path file = dir.resolve(ACTIVE_SESSION_FILE);
+        Path tmp = dir.resolve(ACTIVE_SESSION_FILE + ".tmp");
+        Files.writeString(tmp, sessionId.trim(), StandardCharsets.UTF_8);
+        try {
+            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException amnse) {
+            // Some filesystems (network shares) cannot do an atomic
+            // rename. A plain replace is still far better than writing
+            // the target in place.
+            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /**
+     * R398: the recorded active session, or empty when there is none.
+     *
+     * <p>A missing file, an unreadable file and a blank file are all
+     * the SAME answer — "we do not know" — because the only sane
+     * reaction to all three is the same one: start on the startup
+     * session and let the user pick. A corrupt pointer must never be
+     * an exception that takes the daemon down.
+     */
+    public Optional<String> activeSessionId() {
+        try {
+            Path file = dir.resolve(ACTIVE_SESSION_FILE);
+            if (!Files.exists(file)) return Optional.empty();
+            String s = Files.readString(file, StandardCharsets.UTF_8).trim();
+            return s.isEmpty() ? Optional.empty() : Optional.of(s);
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("SessionStore.activeSessionId failed: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * R398: forget the recorded active session.
+     *
+     * <p>Used when the pointer names a session that no longer exists
+     * (trashed or deleted). Leaving a dead pointer in place would
+     * make every subsequent start re-try the same dead restore.
+     */
+    public void clearActive() {
+        try {
+            Files.deleteIfExists(dir.resolve(ACTIVE_SESSION_FILE));
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("SessionStore.clearActive failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * R398: the session's state, as the INDEX sees it.
+     *
+     * <p>Four states, because each one asks for a different action:
+     * <ul>
+     *   <li>{@link #ALIVE} — the row exists and is not trashed. Restore it.</li>
+     *   <li>{@link #TRASHED} — the row exists and IS trashed. The user
+     *       threw it away; never put them back into it.</li>
+     *   <li>{@link #GONE} — no row at all. The session does not
+     *       exist (deleted, or never indexed).</li>
+     *   <li>{@link #UNKNOWN} — the index could not be read. Say so
+     *       rather than guess: {@code TRASHED} and {@code GONE} are
+     *       both "definitely not alive", {@code UNKNOWN} is not.</li>
+     * </ul>
+     */
+    public enum SessionState { ALIVE, TRASHED, GONE, UNKNOWN }
+
+    /**
+     * R398: the state of a session, read from the INDEX in one query.
+     *
+     * <p>WHY NOT THE LIST PAIR. {@link #list()} returns the active
+     * rows and {@link #listTrashed()} the trashed ones, but BOTH
+     * degrade when SQLite is unreadable: {@code list()} falls back to
+     * a directory scan — which SEES a trashed session, because a soft
+     * delete leaves the JSONL on disk — and {@code listTrashed()}
+     * falls back to an empty list. A caller that filtered with the
+     * pair would then happily restore a TRASHED session, which is the
+     * exact failure this check exists to prevent. One row lookup
+     * answers the question directly, and it cannot answer "alive" by
+     * accident.
+     */
+    public SessionState sessionState(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return SessionState.UNKNOWN;
+        try {
+            Optional<SessionStoreSqlite.Metadata> row = meta.get(sessionId);
+            if (row.isEmpty()) return SessionState.GONE;
+            return row.get().trashedAt > 0 ? SessionState.TRASHED : SessionState.ALIVE;
+        } catch (SQLException sqle) {
+            LOG.warn("SessionStore.sessionState({}) failed: {}", sessionId, sqle.getMessage());
+            return SessionState.UNKNOWN;
+        }
+    }
 
     public static String newSessionId() {
         String ts = java.time.Instant.now().toString().replace(':', '-');

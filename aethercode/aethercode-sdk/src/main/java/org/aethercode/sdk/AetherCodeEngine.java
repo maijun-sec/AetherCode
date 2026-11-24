@@ -2614,6 +2614,40 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         }
     }
 
+    /**
+     * R398: record WHICH session the user is in, so a daemon
+     * restart can put them back where they were.
+     *
+     * <p>WHY THIS IS ITS OWN FACT. The index already tracks
+     * {@code last_used_at}, but that records the last time a session
+     * was <em>written</em>, not the last time it was <em>opened</em>.
+     * So "switch to an old session and read it" would still restore
+     * the wrong one — the session that was written to most recently
+     * is not necessarily the one the user is looking at.
+     *
+     * <p>WHY BOTH CALLERS. The engine's session id changes in two
+     * places: {@link #loadSession} (the user picked an existing
+     * session) and {@link #createSession} (the user hit "＋ New
+     * Session"). Both are "the user is now in this session", and a
+     * restore that covered only one of them would send the user back
+     * to the wrong place after the other — the "＋" button is the
+     * more common of the two.
+     *
+     * <p>Best-effort by contract: failing to record must never fail
+     * the operation the user actually asked for (switching or
+     * creating a session). The pointer is a convenience, not a
+     * correctness requirement — the daemon falls back to its startup
+     * session when the pointer is missing.
+     */
+    private void recordActiveSession(String sessionId) {
+        if (sessionStore == null) return;
+        try {
+            sessionStore.markActive(sessionId);
+        } catch (java.io.IOException ioe) {
+            LOG.warn("R398: could not record the active session {}: {}", sessionId, ioe.getMessage());
+        }
+    }
+
     /** switch the engine to an existing session. The current
      *  session's transcript is closed (the on-disk file already
      *  has every message via the append listener) and the new
@@ -2647,6 +2681,9 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // the engine's startup sessionId, which the user can't
         // ever escape.
         appState.sessionId(sessionId);
+        // R398: record WHICH session the user is in, so a daemon
+        // restart can put them back where they were.
+        recordActiveSession(sessionId);
         // R284: keep QueryEngine's snapshot attribution in
         // sync with the active session. Without this, the
         // next runPreFlightCompact would write a snapshot
@@ -3207,6 +3244,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // prior round transcript_push payloads would always show the
         // old id, which the user can't ever escape.
         appState.sessionId(newId);
+        // R398: record the new session as the active one — same
+        // fact loadSession records, so a daemon restart puts the
+        // user back in the session they just created.
+        recordActiveSession(newId);
         // R284: keep QueryEngine's snapshot attribution in
         // sync with the freshly-minted session id so the
         // first compact on this session attributes its
