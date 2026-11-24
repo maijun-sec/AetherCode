@@ -260,28 +260,59 @@ class SdkTaskSchedulerInterfaceTest {
 
     @Test
     void taskSchedulerCountsAreAccurate() throws InterruptedException {
-        TaskScheduler s = new TaskScheduler(3, c -> {});
-        // Block the worker so both tasks stay pending — gives
-        // us a deterministic snapshot of the counts.
+        // R401b: this test used to be a RACE, and it failed roughly one
+        // run in three (measured: 2 red out of 6 identical runs).
+        //
+        // It scheduled TWO tasks on a scheduler with THREE workers and
+        // then asserted "1 running, 1 pending" — a state the scheduler
+        // can only be in during the narrow window where exactly one
+        // worker has claimed a task and the second has not. Under load
+        // the workers were slower than the assertion, so `runningCount()`
+        // was still 0 and the test failed with `expected: <1> but was:
+        // <0>`. The old comment ("Block the worker so both tasks stay
+        // pending") described a ONE-worker scheduler, not a three-worker
+        // one — and the third assertion then compared `2` against
+        // `s.maxConcurrent() > 1 ? 2 : 0`, a tautology that never called
+        // `activeCount()` at all, so the "active count" it was named
+        // after was never measured.
+        //
+        // The fix makes the state REACHABLE and then WAITS for it:
+        //   - ONE worker, so exactly one task can run and the other stays
+        //     queued — the original intent;
+        //   - a `started` latch, so the snapshot is taken AFTER the first
+        //     task is really running rather than before;
+        //   - the third assertion now measures the real active count.
+        //
+        // The task bodies wait on `blocker` for 30 s (not 2 s): a slow
+        // machine must not be able to time a task out before the
+        // snapshot is taken. `TaskScheduler`'s worker threads are
+        // daemons, so a failed assertion cannot wedge the JVM.
+        TaskScheduler s = new TaskScheduler(1, c -> {});
         CountDownLatch blocker = new CountDownLatch(1);
-        s.schedule("a", Priority.NORMAL, () -> {
-            try { blocker.await(2, TimeUnit.SECONDS); }
-            catch (InterruptedException ignored) {}
-        });
-        s.schedule("b", Priority.NORMAL, () -> {
-            try { blocker.await(2, TimeUnit.SECONDS); }
-            catch (InterruptedException ignored) {}
-        });
-        // 2 pending, 1 running, 1 still in queue.
-        assertEquals(1, s.runningCount());
-        assertEquals(1, s.pendingCount());
-        assertEquals(2, s.maxConcurrent() > 1 ? 2 : 0, "active count semantics vary");
-        blocker.countDown();
-        assertTrue(s.awaitIdle(2_000));
-        assertEquals(0, s.pendingCount());
-        assertEquals(0, s.runningCount());
-        assertTrue(s.isIdle());
-        s.close();
+        CountDownLatch started = new CountDownLatch(1);
+        try {
+            s.schedule("a", Priority.NORMAL, () -> {
+                started.countDown();
+                try { blocker.await(30, TimeUnit.SECONDS); }
+                catch (InterruptedException ignored) {}
+            });
+            s.schedule("b", Priority.NORMAL, () -> {
+                try { blocker.await(30, TimeUnit.SECONDS); }
+                catch (InterruptedException ignored) {}
+            });
+            // "a" is running, "b" is still queued.
+            assertTrue(started.await(5, TimeUnit.SECONDS), "the first task must start");
+            assertEquals(1, s.runningCount());
+            assertEquals(1, s.pendingCount());
+            assertEquals(1, s.activeCount());
+            blocker.countDown();
+            assertTrue(s.awaitIdle(2_000));
+            assertEquals(0, s.pendingCount());
+            assertEquals(0, s.runningCount());
+            assertTrue(s.isIdle());
+        } finally {
+            s.close();
+        }
     }
 
     /* ---------------- TaskScheduler: close ---------------- */
