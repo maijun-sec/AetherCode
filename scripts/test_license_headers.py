@@ -1,3 +1,22 @@
+# Copyright (c) 2026 maijun
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 """Regression tests for the licence-header tools.
 
 WHY THIS FILE EXISTS
@@ -326,6 +345,60 @@ def test_remover_check_does_not_write():
 
 
 test_remover_check_does_not_write()
+
+
+# --- 10. a BLOCK-ONLY language carrying the obsolete LINE form ---
+#
+# THE CRASH. `java` is mapped to a BLOCK-comment style only, so
+# `style.line` is undefined for it. A file that carries the obsolete
+# `//`-line form of the header therefore reached
+# `renderLineHeader(style.line)` with `undefined`, and the whole gate
+# ABORTED with a TypeError -- before it could report a single file.
+# Five committed .java files were in exactly that state, so
+# `add-license-headers.mjs --check` had been unusable, and silently
+# so: the tool is not on CI, and a crash looks like "no output".
+#
+# THE CONTRACT. A block-only language has no line form at all, so
+# such a file is NOT "already has the canonical header" -- it carries
+# the obsolete form and must be MIGRATED to the block form.
+#
+# NOTE: `scenario` asserts "tool exits 0" FIRST, so this case pins the
+# crash itself, not just the end state.
+JAVA_LINE_FORM_HEADER = (
+    "// Copyright (c) 2026 maijun\n"
+    "//\n"
+    "// Permission is hereby granted, free of charge, to any person obtaining a copy\n"
+    "// of this software and associated documentation files (the \"Software\"), to deal\n"
+    "// in the Software without restriction, including without limitation the rights\n"
+    "// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n"
+    "// copies of the Software, and to permit persons to whom the Software is\n"
+    "// furnished to do so, subject to the following conditions:\n"
+    "//\n"
+    "// The above copyright notice and this permission notice shall be included in all\n"
+    "// copies or substantial portions of the Software.\n"
+    "//\n"
+    "// THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n"
+    "// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n"
+    "// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n"
+    "// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n"
+    "// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n"
+    "// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n"
+    "// SOFTWARE.\n"
+    "\n"
+    "package a;\n"
+    "\n"
+    "public class A {}\n"
+)
+
+scenario(
+    "java with an obsolete line-form header",
+    {"A.java": JAVA_LINE_FORM_HEADER},
+    {"A.java": lambda t: t.startswith("/*\n")
+     and "Permission is hereby granted" in t
+     and "// Copyright (c) 2026 maijun" not in t
+     and "package a;" in t
+     and "public class A {}" in t},
+)
 
 print("")
 print("passed: %d   failed: %d" % (PASSED, len(FAILURES)))

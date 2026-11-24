@@ -4316,3 +4316,31 @@ a gate. Both of those cost this round real time.
   个用例**跑了 —— 看起来像「变异没生效」，其实是「实验坏了」。⇒ 变异台
   现在显式把 `total === 0` 判为 BAD，并报「变异把构建搞坏了」。
   Doc: `docs/R396-which-conversation-am-i-typing-into.md`.
+
+## Watch out for (R397 additions)
+
+- **许可证门禁之前是**崩**的，不是绿的**（R397）。`node
+  scripts/add-license-headers.mjs --check` 抛 `TypeError: Cannot read
+  properties of undefined (reading 'trimEnd')`，**一个文件都没报告**。
+  根因：`java` 在风格表里**只有块注释**（`{ block: ["/*","*/"] }`）⇒
+  `style.line` 是 undefined；而检测器在「文件第一行是行注释」时无条件调
+  `renderLineHeader(style.line)` ⇒ 整个门禁在报告第一个文件之前就死了。
+  触发文件是 **5 个已提交的 `.java`**（R388k / R390 留下的、用行注释版
+  旧头的测试文件）。
+  **Lesson 1479 — 一个崩掉的门禁和一个永远通过的门禁，在终端上长得一模
+  一样。** 崩溃打印一个 TypeError 栈；「没有缺头的文件」打印一行统计 ——
+  两者都不是「PASS」。⇒ 这个工具**不在 CI 上**（`test.yml` 只跑 vitest /
+  node --test / smoke），所以没人看见它已经哑了多久。
+  **Lesson 1480 — 「门禁能跑」和「门禁在跑」是两件事**：要么接进 CI，要么
+  在改代码之前**先跑一次它**，否则你不知道它已经死了多久。
+  **Lesson 1481 — 崩溃的修法往往就是契约本身**：块注释语言**没有**行注释
+  形式 ⇒ 这种文件**不是**「已经有规范头」⇒ 它**必须**迁移。守卫不是
+  「加个 null check 免得炸」，是**把语义说全**。
+  ⇒ 修法：① `alreadyHasHeaderAtTop` 加 `if (!style.line) return false;`；
+  ② 5 个 `.java` 用**门禁自己的** `renderBlockHeader()` 迁移成块注释形式
+  （头以下逐字节断言未变）；③ `scripts/test_license_headers.py` 新增一条
+  崩溃回归用例（`scenario` 助手**先**断言「工具退出码为 0」⇒ **崩溃本身
+  被钉住**）⇒ 工具自身回归 **11/11 绿**，把守卫去掉该用例**精确变红**。
+  ⇒ 还剩 6 个缺头的文件，**全在 `aethercode-tui/**`**（用户在途的 R389
+  模块，本轮不碰）⇒ 门禁现在能正常报告，等那摊活干完就能变绿。
+  Doc: `docs/R397-licence-gate-crash.md`.

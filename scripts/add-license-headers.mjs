@@ -440,6 +440,18 @@ function alreadyHasHeaderAtTop(lines, style) {
   const t = (lines[start] ?? "").trim();
   // A LINE-comment run.
   if (/^(\/\/|#|REM |--)/.test(t)) {
+    // A BLOCK-ONLY language (Java, CSS, HTML, ...) has no line-comment
+    // form at all, so `style.line` is undefined for it. Calling
+    // renderLineHeader(undefined) CRASHED the whole gate - it aborted
+    // before it could report a single file, so `--check` had been
+    // unusable since the first file with that shape landed.
+    //
+    // Such a file carries the OBSOLETE line form of the header (the
+    // R389 short form written as `//` lines). It is NOT the canonical
+    // header for its language, so the answer is "no" - and the caller
+    // then MIGRATES it to the block form, which is exactly what the
+    // tool's own contract says must happen to an obsolete header.
+    if (!style.line) return false;
     const rendered = renderLineHeader(style.line);
     for (let k = 0; k < rendered.length; k++) {
       if ((lines[start + k] ?? "").trim() !== rendered[k].trim()) return false;
