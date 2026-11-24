@@ -3166,13 +3166,26 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *       "from here" part.</li>
      * </ol>
      *
-     * <p>"Summarize UP TO here" is the same operation with the
-     * summarised side flipped; both are the same engine primitive with
-     * a different half kept.
+     * <p>★ BOTH MODES SUMMARISE THE HEAD ★ "Summarize UP TO here" is
+     * NOT the mirror image of "from here": both summarise the part
+     * BEFORE the point and keep the part after it. The only difference
+     * is the BOUNDARY — {@code from} splits BEFORE the point's own
+     * message (so that message survives) and {@code up_to} splits
+     * AFTER it (so that message is folded into the summary).
+     *
+     * <p>★ THIS PARAGRAPH USED TO SAY THE OPPOSITE ★ it claimed the
+     * summarised side was "flipped" and that {@code up_to} "keeps the
+     * head". The implementation has never done that — see
+     * {@code summarizeAtTranscriptIndex}, whose own comment says "the
+     * head is what gets summarised; the tail is what survives". A
+     * javadoc that describes the opposite of the code is worse than
+     * no javadoc: it is the copy a reader trusts.
      *
      * @param target the 0-based user-message ordinal
-     * @param keepAfter true = "summarize from here" (keep the tail),
-     *                  false = "summarize up to here" (keep the head)
+     * @param keepAfter true = "summarize from here" (split BEFORE the
+     *                  boundary message — it survives), false =
+     *                  "summarize up to here" (split AFTER it — it is
+     *                  summarised away)
      * @return a report: what was summarised, what was kept
      */
     public java.util.Map<String, Object> summarizeFrom(
@@ -3208,8 +3221,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      * happens to be after a compaction notice shifted the numbering.
      *
      * @param checkpointId the checkpoint
-     * @param keepAfter true = keep the tail ("from here"), false = keep
-     *                  the head ("up to here")
+     * @param keepAfter true = split BEFORE the boundary message (it
+     *                  survives — "from here"), false = split AFTER it
+     *                  (it is summarised away — "up to here"). BOTH
+     *                  summarise the head and keep the tail.
      * @return what was summarised and what was kept
      */
     public java.util.Map<String, Object> summarizeAtCheckpoint(
@@ -3224,7 +3239,7 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
 
     /**
      * R388n: the summarisation primitive — split the transcript at a
-     * transcript index, summarise one half, keep the other.
+     * transcript index, summarise the HEAD, keep the TAIL.
      *
      * <p>★ ONE implementation, three callers. ★
      *
@@ -3233,14 +3248,20 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      * "which half is summarised" rule cannot differ between them.
      *
      * @param boundaryIndex the transcript index of the boundary message
-     * @param keepAfter true = summarise the head and keep the tail
+     * @param keepAfter true = split BEFORE the boundary message (it
+     *                  survives), false = split AFTER it (it is
+     *                  summarised away). The head is summarised and
+     *                  the tail survives in BOTH cases.
      * @param label a label for the log line
      */
     private java.util.Map<String, Object> summarizeAtTranscriptIndex(
             int boundaryIndex, boolean keepAfter, String label) throws java.io.IOException {
         java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
-        // The half to summarise: everything BEFORE the boundary message
-        // ("up to here"), or everything FROM it on ("from here").
+        // The half to summarise: the HEAD — everything BEFORE the
+        // boundary message ("from here", which keeps the boundary
+        // message itself) or everything up to AND INCLUDING it ("up to
+        // here", which folds it into the summary). The boundary
+        // message is the ONLY difference between the two modes.
         int split = keepAfter ? boundaryIndex : boundaryIndex + 1;
         java.util.List<org.aethercode.core.message.Message> head =
                 new java.util.ArrayList<>(t.subList(0, Math.max(0, Math.min(split, t.size()))));

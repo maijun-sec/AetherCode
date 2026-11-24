@@ -1,0 +1,241 @@
+.checkpoint-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.checkpoint-modal-card {
+  background: #1e1e22;
+  color: #e6e6e8;
+  border-radius: 12px;
+  width: min(760px, 95vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.checkpoint-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.checkpoint-modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkpoint-modal-icon {
+  font-size: 18px;
+  color: #8aa9ff;
+}
+
+.checkpoint-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.checkpoint-modal-close {
+  background: transparent;
+  border: 0;
+  color: #a0a0a8;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+.checkpoint-modal-close:hover {
+  color: #fff;
+}
+
+.checkpoint-modal-meta {
+  padding: 8px 20px;
+  font-size: 12px;
+  color: #e0b060;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.checkpoint-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.checkpoint-modal-status {
+  padding: 16px;
+  color: #a0a0a8;
+  text-align: center;
+}
+
+.checkpoint-modal-error {
+  color: #ff8a8a;
+}
+
+.checkpoint-modal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkpoint-modal-point {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.checkpoint-modal-point.selected {
+  border-color: rgba(138, 169, 255, 0.5);
+}
+
+.checkpoint-modal-point-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.checkpoint-modal-point-head:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ★ THE KIND BADGE ★ 'cancel' is the one the user must notice: it is
+   "the run stopped here", not "a new turn starts here". */
+.checkpoint-modal-kind {
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.checkpoint-modal-kind-turn {
+  background: rgba(138, 169, 255, 0.16);
+  color: #8aa9ff;
+}
+
+.checkpoint-modal-kind-cancel {
+  background: rgba(255, 170, 90, 0.18);
+  color: #ffaa5a;
+}
+
+.checkpoint-modal-ordinal {
+  color: #6c6c74;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.checkpoint-modal-summary {
+  flex: 1 1 auto;
+  color: #d0d0d8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-modal-files {
+  color: #a0a0a8;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.checkpoint-modal-detail {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 12px;
+}
+
+.checkpoint-modal-preview {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.checkpoint-modal-preview li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.checkpoint-modal-preview-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #d0d0d8;
+}
+
+.checkpoint-modal-preview-delta {
+  color: #a0a0a8;
+  white-space: nowrap;
+}
+
+.checkpoint-modal-incomplete {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: #e0b060;
+}
+
+.checkpoint-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.checkpoint-modal-action {
+  background: rgba(138, 169, 255, 0.12);
+  color: #8aa9ff;
+  border: 1px solid rgba(138, 169, 255, 0.28);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.checkpoint-modal-action:hover:not(:disabled) {
+  background: rgba(138, 169, 255, 0.22);
+}
+
+.checkpoint-modal-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.checkpoint-modal-report {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+  color: #d0d0d8;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.checkpoint-modal-report-failed {
+  color: #ff8a8a;
+}

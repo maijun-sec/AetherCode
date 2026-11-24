@@ -154,6 +154,25 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       return { status: `已请求切换 cwd 到 ${path}` };
     },
   },
+  {
+    // R402: the rewind menu. The daemon has had the whole checkpoint
+    // surface since R388n (points, file snapshots, per-file preview,
+    // cancel points, on-disk persistence in R403) — but the desktop
+    // had NO surface for it, so the feature was unreachable here.
+    //
+    // The command dispatches an event rather than importing the menu
+    // component: the same one-way coupling the other commands use
+    // (commands -> store / event, not commands -> App).
+    id: 'rewind',
+    label: '/rewind',
+    hint: '回退到之前的某个点 (代码 / 对话)',
+    category: '会话',
+    takesArgs: false,
+    run: () => {
+      window.dispatchEvent(new CustomEvent('aethercode:open-checkpoint-menu'));
+      return { status: '已请求打开回退菜单' };
+    },
+  },
 
   // ----- Context -----
   {

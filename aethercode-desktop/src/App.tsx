@@ -38,6 +38,7 @@ import { AwaitingDecisionBanner } from './components/AwaitingDecisionBanner';
 import { PermissionPromptBanner } from './components/PermissionPromptBanner';
 import { CommandPalette } from './components/CommandPalette';
 import { SessionPickerModal } from './components/SessionPickerModal';
+import { CheckpointMenu } from './components/CheckpointMenu';
 import { NewSessionModeDialog } from './components/NewSessionModeDialog';
 import { LoopGuardBanner } from './components/LoopGuardBanner';
 import { EndOfTaskPanel } from './components/EndOfTaskPanel';
@@ -87,6 +88,9 @@ function Shell() {
   const [showRpcDiag, setShowRpcDiag] = useState(false);
   const [showRpcPalette, setShowRpcPalette] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  // R402: the checkpoint (rewind) menu. The daemon has grown the whole
+  // checkpoint surface since R388n; the desktop had no way to reach it.
+  const [showCheckpoints, setShowCheckpoints] = useState(false);
   // The right-side Telemetry panel is hidden by default; toggle it via 📊 in the Header.
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   // R703 (UX-P2-1): lift the right-panel tab state up
@@ -164,6 +168,15 @@ function Shell() {
     const onOpen = () => setShowSettings(true);
     window.addEventListener('aethercode:open-settings', onOpen);
     return () => window.removeEventListener('aethercode:open-settings', onOpen);
+  }, []);
+
+  // R402: cross-tree "open the rewind menu" event. The slash command
+  // (/rewind) lives in the command table, which has no access to this
+  // component's state — same convention as the two effects above.
+  useEffect(() => {
+    const onOpen = () => setShowCheckpoints(true);
+    window.addEventListener('aethercode:open-checkpoint-menu', onOpen);
+    return () => window.removeEventListener('aethercode:open-checkpoint-menu', onOpen);
   }, []);
 
   useEffect(() => {
@@ -292,6 +305,7 @@ function Shell() {
               showRpcDiag={showRpcDiag} setShowRpcDiag={setShowRpcDiag}
               showRpcPalette={showRpcPalette} setShowRpcPalette={setShowRpcPalette}
               showModelPicker={showModelPicker} setShowModelPicker={setShowModelPicker}
+              showCheckpoints={showCheckpoints} setShowCheckpoints={setShowCheckpoints}
               rightPanelOpen={rightPanelOpen} setRightPanelOpen={setRightPanelOpen}
               rightPanelTab={rightPanelTab} openRightPanelTab={openRightPanelTab}
               awaitingCwd={awaitingCwd}
@@ -320,6 +334,7 @@ function Shell() {
         showRpcDiag={showRpcDiag} setShowRpcDiag={setShowRpcDiag}
         showRpcPalette={showRpcPalette} setShowRpcPalette={setShowRpcPalette}
         showModelPicker={showModelPicker} setShowModelPicker={setShowModelPicker}
+        showCheckpoints={showCheckpoints} setShowCheckpoints={setShowCheckpoints}
         rightPanelOpen={rightPanelOpen} setRightPanelOpen={setRightPanelOpen}
         rightPanelTab={rightPanelTab} openRightPanelTab={openRightPanelTab}
         awaitingCwd={awaitingCwd}
@@ -344,6 +359,8 @@ interface MainLayoutProps {
   showRpcDiag: boolean; setShowRpcDiag: (v: boolean) => void;
   showRpcPalette: boolean; setShowRpcPalette: (v: boolean) => void;
   showModelPicker: boolean; setShowModelPicker: (v: boolean) => void;
+  /** R402: the rewind / checkpoint menu. */
+  showCheckpoints: boolean; setShowCheckpoints: (v: boolean) => void;
   rightPanelOpen: boolean; setRightPanelOpen: (v: boolean) => void;
   /** R703: lifted right-panel tab state. The Header
    *  uses this to decide whether to light up the
@@ -489,6 +506,12 @@ function MainLayout(p: MainLayoutProps) {
         const setShowRpcPalette = p.setShowRpcPalette;
         return showRpcPalette && <RpcCommandPalette onClose={() => setShowRpcPalette(false)} />;
       })()}
+      {p.showCheckpoints && (
+        <CheckpointMenu
+          sessionId={p.currentSessionId ?? undefined}
+          onClose={() => p.setShowCheckpoints(false)}
+        />
+      )}
       {p.showModelPicker && (
         <ModelPickerMount open={p.showModelPicker} onClose={() => p.setShowModelPicker(false)} />
       )}

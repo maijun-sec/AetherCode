@@ -120,6 +120,37 @@ export interface MockSeed {
    *  snapshots in {@code compactionIndex} order (0, 1,
    *  2, ...). */
   snapshots?: Record<string, MockSnapshot[]>;
+  /** R402: per-session CHECKPOINT points for the rewind
+   *  menu. The key is sessionId; the value is the list of
+   *  points in the daemon's own order (oldest first). The
+   *  menu reverses them for display — the ORDER is the
+   *  renderer's business, the points are the daemon's. */
+  checkpoints?: Record<string, MockCheckpointPoint[]>;
+  /** R402: how many points the daemon has evicted. The menu
+   *  shows it, because a menu that silently starts at "point
+   *  40" looks like the daemon lost the history. */
+  checkpointsEvicted?: number;
+}
+
+/** R402: a checkpoint point, the shape `checkpoints/list`
+ *  returns. The `kind` ('turn' | 'cancel') and the per-file
+  `preview` are the DAEMON's verdict — the mock hands them
+  over verbatim so a test cannot pass by re-deriving them
+  in the renderer. */
+export interface MockCheckpointPoint {
+  id: string;
+  userMessageIndex: number;
+  transcriptIndex: number;
+  summary: string;
+  kind?: string;
+  files?: Array<{ path: string; name: string; restorable: boolean; created: boolean }>;
+  preview?: Array<{
+    name: string; linesNow: number; linesDelta: number;
+    created: boolean; known: boolean; note: string | null;
+  }>;
+  changedFiles?: number;
+  changedLines?: number;
+  previewComplete?: boolean;
 }
 
 /** R284: a single pre-compaction snapshot row, the
@@ -150,6 +181,10 @@ export class MockRpcServer {
     tasks: TaskInfo[];
     lastUsedModelId?: string;
     snapshots: Record<string, MockSnapshot[]>;
+    /** R402: the checkpoint points, per session. */
+    checkpoints: Record<string, MockCheckpointPoint[]>;
+    /** R402: how many points the daemon has evicted. */
+    checkpointsEvicted?: number;
     /** R284: the {@code MockSeed.sessionId} the mock was
      *  constructed with. The compact/* RPCs resolve an
      *  omitted {@code sessionId} param to this value (the
@@ -178,6 +213,11 @@ export class MockRpcServer {
     sessions: [], grants: [], models: [],
     providers: [], workflows: [], tasks: [],
     snapshots: {},
+    // R402: the checkpoint points. A seeded field the
+    // constructor does NOT copy is a field the mock silently
+    // ignores — so the seed has to land here, cloned like the
+    // rest.
+    checkpoints: {},
   };
   private idCounter = 1;
   private now = 1_700_000_000_000;
@@ -208,6 +248,11 @@ export class MockRpcServer {
         ? JSON.parse(JSON.stringify(seed.snapshots))
         : {},
       defaultSessionId: seed.sessionId,
+      // R402: same deep-clone discipline as the snapshots above.
+      checkpoints: seed.checkpoints
+        ? JSON.parse(JSON.stringify(seed.checkpoints))
+        : {},
+      checkpointsEvicted: seed.checkpointsEvicted,
     };
     if (seed.sessionId) this.ensureSession(seed.sessionId);
     this.registerDefaults();
@@ -822,6 +867,69 @@ export class MockRpcServer {
           summary: hit.summary ?? '',
           messages: hit.messages ?? [],
         },
+      };
+    });
+    // R402: the checkpoint surface — the rewind menu's data
+    // source. Mirrors the daemon's contract so the menu can be
+    // tested without a live daemon.
+    this.handle('checkpoints/list', (params) => {
+      const p = (params ?? {}) as { sessionId?: string | null };
+      const sid = p.sessionId || this.store.defaultSessionId || 'default';
+      const rows = this.store.checkpoints?.[sid] ?? [];
+      return {
+        ok: true,
+        checkpoints: rows.map((c) => ({
+          id: c.id,
+          userMessageIndex: c.userMessageIndex,
+          transcriptIndex: c.transcriptIndex,
+          summary: c.summary ?? '',
+          kind: c.kind ?? 'turn',
+          files: c.files ?? [],
+          preview: c.preview ?? [],
+          changedFiles: c.changedFiles ?? 0,
+          changedLines: c.changedLines ?? 0,
+          previewComplete: c.previewComplete ?? true,
+        })),
+        evicted: this.store.checkpointsEvicted ?? 0,
+      };
+    });
+    this.handle('checkpoints/restore', (params) => {
+      const p = (params ?? {}) as { sessionId?: string | null; id?: string; scope?: string };
+      const sid = p.sessionId || this.store.defaultSessionId || 'default';
+      const rows = this.store.checkpoints?.[sid] ?? [];
+      const hit = rows.find((c) => c.id === p.id);
+      if (!hit) return { ok: false, reason: 'no such checkpoint: ' + p.id };
+      const scope = p.scope ?? 'code';
+      const touchesCode = scope === 'code' || scope === 'both';
+      const touchesConversation = scope === 'conversation' || scope === 'both';
+      const out: Record<string, unknown> = { ok: true, id: hit.id, scope };
+      if (touchesCode) {
+        const names = (hit.files ?? []).map((f) => f.name);
+        out.restored = (hit.files ?? []).filter((f) => !f.created && f.restorable).map((f) => f.name);
+        out.deleted = (hit.files ?? []).filter((f) => f.created).map((f) => f.name);
+        out.skipped = (hit.files ?? []).filter((f) => !f.created && !f.restorable).map((f) => f.name);
+        out.failed = [];
+        out.changed = names.length;
+      }
+      if (touchesConversation) {
+        out.conversation = { ok: true, kept: hit.transcriptIndex, removed: 0, transcriptSize: hit.transcriptIndex };
+      }
+      return out;
+    });
+    this.handle('checkpoints/summarize', (params) => {
+      const p = (params ?? {}) as { sessionId?: string | null; checkpointId?: string; mode?: string };
+      const sid = p.sessionId || this.store.defaultSessionId || 'default';
+      const rows = this.store.checkpoints?.[sid] ?? [];
+      const hit = rows.find((c) => c.id === p.checkpointId);
+      if (!hit) return { ok: false, reason: 'no such checkpoint: ' + p.checkpointId };
+      return {
+        ok: true,
+        checkpointId: hit.id,
+        target: hit.transcriptIndex,
+        summarized: hit.transcriptIndex,
+        kept: 0,
+        transcriptSize: hit.transcriptIndex,
+        mode: p.mode ?? 'from',
       };
     });
     this.handle('model/set', (params) => {

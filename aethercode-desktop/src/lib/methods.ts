@@ -570,6 +570,49 @@ export interface WorkflowStep {
 
 export type NotificationHandler = (params: unknown) => void;
 
+/** R402: one checkpoint point, the shape `checkpoints/list` returns.
+ *
+ *  ★ `kind` IS THE DAEMON'S VERDICT ★ 'turn' = "a new turn was about to
+ *  start here"; 'cancel' = "the run was stopped here". The renderer
+ *  displays it — it never re-derives it from the summary text (reading
+ *  prose as a contract is the R378 failure mode).
+ *
+ *  ★ `preview` IS THE DAEMON'S ANSWER TO "WHAT WOULD THIS CHANGE?" ★
+ *  The renderer cannot compute it: it never held the snapshot. Each
+ *  entry carries `known` — false means "I do not know", which is NOT
+ *  the same as zero (R1406).
+ */
+export interface CheckpointPoint {
+  id: string;
+  /** the 0-based user-message ordinal the point sits at. */
+  userMessageIndex: number;
+  /** the transcript index the point sits at. */
+  transcriptIndex: number;
+  /** one line for the menu. */
+  summary: string;
+  /** 'turn' | 'cancel' */
+  kind: string;
+  files: Array<{
+    path: string;
+    name: string;
+    restorable: boolean;
+    created: boolean;
+  }>;
+  preview: Array<{
+    name: string;
+    linesNow: number;
+    linesDelta: number;
+    created: boolean;
+    known: boolean;
+    note: string | null;
+  }>;
+  changedFiles: number;
+  changedLines: number;
+  /** false when at least one preview entry is unknown. */
+  previewComplete: boolean;
+}
+
+
 export class AetherCodeRpc {
   private handlers = new Map<string, Set<NotificationHandler>>();
   private unlisten: UnlistenFn | null = null;
@@ -1536,6 +1579,81 @@ export class AetherCodeRpc {
     return this.call('compact/getSnapshot', {
       sessionId: opts.sessionId ?? null,
       compactionIndex: opts.compactionIndex,
+    });
+  }
+
+  // R402: the CHECKPOINT surface — the data behind the rewind menu.
+  //
+  // ★ WHY THE RENDERER KEEPS NO COPY OF THE SHAPE ★ the daemon owns
+  // the taxonomy (a point is a "turn" or a "cancel", and only the
+  // daemon knows which), the preview (what a restore would change),
+  // and the evicted counter. The renderer asks and displays.
+  //
+  // ★ THE FILE LIST IS THE POINT'S OWN ★ the daemon stores the files
+  // with the point (R403) — the renderer never re-derives them from
+  // the transcript, because after a restart the transcript has moved
+  // on and the re-derived set would be a different set.
+  checkpointsList(opts?: { sessionId?: string | null }): Promise<{
+    ok: boolean;
+    error?: string;
+    checkpoints: CheckpointPoint[];
+    evicted: number;
+  }> {
+    return this.call('checkpoints/list', {
+      sessionId: opts?.sessionId ?? null,
+    });
+  }
+  // scope: 'code' | 'conversation' | 'both'
+  checkpointsRestore(opts: {
+    sessionId?: string | null;
+    id: string;
+    scope: 'code' | 'conversation' | 'both';
+  }): Promise<{
+    ok: boolean;
+    reason?: string;
+    // ★ THE DAEMON USES TWO ERROR FIELDS ★ `reason` when the OPERATION
+    // was refused ("no such checkpoint", "the summariser refused") and
+    // `error` when the SESSION could not be resolved ("no such
+    // sessionId"). A client that reads only one of them shows a generic
+    // fallback for the other case — so both are declared, and the menu
+    // reads `reason` first, then `error`.
+    error?: string;
+    id?: string;
+    scope?: string;
+    restored?: string[];
+    deleted?: string[];
+    skipped?: string[];
+    failed?: string[];
+    changed?: number;
+    conversation?: Record<string, unknown>;
+  }> {
+    return this.call('checkpoints/restore', {
+      sessionId: opts?.sessionId ?? null,
+      id: opts.id,
+      scope: opts.scope,
+    });
+  }
+  // mode: 'from' | 'up_to' — 'from' splits BEFORE the point, 'up_to'
+  // folds the point's own message into the summary. Both keep the tail.
+  checkpointsSummarize(opts: {
+    sessionId?: string | null;
+    checkpointId: string;
+    mode: 'from' | 'up_to';
+  }): Promise<{
+    ok: boolean;
+    reason?: string;
+    // the daemon's OTHER error field — see the note on `checkpointsRestore`.
+    error?: string;
+    checkpointId?: string;
+    target?: number;
+    summarized?: number;
+    kept?: number;
+    transcriptSize?: number;
+  }> {
+    return this.call('checkpoints/summarize', {
+      sessionId: opts?.sessionId ?? null,
+      checkpointId: opts.checkpointId,
+      mode: opts.mode,
     });
   }
 
