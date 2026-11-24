@@ -4418,3 +4418,104 @@ a gate. Both of those cost this round real time.
   **把顺序反过来**：**先杀进程，再动被测状态，再启动**。⇒ 凡是「某个活着的进程
   会写这个文件」的实验，**被测文件必须在那个进程死掉之后才能动**。
   Doc: `docs/R398-daemon-restart-session-restore.md`.
+
+## Watch out for (R400 additions)
+
+- **客户端的「取消」不带标识，就等于没有取消**（R400）。
+  daemon 的 `cancel` 处理器**强制要求** `runId`（`stringOrThrow(p, "runId")`），
+  而桌面端的 `cancel() { return this.call('cancel'); }` **一个参数都不传** ⇒
+  daemon 回 `-32602 missing required string field: runId` ⇒ 桌面端用
+  `catch {}` **把它吞了**。UI 把 `isStreaming` 翻成 false（**看起来停了**），
+  daemon 继续流式输出 ⇒ 用户看到「明明已经停止了，结果隔了一会儿自己又继续跑」。
+  ⇒ **R721 的四层硬取消（future flag → `thread.interrupt()` →
+  `destroyForcibly()` → `Thread.stop()`）全部排在参数校验之后，一次都没执行过。**
+  ⇒ 修法：`runId` 改成**可选**，回落链 = 显式 `runId` → 显式 `sessionId` →
+  引擎当前会话 → **该会话在 `sessionRunLock` 里登记的当前 run**。**daemon 是归属方，
+  它知道谁在跑**，所以「取消这个会话当前的 run」不需要客户端记住 id。
+  ⇒ **客户端的失败不能静默**：daemon 拒绝了就落一条 `[停止失败]` 的 error message
+  —— 一个静默失败的停止按钮，和一个不存在的停止按钮，在用户眼里是同一个东西。
+  ⇒ 参考 TUI：它一直有 `state.activeRunId`，cancel 带 `{runId}`，所以**它是好的**。
+  ⇒ **Lesson 1240 — 「一个必需的参数」可以是一条比它更长的依赖链的死结**：
+  客户端没有那个值时，不是「传一个假的」，而是**让服务端自己查得到**。
+
+- **★ reactive 流遇 interrupt 是「完成」，不是「抛异常」 ★**（R400）。
+  引擎 park 在 `currentLlmIt.hasNext()` 等下一个 chunk 时，daemon 的 cancel 调
+  `thread.interrupt()` ⇒ **Reactive pipeline 把它当成「取消订阅」，于是把 flux
+  COMPLETE 掉**（不是抛异常）⇒ `hasNext()` 返回 `false` ⇒ 引擎把**被截断的流**
+  读成了「模型正常说完」⇒ run 以**干净的 end-of-turn 理由**结束。
+  ⇒ 后果有两个，都很贵：① 渲染器显示「✓Done」而不是「⏹ 已停止」；
+  ② `StreamEvent.isDeterministicHardStopOf` **不含** end-of-turn ⇒ boulder hook 的
+  硬停闸门不命中 ⇒ **2 秒倒计时仍可能把用户刚杀掉的 run 复活**。
+  ⇒ **R721 的 `Thread.interrupted()` 检查点抓不到这个形状** —— 它只在引擎
+  **推进迭代**时执行，而引擎正阻塞在 `hasNext()` 里面。
+  ⇒ 修法：在「iterator 耗尽」这条路上加分支 —— 耗尽**且**中断标志置位 ⇒ 以裸 kind
+  `cancelled` 结束并发终端帧。**未被中断的线程标志是清的**，所以正常路径完全不受影响
+  （反向用例 `anUninterruptedRunStillEndsCleanly` 钉住这一点）。
+  ⇒ **Lesson 1241 — 「流结束了」有不止一种含义**：正常耗尽、被上游截断、被中断、
+  被取消。**任何读「流结束了」的代码都必须问一句「是哪种」**，否则「结束了」会被
+  读成「正常结束」。
+  ⇒ **Lesson 1242 — 分类法要由**产生事件的那一层**拥有**。`cancelled` 不是失败
+  （daemon 的 `isErrorOutcomeOf` 明确排除它，wire 上是 `isError: false`），
+  但桌面端的**本地兜底列表**在 daemon 已经表态时仍被查询 ⇒ 本地列表**盖过**了
+  daemon 的判断 ⇒ 每次用户主动停止都渲染成「● Failed (cancelled)」+ ↻ 重试按钮。
+  **而这在 cancel 从未生效时是看不见的**（没有任何 run 会以 `cancelled` 结束）⇒
+  **「让取消生效」和「取消不算失败」必须同时落地，否则修一个就制造另一个。**
+
+- **★ 源码 pin 测试的「字符窗口」是硬约束，长注释不能放函数体里 ★**（R400）。
+  `QueryEngineR735Test.tryAdvance_hasOuterTryCatchRuntimeException` 在
+  `tryAdvance` 的签名之后开一个 **60,000 字符窗口**找 `"runtime_exception"`。
+  在 `tryAdvance` 里加 2,949 字符的注释 ⇒ 那个字面量被推出窗口 ⇒ **红**，
+  而代码本身完全正确。窗口原本的余量只有 2,186 字符。
+  ⇒ 修法：**把完整分析挪到类的 javadoc 上**（它在签名之前，不占窗口），
+  函数体里只留十几行短说明。**这与「长注释放接口声明上」是同一条规则。**
+  ⇒ **Lesson 1243 — 一个 pin 的「窗口」是它的承重结构**：改代码时必须同时看
+  窗口还剩多少余量，而不是「我加的注释在窗口内就行」。
+  ⇒ 顺带：**`QueryEngineR735Test` 扫源码里的 `stopReason = "…"` 赋值形状** ⇒
+  **注释里复现那个形状会被当成一个真的终止分支**（Lesson 1057）。
+
+- **★ 量具自检：一条用例可以「断言了它没设置的东西」 ★**（R400）。
+  `cancelR400.test.ts` 有一条「run 结束时 run id 必须被释放」—— 它**从没把
+  `activeRunId` 设成非空**，于是断言的是本来就为 null 的值 ⇒ **删掉释放逻辑它照样绿**。
+  是**变异**把它照出来的（M5：删掉 `activeRunId: null` ⇒ 红集合为空）。
+  ⇒ 修法：先把 `activeRunId` 设成 `'run-7'`，再断言它变回 null。
+  ⇒ **Lesson 1244 — 「红集合为空」先问「变异生效了吗」，再问「量具读到东西了吗」**；
+  而这一次的答案是第三种：**断言本身落在一个永远成立的取值上**。
+  ⇒ 顺带：W1 变异（注释掉 `stopReason = "cancelled"`）**也没有红** —— 因为分支里
+  发出的 `RunEnd` 用的是**字面量** `"cancelled"`，不是那个变量 ⇒ **变异打在了
+  不被测量的路径上**。**真正的变异是「整个修复前代码」**（`git checkout` 回 HEAD），
+  它给出的失败信息 `expected: <cancelled> but was: <end_turn>` 与实机观测**逐字一致**。
+
+- **★ 实机验证要打「正在运行的 daemon」，而且要能区分三种失败 ★**（R400）。
+  第一层修复（daemon 回落 + 桌面端带 runId）做完后，实机打 daemon 发现 cancel
+  **已经到达引擎**（流真的停了，零后续 delta），**但 stopReason 还是 `end_turn`** ——
+  这不是噪音，它指向上面那条 reactive 的根因。**只跑单元测试看不到这一层**：
+  测试的 fake client 不会复现「reactive 遇 interrupt 变 COMPLETE」这个形状。
+  ⇒ 判据要能区分：**cancel 没到达** / **到达了但理由不对** / **理由对了但自动续跑没停**。
+  本轮用三个读数分开：`cancel` 的返回体、终端帧的 `stopReason`、
+  以及「cancel 之后是否还有 delta / 是否出现第二个 `run_start` / 是否广播了 countdown」。
+  ⇒ 实机跑在**一次性会话**里（`scripts/oneshot-session.mjs open|verify|drop`），
+  跑完 verify 确认没有泄漏进用户自己的会话，再 drop。
+  ⇒ **Lesson 1245 — 「停下来了」和「以什么理由停下来」是两个不同的量**，
+  而只有一个会被单元测试看见。
+
+- **★ 「stop 一切」要在服务端做，客户端分两次调用会留窗口 ★**（R400）。
+  boulder hook 在 run 以「还有未完成 todo」结束后排一个 **2 秒**倒计时，到点
+  **重新发起 LLM 调用**。所以「停止」的语义必须包含**取消已排的倒计时** +
+  **关闭自动续跑**（`setContinuationStopped`）。
+  ⇒ **这必须在 daemon 侧一次做完**：客户端若分两次 RPC 调用（先 cancel 再
+  `setContinuationStopped`），**中间那个窗口里倒计时就可能开火** —— 而倒计时的
+  全部工作就是重新提示引擎，那正是用户刚说「不要」的事。
+  ⇒ 标志由**下一次用户 prompt** 复位 ⇒ 「停止」持续到用户再次开口，而不是永远。
+  ⇒ **Lesson 1246 — 一个「统一语义」的动作（停止一切）不能拆成多个客户端往返**：
+  中间态必须是服务端不可能被观察到的。
+  ⇒ 桌面端此前对 `todo_continuation_countdown` **零引用** ⇒ 那 2 秒窗口里
+  **没有任何提示** ⇒ 现在是一个带「停止自动续跑」按钮的 sticky toast。
+
+- **★ 一条承诺要在**它自己声称的那个契约**上修 ★**（R400）。
+  daemon 侧 `cancel` 的回落让 cancel 到达了引擎；引擎侧那句「reactive 遇中断是
+  COMPLETE」解释了为什么终端帧的理由是错的。**两边都要改**，因为契约分两层：
+  「取消到达了」和「被取消的 run 以 `cancelled` 结束」是**两个不同的承诺**，
+  而下游（渲染器 / boulder hook 的硬停闸门 / 指标 / 审计）读的是**第二个**。
+  ⇒ **Lesson 1247 — 一个用户可见的动作往往由多层契约拼成**；只修最外层
+  （「按钮发出去了」）会让内层继续说错话，而内层的错话**下游读得到**。
+  Doc: `docs/R400-cancel-intent-checkpoint-design.md`.

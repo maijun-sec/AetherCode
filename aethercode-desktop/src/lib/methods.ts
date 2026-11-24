@@ -674,6 +674,30 @@ export class AetherCodeRpc {
     return () => set!.delete(handler);
   }
 
+  /**
+   * R400: deliver a notification to the registered handlers.
+   *
+   * <p>★ WHY THIS EXISTS ★
+   * The production path delivers notifications from the WS
+   * {@code ws-notify} listener (see {@link #start}). A test that
+   * wants to drive the store's real {@code stream_event} /
+   * {@code todo_continuation_countdown} handlers has no other way in
+   * — the handler map is private, and re-implementing the handler
+   * body in the test would pin a COPY of the logic instead of the
+   * thing that ships.
+   *
+   * <p>So the seam dispatches to the SAME handler set the WS
+   * listener uses. A handler that throws is swallowed exactly as the
+   * production path swallows it.
+   */
+  __test_dispatchNotification(method: string, params: unknown): void {
+    const set = this.handlers.get(method);
+    if (!set) return;
+    for (const h of set) {
+      try { h(params); } catch (e) { console.error('notif handler threw:', e); }
+    }
+  }
+
   ping(): Promise<{ ok: true; timestamp: number }> { return this.call('ping'); }
   getState(): Promise<EngineState> { return this.call('getState'); }
   listTools(): Promise<{ tools: ToolInfo[] }> { return this.call('listTools'); }
@@ -735,8 +759,31 @@ export class AetherCodeRpc {
   setModel(model: string, sessionId?: string): Promise<{ ok: true; model: string; sessionId?: string }> { return this.call('setModel', { model, sessionId }); }
   setPermissionMode(mode: string, sessionId?: string): Promise<{ ok: true; mode: string; sessionId?: string }> { return this.call('setPermissionMode', { mode, sessionId }); }
   setSystemPrompt(prompt: string): Promise<{ ok: true }> { return this.call('setSystemPrompt', { prompt }); }
-  query(prompt: string, opts?: { sessionId?: string }): Promise<{ ok: true; messageId: string }> { return this.call('query', { prompt, ...opts }); }
-  cancel(): Promise<{ ok: true }> { return this.call('cancel'); }
+  /**
+   * R400: the daemon's `query` returns `{runId, accepted}` — the
+   * runId is the handle `cancel` needs. The old declaration said
+   * `{ok, messageId}`, which the daemon has NEVER returned; the
+   * store therefore had no runId to cancel with, and the desktop's
+   * `cancel()` (which sent no params) was answered `-32602`.
+   */
+  query(prompt: string, opts?: { sessionId?: string }): Promise<{ runId: string; accepted: boolean }> { return this.call('query', { prompt, ...opts }); }
+  /**
+   * R400: cancel a run.
+   *
+   * The runId is optional now — the daemon falls back to "the run
+   * that currently holds this session's run slot", which is what
+   * the desktop wants (the desktop does not always know the
+   * runId, e.g. when the run was started before a session switch).
+   * The desktop still sends it when it has one, so the daemon does
+   * not have to guess.
+   */
+  cancel(opts?: { runId?: string; sessionId?: string }): Promise<{ cancelled: boolean; runId?: string; sessionId?: string; reason?: string; continuationStopped?: boolean }> { return this.call('cancel', opts ?? {}); }
+  /** stop the session's automatic continuation (the boulder hook's
+   *  countdown). Distinct from `cancel` — this one does not touch a
+   *  running turn, it only disarms the auto-continue. */
+  setContinuationStopped(stopped: boolean, sessionId?: string): Promise<{ sessionId: string; stopped: boolean }> {
+    return this.call('setContinuationStopped', { stopped, ...(sessionId ? { sessionId } : {}) });
+  }
   // listSessions accepts optional
   // { limit, withPreview } params. The
   // legacy wire shape is preserved

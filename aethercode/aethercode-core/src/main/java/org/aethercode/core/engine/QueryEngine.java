@@ -62,6 +62,40 @@ import java.util.stream.StreamSupport;
  * <p>Concurrency rule (matching the TS original): model streams run <em>serially</em>. Tools
  * within a single turn can run concurrently if the orchestrator says so, but a fresh LLM call
  * only starts after every tool result from the previous turn is in the transcript.
+ *
+ * <h2>R400 — a cancelled run must SAY SO</h2>
+ *
+ * <p>An exhausted LLM iterator has <b>two</b> very different meanings, and the engine used
+ * to read both of them as "the model finished":
+ *
+ * <ol>
+ *   <li>the model really did finish the turn, and</li>
+ *   <li>the worker thread was <b>interrupted</b> while the engine was parked inside the
+ *       reactive stream.</li>
+ * </ol>
+ *
+ * <p>Case (2) is exactly what the daemon's cancel RPC does to a run that is streaming: it
+ * interrupts the worker thread. A reactive pipeline treats an interrupt as "cancel this
+ * subscription" and <b>completes</b> the flux — it does <b>not</b> throw — so
+ * {@code hasNext()} returns {@code false} and the engine reads a <b>truncated</b> stream as
+ * a normal end of turn.
+ *
+ * <p>Measured on the live daemon (R400): a cancel issued 4.7 s into a streaming run stopped
+ * the output (zero further deltas) but the terminal frame carried a <b>clean</b> end-of-turn
+ * reason. Two things downstream then got the wrong answer:
+ *
+ * <ul>
+ *   <li>the renderer showed "✓Done" instead of "⏹ 已停止" — the user asked for the stop;</li>
+ *   <li>{@link org.aethercode.core.stream.StreamEvent#isDeterministicHardStop()} does not
+ *       contain a clean end-of-turn reason, so the boulder hook's hard-stop gate did not
+ *       fire and the 2-second auto-continue countdown could still resurrect the run the
+ *       user had just killed.</li>
+ * </ul>
+ *
+ * <p>The fix is a single branch next to the iterator-exhausted path: when the iterator is
+ * exhausted <b>and</b> the thread's interrupt flag is set, the run ends with the bare
+ * {@code cancelled} reason and emits the terminal frame. A thread that was never
+ * interrupted has the flag clear, so the ordinary end-of-turn path is untouched.
  */
 public class QueryEngine {
 
@@ -2587,6 +2621,32 @@ private Stream<StreamEvent> currentLlmStream;
                             if (deliveredOrContinue(action)) return true;
                             continue engineLoop;
                         }
+                    } else if (Thread.interrupted()) {
+                        // R400: an exhausted LLM iterator means one of
+                        // two things: the model finished, OR the worker
+                        // thread was interrupted while the engine was
+                        // parked inside the reactive stream (a reactive
+                        // pipeline COMPLETES on an interrupt instead of
+                        // throwing, so hasNext() returns false).
+                        //
+                        // The second case is what the daemon's cancel RPC
+                        // does to a streaming run. Reading it as a clean
+                        // end of turn made the renderer show "✓Done" and
+                        // left the boulder hook's hard-stop gate un-fired,
+                        // so the 2s auto-continue could resurrect the run
+                        // the user had just killed.
+                        //
+                        // The full analysis is in the class javadoc
+                        // ("R400 — a cancelled run must SAY SO").
+                        finished = true;
+                        stopReason = "cancelled";
+                        try {
+                            action.accept(new StreamEvent.RunEnd("cancelled", List.of()));
+                        } catch (Exception ignored) {
+                            // the action consumer can throw on a closed
+                            // downstream — the run is over either way.
+                        }
+                        return false;
                     }
 
                     // LLM iterator is exhausted OR RunEnd was just processed: handle the batch.

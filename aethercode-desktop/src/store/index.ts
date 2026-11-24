@@ -1743,6 +1743,25 @@ interface AppState {
    *  shows this, the Progress bar tracks its step count, and
    *  the Tasks list injects it as a synthetic running row. */
   currentQuery: { id: string; prompt: string; startedAt: number; stepCount: number; toolCount: number } | null;
+  /** R400: the daemon's run id for the run currently in flight.
+   *
+   *  The daemon's `query` answers `{runId, accepted}` and its
+   *  `cancel` needs that runId. The desktop used to THROW THE
+   *  RESPONSE AWAY and then call `cancel` with no params at all,
+   *  which the daemon answered with `-32602 missing required
+   *  string field: runId` — and the desktop swallowed that error
+   *  with `catch {}`.
+   *
+   *  The symptom was exactly "我点了停止，明明已经停止了，隔了
+   *  一会儿自己又继续跑": the UI flipped `isStreaming` to false
+   *  while the run kept streaming, and because the run never
+   *  stopped with reason `cancelled`, the boulder hook's
+   *  auto-continue was still allowed to fire.
+   *
+   *  The daemon now ALSO falls back to "the run that currently
+   *  holds this session's run slot", so this field is a
+   *  belt-and-braces handle, not the only way to cancel. */
+  activeRunId: string | null;
   /** R83 Issue #6: a "step" is one round-trip through the engine
    *  (run_start →…→run_end). The MessageList groups events
    *  into steps and shows a counter header per step
@@ -1881,6 +1900,48 @@ interface AppState {
   refreshModels: () => Promise<void>;
   setCurrentInput: (s: string) => void;
   sendMessage: () => Promise<void>;
+  /**
+   * R400: stop the run in flight — and stop EVERYTHING, which
+   * includes the queued follow-up and the session's automatic
+   * continuation.
+   *
+   * <p>★ WHY THIS DOCSTRING IS HERE AND NOT IN THE BODY ★
+   * The body of this action carries a short note instead of the
+   * full story, because a source-pin gate
+   * ({@code store/notificationsR359.test.ts}) matches the action
+   * body with a bounded window between the action's opening brace
+   * and the {@code clearNotificationsBySource('stream-stale')} call
+   * it asserts. A long comment in the body pushed that call out
+   * of the window and turned the gate red. The explanation
+   * belongs here, on the declaration, where no window applies.
+   *
+   * <p>★ WHAT WAS BROKEN ★
+   * Before R400 this action was
+   * {@code try { await rpc.cancel(); } catch {}} — with NO
+   * parameters. The daemon's {@code cancel} handler required a
+   * {@code runId} and answered {@code -32602 missing required
+   * string field: runId}; the empty catch ate the error. The
+   * desktop then flipped {@code isStreaming} to false, so the UI
+   * said "stopped" while the daemon kept streaming. Because the
+   * run never ended with the stop reason {@code cancelled}, the
+   * boulder hook's auto-continue was still allowed to fire two
+   * seconds later — which is exactly what the user reported:
+   * "明明已经停止了，结果隔了一会儿自己又继续跑".
+   *
+   * <p>The desktop could not send a run id because it threw the
+   * daemon's {@code query} response away: the daemon answers
+   * {@code {runId, accepted}}, and the store's declaration of
+   * {@code query} claimed {@code {ok, messageId}} — a shape the
+   * daemon has never returned.
+   *
+   * <p>★ THE FIX ★
+   * The store now keeps the run id in {@code activeRunId}, sends
+   * it (plus the session id) with the cancel, and SURFACES a
+   * refusal instead of swallowing it. The daemon also falls back
+   * to "the run that currently holds this session's run slot",
+   * so the stop button works even when the desktop does not know
+   * the run id.
+   */
   cancelQuery: () => Promise<void>;
   /** R267 desktop polish: drop the queued follow-up
    *  prompt (if any). Called by the UI's "cancel queued"
@@ -2881,6 +2942,10 @@ export const useStore = create<AppState>((set, get) => {
     if (!ev?.type) return;
     switch (ev.type) {
       case 'run_start': {
+        // R400: the auto-continue countdown toast is over once the
+        // run actually starts. Clear it so the user is not left
+        // reading "即将自动续跑" while the resumed run streams.
+        get().clearNotificationsBySource('continuation-countdown');
         // Begin of a new run. Reset watchdog timer so it doesn't
         // fire on long-running tool calls. The assistant message
         // will be created on the first text_delta. R82+ Issue 1:
@@ -3398,10 +3463,36 @@ export const useStore = create<AppState>((set, get) => {
           'awaiting_user_decision',
           'runtime_exception',
           'stale_force_end',
-          'cancelled',
+          // R400: 'cancelled' was REMOVED from this list.
+          //
+          // It is not a failure, and the daemon says so in its own
+          // taxonomy: `StreamEvent.isErrorOutcomeOf` excludes it
+          // with the comment "cancelled — the user asked for it;
+          // not a failure", and the daemon therefore puts
+          // `isError: false` on the wire for a cancelled run.
+          //
+          // But `matchedKind` below is consulted even when the
+          // daemon DID express a verdict, so the local list was
+          // overriding it: a user-initiated stop was rendered as
+          // "● Failed (cancelled)" with a ↻ retry button.
+          //
+          // That was invisible until R400 — the desktop's cancel
+          // never worked, so no run ever ended with 'cancelled'.
+          // Now that the stop button actually stops the run, every
+          // stop would have shown a red failure pill. The daemon's
+          // verdict wins; the local list stays a fallback for a
+          // daemon that expresses no verdict at all.
           'no_run_end',
           'consumer_timeout',
         ] as const;
+        // R400: a user-initiated stop. The engine ends a cancelled
+        // run with the bare kind `cancelled` (QueryEngine's
+        // interrupt branch), but the desktop still prefix-matches
+        // decorated reasons, so accept the decorated form too.
+        const isCancelledRun = typeof stopReason === 'string'
+          && (stopReason === 'cancelled'
+            || stopReason.startsWith('cancelled:')
+            || stopReason.startsWith('cancelled '));
         // R735b (2026-10-20): prefix match, NOT Set.has().
         //
         // The engine does NOT emit bare enum stopReasons — it
@@ -3475,11 +3566,16 @@ export const useStore = create<AppState>((set, get) => {
             lastFailedStopReason: failedKind,
             lastFailedAt: Date.now(),
           });
-        } else if (stopReason === 'stop' || stopReason === 'end_turn') {
+        } else if (stopReason === 'stop' || stopReason === 'end_turn' || isCancelledRun) {
           // Successful end — clear the retry slot so the
           // ↻ button only appears for the latest failure.
           // Don't clear on awaiting_user_decision (the user
           // hasn't finished the conversation yet).
+          //
+          // R400: a cancelled run also clears the retry slot. The
+          // user pressed stop; there is nothing to retry, and a
+          // ↻ button next to "Failed" would invite them to re-run
+          // a turn they deliberately aborted.
           set({ lastFailedPrompt: null, lastFailedStopReason: null, lastFailedAt: null });
         }
         set((s) => {
@@ -3517,9 +3613,18 @@ export const useStore = create<AppState>((set, get) => {
             // streaming) stamps a fresh one instead of reusing
             // this run's start.
             streamingStartedAt: 0,
-            currentActivity: { kind: 'done', label: '✓Done', ts: Date.now() },
+            // R400: a cancelled run says "已停止", not "✓Done" —
+            // the user asked for it, and the difference is the
+            // difference between "the work finished" and "you
+            // stopped it".
+            currentActivity: isCancelledRun
+              ? { kind: 'done', label: '⏹ 已停止', ts: Date.now() }
+              : { kind: 'done', label: '✓Done', ts: Date.now() },
             steps,
             currentStepId: null,
+            // R400: the run is over — its id is no longer a live
+            // handle, so a later `cancel` must not try to use it.
+            activeRunId: null,
             // a fresh run ended; clear any active workflow
             // selection and the running-workflow tracker. The
             // progress bar unmounts, and the next message starts
@@ -4094,6 +4199,53 @@ export const useStore = create<AppState>((set, get) => {
     applyLogNotification(set, params);
   });
 
+  // R400: the auto-continue countdown.
+  //
+  // The daemon's boulder hook schedules a 2s countdown after a run
+  // ends with unfinished todos, and then RE-PROMPTS the engine on
+  // its own. The desktop used to ignore that notification entirely
+  // (zero references to `todo_continuation_countdown` anywhere in
+  // aethercode-desktop/src), so the user saw the output simply
+  // resume with no explanation and no way to stop it — "自己又继续
+  // 跑了，好像没办法停".
+  //
+  // Now the countdown is VISIBLE and can be stopped with one click.
+  // The button calls `setContinuationStopped(true)` — the daemon's
+  // own "disarm the auto-continue" switch. The NEXT user prompt
+  // re-arms it (the daemon resets the flag in its `query` handler),
+  // so "stop" lasts until the user says something, not forever.
+  rpc.on('todo_continuation_countdown', (params: any) => {
+    if (!params || typeof params !== 'object') return;
+    const evSession = typeof params.sessionId === 'string' ? params.sessionId : '';
+    if (!isOurSession(evSession, get().currentSessionId)) return;
+    const incomplete = Number(params.incompleteCount);
+    const total = Number(params.totalCount);
+    const remainingMs = Number(params.remainingMs);
+    const n = Number.isFinite(incomplete) ? incomplete : 0;
+    const t = Number.isFinite(total) ? total : n;
+    const secs = Number.isFinite(remainingMs) ? Math.max(0, Math.round(remainingMs / 1000)) : 0;
+    get().pushNotification({
+      source: 'continuation-countdown',
+      level: 'info',
+      // Sticky: the countdown window is short, and the user must be
+      // able to act on it even after the resumed run has started.
+      sticky: true,
+      title: '即将自动续跑',
+      message: `还有 ${n}/${t} 个待办未完成，约 ${secs} 秒后引擎会自己再问一次。`,
+      actions: [
+        {
+          label: '停止自动续跑',
+          variant: 'primary',
+          onClick: () => {
+            const sid = get().currentSessionId ?? undefined;
+            rpc.setContinuationStopped(true, sid).catch(() => {});
+            get().clearNotificationsBySource('continuation-countdown');
+          },
+        },
+      ],
+    });
+  });
+
   // the daemon short-circuits low-risk
   // permission asks and emits this notification
   // instead. The renderer uses it for two
@@ -4597,6 +4749,10 @@ export const useStore = create<AppState>((set, get) => {
     // dismissNotification action.
     notificationHistory: [],
     currentQuery: null,
+    // R400: no run in flight yet — this is the handle `cancel`
+    // needs. The daemon's `query` answers `{runId, accepted}` and
+    // the desktop used to throw that away.
+    activeRunId: null,
     steps: [],
     currentStepId: null,
     expandedStepIds: {},
@@ -5483,6 +5639,17 @@ export const useStore = create<AppState>((set, get) => {
             }));
             return;
           }
+          // R400: KEEP the daemon's run id.
+          //
+          // The daemon answers `{runId, accepted}` and that runId is
+          // the handle `cancel` needs. The desktop used to drop the
+          // response on the floor, so the only cancel it could send
+          // was an empty one — which the daemon rejected with
+          // `-32602`, and the desktop swallowed with `catch {}`.
+          // That is the whole reason the stop button did nothing.
+          if (r && typeof r.runId === 'string' && r.runId) {
+            set({ activeRunId: r.runId });
+          }
         }
         // If the user dismissed the decision (or sent an abort-ish
         // response), the engine may or may not resume. Either way
@@ -5591,11 +5758,36 @@ export const useStore = create<AppState>((set, get) => {
       // — when they hit cancel they want a clean slate,
       // not a surprise prompt firing the moment the
       // daemon tears down.
-      try { await rpc.cancel(); } catch {}
-      set({ isStreaming: false, pendingFollowUp: null });
-      // R359: cancelling the run makes any
-      // stream-stale warning moot — drop it.
+      const sid = get().currentSessionId ?? undefined;
+      const runId = get().activeRunId ?? undefined;
+      let failure: string | null = null;
+      // R359: cancelling the run makes any stream-stale warning moot.
       get().clearNotificationsBySource('stream-stale');
+      // R400: send the run id, and do NOT swallow the failure.
+      // (The long story lives on the interface declaration.)
+      try {
+        const res = await rpc.cancel({
+          ...(runId ? { runId } : {}),
+          ...(sid ? { sessionId: sid } : {}),
+        });
+        if (res && res.cancelled === false && res.reason) failure = res.reason;
+      } catch (e: any) {
+        failure = e?.message ?? String(e);
+      }
+      set({ isStreaming: false, pendingFollowUp: null, activeRunId: null });
+      if (failure) {
+        // The daemon refused, or the call itself failed. SAY SO.
+        // A silent failure here is exactly what made the stop
+        // button look broken for so long: the user pressed it, the
+        // UI flipped, and nothing told them the run was still going.
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system' as const,
+            content: `[停止失败] daemon 没有接受这次取消（${failure}）。这一轮可能还在运行 —— 请重试，或改用 Esc / 停止按钮再点一次。`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+      }
     },
 
     cancelPendingFollowUp: () => set({ pendingFollowUp: null }),
@@ -7692,7 +7884,36 @@ export const useStore = create<AppState>((set, get) => {
     selectTask: (taskId: string | null) => set({ currentTaskId: taskId }),
 
     cancelTask: async (taskId: string) => {
-      try { await rpc.cancel(); } catch {}
+      // R400: same bug as `cancelQuery` — `rpc.cancel()` with no
+      // params was answered `-32602` and swallowed by `catch {}`.
+      //
+      // NOTE (honest scope): the daemon has NO per-task kill RPC
+      // for the engine's task registry — `subagentCancel {jobId}`
+      // covers background subagents, and everything else goes
+      // through `cancel {runId}`. So this action cancels the run
+      // that is currently in flight and then marks the row
+      // locally. That is what the ⏹ on a RUNNING task row means
+      // in practice.
+      //
+      // The local mark is now CONDITIONAL on the daemon accepting
+      // the cancel. Marking a task `killed` while the run it
+      // belongs to is still going is the "claim success while
+      // nothing moved" shape — the row would show `killed` and
+      // the output would keep scrolling.
+      const sid = get().currentSessionId ?? undefined;
+      const runId = get().activeRunId ?? undefined;
+      let failure: string | null = null;
+      try {
+        const res = await rpc.cancel({
+          ...(runId ? { runId } : {}),
+          ...(sid ? { sessionId: sid } : {}),
+        });
+        if (res && res.cancelled === false && res.reason) {
+          failure = res.reason;
+        }
+      } catch (e: any) {
+        failure = e?.message ?? String(e);
+      }
       // map the legacy 'cancelled' status
       // to the new TaskRegistry status set
       // ('killed' for terminal cancellation). The
@@ -7700,9 +7921,20 @@ export const useStore = create<AppState>((set, get) => {
       // selector (kept for the legacy TaskList
       // rendering); we use 'killed' as the canonical
       // value going forward.
+      if (failure) {
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system' as const,
+            content: `[停止失败] daemon 没有接受这次取消（${failure}）。这一轮可能还在运行。`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+        return;
+      }
       set((s) => ({
         tasks: s.tasks.map((t) => t.id === taskId ? { ...t, status: 'killed' as const, endedAtMs: Date.now() } : t),
         isStreaming: false,
+        activeRunId: null,
       }));
     },
 
