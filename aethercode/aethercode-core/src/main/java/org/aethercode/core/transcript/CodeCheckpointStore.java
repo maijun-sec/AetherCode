@@ -36,6 +36,8 @@ import java.util.Set;
 import org.aethercode.core.message.ContentBlock;
 import org.aethercode.core.message.Message;
 import org.aethercode.core.message.Role;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * R388n: the CODE side of a checkpoint — the files, not just the
@@ -88,6 +90,8 @@ import org.aethercode.core.message.Role;
  */
 public final class CodeCheckpointStore {
 
+    private static final Logger LOG = LoggerFactory.getLogger(CodeCheckpointStore.class);
+
     /**
      * The tools that CHANGE a file, and the input field that names it.
      *
@@ -112,6 +116,26 @@ public final class CodeCheckpointStore {
         }
     }
 
+    /**
+     * A checkpoint that was taken at a TURN BOUNDARY — the normal case.
+     *
+     * <p>R403: the kind is a property of the point, not a decoration. A
+     * cancel point records a DIFFERENT thing ("the run was stopped here")
+     * than a turn point ("a new turn was about to start here"), and a
+     * renderer has to be able to tell them apart.
+     */
+    public static final String KIND_TURN = "turn";
+
+    /**
+     * A checkpoint taken at the moment a run was CANCELLED.
+     *
+     * <p>Its files hold the HALF-FINISHED state (the working tree as it
+     * was when the user hit stop), not the state before the cancelled
+     * turn. See {@code docs/R403-checkpoint-persistence-cancel-marking.md}
+     * §3.3 for why that distinction is not negotiable.
+     */
+    public static final String KIND_CANCEL = "cancel";
+
     /** One checkpoint: a set of files, at a moment. */
     public record Checkpoint(
             String id,
@@ -121,10 +145,29 @@ public final class CodeCheckpointStore {
             int userMessageIndex,
             /** a one-line summary for the menu. */
             String summary,
+            /** R403: {@link #KIND_TURN} or {@link #KIND_CANCEL}. */
+            String kind,
             List<FileState> files) {
+
+        /**
+         * The pre-R403 shape — a turn-boundary point.
+         *
+         * <p>Kept so the callers that do not care about the kind stay
+         * unchanged, and so a checkpoint written by an older build (which
+         * had no kind) still loads as a turn point.
+         */
+        public Checkpoint(String id, int transcriptIndex, int userMessageIndex,
+                String summary, List<FileState> files) {
+            this(id, transcriptIndex, userMessageIndex, summary, KIND_TURN, files);
+        }
 
         public boolean isEmpty() {
             return files.isEmpty();
+        }
+
+        /** Is this the point where a cancelled run stopped? */
+        public boolean isCancelPoint() {
+            return KIND_CANCEL.equals(kind);
         }
     }
 
@@ -197,6 +240,47 @@ public final class CodeCheckpointStore {
     private final Map<String, Checkpoint> checkpoints = new LinkedHashMap<>();
 
     /**
+     * R403: the DISK half — null when persistence is off.
+     *
+     * <p>★ WHY THE STORE OWNS IT ★ The memory and the disk must be
+     * evicted by the SAME rule. If the disk kept a different number than
+     * the memory, a restart would load a different list than the one the
+     * user was just looking at — the menu would "gain" rows the user
+     * never saw. So the eviction below touches both.
+     */
+    private final CheckpointDiskStore disk;
+
+    /**
+     * A store with persistence OFF — the pre-R403 behaviour, kept for
+     * the CLI path and for the tests that only care about the snapshot
+     * semantics.
+     */
+    public CodeCheckpointStore() {
+        this(null);
+    }
+
+    /**
+     * A store that PERSISTS to {@code diskDir}.
+     *
+     * @param diskDir the directory that holds this session's checkpoints,
+     *                or null to keep everything in memory
+     */
+    public CodeCheckpointStore(Path diskDir) {
+        this.disk = diskDir == null ? null : new CheckpointDiskStore(diskDir);
+        if (disk != null) {
+            // The eviction counter is a property of the DIRECTORY's
+            // history, not of this instance's lifetime — a restart that
+            // reported zero would claim nothing was ever lost.
+            evicted = disk.readEvicted();
+        }
+    }
+
+    /** The disk store, or null when persistence is off. */
+    public CheckpointDiskStore disk() {
+        return disk;
+    }
+
+    /**
      * How many checkpoints are kept.
      *
      * <p>★ WHY THE STORE MUST BE BOUNDED ★
@@ -241,7 +325,13 @@ public final class CodeCheckpointStore {
             String oldest = checkpoints.keySet().iterator().next();
             checkpoints.remove(oldest);
             evicted++;
+            // ★ THE DISK EVICTS WITH THE MEMORY ★ Same rule, same
+            // moment. If the disk kept the evicted point, a restart
+            // would resurrect it — the user would see a point they were
+            // told had been dropped.
+            if (disk != null) disk.delete(oldest);
         }
+        if (disk != null && evicted > 0) disk.writeEvicted(evicted);
     }
 
     /** How many checkpoints have been dropped because the store was full. */
@@ -316,6 +406,34 @@ public final class CodeCheckpointStore {
             int userMessageIndex,
             Path cwd,
             String summary) {
+        return save(id, transcript, transcriptIndex, userMessageIndex, cwd, summary,
+                KIND_TURN);
+    }
+
+    /**
+     * Take a checkpoint of the files the session has touched SO FAR.
+     *
+     * <p>The snapshot captures the CURRENT content, which — because the
+     * checkpoint is taken at a message boundary BEFORE the next turn's
+     * writes — is the "before" state for anything that comes later.
+     *
+     * @param id the checkpoint's id
+     * @param transcript the session's messages
+     * @param transcriptIndex the transcript index the checkpoint sits at
+     * @param userMessageIndex the user-message ordinal it sits at
+     * @param cwd the session's working directory
+     * @param summary a one-line summary for the menu
+     * @param kind {@link #KIND_TURN} or {@link #KIND_CANCEL}
+     * @return the checkpoint
+     */
+    public Checkpoint save(
+            String id,
+            List<Message> transcript,
+            int transcriptIndex,
+            int userMessageIndex,
+            Path cwd,
+            String summary,
+            String kind) {
         List<FileState> files = new ArrayList<>();
         for (Path p : touchedFiles(transcript, cwd)) {
             try {
@@ -344,13 +462,54 @@ public final class CodeCheckpointStore {
                 files.add(new FileState(p, null, false));
             }
         }
-        Checkpoint cp = new Checkpoint(id, transcriptIndex, userMessageIndex, summary, files);
+        Checkpoint cp = new Checkpoint(id, transcriptIndex, userMessageIndex, summary,
+                kind == null ? KIND_TURN : kind, files);
         checkpoints.put(id, cp);
         // ★ BOUND THE STORE ★ Every checkpoint holds a full copy of
         // every file the session has touched, so an unbounded store is
         // a quadratic memory leak (see MAX_CHECKPOINTS).
         evictIfNeeded();
+        // ★ AND PERSIST IT ★ A checkpoint that only exists in the heap
+        // dies with the daemon — and with it goes the anchor that says
+        // where in the conversation the snapshot was taken (gap G1).
+        // Best-effort: a failing write logs at warn and the in-memory
+        // point still works.
+        if (disk != null) {
+            try {
+                disk.save(cp);
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("R403: could not persist checkpoint {}: {}", id, e.getMessage());
+            }
+        }
         return cp;
+    }
+
+    /**
+     * R403: load the checkpoints that are on disk into this store.
+     *
+     * <p>Called when the engine binds to a session (at boot, and whenever
+     * the user switches sessions). The points come back OLDEST FIRST —
+     * the same order {@link #list()} produces — because the menu numbers
+     * its rows by position in that list.
+     *
+     * <p>★ THE FILES LIST COMES FROM THE DISK, NOT FROM THE TRANSCRIPT ★
+     * The old derivation ("which files did the session touch?") scans
+     * the transcript's tool_use blocks — and after a restart the
+     * transcript is a DIFFERENT transcript. Deriving the set again would
+     * return a different answer than the one the snapshot was taken
+     * with, and a restore would then quietly restore the wrong files.
+     * That is why the whole point — content, position and file list — is
+     * saved as one record.
+     *
+     * @return how many points were loaded
+     */
+    public int loadFromDisk() {
+        if (disk == null) return 0;
+        List<Checkpoint> onDisk = disk.loadAll();
+        for (Checkpoint cp : onDisk) {
+            checkpoints.putIfAbsent(cp.id(), cp);
+        }
+        return onDisk.size();
     }
 
     /** The checkpoint with this id. */
@@ -373,6 +532,18 @@ public final class CodeCheckpointStore {
      */
     public void clear() {
         checkpoints.clear();
+        // ★ THE DISK FORGETS TOO ★ Leaving the files behind would mean
+        // the next {@link #loadFromDisk()} brings the same points back —
+        // a "clear" that un-clears itself.
+        if (disk != null) {
+            disk.deleteAll();
+            // The eviction counter survives the clear — it says how
+            // many points this session has LOST, and a clear does not
+            // un-lose them. The disk's copy has to agree with the
+            // memory's, or the next restart would report a different
+            // number than the one the user was just shown.
+            disk.writeEvicted(evicted);
+        }
     }
 
     /**

@@ -544,6 +544,23 @@ public class AetherCodeMethods {
      *  within 5-10 seconds regardless of where in the stream
      *  it was. */
     private final Map<String, Thread> runThreads = new ConcurrentHashMap<>();
+    /**
+     * R403: the engine that OWNS each run.
+     *
+     * <p>★ WHY THIS IS A FACT AND NOT A RE-DERIVATION ★ The cancel
+     * RPC has to mark WHERE the run stopped — and that point belongs to
+     * the engine the run actually executed on. Re-resolving the engine
+     * from the session id at cancel time is a SECOND lookup that can
+     * fail on its own: with no {@code SessionManager} wired (the
+     * single-engine CLI / the legacy daemon path) the lookup returns
+     * null, and the point is silently skipped — the feature "works" in
+     * the daemon and does nothing in every other host.
+     *
+     * <p>So the query records the owner next to the thread it already
+     * registers, and the cancel reads the fact back.
+     */
+    private final Map<String, AetherCodeEngine> runEngines = new ConcurrentHashMap<>();
+
     /** R721: child processes spawned by tool calls during the
      *  run. Cancelling a run also tries to destroy these
      *  (a bash tool that spawned a long-running command would
@@ -4483,6 +4500,7 @@ public class AetherCodeMethods {
                 inFlight.remove(runId);
                 runThreads.remove(runId);
                 runChildren.remove(runId);
+                runEngines.remove(runId);
                 // release the session-level run
                 // lock so the user's next query (or the
                 // next auto-continue) can proceed. We
@@ -4502,6 +4520,10 @@ public class AetherCodeMethods {
         // so cancel was effectively a no-op for any code path
         // that didn't poll the future's cancel flag.
         runThreads.put(runId, t);
+        // R403: remember WHICH engine owns this run, so the cancel
+        // can mark the point on the right engine without re-resolving
+        // the session id.
+        runEngines.put(runId, target);
         t.setDaemon(true);
         t.start();
 
@@ -5433,6 +5455,20 @@ public class AetherCodeMethods {
         }
         String runId = explicitRunId != null ? explicitRunId : currentRunIdFor(sessionId);
 
+        // ★ R403: RESOLVE THE RUN'S OWNER BEFORE THE TEARDOWN ★
+        //
+        // The cancel has to mark WHERE the run stopped, and that point
+        // belongs to the engine the run executed on. The owner is read
+        // HERE — before the interrupt — because the interrupt makes the
+        // worker finish, and the worker's cleanup removes the run from
+        // the tracking maps. Reading the owner afterwards is a RACE:
+        // when the worker was quick, the map was already empty and the
+        // point was silently not marked.
+        //
+        // ⇒ The owner is a FACT recorded when the run started, and it
+        // has to be read while the run still exists.
+        AetherCodeEngine runOwner = runId == null ? null : runEngines.get(runId);
+
         // R400: a cancel means "stop EVERYTHING", and the auto-continue
         // (the boulder hook's 2s countdown) is part of "everything".
         //
@@ -5576,6 +5612,37 @@ public class AetherCodeMethods {
         forceWatchdog.start();
         out.put("cancelled", true);
         out.put("forceMs", finalForceMs);
+        // ★ R403: MARK WHERE THE RUN STOPPED ★
+        //
+        // The turn-boundary checkpoint is "the state before this turn
+        // started" — but the user pressed stop because the run was
+        // HALF WAY THROUGH, and the point they want is the one that
+        // records the scene where it stopped.
+        //
+        // ★ ONLY WHEN SOMETHING WAS ACTUALLY CANCELLED ★ A cancel
+        // against an already-finished run must not litter the session
+        // with points the user never asked for.
+        //
+        // ★ THE MARKING CANNOT FAIL THE CANCEL ★ The run is already
+        // being stopped; a checkpoint that cannot be written is worth a
+        // warning, never an error the user has to read.
+        String checkpointId = null;
+        try {
+            // ★ THE OWNER, NOT A RE-RESOLUTION ★ The owner was resolved
+            // BEFORE the interrupt (see above) — reading it now would
+            // race the run's teardown.
+            AetherCodeEngine marked = runOwner;
+            if (marked == null) {
+                marked = resolveRpcTarget(sessionId);
+            }
+            if (marked != null) {
+                var cp = marked.markCancelCheckpoint("cancel rpc");
+                if (cp.isPresent()) checkpointId = cp.get().id();
+            }
+        } catch (RuntimeException cpEx) {
+            LOG.warn("R403: could not mark the cancel point: {}", cpEx.getMessage());
+        }
+        out.put("checkpointId", checkpointId);
         return out;
     }
 
@@ -9099,6 +9166,13 @@ public class AetherCodeMethods {
             row.put("userMessageIndex", cp.userMessageIndex());
             row.put("transcriptIndex", cp.transcriptIndex());
             row.put("summary", cp.summary() == null ? "" : cp.summary());
+            // ★ R403: THE KIND GOES ON THE WIRE ★ A turn point and a
+            // cancel point are DIFFERENT things ("a new turn was about
+            // to start" vs "the run was stopped here"), and only the
+            // daemon knows which one a point is. A renderer that had to
+            // guess from the summary text would be reading prose as a
+            // contract.
+            row.put("kind", cp.kind() == null ? "turn" : cp.kind());
             row.put("files", files);
             row.put("preview", preview);
             row.put("changedFiles", changedFiles);

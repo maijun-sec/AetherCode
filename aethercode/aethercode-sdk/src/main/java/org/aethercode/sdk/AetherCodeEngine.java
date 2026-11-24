@@ -540,6 +540,11 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         this.sessionStore = b.sessionStore;
         if (this.sessionStore != null) {
             attachSessionStore();
+            // R403: bind the checkpoint store to THIS session's
+            // directory and load whatever it already holds. Without
+            // this, a daemon restart would start with an empty
+            // checkpoint history even though the files are on disk.
+            bindCheckpointDisk(appState.sessionId());
         }
         // R284: stash the pre-compaction snapshot store
         // BEFORE QueryEngine is constructed below — we
@@ -2511,6 +2516,11 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             for (Message m : savedTranscript.messages()) appState.transcript().add(m);
             currentTranscript = savedTranscript;
             appState.sessionId(savedSessionId);
+            // R403: the checkpoint store followed the CHILD into
+            // createSession(); it has to follow the parent back —
+            // otherwise the parent's next checkpoint lands in the
+            // child's directory.
+            bindCheckpointDisk(savedSessionId);
         }
     }
 
@@ -2589,6 +2599,9 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // here so a post-construction setSessionStore
         // gives the engine the same capabilities.
         attachSessionStore();
+        // R403: the store arrived late, so the checkpoint store has to
+        // be bound (and its history loaded) now.
+        bindCheckpointDisk(appState.sessionId());
         LOG.info("R148: SessionStore wired post-construction: {} (active session: {})",
                 store.dir(), appState.sessionId());
     }
@@ -2681,6 +2694,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // the engine's startup sessionId, which the user can't
         // ever escape.
         appState.sessionId(sessionId);
+        // R403: the checkpoints belong to a session, so switching
+        // sessions switches the checkpoint store — and loads the new
+        // session's points from disk.
+        bindCheckpointDisk(sessionId);
         // R398: record WHICH session the user is in, so a daemon
         // restart can put them back where they were.
         recordActiveSession(sessionId);
@@ -2821,8 +2838,60 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      * tool calls — the files the session wrote — so there is no second
      * bookkeeping path that could disagree with what actually happened.
      */
-    private final org.aethercode.core.transcript.CodeCheckpointStore codeCheckpoints =
+    private volatile org.aethercode.core.transcript.CodeCheckpointStore codeCheckpoints =
             new org.aethercode.core.transcript.CodeCheckpointStore();
+
+    /**
+     * R403: point the checkpoint store at a SESSION's directory on disk.
+     *
+     * <p>★ WHY THE STORE IS RE-BOUND ★ Checkpoints belong to a session
+     * — the directory is {@code <sessionsDir>/<sessionId>/checkpoints/} —
+     * and the engine's session id CHANGES when the user switches
+     * sessions ({@link #loadSession}) or starts a new one
+     * ({@link #createSession}). So the store has to follow.
+     *
+     * <p>★ AND THE OLD SESSION'S POINTS ARE DROPPED ★ They belong to a
+     * different conversation; showing them next to the new session's
+     * points would offer the user a "rewind to point 3" that lands in
+     * another conversation.
+     *
+     * <p>★ AND THE NEW SESSION'S POINTS ARE LOADED ★ This is the whole
+     * point of R403: a daemon restart must not erase the history.
+     *
+     * @param sessionId the session whose directory to bind to
+     */
+    private void bindCheckpointDisk(String sessionId) {
+        if (sessionStore == null || sessionId == null || sessionId.isBlank()) {
+            // No store wired ⇒ no persistence. Keep the in-memory store.
+            return;
+        }
+        java.nio.file.Path dir = sessionStore.dir()
+                .resolve(sessionId)
+                .resolve(org.aethercode.core.transcript.CheckpointDiskStore.DIR_NAME);
+        var current = codeCheckpoints;
+        if (current.disk() != null && dir.equals(current.disk().dir())) {
+            // Already bound to this session — nothing to do. (This is
+            // the common case: the turn-boundary hook fires on every
+            // turn.)
+            return;
+        }
+        var fresh = new org.aethercode.core.transcript.CodeCheckpointStore(dir);
+        int loaded = fresh.loadFromDisk();
+        codeCheckpoints = fresh;
+        LOG.info("R403: checkpoint store bound to {} ({} point(s) loaded from disk)",
+                dir, loaded);
+    }
+
+    /**
+     * R403: the directory this session's checkpoints live in, or null when
+     * persistence is off. Exposed so the delete path can clean it up.
+     */
+    private java.nio.file.Path checkpointDiskDir(String sessionId) {
+        if (sessionStore == null || sessionId == null || sessionId.isBlank()) return null;
+        return sessionStore.dir()
+                .resolve(sessionId)
+                .resolve(org.aethercode.core.transcript.CheckpointDiskStore.DIR_NAME);
+    }
 
     /**
      * R388n: the one-line label the checkpoint menu shows.
@@ -2861,6 +2930,20 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      */
     public org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint
             saveCodeCheckpoint(int userMessageIndex, String summary) {
+        return saveCodeCheckpoint(userMessageIndex, summary,
+                org.aethercode.core.transcript.CodeCheckpointStore.KIND_TURN);
+    }
+
+    /**
+     * R403: take a code checkpoint of the files the session has touched.
+     *
+     * @param userMessageIndex the 0-based user-TURN ordinal
+     * @param summary the one-line menu label
+     * @param kind {@code "turn"} or {@code "cancel"}
+     * @return the checkpoint
+     */
+    public org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint
+            saveCodeCheckpoint(int userMessageIndex, String summary, String kind) {
         java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
         java.util.List<Integer> turns =
                 org.aethercode.core.transcript.CodeCheckpointStore.userTurnIndices(t);
@@ -2875,7 +2958,66 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         }
         java.nio.file.Path cwd = appState.cwd();
         String id = "cp-" + userMessageIndex + "-" + System.currentTimeMillis();
-        return codeCheckpoints.save(id, t, transcriptIndex, userMessageIndex, cwd, summary);
+        return codeCheckpoints.save(id, t, transcriptIndex, userMessageIndex, cwd,
+                summary, kind);
+    }
+
+    /**
+     * R403: mark WHERE a cancelled run stopped.
+     *
+     * <p>★ WHAT THIS POINT MEANS ★ Its files hold the HALF-FINISHED
+     * state — the working tree as it was at the instant the user hit
+     * stop — and its conversation boundary is the START of the cancelled
+     * turn, because that turn never finished and its half-written
+     * messages are not a conversation the model can continue from.
+     *
+     * <p>★ IT IS NOT "UNDO THIS TURN" ★ It records the scene where the
+     * task stopped. Undoing the cancelled turn's partial work is the
+     * PREVIOUS turn-boundary point's job, and that point has a known
+     * gap (a file this turn CREATED is not in it). Saying otherwise
+     * would be claiming a capability that does not exist.
+     *
+     * <p>★ THE FILES COME FROM THE TRANSCRIPT'S TOOL CALLS ★ The engine
+     * appends the assistant message — which carries the tool_use blocks
+     * — to the transcript BEFORE the tools run
+     * ({@code QueryEngine.java:2740-2743}), so at cancel time the
+     * transcript already names every file the session actually wrote.
+     *
+     * @param reason why the run was stopped (for the log)
+     * @return the cancel point, or empty when there is no user turn to
+     *         anchor it to
+     */
+    public java.util.Optional<org.aethercode.core.transcript.CodeCheckpointStore.Checkpoint>
+            markCancelCheckpoint(String reason) {
+        try {
+            java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
+            java.util.List<Integer> turns =
+                    org.aethercode.core.transcript.CodeCheckpointStore.userTurnIndices(t);
+            if (turns.isEmpty()) {
+                // No user turn yet ⇒ nothing to anchor the point to.
+                return java.util.Optional.empty();
+            }
+            // ★ THE LAST USER TURN IS THE CANCELLED ONE ★ Its message is
+            // already in the transcript (the engine appends it before the
+            // turn starts), so the LAST real user turn is the one that
+            // was interrupted.
+            int ordinal = turns.size() - 1;
+            int transcriptIndex = turns.get(ordinal);
+            String id = "cp-cancel-" + System.currentTimeMillis();
+            String summary = "(stopped here)";
+            var cp = codeCheckpoints.save(id, t, transcriptIndex, ordinal,
+                    appState.cwd(), summary,
+                    org.aethercode.core.transcript.CodeCheckpointStore.KIND_CANCEL);
+            LOG.info("R403: cancel point {} marked (turn {}, transcript index {}, reason={})",
+                    id, ordinal, transcriptIndex, reason);
+            return java.util.Optional.of(cp);
+        } catch (RuntimeException e) {
+            // A broken checkpoint must never break a cancel — the run is
+            // already being stopped, and the user is waiting for the
+            // stop to take effect.
+            LOG.warn("R403: could not mark the cancel point: {}", e.getMessage());
+            return java.util.Optional.empty();
+        }
     }
 
     /** R388n: every code checkpoint, in creation order. */
@@ -3244,6 +3386,9 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // prior round transcript_push payloads would always show the
         // old id, which the user can't ever escape.
         appState.sessionId(newId);
+        // R403: a new session starts with its OWN checkpoint history —
+        // the new session's directory, which is empty.
+        bindCheckpointDisk(newId);
         // R398: record the new session as the active one — same
         // fact loadSession records, so a daemon restart puts the
         // user back in the session they just created.
@@ -3314,8 +3459,32 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             throw new IllegalStateException("cannot delete the active session; load another first");
         }
         boolean removed = sessionStore.delete(sessionId);
+        // R403: the session's CHECKPOINTS go with it. Leaving the
+        // code snapshots of a deleted session on disk is garbage that
+        // the user cannot reach and cannot get rid of.
+        java.nio.file.Path cpDir = checkpointDiskDir(sessionId);
+        if (cpDir != null) {
+            try {
+                deleteRecursively(cpDir);
+            } catch (java.io.IOException | RuntimeException e) {
+                LOG.warn("R403: could not delete the checkpoints of {}: {}",
+                        sessionId, e.getMessage());
+            }
+        }
         LOG.info("deleteSession: {} removed={}", sessionId, removed);
         return removed;
+    }
+
+    /** Delete a directory and everything under it. */
+    private static void deleteRecursively(java.nio.file.Path root) throws java.io.IOException {
+        if (!java.nio.file.Files.exists(root)) return;
+        try (var stream = java.nio.file.Files.walk(root)) {
+            stream.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    java.nio.file.Files.deleteIfExists(p);
+                } catch (java.io.IOException ignored) { }
+            });
+        }
     }
 
     /**
