@@ -232,6 +232,33 @@ public final class IntentClassifier {
      * Explicit implementation verbs. These may promote a NON-question
      * prompt to {@link Kind#CODE_CHANGE}. They may NOT promote a
      * question — that needs {@link #STRICT_CODE_VERBS}.
+     *
+     * <p>★ WHY THE ARTICLE IS PART OF THE VERB ★
+     * Some English verbs collide with nouns: "the create method",
+     * "the write path", "the build tool", "the add operation". A bare
+     * "create" would fire on all of them, so those verbs are listed as
+     * <b>verb + determiner</b> ("create a", "create an") instead. The
+     * determiner is what makes the phrase an instruction.
+     *
+     * <p>★ R404: "THE" IS A DETERMINER TOO ★
+     * The list had only the INDEFINITE forms ("create a", "create an"),
+     * so "create the file X" / "write the file X" / "add the test" fell
+     * through to {@link Kind#UNCERTAIN} ⇒ the read-only
+     * {@code navigator} profile ⇒ {@code file_write} pruned out of the
+     * tool pool ⇒ the model answered "unknown tool: file_write" and
+     * then routed around it through the shell.
+     *
+     * <p>Measured on the live daemon (R403): the same prompt with "a"
+     * wrote the file; the same prompt with "the" could not. The
+     * determiner carries the same disambiguating power, and the noun
+     * collisions above are UNAFFECTED — "the create method" does not
+     * contain "create the", because the determiner has to FOLLOW the
+     * verb.
+     *
+     * <p>★ WHY BARE "update" IS DELIBERATELY ABSENT ★
+     * "give me a status update" is a noun phrase, and a bare "update"
+     * would read it as an instruction. "update the README" is not
+     * ambiguous, so only the determiner form is listed.
      */
     private static final List<String> CODE_VERBS = List.of(
             "实现", "编写", "写一个", "写个", "写一段", "新增", "创建", "生成", "重构",
@@ -239,9 +266,14 @@ public final class IntentClassifier {
             "加上", "加个", "加一个", "加一段", "添加", "改造", "迁移", "删除", "删掉", "移除",
             "优化", "简化", "完善", "修复", "修一下", "更新", "升级", "补一个",
             "帮我改", "改一下", "改名", "重命名", "清理", "整理", "排序",
-            "implement", "create a", "create an", "add a", "add an",
-            "refactor", "rewrite", "scaffold", "generate a", "generate an",
-            "write a", "write an", "build a", "build an", "delete", "remove",
+            "implement", "create a", "create an", "create the",
+            "add a", "add an", "add the",
+            "refactor", "rewrite", "scaffold",
+            "generate a", "generate an", "generate the",
+            "write a", "write an", "write the",
+            "build a", "build an", "build the",
+            "update the",
+            "delete", "remove",
             "rename", "fix", "optimize", "migrate", "translate", "convert",
             "format", "sort", "support", "adapt"
     );

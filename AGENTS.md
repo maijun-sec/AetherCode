@@ -4717,3 +4717,42 @@ a gate. Both of those cost this round real time.
   ⇒ 每次实机红都先问「**被测物错，还是量具错**」，把量具错修掉再判产品。
 
 Doc: `docs/R403-checkpoint-persistence-cancel-marking.md`.
+
+## Watch out for (R404 additions)
+
+- **★ 限定词也是动词的一部分 ★**（R404）。
+  `IntentClassifier.CODE_VERBS` 里 `create` / `add` / `write` / `build` /
+  `generate` 只列了**不定**冠词形式（`create a` / `create an`），
+  **没有**定冠词形式 ⇒ `create the file X` 判 `UNCERTAIN` ⇒ 只读档案 ⇒
+  `file_write` 被裁掉 ⇒ 模型报 6 次 `unknown tool: file_write` 再绕道 shell。
+  实机对照：**同一句话只差一个冠词**，`create a` 能写、`create the` 不能写。
+  ⇒ 补的是**一个缺失的语法位**，不是「更多词」：`create the` / `add the` /
+  `write the` / `build the` / `generate the` / `update the`。
+  ⇒ 这些动词之所以要带冠词，是因为它们**和名词同形**
+  （`the create method` / `the write path`）—— 而 `the` 和 `a` 一样是限定词，
+  消歧能力相同，且限定词必须**跟在动词后面** ⇒ `the create method` 不含 `create the`。
+  ⇒ **裸 `update` 刻意不加**：`give me a status update` 是名词短语，
+  裸形式会把它读成指令 —— 那正是 R401 要防的失败模式。
+  ⇒ **Lesson 1505 — 一个词表的缺口，常常是它漏掉了一个语法位，不是一批词。**
+
+- **★ 改动词表之前先量一遍 ★**（R404）。
+  `jshell --class-path aethercode-core/target/classes` 直接跑真分类器，
+  20 条提示一次跑完，**哪些落空一目了然**；比读代码猜快得多，也准得多。
+  ⇒ 改分类器这类「判定表」的轮次，**先量、后改、再量**。
+
+- **★ 变异台的「抓住 / 漏掉」结论，本身也是一个量具 ★**（R404）。
+  本轮变异台的判定式用**非贪婪**的第一捕获组切 surefire 的全限定名
+  （`org.aethercode.core.intent.IntentClassifierR404Test.someMethod`），
+  于是「方法名」变成了 `rg.aethercode...R404Test.someMethod` ⇒
+  **6 个突变全部报「漏掉」，而同一份输出里 6 条期望用例明明都在红集合里**。
+  ⇒ **判定的结论必须能从它自己的输出里复核**：
+  匹配要用**贪婪**的第一组，再取**最后一段**（`($token -split '\.')[-1]`）。
+  ⇒ **Lesson 1506 — 量具读到了正确的数据，也可能把它格式化成一个对不上的形状；
+  「报 0 命中」时，先把红集合原样打出来看一眼。**
+
+- **★ 证据文件里的数字也是断言 ★**（R404）。
+  surefire 先打**每个测试类**一行 `Tests run: N`，最后才打**总数**行；
+  判定式取了第一个匹配 ⇒ 摘要写着 `ran=3`，实际跑了 **11** 例。
+  ⇒ 取**最后一个**匹配（唯一没有 `-- in <class>` 后缀的那行）。
+  ⇒ **Lesson 1507 — 报告里的数字会被下一个人当真，所以它必须是真的。**
+
