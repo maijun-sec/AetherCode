@@ -33,8 +33,27 @@ import java.util.Map;
  */
 public sealed interface StreamEvent {
 
-    /** Stream began. The first event of every run. */
-    record RunStart(String runId, String model) implements StreamEvent {}
+    /**
+     * Stream began. The first event of every run.
+     *
+     * <p>R401: the four intent/profile fields carry the DAEMON's
+     * verdict for this turn — the intent kind, its human label, the
+     * resolved profile name and the profile's label. They are on the
+     * wire so a renderer never has to re-derive "what did the agent
+     * think this turn was about" (the R385 rule: the verdict comes
+     * from the daemon). Null means "no verdict" — a run started
+     * outside the main loop (a subagent's inner loop, a test).
+     *
+     * <p>The 2-arg constructor is kept so the ~50 existing call sites
+     * (tests, the stream-json emitter) keep compiling unchanged.
+     */
+    record RunStart(String runId, String model,
+                    String intent, String intentLabel,
+                    String profile, String profileLabel) implements StreamEvent {
+        public RunStart(String runId, String model) {
+            this(runId, model, null, null, null, null);
+        }
+    }
 
     /** A text delta from the model. */
     record TextDelta(String text) implements StreamEvent {}

@@ -55,6 +55,29 @@ public class AppState {
     private volatile Path cwd;
     private PermissionMode permissionMode = PermissionMode.DEFAULT;
     private String mainLoopModel = "claude-sonnet-4-5";
+    /** R401: the user's PROFILE OVERRIDE for this session — the
+     * posture the engine must use regardless of what the intent
+     * classifier says. {@code null} = "auto" (let the classifier
+     * decide). A non-null value is a profile NAME
+     * ({@code ProfileRegistry.lookup}); an unknown name is rejected at
+     * the RPC boundary, so this field only ever holds a real profile
+     * name or null.
+     *
+     *  <p>The override PERSISTS until the user switches it back to
+     *  "auto" — the same contract as {@link PermissionMode}. */
+    private volatile String profileOverride = null;
+    /** R401: the profile of the MAIN turn that is currently running.
+     *
+     *  <p>This is NOT the override — it is the RESOLVED profile (the
+     *  override when set, otherwise the classifier's choice). It
+     *  exists so a SUBAGENT can inherit its parent's restriction: a
+     *  read-only parent must not be able to launder a write through
+     *  {@code spawn_agent}.
+     *
+     *  <p>Written only by the main-loop path (the SDK's 2-arg
+     *  {@code query}); the subagent path only READS it. Null when no
+     *  main turn is running. */
+    private volatile org.aethercode.core.profile.Profile activeProfile = null;
     private final java.util.List<Message> transcript = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final java.util.List<Tool> toolPool = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, Object> attributes = new ConcurrentHashMap<>();
@@ -146,6 +169,17 @@ public class AppState {
     }
     public PermissionMode permissionMode() { return permissionMode; }
     public AppState permissionMode(PermissionMode mode) { this.permissionMode = mode; return this; }
+    /** R401: the user's profile override for this session. Null =
+     *  "auto" (the classifier decides). */
+    public String profileOverride() { return profileOverride; }
+    public AppState profileOverride(String name) {
+        this.profileOverride = (name == null || name.isBlank()) ? null : name.trim();
+        return this;
+    }
+    /** R401: the RESOLVED profile of the main turn that is running
+     *  right now, or null when no main turn is running. */
+    public org.aethercode.core.profile.Profile activeProfile() { return activeProfile; }
+    public AppState activeProfile(org.aethercode.core.profile.Profile p) { this.activeProfile = p; return this; }
     public String mainLoopModel() { return mainLoopModel; }
     public AppState mainLoopModel(String m) { this.mainLoopModel = m; return this; }
     public List<Message> transcript() { return transcript; }

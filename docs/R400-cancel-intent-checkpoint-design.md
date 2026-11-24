@@ -225,9 +225,19 @@ R721 的 `Thread.interrupted()` 检查点（在 `tryAdvance` 顶部）抓不到�
 「生成了一堆莫名其妙的代码」，而**写文件是不可逆的**。opencode 的做法更硬 —— 每个 agent
 带自己的**权限集**：
 
-> opencode 内置两个 primary agent：**Build**（全工具）与 **Plan**（file edits / bash 默认
-> `ask`）；三个 subagent：**General**、**Explore**（只读，答代码库问题）、**Scout**
-> （只读，专做**外部文档与依赖调研**）。权限写在 agent 定义里，不是写在提示词里。
+> opencode V2 内置两个 primary agent：**Build**（默认全量）与 **Plan**（探索规划，file edits /
+> bash 默认 `ask`）；两个 subagent：**General**（研究 + 多步，工具广但不能再派子代理）、
+> **Explore**（只读，读代码**或网络来源**）。权限写在 agent 定义里，不是写在提示词里。
+> V2 的权限是 `action × resource × effect(allow | ask | deny)` 的**有序规则、最后匹配者胜**。
+>
+> ⚠️ **V2 没有 `scout` agent**（官方原文："V2 has no built-in `scout` agent"）。本节早期版本
+> 引用的「Scout（专做外部文档与依赖调研）」是 **V1 的旧信息**，已按 V2 事实更正。
+>
+> ⚠️ **两家上游都没有「意图分类」这个概念。** claude code 是 permission mode
+> （`default` / `acceptEdits` / `auto` / `dontAsk` / `bypassPermissions` / `plan` / `manual`）
+> + 子代理的 `tools` 允许列表；opencode 是 primary agent 由用户切、subagent 由模型按
+> `description` 自动调。**「自动、确定性、每轮重算的意图分类」是 AetherCode 自创的第三条路** ——
+> 它的正确性没有现成参照可抄，只能自负责任。
 
 ### 2.2 AetherCode 已经有的零件
 
@@ -243,6 +253,12 @@ if (role.allowedTools() != null && !role.allowedTools().contains(t.name())) cont
 ```
 
 ⇒ **被禁的工具，模型连调都调不到。** 这是「别生成代码」唯一可靠的实现方式。
+
+> ⚠️ **R401 实测发现：`SubagentRole` 的结构性收窄从未真正生效。**
+> `AppState.pushToolPoolOverride` 在 `AetherCodeEngine.query` 的 `finally` 里 pop，
+> 但那个方法返回的是**惰性 Stream** ⇒ pop 发生在流被消费**之前** ⇒ 线程本地的收窄池
+> 在任何一次 LLM 调用之前就没了 ⇒ 子代理的 role 至今**只靠 prompt 软约束**。
+> R401 把它改成**显式传参**（收窄后的池作为 `RunContext` 的一部分一路传到执行器），这条洞才堵上。
 
 **零件 B —— 主循环的工具池是每轮传入的**：`QueryEngine.java:2451-2452`
 
@@ -276,7 +292,7 @@ currentLlmStream = effectiveChatClient.stream(
 #### 2.4.1 数据模型（新增 `core/intent/` + `core/profile/`）
 
 ```
-IntentKind { CODE_CHANGE, DIAGNOSE, RESEARCH, EXPLAIN, REVIEW, OPS, UNKNOWN }
+IntentKind { CODE_CHANGE, DIAGNOSE, RESEARCH, ANSWER, REVIEW, OPS, UNCERTAIN }
 Intent    { kind, reason, profileName, confidence }
 Profile   { name, label, description, systemPrompt, allowedTools, deniedTools }
 ```
@@ -297,20 +313,30 @@ deniedTools），但**另立 registry**：
 2. 失败症状（`报错` / `不生效` / `崩溃` / `排查` …） ⇒ **DIAGNOSE**
 3. 评审请求 ⇒ **REVIEW**
 4. 构建 / 运行 / 部署 ⇒ **OPS**
-5. 问句 **且** 有本地锚点（路径、本仓库、这个类…） ⇒ **EXPLAIN**
-6. 问句 **且** 无本地锚点 ⇒ **RESEARCH**（概念问题，答案不在这个工作树里）
-7. 含明确实现动词（`实现` / `新增` / `重构` / `implement` …） ⇒ **CODE_CHANGE**
-8. 其它 ⇒ **UNKNOWN**
+5. **问句**：
+   5a. 带**概念阻断词**（`原理` / `机制` / `关系` / `是什么` / `what is` …）⇒ 要的是**解释**
+       ⇒ 本地锚点在 ⇒ **ANSWER**，不在 ⇒ **RESEARCH**
+   5b. 有本地锚点（路径、本仓库、这个类…）⇒ **ANSWER**
+   5c. 无本地锚点 ⇒ **RESEARCH**（概念问题，答案不在这个工作树里）
+   —— 只有在下面这条硬不变式放行时，5b / 5c 才升级为 **CODE_CHANGE**
+6. 非问句 + 明确实现动词（`实现` / `新增` / `重构` / `implement` …） ⇒ **CODE_CHANGE**
+7. 其它 ⇒ **UNCERTAIN**（⇒ 只读的 `navigator`）
 
 **硬不变式（必须 pin 住）**：
 
 > **带问号的 prompt，除非含明确实现动词，否则绝不判成 `CODE_CHANGE`。**
 
+**「明确实现动词」在问句里必须是「动词 + 宾语」（`实现一个` / `write a` …），不能是裸动词。**
+理由：裸动词会藏在名词里 —— 「实现原理」里的「实现」不是动作，是概念。
+概念阻断词再补一刀：**「what is the best way to implement a cache?」** 里也有
+`implement a`，但用户问的是「最好的做法是什么」，不是「去做」⇒ 判 **RESEARCH**。
+（这一条是 `aConceptQuestionThatMentionsImplementingIsStillAConceptQuestion` 钉住的。）
+
 理由：把「问题」误判成「代码任务」会让 agent 写出一堆没人要的文件，而用户很难撤销；
 反过来把「代码任务」误判成「问题」，代价只是一轮浪费。
 
-`UNKNOWN` 也**照样注入一段护栏**（「是问题就回答、别创建文件；是要代码就写」），
-因为默认行为恰恰是用户抱怨的那个。
+`UNCERTAIN` 也**照样注入一段护栏**（「是问题就回答、别创建文件；是要代码就写」），
+因为默认行为恰恰是用户抱怨的那个 —— 而它的**工具表是只读的**，所以护栏失效也不会写文件。
 
 #### 2.4.3 profile 表（初稿）
 
@@ -318,12 +344,35 @@ deniedTools），但**另立 registry**：
 |---|---|---|---|
 | `builder` | CODE_CHANGE | 实现它；先读后写；别做环境调研 | 全量 |
 | `debugger` | DIAGNOSE | 先定位根因，给 file:line 证据；没让改就别改 | 全量 |
-| `researcher` | RESEARCH | 先 `web_search` 找、`web_fetch` 读，**再**汇总作答并给来源 | **禁** `file_write` / `file_edit` / `file_create` |
-| `analyst` | EXPLAIN | 读本仓库回答，引用 file:line | **禁** `file_write` / `file_edit` |
-| `reviewer` | REVIEW | 只读 + 报告，**不要重写** | **禁** `file_write` / `file_edit` |
+| `researcher` | RESEARCH | 先 `web_search` 找、`web_fetch` 读，**再**汇总作答并给来源 | **禁** `file_write` / `file_edit` / `notebook_edit` / `bash` / `spawn_agent` |
+| `analyst` | ANSWER | 读本仓库回答，引用 file:line | **禁** `file_write` / `file_edit` / `notebook_edit` |
+| `reviewer` | REVIEW | 只读 + 报告，**不要重写** | **禁** `file_write` / `file_edit` / `notebook_edit` |
 | `operator` | OPS | 跑真命令、报真输出 | 全量 |
+| `navigator` | UNCERTAIN | 没能识别这一轮：只读 + 先问清楚 | **禁** `file_write` / `file_edit` / `notebook_edit` |
 
-`researcher` 的允许集：`web_search` / `web_fetch` / `file_read` / `grep` / `glob` / `bash`(只读)。
+**这张表编码的是一条规则：**
+
+> **没有被要求「动手」的意图，一律不给写工具。**
+
+⇒ `file_write` / `file_edit` / `notebook_edit` 只在 **CODE_CHANGE / DIAGNOSE / OPS**
+三个意图下活着（用户明确要动作的那三类），其余一律没有。
+
+**三个与初稿的偏差（已实施）：**
+
+1. **`UNCERTAIN` 有了自己的 profile（`navigator`），而不是「无 profile ⇒ 全量工具」。**
+   「认不出来」绝不能变成「那就写点文件」。默认姿态必须是安全的那一档。
+   ⇒ 代价是分类器**精度**变便宜了：误判最多浪费一轮（模型改问），而不会毁掉工作树。
+   下一轮重新分类，写工具就回来了（「对，实现它」本身就是 CODE_CHANGE）。
+2. **`researcher` 连 `bash` 也不给。** 概念查询没有理由在用户的仓库里跑命令。
+   ⇒ 它是全部 profile 里最严的一个。
+3. **`analyst` / `reviewer` 保留 `bash`**（只读排查用），但不给任何写工具。
+
+> **工具名必须是真名。** 写错一个名字 ⇒ 收窄静默失效（池子里根本没那个工具可禁），
+> 症状是「问问题又开始生成文件了」而日志里什么都没有。
+> `ProfileRegistryToolNamesR401Test` 把每个 profile 引用的名字对 `StandardTools.all()` 逐个核。
+
+**子代理继承父级的限制。** 父级是只读 ⇒ 子代理拿到的池子也是只读 ⇒
+「派个子代理去写文件」这条洗白路径也堵死了。
 
 #### 2.4.4 路由（三层叠加）
 
@@ -351,9 +400,17 @@ deniedTools），但**另立 registry**：
 #### 2.4.5 覆盖
 
 - 新 RPC `setProfile`：`{sessionId?, profile}` ⇒ 写入 `AppState.profileOverride`（per-session）。
+  `profile` 取 `builder` / `debugger` / `researcher` / `analyst` / `reviewer` / `operator` /
+  `navigator`，或 `"auto"`（交回分类器）。
+  **未知的名字会被拒绝**（不是静默忽略）—— 一个拼错的名字若悄悄回落到「自动」，
+  用户看到的现象就是「覆盖没生效」，而他无从判断原因。
+  ⇒ **stdio（`registerAll`）与 HTTP+WS（`HttpJsonRpcServer` 的手写 switch）两边都要注册**
+  —— 这正是 Lesson 1022 的形状（`memory/*` 只注册了一半 ⇒ 一半客户端看不见）。
 - 覆盖**持续生效**直到用户改回「自动」，与 `PermissionMode` 的语义一致。
 - 桌面端：header 里一个 chip，显示「意图：概念搜索 · 档案：researcher」，
   点击可切换（含「自动」）。分类错了 ⇒ 用户一键改。
+- **判定在 daemon，渲染器不许自己判**（R385 的规则）：`run_start` 帧带上
+  `intent` / `intentLabel` / `profile` / `profileLabel`，渲染器只负责显示。
 
 #### 2.4.6 与 workflow 的关系：**意图不自动选 workflow**
 
@@ -571,5 +628,5 @@ C2 的设计要点：
   超时的 fail-open / fail-closed 两种语义。
 - opencode agents：https://opencode.ai/docs/agents
   —— agent = (prompt, model, permission)；primary（Build / Plan）与 subagent
-  （General / Explore / Scout）；Scout 专做外部文档与依赖调研；
+  V2 的 built-ins 只有 4 个：primary（Build / Plan）与 subagent（General / Explore），**V2 无 scout**；
   「Subagents are invoked by the primary agent based on their descriptions」。

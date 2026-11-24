@@ -91,6 +91,42 @@ export function Header({
   // inside the popover body itself.
   const bellBtnRef = useRef<HTMLButtonElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  // R401: the intent / profile chip. The DAEMON's verdict for this
+  // turn ("what kind of turn is this, and therefore what may it
+  // touch?") plus the user's one-click override.
+  //
+  // ★ The renderer does NOT decide the intent — it displays what the
+  // daemon said on the `run_start` frame (the R385 rule: the verdict
+  // comes from the daemon). The picker sends back the profile NAME
+  // the daemon itself published, so the vocabulary lives in exactly
+  // one place.
+  const intentLabel = useStore((s) => s.intentLabel);
+  const profileLabel = useStore((s) => s.profileLabel);
+  const profileName = useStore((s) => s.profileName);
+  const profileOverride = useStore((s) => s.profileOverride);
+  const profiles = useStore((s) => s.profiles);
+  const setProfileOverride = useStore((s) => s.setProfileOverride);
+  const [intentOpen, setIntentOpen] = useState(false);
+  const intentMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!intentOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (intentMenuRef.current?.contains(t)) return;
+      setIntentOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [intentOpen]);
+  // pick a profile (or hand the decision back to the classifier with
+  // null). The store surfaces a failure as a system message — an
+  // override that silently did not take would leave the user staring
+  // at a mis-classified turn with no way to tell why.
+  const pickProfile = async (p: string | null) => {
+    setIntentOpen(false);
+    await setProfileOverride(p);
+  };
   useEffect(() => {
     if (!historyOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -428,6 +464,53 @@ export function Header({
             {displayModel}
           </span>
         )}
+        {/* R401: the intent + profile chip. It answers two questions
+            the user actually has — "what did the agent think this turn
+            was about?" and "can I make it behave differently?" — and
+            the second one is answered with ONE CLICK, because a
+            mis-classified turn is expensive (the agent wrote files
+            nobody asked for).
+            The chip is only rendered once the daemon has sent a
+            verdict, so an idle session shows nothing. */}
+        {intentLabel ? (
+          <div className="header-intent-wrap" ref={intentMenuRef}>
+            <button
+              className={`header-meta header-intent-chip ${profileOverride ? 'is-overridden' : ''}`}
+              onClick={() => setIntentOpen((v) => !v)}
+              title={
+                profileOverride
+                  ? `档案已锁定为 ${profileOverride}（点击切换回自动）`
+                  : `意图：${intentLabel} · 档案：${profileLabel ?? profileName ?? '—'}（点击切换档案）`
+              }
+              data-testid="header-intent-chip"
+            >
+              意图：{intentLabel} · 档案：{profileLabel ?? profileName ?? '—'}
+              {profileOverride ? ' 🔒' : ''}
+            </button>
+            {intentOpen ? (
+              <div className="header-intent-menu" role="menu">
+                <button
+                  className={`header-intent-item ${!profileOverride ? 'is-active' : ''}`}
+                  onClick={() => void pickProfile(null)}
+                  role="menuitem"
+                >
+                  自动（按意图判定）
+                </button>
+                {profiles.map((p) => (
+                  <button
+                    key={p.name}
+                    className={`header-intent-item ${profileOverride === p.name ? 'is-active' : ''}`}
+                    onClick={() => void pickProfile(p.name)}
+                    title={p.description}
+                    role="menuitem"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {/* Project / cwd selector: always visible; on first launch the user can pick a project directly. The icon is fixed to avoid layout shift. */}
         <button
           className="header-icon-btn"

@@ -1784,8 +1784,21 @@ public class QueryEngine {
      *  per-turn system prompt: identity + environment + tooling +
      *  workflow + memorySection + planModeSuffix, joined with
      *  blank lines. Extracted from {@link #effectiveSystem()} so we can
-     *  pass the snapshot in. */
-    private String buildSystemForTurn(String memory, String plan) {
+     *  pass the snapshot in.
+     *
+     *  <p>R401: {@code posture} is the PROFILE's directive — the block
+     *  that says what KIND of turn this is ("this is a concept
+     *  question, do not write files"). It sits AFTER the plan-mode
+     *  suffix and BEFORE the R737 response-language lock, because the
+     *  language lock must stay the LAST block (R737 measured that
+     *  recency is what flips the model's output language) and the
+     *  posture must be the block right before it.
+     *
+     *  <p>It is a PARAMETER and not a field on purpose: the engine
+     *  re-enters itself for subagents, and a field would be
+     *  overwritten by the child's turn while the parent's turn is
+     *  still running. */
+    private String buildSystemForTurn(String memory, String plan, String posture) {
         StringBuilder sb = new StringBuilder(systemPrompt);
         // R379: the default agent's block sits right after the base
         // prompt and BEFORE the memory section, because it is part of
@@ -1801,6 +1814,11 @@ public class QueryEngine {
         if (plan != null && !plan.isBlank()) {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(plan);
+        }
+        // R401: the posture directive. BEFORE the language lock below.
+        if (posture != null && !posture.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(posture);
         }
         // R737: the response-language lock. Appended LAST so it sits
         // at the very end of the prompt — the position closest to the
@@ -1998,6 +2016,23 @@ public class QueryEngine {
      * overload does.
      */
     public Stream<StreamEvent> query(String userInput, ChatClient override) {
+        return query(userInput, override, org.aethercode.core.intent.RunContext.none());
+    }
+
+    /**
+     * R401: run a user prompt under a RESOLVED posture.
+     *
+     * <p>{@code ctx} carries the intent, the profile and the already
+     * pruned tool pool. It is a parameter, not engine state, because
+     * the engine re-enters itself for subagents — see
+     * {@link org.aethercode.core.intent.RunContext}.
+     *
+     * <p>The posture is captured into locals here and read by the
+     * Spliterator below, so it stays stable for the whole turn even if
+     * a subagent changes the session's state underneath.
+     */
+    public Stream<StreamEvent> query(String userInput, ChatClient override,
+                                      org.aethercode.core.intent.RunContext ctx) {
         // Snapshot once. The Spliterator below captures
         // this local; the engine's chatClient field stays
         // untouched (so the main turn loop sees no
@@ -2109,6 +2144,33 @@ public class QueryEngine {
         // read on the field is fine, but this local makes the
         // semantics explicit.
         final String snapshotMemory = this.memorySection;
+        // R401: the turn's POSTURE, captured as locals so it cannot be
+        // disturbed by a subagent that re-enters this engine mid-turn.
+        //
+        // `explicitTools` is the pool the caller resolved for THIS
+        // turn — already pruned by the profile (main path) or by the
+        // subagent role AND the parent's profile (child path). It is
+        // null only for a turn with no posture at all (the pre-R401
+        // shape), in which case the session pool is used as-is and the
+        // executor's legacy two-argument entry point is called — that
+        // keeps the "override run(batch, appState)" seam that test
+        // doubles rely on.
+        final java.util.List<org.aethercode.core.tool.Tool> explicitTools =
+                (ctx != null) ? ctx.toolPool() : null;
+        // what the MODEL is shown. A pruned tool is not in this list,
+        // so the model cannot call it.
+        final java.util.List<org.aethercode.core.tool.Tool> visibleTools =
+                explicitTools != null ? explicitTools : appState.toolPool();
+        final String posturePrompt =
+                (ctx != null && ctx.profile() != null) ? ctx.profile().systemPrompt() : "";
+        final String intentToken =
+                (ctx != null && ctx.intent() != null) ? ctx.intent().token() : null;
+        final String intentLabel =
+                (ctx != null && ctx.intent() != null) ? ctx.intent().label() : null;
+        final String profileName =
+                (ctx != null && ctx.profile() != null) ? ctx.profile().name() : null;
+        final String profileLabel =
+                (ctx != null && ctx.profile() != null) ? ctx.profile().label() : null;
         // per-query loop detector. Built fresh each query so
         // prior-session history doesn't bleed into the new one. The
         // detector's window/threshold come from the live volatile
@@ -2351,7 +2413,8 @@ private Stream<StreamEvent> currentLlmStream;
                         // scheduler read the same stream. Emit once.
                         if (!runStartEmitted) {
                             runStartEmitted = true;
-                            emit(new StreamEvent.RunStart(runId, effectiveChatClient.modelId()));
+                            emit(new StreamEvent.RunStart(runId, effectiveChatClient.modelId(),
+                                    intentToken, intentLabel, profileName, profileLabel));
                         }
                         // emit any sub-task transitions BEFORE the LLM
                         // stream starts. On the first turn, this surfaces the
@@ -2373,7 +2436,7 @@ private Stream<StreamEvent> currentLlmStream;
                         // query, not the live field. effectiveSystem() reads
                         // the live field; we temporarily swap it in via a
                         // local-only path here.
-                        String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix);
+                        String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix, posturePrompt);
                         // R716: filter orphan tool results before handing
                         // the transcript to the chat client. Some providers
                         // (notably MiniMax-M3's OpenAI-compat endpoint) strictly
@@ -2483,7 +2546,7 @@ private Stream<StreamEvent> currentLlmStream;
                         // filter, same-reference fast path.
                         cleanedTranscript = stripOrphanToolResults(cleanedTranscript);
                         currentLlmStream = effectiveChatClient.stream(
-                                cleanedTranscript, turnSystem, appState.toolPool());
+                                cleanedTranscript, turnSystem, visibleTools);
                         currentLlmIt = currentLlmStream.iterator();
                         pending = new ArrayList<>();
                         stopReason = "end_turn";
@@ -2852,8 +2915,15 @@ private Stream<StreamEvent> currentLlmStream;
                         }
                     }
                     // Use the streaming executor for live event delivery.
+                    // R401: with an explicit (pruned) pool the executor's
+                    // LOOKUP is pruned too — a tool the model cannot see
+                    // must not be resolvable at execution time. Without
+                    // one, the legacy two-arg call keeps the seam that
+                    // test doubles override.
                     java.util.Iterator<StreamingToolExecutor.Event> it =
-                            streamingExecutor.run(batch, appState).iterator();
+                            (explicitTools != null
+                                    ? streamingExecutor.run(batch, appState, explicitTools)
+                                    : streamingExecutor.run(batch, appState)).iterator();
                     java.util.List<ProgressLoopDetector.BatchResult> results = new java.util.ArrayList<>();
                     while (it.hasNext()) {
                         StreamingToolExecutor.Event ev = it.next();

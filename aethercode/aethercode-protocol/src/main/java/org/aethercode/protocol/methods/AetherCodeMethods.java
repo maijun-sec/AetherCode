@@ -67,6 +67,8 @@ import java.util.stream.Collectors;
  *   <li>{@code listTools} —list of registered tools</li>
  *   <li>{@code setModel} —change the model at runtime</li>
  *   <li>{@code setPermissionMode} —change the permission mode at runtime</li>
+ *   <li>{@code setProfile} —override the intent classifier's profile
+ *       for a session ("auto" to hand it back)</li>
  *   <li>{@code setSystemPrompt} —replace the engine system prompt</li>
  *   <li>{@code query} —start a new query; streams events via
  *       {@code stream_event} notifications; returns the run id
@@ -217,6 +219,10 @@ public class AetherCodeMethods {
         // Engine config (write)
         m.put("setModel",                              new String[]{TAG_WRITE, TAG_ENGINE});
         m.put("setPermissionMode",                     new String[]{TAG_WRITE, TAG_ENGINE, TAG_PERMISSION});
+        // R401: the profile override — same shape as the permission
+        // mode: a per-session write that changes what the engine may
+        // do on the next turn.
+        m.put("setProfile",                            new String[]{TAG_WRITE, TAG_ENGINE, TAG_PERMISSION});
         m.put("setLoopDetectorThresholds",             new String[]{TAG_WRITE, TAG_ENGINE, TAG_LOOP});
         m.put("setAutoApproveLowRisk",                 new String[]{TAG_WRITE, TAG_ENGINE, TAG_PERMISSION});
         m.put("setAutoApproveMediumHigh",              new String[]{TAG_WRITE, TAG_ENGINE, TAG_PERMISSION});
@@ -1747,6 +1753,9 @@ public class AetherCodeMethods {
         dispatcher.register("listToolActions",       this::listToolActions);
         dispatcher.register("setModel",              this::setModel);
         dispatcher.register("setPermissionMode",     this::setPermissionMode);
+        // R401: the profile override (the user's correction of the
+        // intent classifier's verdict).
+        dispatcher.register("setProfile",            this::setProfile);
         // per-session skip-confirmation counter.
         dispatcher.register("setSkipConfirmation",  this::setSkipConfirmation);
         // runtime loop-detector threshold tweak.
@@ -2812,6 +2821,11 @@ public class AetherCodeMethods {
         r.put("model", reported.appState().mainLoopModel());
         r.put("sessionId", reported.appState().sessionId());
         r.put("permissionMode", reported.appState().permissionMode().name());
+        // R401: the profile override (null = "auto", i.e. the intent
+        // classifier decides) and the valid profile names. The renderer
+        // must not hard-code the names — the registry is the truth.
+        r.put("profileOverride", reported.appState().profileOverride());
+        r.put("profiles", org.aethercode.core.profile.ProfileRegistry.describeAll());
         // explicit `currentSessionId` so the renderer can
         // distinguish "which session are we reporting on"
         // (active) from the constructor engine's sessionId
@@ -3668,6 +3682,63 @@ public class AetherCodeMethods {
         target.appState().permissionMode(mode);
         target.setPermissionMode(mode);
         return Map.of("sessionId", target.appState().sessionId(), "mode", mode.name());
+    }
+
+    /**
+     * R401: set the PROFILE OVERRIDE for a session.
+     *
+     * <p>The params are {@code {sessionId?, profile}}. {@code profile}
+     * is a profile name ({@code builder} / {@code debugger} /
+     * {@code researcher} / {@code analyst} / {@code reviewer} /
+     * {@code operator} / {@code navigator}), or {@code "auto"} (or a
+     * blank value) to hand the decision back to the intent
+     * classifier.
+     *
+     * <p>The override PERSISTS until the user switches it back to
+     * "auto" — the same contract as {@code setPermissionMode}. It is
+     * per-session, so two sessions can be in different postures.
+     *
+     * <p>The response shape is
+     * {@code {ok, sessionId, profile, profiles}} where {@code profile}
+     * is null for "auto" and {@code profiles} lists the valid names so
+     * a renderer never has to hard-code them.
+     *
+     * <p>An unknown profile name is REJECTED (not silently ignored):
+     * a typo that fell back to "auto" would look like the override
+     * simply did not take, and the user would be left with a
+     * mis-classified turn and no way to tell why.
+     */
+    public Object setProfile(Object params) {
+        Map<String, Object> p = asMap(params);
+        String sid = p.get("sessionId") instanceof String s && !s.isBlank() ? s : null;
+        AetherCodeEngine target = resolveRpcTarget(sid);
+        if (target == null) {
+            return Map.of("ok", false, "error", "no such sessionId: " + sid);
+        }
+        String raw = p.get("profile") instanceof String s ? s.trim() : null;
+        // "auto" / "" / null all mean "let the classifier decide".
+        String profile = (raw == null || raw.isEmpty()
+                || raw.equalsIgnoreCase("auto")) ? null : raw;
+        if (profile != null
+                && org.aethercode.core.profile.ProfileRegistry.lookup(profile) == null) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("ok", false);
+            err.put("error", "unknown profile: " + profile);
+            err.put("profiles", org.aethercode.core.profile.ProfileRegistry.describeAll());
+            return err;
+        }
+        target.appState().profileOverride(profile);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", true);
+        r.put("sessionId", target.appState().sessionId());
+        // null = auto. A LinkedHashMap accepts a null value (Map.of
+        // would throw), and the renderer reads "null" as "auto".
+        r.put("profile", profile);
+        // the WIRE description of every profile (name + label +
+        // description). The renderer must not keep its own copy of the
+        // names — the registry is the truth.
+        r.put("profiles", org.aethercode.core.profile.ProfileRegistry.describeAll());
+        return r;
     }
 
     /**
@@ -9351,6 +9422,14 @@ public class AetherCodeMethods {
             r.put("type",  "run_start");
             r.put("runId", rs.runId());
             r.put("model", rs.model());
+            // R401: the daemon's verdict for this turn, on the wire.
+            // The renderer must NOT re-derive it (the R385 rule: the
+            // verdict comes from the daemon) — it displays these and
+            // lets the user override via `setProfile`.
+            r.put("intent",      rs.intent());
+            r.put("intentLabel", rs.intentLabel());
+            r.put("profile",     rs.profile());
+            r.put("profileLabel", rs.profileLabel());
         } else if (ev instanceof StreamEvent.TextDelta td) {
             r.put("type", "text_delta");
             r.put("text", td.text());

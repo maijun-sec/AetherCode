@@ -784,6 +784,22 @@ export class AetherCodeRpc {
   setContinuationStopped(stopped: boolean, sessionId?: string): Promise<{ sessionId: string; stopped: boolean }> {
     return this.call('setContinuationStopped', { stopped, ...(sessionId ? { sessionId } : {}) });
   }
+  /**
+   * R401: override the intent classifier's profile for this session.
+   *
+   * `profile` is a profile name (`builder` / `debugger` / `researcher` /
+   * `analyst` / `reviewer` / `operator` / `navigator`) or `null` /
+   * `'auto'` to hand the decision back to the classifier.
+   *
+   * The daemon REJECTS an unknown name (it does not silently fall back
+   * to "auto") — a typo that fell back would look like the override
+   * did not take, and the user would be left with a mis-classified
+   * turn and no way to tell why. The response carries the valid names
+   * so the picker never hard-codes them.
+   */
+  setProfile(profile: string | null, sessionId?: string): Promise<{ ok: boolean; sessionId?: string; profile?: string | null; profiles?: Array<{ name: string; label: string; description: string }>; error?: string }> {
+    return this.call('setProfile', { profile: profile ?? 'auto', ...(sessionId ? { sessionId } : {}) });
+  }
   // listSessions accepts optional
   // { limit, withPreview } params. The
   // legacy wire shape is preserved

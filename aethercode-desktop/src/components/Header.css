@@ -72,6 +72,56 @@
 .task-status-cancelled { background: rgba(133, 133, 133, 0.2); color: var(--text-dim); }
 .header-status { font-size: 12px; font-weight: 500; }
 .header-meta { font-size: 11px; color: var(--text-dim); padding: 3px 8px; background: var(--bg-input); border-radius: 4px; }
+/* R401: the intent / profile chip. It sits in the header's right
+   cluster next to the model pill. The chip is a BUTTON (it opens the
+   profile picker), so it must not inherit the span styling blindly:
+   the border has to be reset or the chip looks like a text field. */
+.header-intent-wrap { position: relative; display: inline-flex; }
+.header-intent-chip {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 3px 8px;
+  background: var(--bg-input);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.header-intent-chip:hover { color: var(--text); border-color: var(--border, rgba(255,255,255,0.12)); }
+/* an override is locked in — the user chose it, so the chip says so */
+.header-intent-chip.is-overridden {
+  color: var(--accent, #63b3ed);
+  border-color: rgba(99, 179, 237, 0.35);
+}
+.header-intent-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-input);
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 40;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.header-intent-item {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.header-intent-item:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
+.header-intent-item.is-active { color: var(--accent, #63b3ed); }
 .header-icon-btn { background: transparent; border: none; color: var(--text-dim); font-size: 16px; padding: 4px 8px; cursor: pointer; border-radius: 4px; }
 .header-icon-btn:hover { color: var(--text); background: var(--bg-input); }
 /* pressed state for toggle icon buttons. The Telemetry

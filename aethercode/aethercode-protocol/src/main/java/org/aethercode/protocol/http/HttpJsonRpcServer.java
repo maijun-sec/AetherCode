@@ -901,6 +901,13 @@ public final class HttpJsonRpcServer {
             case "listToolActions" -> methods.listToolActions(params);
             case "setModel" -> methods.setModel(params);
             case "setPermissionMode" -> methods.setPermissionMode(params);
+            // R401: the profile override. MUST be in this switch as
+            // well as AetherCodeMethods.registerAll — the HTTP+WS
+            // daemon dispatches through this switch, so a method that
+            // is only registered in registerAll is invisible to the
+            // desktop (the Lesson 1022 shape: a method that exists on
+            // one transport and 404s on the other).
+            case "setProfile" -> methods.setProfile(params);
             case "getSkipStats" -> methods.getSkipStats(params);
             // the desktop's Settings panel uses
             // this to nudge the loop detector window /

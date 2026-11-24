@@ -4519,3 +4519,110 @@ a gate. Both of those cost this round real time.
   ⇒ **Lesson 1247 — 一个用户可见的动作往往由多层契约拼成**；只修最外层
   （「按钮发出去了」）会让内层继续说错话，而内层的错话**下游读得到**。
   Doc: `docs/R400-cancel-intent-checkpoint-design.md`.
+
+## Watch out for (R401 additions)
+
+- **★ 意图路由：没有被要求「动手」的意图，一律不给写工具 ★**（R401）。
+  用户报的问题是「概念性问题被当成代码任务，生成一堆莫名其妙的代码」。
+  修法分两层：**prompt 指令是软的**（模型可以不听），**工具表收窄是硬的**
+  （模型看不到被裁的工具 ⇒ 调不到）。
+  ⇒ `core/profile/ProfileRegistry` 的表编码一条规则：
+  `file_write` / `file_edit` / `notebook_edit` 只在 **CODE_CHANGE / DIAGNOSE / OPS**
+  三个意图下活着。`UNCERTAIN` 映射到 **`navigator`（只读）** ——
+  「认不出来」绝不能变成「那就写点文件」。
+  ⇒ **Lesson 1248 — 默认姿态必须是安全的那一档**：分类器的**精度**因此变便宜了
+  （误判最多浪费一轮，下一轮重新分类就恢复），而写工具一旦放出去是**不可逆**的。
+  ⇒ 顺带：`researcher` 连 `bash` 都不给（概念查询没理由在用户仓库里跑命令）。
+  ⇒ **Lesson 1257 — 「禁掉 X」不蕴含「X 做不到」：每多一条能达成 X 的通路，就要多禁一条。**
+  写工具被禁了，**shell 还在** —— 而 `echo x > f` / `sed -i` 都是写入。
+  ⇒ 实机把这个洞测出来了（见下面的 Lesson 1258）：初版 `analyst` 禁写工具但留 `bash`，
+  模型在 `file_write` 被拒 6 次之后**改用 shell 把文件写了出来** ⇒「只读」退化成**提示词**。
+  ⇒ 修法：**凡是禁写工具的档案，一律连 `bash` 一起禁**（`ProfileRegistry.READ_ONLY_DENY`），
+  只读工具（`file_read` / `grep` / `glob`）保留 —— 它们改不了任何东西。
+  代价：只读档案不能跑 `git log` 了。**接受** —— 一个「结构上只读」的承诺值这个价。
+  ⇒ 钉死：`ProfileRegistryR401Test.aProfileWithoutTheWriteToolsHasNoShellEither`
+  （遍历所有档案的结构性断言）。
+  ⇒ **工具名必须是真名**：写错一个名字 ⇒ 收窄静默失效（池子里根本没那个工具可禁），
+  症状是「问问题又开始生成文件了」而日志里什么都没有。
+  `ProfileRegistryToolNamesR401Test` 把每个名字对 `StandardTools.all()` 逐个核。
+
+- **★ 收窄要同时作用于「模型看到的」和「执行器解析的」 ★**（R401）。
+  只裁前者 = 模型看不见了，但执行器**仍然解析得到** ⇒ 一个幻觉出来的
+  `file_write` 块照样写进用户的仓库。
+  ⇒ 两处都要走同一个 `ProfileRegistry.prune`：
+  模型侧 `QueryEngine` 传 `visibleTools` 给 `ChatClient.stream`；
+  执行器侧 `StreamingToolExecutor.run(batch, appState, toolPool)` 拿**同一个池子**。
+  ⇒ **Lesson 1249 — 一个「限制」往往有两条通路**；只堵一条，洞还在另一条。
+
+- **★ 惰性 Stream 会让 `finally` 里的清理早于消费 ★**（R401）。
+  `AppState.pushToolPoolOverride` 在 `AetherCodeEngine.query` 的 `finally` 里 pop，
+  但那个方法返回的是**惰性 Stream** ⇒ pop 发生在流被消费**之前**
+  ⇒ 线程本地的收窄池在任何一次 LLM 调用之前就没了。
+  ⇒ **R90-B 的「子代理工具池在引擎层收窄」从未真正生效** —— 子代理的 role
+  至今只靠 prompt 软约束。
+  ⇒ 修法：**显式传参**（收窄后的池作为 `RunContext` 的一部分一路传到执行器）。
+  ⇒ **Lesson 1250 — 依赖「调用即执行」的假设去清理状态，在惰性求值下会提前生效**。
+
+- **★ 引擎会重入自己 ⇒ 运行态上下文必须用值传递，不能用字段 ★**（R401）。
+  `AetherCodeEngine` 用 `streamingToolExecutor.withSubagentEngine(this)` 把**自己**
+  交给 `spawn_agent` ⇒ 子代理复用**同一个** `QueryEngine`。
+  ⇒ 姿态（intent / profile / 收窄后的池）若放在引擎字段上，**子代理的 turn 会覆盖
+  父代理的**，父代理剩下的 turn 就悄悄跑在子代理的姿态下。
+  ⇒ 修法：`RunContext`（一个 record）在 turn 开始时创建一次，被该 turn 的
+  Spliterator **局部捕获**；父子各持一份，互不干扰。
+  ⇒ **Lesson 1251 — 「这个引擎会不会被自己重入」决定了运行态该放在哪**：
+  会 ⇒ 传值；不会 ⇒ 字段（更快，但不是这里）。
+
+- **★ 新 RPC 必须在 stdio 和 HTTP 两边注册 ★**（R401）。
+  `AetherCodeMethods.registerAll()`（stdio）与 `HttpJsonRpcServer` 里**手写的
+  switch**（HTTP+WS，桌面端走的就是这条）是两个**独立**的派发表。
+  只注册一边 ⇒ 一半客户端拿到 `-32601`（Lesson 1022 的 `memory/*` 缺口）。
+  ⇒ `setProfile` 两边都注册了，并分别被钉住：`registerAll` 用
+  `dispatcher.hasMethod` 功能性验证，HTTP switch 用源码 pin。
+
+- **★ 量具跑在错误的目录 ⇒ exit=1 与「测试失败」长得一模一样 ★**（R401）。
+  本轮变异脚本第一版在**仓库根目录**跑 mvn（`pom.xml` 在 `aethercode/`）⇒
+  报 `Could not find the selected project in the reactor` ⇒ **exit=1**，
+  而红集合提取不到任何东西 ⇒ **9 个变异全部显示「存活」**。
+  三层量具缺陷叠在一起才造出这个假象：① 工作目录错 ② `2>&1` 得到的是
+  `ErrorRecord` 对象而不是字符串（正则匹配不上）③ 异常中断时脚本死在还原之前
+  ⇒ **变异残留在源码里**（第 397 行还留着 `if (false && concept)`）。
+  ⇒ **Lesson 1252 — 「红集合为空」有三种原因（变异没生效 / 量具读不到 /
+  断言落空），而 exit code 只会告诉你「失败了」，不会告诉你是哪一种**。
+  ⇒ 修法（脚本级）：`try/finally` 包住每个变异并**逐字节校验还原**
+  （SHA256 前后一致）；把输出 `ForEach-Object { [string]$_ }` **字符串化**再匹配；
+  **在正确的目录**跑 mvn。
+
+- **★ 一个 pin 报告「保护的东西没了」，而它就在那儿 ⇒ 量具坏了，不是代码坏了 ★**（R401）。
+  R401 往 `QueryEngine` 里加了约 600 字符，把 `QueryEngineR735Test` 的
+  **60 000 字符窗口**顶破了 ⇒ `tryAdvance_hasOuterTryCatchRuntimeException` 变红。
+  量一下就知道：`catch (Throwable t)` 在偏移 18 899、`runtime_exception` 在 **60 110**
+  —— **差 110 字符**。实现完好，是 pin 的量具不够宽。
+  ⇒ **Lesson 1253 — 先分清「实现坏了」和「量具坏了」**：两者的修法相反
+  （改代码 vs 换量具），而症状看起来一模一样。
+  ⇒ 而顺着这条线查下去，发现了**更糟的两件事**：
+  ① 旧 pin 搜的是**裸词** `runtime_exception`，而该词第一次出现是 catch 里的
+  一句**注释**（「stopReason is prefixed `runtime_exception` so …」），
+  真正的**赋值**在 2.5 kB 之外、**窗口之外** ⇒ **这个 pin 一直是空转的**：
+  它声称验「catch 把异常翻译成 RunEnd」，实际验的是散文里提了一句。
+  ② 字符窗口是**排版**的代理，不是**契约**的代理 ⇒ 方法会长；契约不会。
+  ⇒ 修法：pin 改用**结构锚点**（找赋值 → 括号匹配找外层 catch → 要求 RunEnd
+  在同一块内 → 要求整块在 `tryAdvance` 的方法体内），匹配器跳过
+  注释 / 字符串 / 字符字面量 / 文本块 ⇒ 方法可以随意变长。
+  ⇒ **Lesson 1254 — 断言被散文满足 = 这个断言是空转的**。搜裸词永远搜得到
+  注释；搜「赋值形状」才搜得到代码。
+  ⇒ **Lesson 1255 — 字符窗口是排版的代理，不是契约的代理**。
+  ⇒ **Lesson 1256 — 阴性对照是必需的**：一个「所有变异都红」的 pin 也可能只是
+  「所有东西都红」。本轮 4 个变异：3 个真实缺陷（外层 catch 改类型 / 字面量改名 /
+  去掉终端 RunEnd）**新 pin 全红、旧 pin 全绿**；第 4 个只改注释 ⇒ 两者都绿。
+  ⇒ 括号匹配器**带自测**（`matchBrace_ignoresBracesInCommentsAndLiterals`）：
+  一个没有自测的扫描器，它的 bug 会被「恰好撞上它的那个门禁」发现——那不叫计划。
+  ⇒ **Lesson 1258 — 单元测试测「工具被裁了」，测不到「工具被绕过」。**
+  绕过是**模型的选择**，不是代码的路径 ⇒ 只有实机能测到。
+  实机做法：同一个 prompt、同一个会话、**唯一变量是档案** ——
+  override=只读档案时文件**没**被创建；override=auto 时文件**被**创建 ⇒ 档案决定写能力。
+  顺带：实机还测到「模型调了 7 次 `bash`，7 次全被拒 `unknown tool: bash`」
+  ⇒ **执行器确实按裁剪后的池子解析工具**，凭记忆写出的工具名会被当场拒绝。
+  ⇒ 顺带：`QueryEngine` 里 R401 的长注释也压短了（项目约定：函数体只留短说明，
+  长注释放**类 javadoc**），减少任何窗口型 pin 的压力。
+  Doc: `docs/R401-intent-profile-routing.md`.

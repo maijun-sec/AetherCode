@@ -3700,38 +3700,95 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      * local in {@link QueryEngine#query(String,
      * ChatClient)}. Pass {@code null} to use the engine's
      * default — that's what the 1-arg overload does.
+     *
+     * <p>R401: this is the MAIN (user) path. The prompt is
+     * classified, a profile is selected (the user's override wins over
+     * the classifier), and the tool pool is PRUNED to that profile
+     * before the model ever sees the tool table.
      */
     public Stream<StreamEvent> query(String userInput, ChatClient override) {
-        return query(userInput, override, null);
+        // R401: classify the user's prompt, resolve the posture, prune
+        // the tool pool. The classification is deterministic (a rule
+        // table) — no model call, no added latency.
+        org.aethercode.core.intent.IntentClassifier.Intent intent =
+                org.aethercode.core.intent.IntentClassifier.classify(userInput);
+        org.aethercode.core.profile.Profile profile = resolveProfile(intent);
+        java.util.List<org.aethercode.core.tool.Tool> pool =
+                org.aethercode.core.profile.ProfileRegistry.prune(appState.toolPool(), profile);
+        // Publish the RESOLVED profile on the session so a subagent
+        // spawned by this turn inherits the restriction — a read-only
+        // parent must not be able to launder a write through
+        // `spawn_agent`.
+        //
+        // It is deliberately NOT cleared at the end of the turn: the
+        // stream is lazy, so the "end of turn" is not observable from
+        // here, and a stale profile only ever errs towards MORE
+        // restriction. The next main turn overwrites it.
+        appState.activeProfile(profile);
+        return queryInternal(userInput, override,
+                new org.aethercode.core.intent.RunContext(intent, profile, pool));
+    }
+
+    /**
+     * R401: the posture for this turn. The user's OVERRIDE wins over
+     * the classifier's verdict — a mis-recognised prompt is corrected
+     * by one click, not by a re-prompt.
+     */
+    private org.aethercode.core.profile.Profile resolveProfile(
+            org.aethercode.core.intent.IntentClassifier.Intent intent) {
+        String override = appState.profileOverride();
+        if (override != null && !override.isBlank()) {
+            org.aethercode.core.profile.Profile p =
+                    org.aethercode.core.profile.ProfileRegistry.lookup(override);
+            // An unknown name cannot happen (the RPC validates it), but
+            // a stale one must not silently disable the pruning — fall
+            // back to the classifier's verdict instead.
+            if (p != null) return p;
+        }
+        return org.aethercode.core.profile.ProfileRegistry.forIntent(intent.kind());
     }
 
     /**
      * run a query with an optional per-call tool pool
-     * override. The override is installed on the engine's
-     * {@code AppState} for the duration of the query via a
-     * thread-local, then cleared in a finally block. Used by
-     * {@code AgentTool} to scope a subagent's tool set to a
-     * role preset (e.g. an {@code explore} agent can't call
+     * override. Used by {@code AgentTool} to scope a subagent's tool
+     * set to a role preset (e.g. an {@code explore} agent can't call
      * {@code file_write}). {@code toolPoolOverride} may be
      * {@code null} or empty — both mean "use the engine's
      * default pool". The override is a superset/replacement,
      * not an additive filter.
+     *
+     * <p>R401: this is the SUBAGENT path, and it is deliberately
+     * different from the 2-arg one. The "task" here was written by the
+     * agent, not by the user, so classifying it would replace the
+     * user's task with the agent's own words. No intent, no posture
+     * directive.
+     *
+     * <p>What it DOES inherit is the parent's RESTRICTION: the pool is
+     * pruned by the parent turn's profile, so a read-only parent cannot
+     * hand a write-capable pool to its child.
+     *
+     * <p>Also note: the pool is captured EAGERLY here. The old
+     * implementation installed it as a thread-local override and
+     * popped it in a {@code finally} — but the returned stream is
+     * LAZY, so the pop happened before a single LLM call was made and
+     * the override never reached the executor. That is why the R90-B
+     * "subagent tool scoping" was prompt-only in practice.
      */
     @Override
     public Stream<StreamEvent> query(String userInput, ChatClient override, List<org.aethercode.core.tool.Tool> toolPoolOverride) {
-        if (toolPoolOverride != null && !toolPoolOverride.isEmpty()) {
-            appState.pushToolPoolOverride(toolPoolOverride);
-        }
-        try {
-            return queryInternal(userInput, override);
-        } finally {
-            if (toolPoolOverride != null && !toolPoolOverride.isEmpty()) {
-                appState.popToolPoolOverride();
-            }
-        }
+        java.util.List<org.aethercode.core.tool.Tool> base =
+                (toolPoolOverride != null && !toolPoolOverride.isEmpty())
+                        ? List.copyOf(toolPoolOverride)
+                        : appState.toolPool();
+        org.aethercode.core.profile.Profile parent = appState.activeProfile();
+        java.util.List<org.aethercode.core.tool.Tool> pool =
+                org.aethercode.core.profile.ProfileRegistry.prune(base, parent);
+        return queryInternal(userInput, override,
+                new org.aethercode.core.intent.RunContext(null, null, pool));
     }
 
-    private Stream<StreamEvent> queryInternal(String userInput, ChatClient override) {
+    private Stream<StreamEvent> queryInternal(String userInput, ChatClient override,
+                                              org.aethercode.core.intent.RunContext ctx) {
         // count this query in the per-session
         // stats so the summary RPC's `queries` field
         // reflects the actual turn-loop iterations.
@@ -3809,7 +3866,7 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         String middle = combineThreeSections(memorySection, experienceSection, sessionKvSection);
         String combined = combineSections(top, middle);
         queryEngine.setMemorySection(combined);
-        Stream<StreamEvent> inner = queryEngine.query(userInput, override);
+        Stream<StreamEvent> inner = queryEngine.query(userInput, override, ctx);
         final String sectionForNote = memorySection;
         return StreamSupport.stream(new java.util.Spliterators.AbstractSpliterator<StreamEvent>(
                 Long.MAX_VALUE,

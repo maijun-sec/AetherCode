@@ -126,7 +126,7 @@ public final class SubagentOrchestrator {
         // mechanism by which the parent learns the child died; a
         // STALLED result is surfaced as an error Result (not silently
         // returned as "empty output") so the parent can act on it.
-        try (java.util.stream.Stream<StreamEvent> stream = child.query(effectiveTask)) {
+        try (java.util.stream.Stream<StreamEvent> stream = child.query(effectiveTask, null, null)) {
             StreamConsumerGuard.Result guard = StreamConsumerGuard.consume(
                     "subagent-orchestrator",
                     stream.iterator(),

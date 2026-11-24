@@ -1762,6 +1762,25 @@ interface AppState {
    *  holds this session's run slot", so this field is a
    *  belt-and-braces handle, not the only way to cancel. */
   activeRunId: string | null;
+  /** R401: the DAEMON's verdict for the current turn — what kind of
+   *  turn it is and which posture (profile) it chose.
+   *
+   *  ★ The renderer must NOT re-derive this (the R385 rule: the
+   *  verdict comes from the daemon). The daemon puts it on the
+   *  `run_start` frame; the store just remembers it so the header can
+   *  show it and the user can override it. */
+  intentKind: string | null;
+  intentLabel: string | null;
+  profileName: string | null;
+  profileLabel: string | null;
+  /** R401: the user's PROFILE OVERRIDE for this session. `null` = auto
+   *  (the classifier decides). Persists until the user switches it
+   *  back — the same contract as the permission mode. */
+  profileOverride: string | null;
+  /** R401: the valid profiles, as reported by the daemon: `{name, label,
+   *  description}`. The picker renders whatever the daemon says — the
+   *  profile vocabulary is the DAEMON's, not the renderer's. */
+  profiles: Array<{ name: string; label: string; description: string }>;
   /** R83 Issue #6: a "step" is one round-trip through the engine
    *  (run_start →…→run_end). The MessageList groups events
    *  into steps and shows a counter header per step
@@ -1943,6 +1962,17 @@ interface AppState {
    * the run id.
    */
   cancelQuery: () => Promise<void>;
+  /** R401: override the intent classifier's profile for this session.
+   *
+   *  `profile` is a profile name, or `null` to hand the decision back
+   *  to the classifier ("auto"). The override PERSISTS until the user
+   *  switches it back — the same contract as the permission mode.
+   *
+   *  A failure is SURFACED (a toast), not swallowed: an override that
+   *  silently did not take is the same class of bug as R400's stop
+   *  button — the UI would say one thing and the daemon would do
+   *  another. */
+  setProfileOverride: (profile: string | null) => Promise<void>;
   /** R267 desktop polish: drop the queued follow-up
    *  prompt (if any). Called by the UI's "cancel queued"
    *  button or when the user manually dismisses the
@@ -2946,6 +2976,21 @@ export const useStore = create<AppState>((set, get) => {
         // run actually starts. Clear it so the user is not left
         // reading "即将自动续跑" while the resumed run streams.
         get().clearNotificationsBySource('continuation-countdown');
+        // R401: the daemon's verdict for this turn. The renderer does
+        // NOT decide what kind of turn this is — it displays what the
+        // daemon says (the R385 rule). The fields are absent on a
+        // run that did not come from a user prompt (a subagent's inner
+        // loop), in which case the previous verdict stays put rather
+        // than being wiped by a null.
+        {
+          const k = typeof (ev as any).intent === 'string' ? (ev as any).intent : null;
+          const kl = typeof (ev as any).intentLabel === 'string' ? (ev as any).intentLabel : null;
+          const p = typeof (ev as any).profile === 'string' ? (ev as any).profile : null;
+          const pl = typeof (ev as any).profileLabel === 'string' ? (ev as any).profileLabel : null;
+          if (k || p) {
+            set({ intentKind: k, intentLabel: kl, profileName: p, profileLabel: pl });
+          }
+        }
         // Begin of a new run. Reset watchdog timer so it doesn't
         // fire on long-running tool calls. The assistant message
         // will be created on the first text_delta. R82+ Issue 1:
@@ -4753,6 +4798,14 @@ export const useStore = create<AppState>((set, get) => {
     // needs. The daemon's `query` answers `{runId, accepted}` and
     // the desktop used to throw that away.
     activeRunId: null,
+    // R401: no verdict yet (the daemon sends it on `run_start`).
+    intentKind: null,
+    intentLabel: null,
+    profileName: null,
+    profileLabel: null,
+    // R401: no override — the classifier decides.
+    profileOverride: null,
+    profiles: [],
     steps: [],
     currentStepId: null,
     expandedStepIds: {},
@@ -5791,6 +5844,37 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     cancelPendingFollowUp: () => set({ pendingFollowUp: null }),
+
+    // R401: set (or clear) the profile override.
+    setProfileOverride: async (profile: string | null) => {
+      const sid = get().currentSessionId ?? undefined;
+      let failure: string | null = null;
+      let profiles: Array<{ name: string; label: string; description: string }> | null = null;
+      try {
+        const res = await rpc.setProfile(profile, sid);
+        if (res && res.ok === false) {
+          failure = res.error ?? 'the daemon rejected the profile';
+        } else if (res && Array.isArray(res.profiles)) {
+          profiles = res.profiles;
+        }
+      } catch (e: any) {
+        failure = e?.message ?? String(e);
+      }
+      if (failure) {
+        // SAY SO. An override that silently did not take leaves the
+        // user staring at a mis-classified turn with no way to tell
+        // why — the same class of defect as R400's stop button.
+        set((s) => ({
+          messages: [...s.messages, {
+            id: newId('system'), role: 'system' as const,
+            content: `[档案切换失败] ${failure}`,
+            timestamp: Date.now(), isError: true,
+          }],
+        }));
+        return;
+      }
+      set({ profileOverride: profile, ...(profiles ? { profiles } : {}) });
+    },
 
     switchSession: async (sessionId: string) => {
       // R359: switching sessions drops any stream-stale

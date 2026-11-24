@@ -385,9 +385,44 @@ public class StreamingToolExecutor {
         }
     }
 
+    /**
+     * Run a batch of tool calls against the session's EFFECTIVE tool
+     * pool (the thread-local override when one is installed, otherwise
+     * the session pool).
+     */
     public Stream<Event> run(List<ContentBlock.ToolUseBlock> calls, AppState appState) {
+        return run(calls, appState, appState == null ? List.of() : appState.effectiveToolPool());
+    }
+
+    /**
+     * R401: run a batch of tool calls against an EXPLICIT tool pool.
+     *
+     * <p>This overload exists because a profile's tool prune has to be
+     * visible to BOTH halves of the tool path:
+     *
+     * <ul>
+     *   <li>the LLM-visible list (what the model is told it can call)
+     *       — pruned in {@code QueryEngine};</li>
+     *   <li>the executor's LOOKUP (what actually runs) — pruned here.</li>
+     * </ul>
+     *
+     * <p>Pruning only the first half would leave a hole: a model that
+     * emits a {@code file_write} block anyway (it saw one earlier in
+     * the transcript, or it simply hallucinated it) would still have
+     * the tool RESOLVED and executed. With both halves pruned, a
+     * forbidden tool is not callable at all — the lookup returns null
+     * and the call fails as "unknown tool".
+     *
+     * <p>Passing the pool explicitly (rather than reading it from
+     * {@code appState} inside) is what makes the pool a SNAPSHOT of
+     * the turn that started the run: the profile is resolved once per
+     * user turn, and a subagent that re-enters the engine must not
+     * change what the parent turn may do.
+     */
+    public Stream<Event> run(List<ContentBlock.ToolUseBlock> calls, AppState appState,
+                              java.util.List<Tool> toolPool) {
         if (calls == null || calls.isEmpty()) return Stream.empty();
-        List<Batch> batches = partition(calls, appState);
+        List<Batch> batches = partition(calls, appState, toolPool);
         return StreamSupport.stream(
                 new java.util.Spliterators.AbstractSpliterator<>(
                         Long.MAX_VALUE, java.util.Spliterator.ORDERED | java.util.Spliterator.NONNULL) {
@@ -408,21 +443,22 @@ public class StreamingToolExecutor {
                             pendingResults = null;
                             if (batchIndex >= batches.size()) return false;
                             Batch b = batches.get(batchIndex++);
-                            pendingResults = runBatchBackpressured(b, appState);
+                            pendingResults = runBatchBackpressured(b, appState, toolPool);
                         }
                     }
                 }, false);
     }
 
     /** R3 �?yield each tool event as soon as it happens, instead of waiting for the whole batch. */
-    private java.util.Iterator<Event> runBatchBackpressured(Batch batch, AppState appState) {
+    private java.util.Iterator<Event> runBatchBackpressured(Batch batch, AppState appState,
+                                                            java.util.List<Tool> toolPool) {
         java.util.concurrent.BlockingQueue<Event> queue = new java.util.concurrent.LinkedBlockingQueue<>();
         java.util.concurrent.atomic.AtomicBoolean abortFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
         if (batch.concurrent) {
             java.util.List<CompletableFuture<Void>> futures = new java.util.ArrayList<>();
             for (ContentBlock.ToolUseBlock call : batch.calls) {
                 futures.add(CompletableFuture.runAsync(() -> {
-                    runOneBackpressured(call, appState, queue, abortFlag);
+                    runOneBackpressured(call, appState, toolPool, queue, abortFlag);
                 }));
             }
             CompletableFuture.runAsync(() -> {
@@ -432,7 +468,7 @@ public class StreamingToolExecutor {
         } else {
             CompletableFuture.runAsync(() -> {
                 for (ContentBlock.ToolUseBlock call : batch.calls) {
-                    runOneBackpressured(call, appState, queue, abortFlag);
+                    runOneBackpressured(call, appState, toolPool, queue, abortFlag);
                 }
                 queue.offer(new Event.BatchEnd());
             });
@@ -458,6 +494,7 @@ public class StreamingToolExecutor {
     }
 
     private void runOneBackpressured(ContentBlock.ToolUseBlock call, AppState appState,
+                                      java.util.List<Tool> toolPool,
                                       java.util.concurrent.BlockingQueue<Event> queue,
                                       java.util.concurrent.atomic.AtomicBoolean batchAbort) {
         // R717-L1: resolve the offload root once per call so the
@@ -478,7 +515,7 @@ public class StreamingToolExecutor {
         // that override {@code isCacheable()} to false are
         // skipped (rare; defaults to true for all).
         if (toolResultCache != null) {
-            Tool toolForCache = Tools.byName(appState.effectiveToolPool(), call.name());
+            Tool toolForCache = Tools.byName(toolPool, call.name());
             boolean cacheable = toolForCache == null
                     || !java.lang.reflect.Modifier.isAbstract(toolForCache.getClass().getModifiers())
                     || true; // default cacheable; future opt-out hook
@@ -498,7 +535,7 @@ public class StreamingToolExecutor {
                 }
             }
         }
-        Tool tool = Tools.byName(appState.effectiveToolPool(), call.name());
+        Tool tool = Tools.byName(toolPool, call.name());
         if (tool == null) {
             queue.offer(new Event.Completed(call.id(), "unknown tool: " + call.name(), true));
             return;
@@ -805,10 +842,17 @@ public class StreamingToolExecutor {
      *  rule itself (concurrent safe tools in one batch, otherwise serial)
      *  is preserved here. */
     List<Batch> partition(List<ContentBlock.ToolUseBlock> blocks, AppState appState) {
+        return partition(blocks, appState, appState == null ? List.of() : appState.effectiveToolPool());
+    }
+
+    /** R401: partition against an EXPLICIT tool pool, so a profile's
+     *  prune decides both the batching AND the resolvability. */
+    List<Batch> partition(List<ContentBlock.ToolUseBlock> blocks, AppState appState,
+                           java.util.List<Tool> toolPool) {
         List<Batch> out = new ArrayList<>();
         Batch current = null;
         for (ContentBlock.ToolUseBlock t : blocks) {
-            Tool tool = Tools.byName(appState.effectiveToolPool(), t.name());
+            Tool tool = Tools.byName(toolPool, t.name());
             boolean safe = tool != null && tool.isConcurrencySafe(t.input());
             if (current == null || current.concurrent != safe) {
                 current = new Batch(safe);
@@ -820,12 +864,13 @@ public class StreamingToolExecutor {
     }
 
     private void runBatch(Batch batch, AppState appState,
+                          java.util.List<Tool> toolPool,
                           java.util.function.Consumer<? super Event> sink) {
         // this synchronous path is kept for unit tests that don't need back-pressure.
         // Production code uses runBatchBackpressured via run() above.
         if (!batch.concurrent) {
             for (ContentBlock.ToolUseBlock call : batch.calls) {
-                runOneLegacy(call, appState, sink, new java.util.concurrent.atomic.AtomicBoolean(false));
+                runOneLegacy(call, appState, toolPool, sink, new java.util.concurrent.atomic.AtomicBoolean(false));
             }
             return;
         }
@@ -833,15 +878,16 @@ public class StreamingToolExecutor {
         java.util.List<CompletableFuture<Void>> futures = new java.util.ArrayList<>();
         for (ContentBlock.ToolUseBlock call : batch.calls) {
             futures.add(CompletableFuture.runAsync(
-                    () -> runOneLegacy(call, appState, sink, abortFlag)));
+                    () -> runOneLegacy(call, appState, toolPool, sink, abortFlag)));
         }
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
     }
 
     private void runOneLegacy(ContentBlock.ToolUseBlock call, AppState appState,
+                              java.util.List<Tool> toolPool,
                               java.util.function.Consumer<? super Event> sink,
                               java.util.concurrent.atomic.AtomicBoolean batchAbort) {
-        Tool tool = Tools.byName(appState.effectiveToolPool(), call.name());
+        Tool tool = Tools.byName(toolPool, call.name());
         if (tool == null) {
             sink.accept(new Event.Completed(call.id(), "unknown tool: " + call.name(), true));
             return;

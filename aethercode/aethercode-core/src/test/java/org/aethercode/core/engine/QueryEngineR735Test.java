@@ -162,39 +162,232 @@ class QueryEngineR735Test {
                 "Pre-R735 the branch had no RunEnd at all; do not regress to `List.of()`.");
     }
 
+    /** The R735a stop reason, matched as CODE. The R735 scan above
+     *  already assumes this shape (`stopReason = "X";`), and the
+     *  R744 note in the source warns that the shape must never be
+     *  reproduced inside a comment (Lesson 1057). */
+    private static final Pattern RUNTIME_EXCEPTION_ASSIGNMENT =
+            Pattern.compile("stopReason\\s*=\\s*\"runtime_exception: ");
+
+    /**
+     * R735a (2026-10-20) — the LLM stream can throw mid-iteration
+     * (e.g. upstream 500 from the chat provider that escaped the
+     * chat-client retry loop, or any WebClientResponseException
+     * that the reactive pipeline propagates). Pre-R735a, the throw
+     * escaped tryAdvance and killed the Spliterator with no terminal
+     * RunEnd emitted — the desktop sat in the green {@code ● Idle}
+     * state with no error banner / no retry affordance, and the user
+     * thought the engine was still running. The fix wraps the
+     * entire tryAdvance body in try/catch and translates the throw
+     * into a single RunEnd whose stopReason is prefixed
+     * {@code runtime_exception}.
+     *
+     * <p>R401 (2026-11-24) rewrote this pin. It used to be a
+     * CHARACTER WINDOW — the 60 000 chars after {@code tryAdvance}'s
+     * signature — which made it measure the LAYOUT of the method
+     * instead of its contract. Two defects fell out of that:
+     *
+     * <p>(1) THE PIN WAS SATISFIED BY PROSE. The window was searched
+     * for the bare word {@code runtime_exception}, and the FIRST such
+     * occurrence in the file is a COMMENT inside the catch ("stopReason
+     * is prefixed {@code runtime_exception} so …") — not the
+     * assignment. The real assignment sat ~2.5 kB further out,
+     * OUTSIDE the window. So the assertion "the catch translates the
+     * throw into a RunEnd with stopReason=runtime_exception" had
+     * never actually looked at the assignment. A pin that passes for
+     * the wrong reason is worse than no pin: it reads as coverage.
+     *
+     * <p>(2) IT BROKE ON AN UNRELATED EDIT. tryAdvance grew by ~600
+     * chars of R401 code, the comment occurrence crossed the 60 000
+     * boundary, and the pin went red while the code it protects was
+     * intact and correct. A pin that reports "the catch is missing"
+     * when the catch is right there teaches the next reader to
+     * distrust the file — and to "fix" it by deleting the pin.
+     *
+     * <p>The rewrite pins the INVARIANT with structural anchors
+     * instead of a distance:
+     * <ol>
+     *   <li>the {@code stopReason = "runtime_exception: "} ASSIGNMENT
+     *       (code, not prose) must exist;</li>
+     *   <li>it must live inside {@code tryAdvance}'s body;</li>
+     *   <li>the nearest enclosing {@code catch (Throwable t)} block
+     *       must contain it (brace matching, with comments and
+     *       literals skipped);</li>
+     *   <li>that catch must emit a terminal {@code StreamEvent.RunEnd}
+     *       for the same stop reason.</li>
+     * </ol>
+     * No character window, so the method may grow freely.
+     */
     @Test
     void tryAdvance_hasOuterTryCatchRuntimeException() {
-            // R735a (2026-10-20): the LLM stream can throw mid-iteration
-            // (e.g. upstream 500 from the chat provider that escaped the
-            // chat-client retry loop, or any WebClientResponseException
-            // that the reactive pipeline propagates). Pre-R735a, the
-            // throw escaped tryAdvance and killed the Spliterator with
-            // no terminal RunEnd emitted — the desktop sat in the
-            // green `● Idle` state with no error banner / no retry
-            // affordance, and the user thought the engine was still
-            // running. The fix wraps the entire tryAdvance body in
-            // try/catch and translates the throw into a single
-            // RunEnd with stopReason="runtime_exception: ...".
-            //
-            // This test guards the contract: tryAdvance must contain
-            // a `try {` immediately after the opening brace and a
-            // `} catch (Throwable t) {` somewhere in its body. A
-            // future refactor that strips the safety net (e.g. to
-            // "let the spliterator die naturally on chat errors") will
-            // fail this test and force re-validation.
-            String src = readSource();
-            int sigIdx = src.indexOf("public boolean tryAdvance(java.util.function.Consumer<? super StreamEvent> action) {");
-            assertTrue(sigIdx > 0, "tryAdvance signature not found");
-            // 60000-char window: the method is ~4000 lines long, so
-            // we have to scan a substantial slice to find the catch.
-            String window = src.substring(sigIdx, Math.min(sigIdx + 60_000, src.length()));
-            assertTrue(window.contains("catch (Throwable t)"),
-                    "R735a: tryAdvance must wrap its body in try/catch (Throwable t) so a chat-stream " +
-                    "exception surfaces as a RunEnd rather than killing the Spliterator silently. " +
-                    "Pre-R735a the user saw `● Idle` with no error banner or retry button.");
-            assertTrue(window.contains("runtime_exception"),
-                    "R735a: the catch must translate the throw into a RunEnd with stopReason=" +
-                    "\"runtime_exception: ...\" so the desktop's failedStopKinds set can route it " +
-                    "to the `● Failed (reason)` pill that R735 introduced.");
+        String src = readSource();
+
+        int sigIdx = src.indexOf("public boolean tryAdvance(java.util.function.Consumer<? super StreamEvent> action) {");
+        assertTrue(sigIdx > 0, "tryAdvance signature not found");
+        int bodyOpen = src.indexOf('{', sigIdx);
+        assertTrue(bodyOpen > sigIdx, "R735a: tryAdvance's body brace not found");
+        int bodyEnd = matchBrace(src, bodyOpen);
+        assertTrue(bodyEnd > bodyOpen,
+                "R735a: could not brace-match tryAdvance's body. Either the source is malformed or "
+                + "the brace scanner in this test is wrong — and a pin that cannot read its subject "
+                + "must fail loudly rather than pass vacuously (Lesson 1236).");
+
+        // (1) the ASSIGNMENT — code, not the comment that names it.
+        Matcher am = RUNTIME_EXCEPTION_ASSIGNMENT.matcher(src);
+        assertTrue(am.find(),
+                "R735a: no `stopReason = \"runtime_exception: \"` assignment in QueryEngine.java. The "
+                + "outer catch no longer translates a chat-stream throw into a terminal RunEnd, so a "
+                + "provider 500 kills the Spliterator with no run_end — the desktop stays in the green "
+                + "`● Idle` state with no error banner and no retry affordance.");
+        int assignIdx = am.start();
+        assertTrue(assignIdx > bodyOpen && assignIdx < bodyEnd,
+                "R735a: the runtime_exception assignment is outside tryAdvance's body (at " + assignIdx
+                + ", body " + bodyOpen + ".." + bodyEnd + ") — this pin describes the outer catch of "
+                + "tryAdvance, not some other method.");
+
+        // (2) the nearest enclosing catch block.
+        int catchIdx = src.lastIndexOf("catch (Throwable t)", assignIdx);
+        assertTrue(catchIdx > bodyOpen,
+                "R735a: no `catch (Throwable t)` precedes the runtime_exception assignment inside "
+                + "tryAdvance — the outer try/catch wrapper is gone.");
+        int catchOpen = src.indexOf('{', catchIdx);
+        int catchEnd = matchBrace(src, catchOpen);
+        assertTrue(catchEnd > catchOpen,
+                "R735a: could not brace-match the catch block — the source-pin cannot be trusted in "
+                + "that state.");
+        assertTrue(assignIdx < catchEnd,
+                "R735a: the runtime_exception assignment is NOT inside the `catch (Throwable t)` "
+                + "block that precedes it, so that catch is not the one translating the throw.");
+
+        // (3) the terminal RunEnd, emitted by that same catch.
+        int runEndIdx = src.indexOf("new StreamEvent.RunEnd(", assignIdx);
+        assertTrue(runEndIdx > 0 && runEndIdx < catchEnd,
+                "R735a: the catch that translates the throw must emit a terminal StreamEvent.RunEnd "
+                + "for the runtime_exception stop reason — otherwise the desktop's run_end handler "
+                + "cannot flip isStreaming=false, populate lastFailedPrompt, or surface the "
+                + "`● Failed (reason)` pill that R735 introduced.");
+    }
+
+    /**
+     * R401: a scanner with no self-test has its bugs found by whichever
+     * gate happens to trip over them (Lesson 1235). The brace matcher
+     * is load-bearing for the pin above, so it gets its own test using
+     * the shapes that actually appear in Java source: a brace inside a
+     * line comment, inside a block comment, inside a string literal,
+     * inside a char literal, and inside a text block.
+     */
+    @Test
+    void matchBrace_ignoresBracesInCommentsAndLiterals() {
+        String src = "class X {\n"
+                + "  void f() { // a comment with } and {\n"
+                + "    /* block } comment { */\n"
+                + "    String s = \"}\";\n"
+                + "    char c = '{';\n"
+                + "    String t = \"\"\"\n"
+                + "      } in a text block\n"
+                + "      \"\"\";\n"
+                + "  }\n"
+                + "}\n";
+        int open = src.indexOf('{', src.indexOf("void f()"));
+        int end = matchBrace(src, open);
+        assertTrue(end > 0, "matchBrace must find the closing brace of the method body");
+        assertTrue(src.substring(open, end).contains("text block"),
+                "matchBrace must SKIP the text block's braces, not mistake them for the method's end");
+        assertTrue("}".equals(src.substring(end - 1, end)),
+                "matchBrace must return the index just PAST the closing brace");
+        int classOpen = src.indexOf('{');
+        assertTrue(matchBrace(src, classOpen) > end,
+                "matchBrace must not confuse the class body with the method body");
+        // An unterminated block must fail loudly, never silently "succeed".
+        assertTrue(matchBrace("{ unterminated", 0) == -1,
+                "matchBrace must return -1 for an unterminated block — a pin that cannot read its "
+                + "subject must fail loudly rather than pass vacuously (Lesson 1236).");
+    }
+
+    /**
+     * Return the index just PAST the {@code }} that closes the block
+     * whose {@code &#123;} sits at {@code openIdx}.
+     *
+     * <p>Comments, string literals, char literals and text blocks are
+     * skipped, so a brace inside prose or inside a literal cannot move
+     * the depth. Returns {@code -1} when the source is malformed (an
+     * unterminated block or literal) — the caller MUST treat that as a
+     * FAILURE, never as "no match" (Lesson 1236: fail loudly rather
+     * than lie).
+     */
+    private static int matchBrace(String src, int openIdx) {
+        if (openIdx < 0 || openIdx >= src.length() || src.charAt(openIdx) != '{') return -1;
+        int depth = 0;
+        int i = openIdx;
+        int n = src.length();
+        while (i < n) {
+            char c = src.charAt(i);
+            if (c == '/' && i + 1 < n && src.charAt(i + 1) == '/') {
+                int nl = src.indexOf('\n', i);
+                if (nl < 0) return -1;
+                i = nl + 1;
+                continue;
+            }
+            if (c == '/' && i + 1 < n && src.charAt(i + 1) == '*') {
+                int close = src.indexOf("*/", i + 2);
+                if (close < 0) return -1;
+                i = close + 2;
+                continue;
+            }
+            if (c == '"') {
+                if (src.startsWith("\"\"\"", i)) {
+                    int close = src.indexOf("\"\"\"", i + 3);
+                    if (close < 0) return -1;
+                    i = close + 3;
+                    continue;
+                }
+                int after = skipLiteral(src, i, '"');
+                if (after < 0) return -1;
+                i = after;
+                continue;
+            }
+            if (c == '\'') {
+                int after = skipLiteral(src, i, '\'');
+                if (after < 0) return -1;
+                i = after;
+                continue;
+            }
+            if (c == '{') {
+                depth++;
+                i++;
+                continue;
+            }
+            if (c == '}') {
+                depth--;
+                i++;
+                if (depth == 0) return i;
+                continue;
+            }
+            i++;
         }
+        return -1;
+    }
+
+    /**
+     * Skip a quoted literal whose opening quote sits at {@code start};
+     * return the index just past its closing quote, or {@code -1} if it
+     * is unterminated.
+     */
+    private static int skipLiteral(String src, int start, char quote) {
+        int i = start + 1;
+        int n = src.length();
+        while (i < n) {
+            char c = src.charAt(i);
+            if (c == '\\') {
+                i += 2;
+                continue;
+            }
+            if (c == quote) return i + 1;
+            // A raw newline cannot occur inside a Java string or char
+            // literal — so hitting one means the literal never closed.
+            if (c == '\n') return -1;
+            i++;
+        }
+        return -1;
+    }
 }
