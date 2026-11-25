@@ -144,10 +144,24 @@ class CodeCheckpointStoreR388nTest {
                 Map.of());
     }
 
+    /**
+     * ★ THE SHAPE OF THE MAP ★ which input field each write tool names.
+     *
+     * <p>★ R406: THIS GATE USED TO BE THE WHOLE COVERAGE CLAIM ★ it
+     * asserted this map and called it "the tools that change files" —
+     * while {@code notebook_edit} changed files and was not in it. The
+     * claim is now CROSS-CHECKED against
+     * {@code ProfileRegistry.WRITE_TOOLS} in
+     * {@code CodeCheckpointStoreR406Test}, which is the part that cannot
+     * go stale; what is left here is the SHAPE (a rename of a tool or
+     * of its path field turns this red).
+     */
     @Test
     void writeToolsAreTheOnesThatChangeFiles() {
         assertEquals(
-                Map.of("file_write", "file_path", "file_edit", "file_path"),
+                Map.of("file_write", "file_path",
+                        "file_edit", "file_path",
+                        "notebook_edit", "notebook_path"),
                 CodeCheckpointStore.writeTools());
     }
 

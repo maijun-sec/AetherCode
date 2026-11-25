@@ -19,7 +19,7 @@
 // SOFTWARE.
 
 import { useEffect, useState } from 'react';
-import { rpc, type CheckpointPoint } from '../lib/methods';
+import { rpc, type CheckpointPoint, type CheckpointFilesCoverage } from '../lib/methods';
 import { useRpc } from '../rpc/queries';
 import { JsonRpcClient } from '../rpc/client';
 import './CheckpointMenu.css';
@@ -210,6 +210,11 @@ export function CheckpointMenu(props: CheckpointMenuProps) {
   const [error, setError] = useState<string | null>(null);
   const [points, setPoints] = useState<CheckpointPoint[] | null>(null);
   const [evicted, setEvicted] = useState(0);
+  // ★ R406: THE COVERAGE IS THE DAEMON'S ★ the file list is what a
+  // rewind can undo, and it does not cover every write channel (the
+  // shell writes files and names none). The menu says so — otherwise
+  // the file list implies "these are all the files that changed".
+  const [coverage, setCoverage] = useState<CheckpointFilesCoverage | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<RestoreReport | null>(null);
@@ -227,6 +232,12 @@ export function CheckpointMenu(props: CheckpointMenuProps) {
     }
     setPoints(resp.checkpoints ?? []);
     setEvicted(resp.evicted ?? 0);
+    // ★ THE COVERAGE COMES WITH THE LIST ★ it is one field of the same
+    // response, so it cannot be fetched from a second place and drift.
+    // An OLDER daemon does not send it ⇒ null ⇒ the menu says nothing
+    // (a missing field must not crash the menu, and must not invent a
+    // coverage the daemon never claimed).
+    setCoverage(resp.filesCoverage ?? null);
   };
 
   // fetch when the modal opens. Re-issued on every open so the user
@@ -359,6 +370,20 @@ export function CheckpointMenu(props: CheckpointMenuProps) {
         {evicted > 0 && (
           <div className="checkpoint-modal-meta" data-testid="checkpoint-modal-evicted">
             最早的 {evicted} 个点已经被丢弃（上限 64 个），无法再回到那里。
+          </div>
+        )}
+
+        {/* ★ R406: WHAT THE FILE LIST COVERS ★ the facts are the daemon's
+            (`coveredTools`, `shellCovered`); only the wording is ours.
+            Without this line the file list implies "these are all the
+            files that changed", and the user rewinds, finds a
+            shell-written file still modified, and concludes the feature
+            is broken. */}
+        {coverage && (
+          <div className="checkpoint-modal-meta" data-testid="checkpoint-modal-coverage">
+            {coverage.shellCovered
+              ? `文件清单覆盖这次会话所有的写入通道（${coverage.coveredTools.join('、')}）。`
+              : `文件清单只覆盖写工具（${coverage.coveredTools.join('、')}）写下的文件；用 shell 写下的文件不在其中，回退之后仍然是改过的。`}
           </div>
         )}
 

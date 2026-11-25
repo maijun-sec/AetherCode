@@ -612,6 +612,28 @@ export interface CheckpointPoint {
   previewComplete: boolean;
 }
 
+/** R406: what the checkpoint's FILE LIST actually covers.
+ *
+ *  ★ WHY THE DAEMON HAS TO SAY IT ★ the file list is what a rewind can
+ *  undo — and it is derived from the tool calls that NAME a file. The
+ *  shell writes files too (`echo x > f`), and it names none, so those
+ *  writes are invisible to the snapshot. A menu that lists files
+ *  without saying so implies "these are all the files that changed".
+ *
+ *  ★ THE COVERAGE IS THE DAEMON'S ★ `coveredTools` is derived from the
+ *  same map the list is derived from, so it cannot claim more than the
+ *  implementation does. The renderer displays it; it never re-derives
+ *  a list of its own (R380).
+ */
+export interface CheckpointFilesCoverage {
+  /** the write tools whose files ARE listed (and restored). */
+  coveredTools: string[];
+  /** whether the shell's writes are covered too. False today. */
+  shellCovered: boolean;
+  /** the daemon's own sentence, for the menu. */
+  note: string;
+}
+
 
 export class AetherCodeRpc {
   private handlers = new Map<string, Set<NotificationHandler>>();
@@ -1598,6 +1620,9 @@ export class AetherCodeRpc {
     error?: string;
     checkpoints: CheckpointPoint[];
     evicted: number;
+    // R406: what the file list covers. Optional because an OLDER daemon
+    // does not send it — and a missing field must not crash the menu.
+    filesCoverage?: CheckpointFilesCoverage;
   }> {
     return this.call('checkpoints/list', {
       sessionId: opts?.sessionId ?? null,
@@ -1626,6 +1651,10 @@ export class AetherCodeRpc {
     failed?: string[];
     changed?: number;
     conversation?: Record<string, unknown>;
+    // R406: the restore is scoped to what it covered — present only
+    // when the CODE was in scope (the daemon omits the file outcome
+    // otherwise).
+    filesCoverage?: CheckpointFilesCoverage;
   }> {
     return this.call('checkpoints/restore', {
       sessionId: opts?.sessionId ?? null,

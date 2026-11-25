@@ -97,10 +97,34 @@ public final class CodeCheckpointStore {
      *
      * <p>Only the tools that WRITE are listed: a read does not change
      * the working tree, so there is nothing to restore.
+     *
+     * <p>★ R406: THIS MAP IS ALSO THE COVERAGE CONTRACT ★
+     * The checkpoint's file list is derived from the transcript's
+     * tool_use blocks through THIS map and nothing else. So this map
+     * says exactly which writes a rewind can undo — and the daemon puts
+     * that fact on the wire, derived from this same map, so a renderer
+     * never has to guess (and the wire can never say more than the
+     * implementation does).
+     *
+     * <p>★ AND THE SHELL IS NOT IN IT ★ The shell is a write channel
+     * ({@code echo x > f}, {@code sed -i}) and it is NOT here — a shell
+     * call names no file, so there is no path to snapshot. That is not a
+     * bug that can be patched; it is the boundary of what this feature
+     * can see. The wire says so out loud (R406) instead of letting a
+     * menu imply "these are all the files that changed".
+     *
+     * <p>★ R406: {@code notebook_edit} WAS MISSING ★ It writes a
+     * notebook to disk ({@code Files.writeString}) and names it in
+     * {@code notebook_path} — the same shape as the other two, and just
+     * as fixable. It was absent, so a session that edited a notebook
+     * got a checkpoint that did not mention it, and a rewind left the
+     * notebook modified. The gate that claimed "these are the tools
+     * that change files" was itself wrong.
      */
     private static final Map<String, String> WRITE_TOOLS = Map.of(
             "file_write", "file_path",
-            "file_edit", "file_path");
+            "file_edit", "file_path",
+            "notebook_edit", "notebook_path");
 
     /** A file's saved state. */
     public record FileState(
@@ -702,6 +726,12 @@ public final class CodeCheckpointStore {
      *
      * <p>Exposed so the daemon and the gate can agree on the list
      * instead of each keeping their own (Lesson 1207).
+     *
+     * <p>★ R406: AND SO THE WIRE CAN STATE THE COVERAGE ★ The daemon
+     * builds the checkpoint wire's coverage note from THIS map, so the
+     * note cannot drift away from what the implementation actually
+     * snapshots. A hand-written list of "the tools we cover" is a second
+     * list, and a second list drifts (R380).
      */
     public static Map<String, String> writeTools() {
         return WRITE_TOOLS;

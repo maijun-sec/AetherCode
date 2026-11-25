@@ -40,6 +40,7 @@ import org.slf4j.LoggerFactory;
 import org.aethercode.core.eval.AgentRunner;
 import org.aethercode.core.eval.EvalRequest;
 import org.aethercode.core.eval.EvalResult;
+import org.aethercode.core.transcript.CodeCheckpointStore;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -9090,6 +9091,44 @@ public class AetherCodeMethods {
     }
 
     /**
+     * R406: THE FILE LIST'S COVERAGE, ON THE WIRE.
+     *
+     * <p>★ DERIVED, NEVER HAND-WRITTEN ★ the covered set is
+     * {@link CodeCheckpointStore#writeTools()} — the very map the file
+     * list is derived from — so the note cannot claim more than the
+     * implementation does. A hand-written "the tools we cover" list is
+     * a SECOND list, and a second list drifts (R380).
+     *
+     * <p>★ WHY THE WIRE HAS TO SAY IT ★ the file list is what a rewind
+     * can undo. The shell writes files too ({@code echo x > f},
+     * {@code sed -i}), and a shell call names no file, so those writes
+     * are invisible to the snapshot. A menu that lists files without
+     * saying so implies "these are all the files that changed" — and
+     * the user would rewind, find a shell-written file still modified,
+     * and conclude the feature is broken.
+     *
+     * <p>★ THE NOTE IS GENERATED ★ so it cannot describe a coverage the
+     * code does not have. The English matches the other wire notes
+     * ("already gone", "unreadable").
+     *
+     * @return the coverage object, identical on every checkpoint surface
+     */
+    private static Map<String, Object> filesCoverage() {
+        Map<String, String> tools = CodeCheckpointStore.writeTools();
+        List<String> covered = new ArrayList<>(tools.keySet());
+        java.util.Collections.sort(covered);
+        boolean shellCovered = tools.containsKey("bash");
+        Map<String, Object> cov = new LinkedHashMap<>();
+        cov.put("coveredTools", covered);
+        cov.put("shellCovered", shellCovered);
+        cov.put("note", shellCovered
+                ? "the file list covers every write channel the session used"
+                : "the file list covers the files written through " + String.join(", ", covered)
+                        + "; writes made through the shell are not listed");
+        return cov;
+    }
+
+    /**
      * R388n: list the CODE checkpoints — the files, at each user turn.
      *
      * <p>Claude Code's rewind menu offers "Restore code and
@@ -9198,6 +9237,13 @@ public class AetherCodeMethods {
         res.put("ok", true);
         res.put("checkpoints", out);
         res.put("evicted", target.codeCheckpointsEvicted());
+        // ★ R406: THE COVERAGE GOES ON THE WIRE ★ the file list is what
+        // a rewind can undo, and it does not cover every write channel
+        // (the shell writes files and names none). A renderer that shows
+        // the files without saying so implies "these are all the files
+        // that changed" — so the daemon states the coverage, derived from
+        // the same map the list is derived from.
+        res.put("filesCoverage", filesCoverage());
         return res;
     }
 
@@ -9274,6 +9320,14 @@ public class AetherCodeMethods {
                 out.put("skipped", result.skipped());
                 out.put("failed", result.failed());
                 out.put("changed", result.changed());
+                // ★ R406: THE RESTORE IS SCOPED TO WHAT IT COVERED ★
+                // "restored: [a.txt]" reads as "the tree is back to the
+                // checkpoint" — but a file the session wrote through the
+                // shell was never in the snapshot, so it is still
+                // modified after the restore. The restore says what it
+                // covers, with the same derived coverage the list
+                // carries.
+                out.put("filesCoverage", filesCoverage());
             } catch (IllegalArgumentException e) {
                 out.put("ok", false);
                 out.put("reason", e.getMessage());

@@ -130,6 +130,26 @@ export interface MockSeed {
    *  shows it, because a menu that silently starts at "point
    *  40" looks like the daemon lost the history. */
   checkpointsEvicted?: number;
+  /** R406: what the checkpoint's FILE LIST covers. The daemon owns
+   * this fact (it derives it from the same map the list is derived
+   * from), so the mock mirrors the daemon's shape.
+   *
+   *  ★ WHY THE SEED CAN SAY "null" ★ a daemon OLDER than R406 does
+   *  not send the field at all, and the menu must survive that. Set
+   *  this key to `null` to simulate such a daemon; leave it out and
+   *  the mock sends the current daemon's coverage. */
+  checkpointsFilesCoverage?: MockCheckpointFilesCoverage | null;
+}
+
+/** R406: the coverage of a checkpoint's file list — the shape the
+ * daemon puts on the wire (`filesCoverage`). */
+export interface MockCheckpointFilesCoverage {
+  /** the write tools whose files ARE listed (and restored). */
+  coveredTools: string[];
+  /** whether the shell's writes are covered too. False today. */
+  shellCovered: boolean;
+  /** the daemon's own sentence, for the menu. */
+  note: string;
 }
 
 /** R402: a checkpoint point, the shape `checkpoints/list`
@@ -167,6 +187,21 @@ export interface MockSnapshot {
   messages?: Array<Record<string, unknown>>;
 }
 
+/** R406: the coverage the CURRENT daemon sends — the file list covers
+ * the file-writing tools, and the shell is not one of them.
+ *
+ *  ★ WHY THE MOCK CARRIES IT ★ the mock exists so the renderer can be
+ *  tested against the daemon's contract. If the mock did not send the
+ *  field, every renderer test would run against a shape no daemon
+ *  ever sends. */
+const DEFAULT_FILES_COVERAGE: MockCheckpointFilesCoverage = {
+  coveredTools: ['file_edit', 'file_write', 'notebook_edit'],
+  shellCovered: false,
+  note:
+    'the file list covers the files written through file_edit, file_write, notebook_edit; ' +
+    'writes made through the shell are not listed',
+};
+
 /** The in-process mock. Tests construct one per `it()` block so
  *  state doesn't leak between cases. */
 export class MockRpcServer {
@@ -185,6 +220,14 @@ export class MockRpcServer {
     checkpoints: Record<string, MockCheckpointPoint[]>;
     /** R402: how many points the daemon has evicted. */
     checkpointsEvicted?: number;
+    /** R406: the file list's coverage.
+     *
+     *  ★ THREE STATES, THREE MEANINGS ★
+     *  `undefined` = the seed did not mention it ⇒ the mock sends the
+     *  CURRENT daemon's coverage;
+     *  `null` = an OLDER daemon ⇒ the mock sends no coverage at all;
+     *  an object = a daemon with that coverage. */
+    checkpointsFilesCoverage?: MockCheckpointFilesCoverage | null;
     /** R284: the {@code MockSeed.sessionId} the mock was
      *  constructed with. The compact/* RPCs resolve an
      *  omitted {@code sessionId} param to this value (the
@@ -253,6 +296,14 @@ export class MockRpcServer {
         ? JSON.parse(JSON.stringify(seed.checkpoints))
         : {},
       checkpointsEvicted: seed.checkpointsEvicted,
+      // R406: the coverage, deep-cloned like the snapshots above.
+      // ★ THE THREE STATES ★ undefined = "the seed did not say" ⇒ the
+      // handler sends the current daemon's coverage; null = "an older
+      // daemon" ⇒ it sends none. A copy that dropped the null would
+      // turn the old-daemon case into the new one.
+      checkpointsFilesCoverage: seed.checkpointsFilesCoverage
+        ? JSON.parse(JSON.stringify(seed.checkpointsFilesCoverage))
+        : seed.checkpointsFilesCoverage,
     };
     if (seed.sessionId) this.ensureSession(seed.sessionId);
     this.registerDefaults();
@@ -891,6 +942,13 @@ export class MockRpcServer {
           previewComplete: c.previewComplete ?? true,
         })),
         evicted: this.store.checkpointsEvicted ?? 0,
+        // ★ R406: THE COVERAGE MIRRORS THE DAEMON ★ the mock must send
+        // the same shape the daemon does, or a test would prove the
+        // renderer handles a shape no daemon ever sends.
+        filesCoverage:
+          this.store.checkpointsFilesCoverage === undefined
+            ? DEFAULT_FILES_COVERAGE
+            : this.store.checkpointsFilesCoverage,
       };
     });
     this.handle('checkpoints/restore', (params) => {
@@ -910,6 +968,14 @@ export class MockRpcServer {
         out.skipped = (hit.files ?? []).filter((f) => !f.created && !f.restorable).map((f) => f.name);
         out.failed = [];
         out.changed = names.length;
+        // ★ R406: THE RESTORE IS SCOPED TO WHAT IT COVERED ★ the daemon
+        // sends the same coverage on the restore, because "restored:
+        // [a.txt]" reads as "the tree is back" and a shell-written file
+        // was never in the snapshot.
+        out.filesCoverage =
+          this.store.checkpointsFilesCoverage === undefined
+            ? DEFAULT_FILES_COVERAGE
+            : this.store.checkpointsFilesCoverage;
       }
       if (touchesConversation) {
         out.conversation = { ok: true, kept: hit.transcriptIndex, removed: 0, transcriptSize: hit.transcriptIndex };
