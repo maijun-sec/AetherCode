@@ -62,8 +62,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>the MODEL IS SHOWN the pruned tool table — a forbidden tool is
  *       not callable because it is not in the list;</li>
  *   <li>the EXECUTOR resolves the tool from the same pruned pool — so
- *       even a model that emits a forbidden tool anyway gets
- *       "unknown tool" instead of a write.</li>
+ *       even a model that emits a forbidden tool anyway gets a REFUSAL
+ *       instead of a write.</li>
  * </ol>
  *
  * <p>All three use the REAL {@link StreamingToolExecutor} — a stub
@@ -239,12 +239,18 @@ class QueryEngineIntentR401Test {
 
         assertEquals(0, writeCalls.get(),
                 "the write tool ran despite being pruned from the pool");
+        // ★ THE PIN IS THE INVARIANT, NOT THE WORDING ★ R410 changed the
+        // refusal's WORDS on purpose: "unknown tool: file_write" said the
+        // tool does not EXIST, so the model went looking for the right
+        // name (48 calls in R408's S1). A pin on the old sentence would
+        // have gone red on the improvement; a pin on the invariant (the
+        // tool did not run, and the refusal NAMES it) survives it.
         boolean refused = events.stream().anyMatch(e ->
                 e instanceof StreamEvent.ToolResult tr
                         && tr.isError()
-                        && String.valueOf(tr.content()).contains("unknown tool"));
+                        && String.valueOf(tr.content()).contains("file_write"));
         assertTrue(refused,
-                "the executor should refuse the pruned tool with 'unknown tool'; events: " + events);
+                "the executor should refuse the pruned tool, naming the tool it refused; events: " + events);
     }
 
     @Test

@@ -534,6 +534,65 @@ public class StreamingToolExecutor {
         };
     }
 
+    /**
+     * R410: the refusal a model gets when it calls a tool this turn does
+     * not have.
+     *
+     * <p>★ WHY NOT "unknown tool: X" ★ Because "unknown" says the tool
+     * does not EXIST, and the model reads it exactly that way. R408
+     * measured the consequence: the model took "unknown tool: bash" as
+     * evidence that it had misremembered the name, and went looking for
+     * the right one — 48 calls, then a guessed name the provider had
+     * never heard of ({@code CompatFileWrite4d3b7c}). The refusal was
+     * supposed to say "this turn does not have that tool"; it said "you
+     * got the name wrong".
+     *
+     * <p>★ WHAT THE REFUSAL MUST CARRY ★
+     * <ul>
+     *   <li>the <b>constraint</b> — this turn is read-only, profile X — so
+     *       the model can conclude "I am not ALLOWED to write", not "I
+     *       misnamed the tool";</li>
+     *   <li>the <b>tools it may call</b> — so it can pick a real one
+     *       instead of guessing;</li>
+     *   <li>the <b>next move</b> — the next turn is classified again, so
+     *       asking the user is a valid answer, and the write tools come
+     *       back on their own.</li>
+     * </ul>
+     *
+     * <p>Without a profile (a turn with no posture), the refusal still
+     * lists the available tools — the tool table is known either way.
+     */
+    static String toolNotAvailable(String name, java.util.List<Tool> toolPool, AppState appState) {
+        StringBuilder allowed = new StringBuilder();
+        if (toolPool != null) {
+            for (Tool t : toolPool) {
+                if (t == null || t.name() == null) continue;
+                if (allowed.length() > 0) allowed.append(", ");
+                allowed.append(t.name());
+            }
+        }
+        org.aethercode.core.profile.Profile profile =
+                (appState == null) ? null : appState.activeProfile();
+        StringBuilder sb = new StringBuilder();
+        sb.append("the tool `").append(name).append("` is not available in this turn.\n\n");
+        if (profile != null) {
+            sb.append("This turn is **").append(profile.label())
+              .append("** (profile `").append(profile.name()).append("`)");
+            if (profile.deniedTools() != null && profile.deniedTools().contains(name)) {
+                sb.append(" — `").append(name).append("` is refused BY DESIGN for this kind of turn");
+            }
+            sb.append(".\n\n");
+        }
+        sb.append("The tools you MAY call in this turn are: ");
+        sb.append(allowed.length() == 0 ? "(none)" : allowed.toString());
+        sb.append(".\n\n");
+        sb.append("Do not go looking for another name for it: there is no other name, ")
+          .append("and there is no other way to do it in this turn. If the user wants ")
+          .append("that change, say so and stop — the next turn is classified again ")
+          .append("and the tools come back on their own.");
+        return sb.toString();
+    }
+
     private void runOneBackpressured(ContentBlock.ToolUseBlock call, AppState appState,
                                       java.util.List<Tool> toolPool,
                                       java.util.concurrent.BlockingQueue<Event> queue,
@@ -578,7 +637,8 @@ public class StreamingToolExecutor {
         }
         Tool tool = Tools.byName(toolPool, call.name());
         if (tool == null) {
-            queue.offer(new Event.Completed(call.id(), "unknown tool: " + call.name(), true));
+            queue.offer(new Event.Completed(call.id(),
+                    toolNotAvailable(call.name(), toolPool, appState), true));
             return;
         }
         Tool.CallContext ctx = new Tool.CallContext(
@@ -930,7 +990,8 @@ public class StreamingToolExecutor {
                               java.util.concurrent.atomic.AtomicBoolean batchAbort) {
         Tool tool = Tools.byName(toolPool, call.name());
         if (tool == null) {
-            sink.accept(new Event.Completed(call.id(), "unknown tool: " + call.name(), true));
+            sink.accept(new Event.Completed(call.id(),
+                    toolNotAvailable(call.name(), toolPool, appState), true));
             return;
         }
         Tool.CallContext ctx = new Tool.CallContext(

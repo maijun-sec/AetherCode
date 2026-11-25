@@ -105,25 +105,72 @@ public final class ProfileRegistry {
      *  enough. */
     public static final String SHELL_TOOL = "bash";
 
-    /**
-     * The deny set every READ-ONLY profile carries: no write tool AND
-     * no shell. See {@link #SHELL_TOOL} for why the shell is in here.
-     *
-     * <p>A read-only posture keeps the READ tools ({@code file_read},
-     * {@code grep}, {@code glob}) — those cannot change anything — and
-     * loses the two channels that can: the write tools and the shell.
-     */
-    public static final Set<String> READ_ONLY_DENY = Set.of(
-            "file_write",
-            "file_edit",
-            "notebook_edit",
-            "bash");
-
     /** the orchestration tool that can start a child agent. A child
      *  inherits its parent's profile (see
      *  {@code AppState#activeProfile}), so a read-only parent cannot
      *  launder a write through a child. */
     public static final String SPAWN_TOOL = "spawn_agent";
+
+    /**
+     * R410: the tools that can change the user's CONFIGURATION — the
+     * things outside the working tree.
+     *
+     * <p>The agent registry lives in {@code ~/.aethercode/agents/}, not in
+     * the project. A read-only turn that can rewrite an agent definition
+     * is not read-only, and R408 measured it happening: under the
+     * read-only {@code navigator} profile the model called
+     * {@code update_agent(name=end-user, body=probe)} — and it EXECUTED,
+     * because the write tools were denied and the AGENT tools were not.
+     * The user's agent file became 30 bytes of "probe".
+     *
+     * <p>★ WHY A DENY LIST AND NOT AN ALLOW LIST ★ An allow-list would
+     * be structurally safer (a new write tool would be denied by
+     * default), but the tool pool is not a closed set: MCP servers add
+     * tools at runtime, and an allow-list would silently disable every
+     * one of them — including read-only MCP tools — in a read-only
+     * posture. The deny list is the honest trade-off, and its cost is
+     * paid HERE: every tool that can change the user's state has to be
+     * named. That is why this set exists as a named constant: a reader
+     * can see what a read-only posture refuses, and a test pins it.
+     */
+    public static final Set<String> AGENT_WRITE_TOOLS = Set.of(
+            "create_agent",
+            "update_agent",
+            "delete_agent");
+
+    /**
+     * The deny set every READ-ONLY profile carries: no write tool, no
+     * shell, and no agent-registry write. See {@link #SHELL_TOOL} for why
+     * the shell is in here and {@link #AGENT_WRITE_TOOLS} for why the
+     * agent tools are.
+     *
+     * <p>A read-only posture keeps the READ tools ({@code file_read},
+     * {@code grep}, {@code glob}) — those cannot change anything — and
+     * loses every channel that can: the write tools, the shell, and the
+     * agent registry.
+     */
+    public static final Set<String> READ_ONLY_DENY = Set.of(
+            "file_write",
+            "file_edit",
+            "notebook_edit",
+            "bash",
+            "create_agent",
+            "update_agent",
+            "delete_agent");
+
+    /**
+     * R410: RESEARCH is read-only AND refuses to delegate. Built from
+     * {@link #READ_ONLY_DENY} rather than spelled out again — a second
+     * copy of the deny set is a second list that drifts.
+     */
+    public static final Set<String> RESEARCH_DENY = deny(READ_ONLY_DENY, Set.of(SPAWN_TOOL));
+
+    /** union of two deny sets, in a stable order. */
+    private static Set<String> deny(Set<String> a, Set<String> b) {
+        Set<String> out = new java.util.LinkedHashSet<>(a);
+        out.addAll(b);
+        return Set.copyOf(out);
+    }
 
     // ------------------------------------------------------------------
     // The profiles
@@ -197,7 +244,7 @@ public final class ProfileRegistry {
                     - Stay on the question that was asked. Do not drift into adjacent work
                       ("while I'm here I also refactored...").""",
             null,
-            Set.of("file_write", "file_edit", "notebook_edit", "bash", "spawn_agent"));
+            RESEARCH_DENY);
 
     /** ANSWER — a question about THIS repository. Read-only: no write
      *  tools and no shell. */
