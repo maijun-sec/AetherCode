@@ -207,6 +207,15 @@ truststore.*
 .aethercode/ssd/
 .aethercode/workflows/
 
+# R409a: 根级的 skills/ 与 workflows/ 是运行时从**内置资源**导出的副本，
+# 不是这个仓库的源码：
+#   skills/sdd/**  与 aethercode/aethercode-sdd/src/main/resources/skills/ 逐字节相同；
+#   workflows/*.yaml 与 aethercode/aethercode-workflows/src/main/resources/workflows/ 逐字节相同。
+# 产品读的是 <cwd>/.aethercode/{skills,workflows}，根级这两个目录**无人读**；
+# 入库只会让副本与内置源漂移（改内置资源时副本不会跟着变）。
+/skills/
+/workflows/
+
 # Windows 保留名 (NUL, CON, PRN, AUX, COM1-9, LPT1-9)
 /NUL
 /CON
