@@ -259,6 +259,16 @@ public final class IntentClassifier {
      * "give me a status update" is a noun phrase, and a bare "update"
      * would read it as an instruction. "update the README" is not
      * ambiguous, so only the determiner form is listed.
+     *
+     * <p>★ R405: WHY BARE "implement" IS GONE FROM HERE ★
+     * "implement" was the only bare verb in this list, and a SUBSTRING
+     * match on it fires on "the implementation of LRU" — measured: that
+     * phrase was classified CODE_CHANGE, so a concept question was
+     * handed the write tools. The determiner forms ("implement a",
+     * "implement an", "implement the") disambiguate exactly like their
+     * siblings, and the bare form now lives in
+     * {@link #AMBIGUOUS_CODE_VERBS}, where it needs the imperative
+     * position (or a path-like object) to fire.
      */
     private static final List<String> CODE_VERBS = List.of(
             "实现", "编写", "写一个", "写个", "写一段", "新增", "创建", "生成", "重构",
@@ -266,7 +276,8 @@ public final class IntentClassifier {
             "加上", "加个", "加一个", "加一段", "添加", "改造", "迁移", "删除", "删掉", "移除",
             "优化", "简化", "完善", "修复", "修一下", "更新", "升级", "补一个",
             "帮我改", "改一下", "改名", "重命名", "清理", "整理", "排序",
-            "implement", "create a", "create an", "create the",
+            "implement a", "implement an", "implement the",
+            "create a", "create an", "create the",
             "add a", "add an", "add the",
             "refactor", "rewrite", "scaffold",
             "generate a", "generate an", "generate the",
@@ -276,6 +287,70 @@ public final class IntentClassifier {
             "delete", "remove",
             "rename", "fix", "optimize", "migrate", "translate", "convert",
             "format", "sort", "support", "adapt"
+    );
+
+    /**
+     * R405: verbs that are AMBIGUOUS ALONE — the same word is a noun as
+     * often as it is a verb ("a status update", "the write path", "an
+     * edit", "a change").
+     *
+     * <p>★ WHY A SEPARATE LIST ★ these cannot live in
+     * {@link #CODE_VERBS}: that list is read with a plain
+     * {@code String.contains}, so a bare "update" there would fire on
+     * "give me a status update". R404's answer was the determiner
+     * ("update the"), which covers "update the README" but NOT "Update
+     * pom.xml" — and "Update pom.xml" is a request, measured UNCERTAIN
+     * ⇒ the read-only {@code navigator} profile ⇒ {@code file_write}
+     * pruned ⇒ the same silent failure R404 fixed, one word shorter.
+     *
+     * <p>★ THE ANSWER IS A POSITION, NOT A WORD ★ the difference
+     * between the request and the noun phrase is WHERE the word sits:
+     * <ul>
+     *   <li>"Update pom.xml" — the verb OPENS the sentence ⇒ an
+     *       instruction;</li>
+     *   <li>"give me a status update on the migration" — the verb sits
+     *       inside a noun phrase ⇒ not an instruction.</li>
+     * </ul>
+     * So a word from this list fires only when it is a STANDALONE token
+     * AND either
+     * <ul>
+     *   <li>it is in <b>imperative position</b> — the prompt starts with
+     *       it, after an optional request prefix ("please", "can you",
+     *       "请", "帮我"); or</li>
+     *   <li>the prompt carries a <b>path-like object</b> ("Update
+     *       pom.xml", "Modify Foo.java") — a noun phrase about a real
+     *       file is not how a request is phrased.</li>
+     * </ul>
+     *
+     * <p>★ WHY THE MATCH MUST BE WHOLE-WORD ★ "the implementation of
+     * LRU" contains "implement"; a substring match reads it as an
+     * instruction. The same holds for "the created file" and "the
+     * generated code".
+     */
+    private static final List<String> AMBIGUOUS_CODE_VERBS = List.of(
+            "update", "modify", "change", "edit", "introduce", "bump",
+            "adjust", "add", "build", "generate", "create", "write",
+            "implement", "replace",
+            "修改", "调整", "改成", "换成"
+    );
+
+    /**
+     * R405: wrappers that keep the imperative reading. "can you update
+     * pom.xml?" and "请修改 Foo.java" are REQUESTS; "what changed in
+     * pom.xml?" and "should I update the file?" are QUESTIONS.
+     *
+     * <p>★ THE QUESTION WORDS ARE NOT HERE ★ "should i", "what",
+     * "why", "how", "did" belong to the information-question side, and
+     * a request prefix that is also a question word would turn
+     * "should I update the file?" into code work — which is exactly the
+     * pin R404 left behind.
+     */
+    private static final List<String> REQUEST_PREFIXES = List.of(
+            "please ", "pls ", "can you ", "could you ", "would you ",
+            "will you ", "just ", "now ", "also ", "then ", "hey ",
+            "ok ", "okay ", "help me ", "i need you to ", "i want you to ",
+            "let's ", "let us ",
+            "请", "帮我", "帮忙", "麻烦", "现在", "我要", "我想让"
     );
 
     /**
@@ -393,6 +468,10 @@ public final class IntentClassifier {
         boolean local = hasLocalAnchor(p, lower);
         boolean concept = containsAny(lower, CONCEPT_BLOCKERS);
         boolean strictVerb = containsAny(lower, STRICT_CODE_VERBS);
+        // ★ R405: THE IMPERATIVE POSITION ★ a request, not a noun phrase.
+        // "Update pom.xml" opens with the verb; "give me a status update"
+        // does not. This is the only signal that separates the two.
+        String imperativeVerb = imperativeAmbiguousVerb(lower);
 
         // 1. An explicit request for external material wins over
         //    everything else: the user has already said what they want
@@ -437,6 +516,15 @@ public final class IntentClassifier {
                     return new Intent(Kind.CODE_CHANGE,
                             "question carrying an implementation verb: " + firstHit(lower, STRICT_CODE_VERBS));
                 }
+                // ★ R405: A REQUEST-QUESTION IS A REQUEST ★ "can you
+                // update pom.xml?" is an instruction wearing a question
+                // mark. Only the IMPERATIVE position may promote here —
+                // a path-like object must NOT, because "what changed in
+                // pom.xml?" is a question ABOUT a file.
+                if (imperativeVerb != null) {
+                    return new Intent(Kind.CODE_CHANGE,
+                            "question carrying an implementation verb in the imperative position: " + imperativeVerb);
+                }
                 return new Intent(Kind.ANSWER, "question about this repository");
             }
             // 5c. No local anchor. A concept question by default; code
@@ -445,6 +533,10 @@ public final class IntentClassifier {
             if (strictVerb) {
                 return new Intent(Kind.CODE_CHANGE,
                         "question carrying an implementation verb: " + firstHit(lower, STRICT_CODE_VERBS));
+            }
+            if (imperativeVerb != null) {
+                return new Intent(Kind.CODE_CHANGE,
+                        "question carrying an implementation verb in the imperative position: " + imperativeVerb);
             }
             return new Intent(Kind.RESEARCH, "concept question with no local anchor");
         }
@@ -456,6 +548,23 @@ public final class IntentClassifier {
             return new Intent(Kind.CODE_CHANGE, "implementation verb: " + codeHit);
         }
 
+        // 6b. R405: an AMBIGUOUS verb — the same word is a noun as often
+        //     as a verb, so it fires only when it stands alone AND
+        //     either opens the sentence (imperative position) or has a
+        //     path-like object.
+        //
+        //     ★ THE PATH-ANCHORED HALF IS NOT AVAILABLE TO QUESTIONS ★
+        //     it is why "what changed in pom.xml?" stays a question
+        //     while "can you update pom.xml?" becomes code work.
+        String ambiguous = standaloneAmbiguousVerb(lower);
+        if (ambiguous != null
+                && (imperativeVerb != null || PATH_LIKE.matcher(p).find())) {
+            String why = imperativeVerb != null
+                    ? "implementation verb in the imperative position: "
+                    : "implementation verb with a path-like object: ";
+            return new Intent(Kind.CODE_CHANGE, why + ambiguous);
+        }
+
         // 7. Nothing matched.
         return Intent.uncertain("no intent signal");
     }
@@ -463,6 +572,97 @@ public final class IntentClassifier {
     private static boolean hasLocalAnchor(String p, String lower) {
         if (containsAny(lower, LOCAL_ANCHORS)) return true;
         return PATH_LIKE.matcher(p).find();
+    }
+
+    // ------------------------------------------------------------------
+    // R405 — the imperative position
+    // ------------------------------------------------------------------
+
+    /** A Latin word character: letter, digit or underscore. */
+    private static boolean isLatinWordChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
+    /**
+     * A CJK ideograph.
+     *
+     * <p>★ WHY CHINESE NEEDS ITS OWN BOUNDARY ★ Chinese has no word
+     * boundary: "修改记录" (the change log) STARTS with "修改" (modify).
+     * A Chinese verb is therefore a standalone word only when the
+     * character AFTER it is not another ideograph — that is what keeps
+     * "修改记录" out of the instruction column while "修改 Foo.java" is
+     * in it.
+     */
+    private static boolean isCjk(char c) {
+        // ★ UNICODE ESCAPES, NOT LITERAL CHARACTERS ★ the lexer resolves
+        // an escape before the file's encoding matters, so these ranges
+        // cannot be corrupted by a mis-decoded source file.
+        return (c >= '\u3400' && c <= '\u4dbf')
+                || (c >= '\u4e00' && c <= '\u9fff')
+                || (c >= '\uf900' && c <= '\ufaff');
+    }
+
+    /** Is the word at {@code at} a standalone token (not part of a longer word)? */
+    private static boolean isStandaloneAt(String lower, int at, String verb) {
+        int end = at + verb.length();
+        if (end < lower.length()) {
+            char c = lower.charAt(end);
+            if (isLatinWordChar(c)) return false;
+            if (isCjk(c) && isCjk(verb)) return false;
+        }
+        if (at > 0 && isLatinWordChar(lower.charAt(at - 1))) return false;
+        return true;
+    }
+
+    /** Is this verb written in Chinese? */
+    private static boolean isCjk(String verb) {
+        return !verb.isEmpty() && isCjk(verb.charAt(0));
+    }
+
+    /**
+     * The first STANDALONE occurrence of an ambiguous verb anywhere in the
+     * prompt, or null.
+     *
+     * <p>★ WHY STANDALONE ★ "the implementation of LRU" contains
+     * "implement"; a substring match reads it as an instruction. The same
+     * holds for "the created file" and "the generated code".
+     */
+    private static String standaloneAmbiguousVerb(String lower) {
+        for (String verb : AMBIGUOUS_CODE_VERBS) {
+            int at = lower.indexOf(verb);
+            while (at >= 0) {
+                if (isStandaloneAt(lower, at, verb)) return verb;
+                at = lower.indexOf(verb, at + 1);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The ambiguous verb that OPENS the prompt — after an optional request
+     * prefix ("please", "can you", "请", "帮我") — or null.
+     *
+     * <p>★ THIS IS THE WHOLE POINT ★ "Update pom.xml" is a request;
+     * "give me a status update on the migration" is a noun phrase. The
+     * difference is not the word, it is where the word sits.
+     */
+    private static String imperativeAmbiguousVerb(String lower) {
+        String rest = lower.trim();
+        boolean stripped = true;
+        while (stripped) {
+            stripped = false;
+            for (String p : REQUEST_PREFIXES) {
+                if (rest.startsWith(p)) {
+                    rest = rest.substring(p.length()).trim();
+                    stripped = true;
+                    break;
+                }
+            }
+        }
+        for (String verb : AMBIGUOUS_CODE_VERBS) {
+            if (rest.startsWith(verb) && isStandaloneAt(rest, 0, verb)) return verb;
+        }
+        return null;
     }
 
     private static boolean containsAny(String lower, List<String> markers) {
