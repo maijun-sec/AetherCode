@@ -112,6 +112,10 @@ public class NotebookEditTool {
                 }
                 default -> { return Tool.ToolResult.error("unknown operation: " + op); }
             }
+            // ★ R407: THE STATE BEFORE THIS WRITE ★ the checkpoint that
+            // precedes this turn has to undo it, and the only moment that
+            // knows what the notebook held is the moment before the write.
+            org.aethercode.core.transcript.FileTouchRecorder.noteBeforeWrite(ctx, p);
             Files.writeString(p, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(root), StandardCharsets.UTF_8);
             return Tool.ToolResult.of("notebook edited (" + op + " at " + cellIndex + "), now " + arr.size() + " cells");
         } catch (IOException e) {

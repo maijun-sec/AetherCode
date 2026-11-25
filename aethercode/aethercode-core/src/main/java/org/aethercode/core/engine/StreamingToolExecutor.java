@@ -281,6 +281,40 @@ public class StreamingToolExecutor {
      *  AetherCodeEngine; tests can leave null. */
     private org.aethercode.core.metrics.MetricsCollector metricsCollector;
 
+    /**
+     * R407: optional recorder that learns what a file looked like BEFORE
+     * the session's first write to it.
+     *
+     * <p>Null when nobody is listening (the CLI path, the unit tests) —
+     * then the write tools simply do not report anything and the
+     * checkpoints behave exactly as they did before R407.
+     */
+    private volatile org.aethercode.core.transcript.FileTouchRecorder fileTouchRecorder;
+
+    /**
+     * Install the recorder the write tools report to.
+     *
+     * @param recorder the recorder, or null to turn the reporting off
+     * @return this for chaining
+     */
+    public StreamingToolExecutor withFileTouchRecorder(
+            org.aethercode.core.transcript.FileTouchRecorder recorder) {
+        this.fileTouchRecorder = recorder;
+        return this;
+    }
+
+    /**
+     * R407: the recorder the write tools will report to — null when
+     * nobody is listening.
+     *
+     * <p>Public so the wiring can be CHECKED: a recorder that exists but
+     * was never installed leaves every rewind silently doing nothing, and
+     * that is exactly the kind of rot no other test would notice.
+     */
+    public org.aethercode.core.transcript.FileTouchRecorder fileTouchRecorder() {
+        return fileTouchRecorder;
+    }
+
     public StreamingToolExecutor withToolResultCache(org.aethercode.core.tool.ToolResultCache cache) {
         this.toolResultCache = cache;
         return this;
@@ -314,6 +348,13 @@ public class StreamingToolExecutor {
         // resolve custom agents registered under ~/.aethercode/agents/.
         // Null is fine — the tool falls back to SubagentRole builtin.
         if (agentRegistry != null) extras.put("agent_registry", agentRegistry);
+        // ★ R407: THE FILE-TOUCH RECORDER ★ the write tools tell it,
+        // before they write, what the file looked like — so the point
+        // BEFORE that turn can undo it (a file the turn created is
+        // deleted, a file the turn overwrote is written back).
+        if (fileTouchRecorder != null) {
+            extras.put(org.aethercode.core.transcript.FileTouchRecorder.EXTRAS_KEY, fileTouchRecorder);
+        }
         // working memory buffer (boxed as Object to avoid a
         // hard dep on the memory module). Stash it under the key the
         // wm_* tools look up.

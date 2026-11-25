@@ -161,6 +161,12 @@ public class FileWriteTool {
         }
 
         try {
+            // ★ R407: THE STATE BEFORE THIS WRITE ★ the checkpoint that
+            // precedes this turn has to undo it, and the only moment that
+            // knows whether the file existed is the moment before the
+            // write. Recorded here, not in the tool result: the result
+            // is the model's output, not a contract.
+            org.aethercode.core.transcript.FileTouchRecorder.noteBeforeWrite(ctx, path);
             Files.createDirectories(path.getParent());
             if (MODE_APPEND.equals(mode)) {
                 // append path: CREATE if absent, APPEND otherwise.

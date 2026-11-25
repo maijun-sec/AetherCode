@@ -88,7 +88,12 @@ import org.slf4j.LoggerFactory;
  * directory where a file was expected — all produce a recorded
  * outcome, never an exception that would abort the whole restore.
  */
-public final class CodeCheckpointStore {
+/**
+ * R407: the store is also the {@link FileTouchRecorder} — it is the one
+ * that has to remember what a file looked like before the session's first
+ * write to it.
+ */
+public final class CodeCheckpointStore implements FileTouchRecorder {
 
     private static final Logger LOG = LoggerFactory.getLogger(CodeCheckpointStore.class);
 
@@ -367,6 +372,33 @@ public final class CodeCheckpointStore {
     }
 
     /**
+     * R407: the state of every file BEFORE the session's FIRST write to
+     * it.
+     *
+     * <p>★ WHY THE FIRST TOUCH AND NOT EVERY TOUCH ★ a point's snapshot
+     * holds "the content at this moment", so the state before the session
+     * first touched a file is the only one that is not already in some
+     * point. It is what lets the point BEFORE that turn undo the turn:
+     * a file the turn CREATED is recorded as created (the restore deletes
+     * it), and a file the turn OVERWROTE is recorded with the content it
+     * had (the restore writes it back).
+     *
+     * <p>Keyed by the normalised absolute path — the same key the
+     * transcript scan produces, so the two agree.
+     */
+    private final Map<Path, FileState> preTouch = new LinkedHashMap<>();
+
+    /**
+     * R407: the pre-touches that no point has claimed yet.
+     *
+     * <p>A pre-touch belongs to the point BEFORE the turn that first
+     * touched the file. It is claimed when the next point is taken (that
+     * point's predecessor is the one that has to learn it) — see
+     * {@link #settlePreTouches()}.
+     */
+    private final List<FileState> unclaimedPreTouches = new ArrayList<>();
+
+    /**
      * How many checkpoints have been EVICTED over this store's life.
      *
      * <p>★ WHY THE USER SHOULD BE TOLD ★ A menu that silently starts
@@ -406,6 +438,110 @@ public final class CodeCheckpointStore {
             }
         }
         return out;
+    }
+
+    /**
+     * R407: learn what a file looked like BEFORE the session's first
+     * write to it.
+     *
+     * <p>★ THE ONLY TOUCH THAT COUNTS ★ the first one: after it, the
+     * file's "before" state is what the point before that turn needs, and
+     * every later touch has a point of its own.
+     *
+     * <p>★ A FILE THAT DID NOT EXIST IS RECORDED AS CREATED ★ so the
+     * restore of the point before that turn DELETES it — which is what
+     * "undo this turn" means for a file the turn brought into existence.
+     *
+     * @param path the path about to be written
+     */
+    @Override
+    public void beforeWrite(Path path) {
+        if (path == null) return;
+        Path key = path.toAbsolutePath().normalize();
+        if (preTouch.containsKey(key)) return;
+        FileState state = captureState(key);
+        preTouch.put(key, state);
+        unclaimedPreTouches.add(state);
+    }
+
+    /**
+     * R407: read a file's current state for the pre-touch record.
+     *
+     * <p>The same three outcomes the snapshot itself distinguishes: absent
+     * (created), a text file (its content), and something the restore
+     * cannot handle (binary, a directory, unreadable) — which is recorded
+     * as "no content", i.e. skipped on restore.
+     */
+    private FileState captureState(Path p) {
+        try {
+            if (!Files.exists(p)) return new FileState(p, null, true);
+            if (!Files.isRegularFile(p)) return new FileState(p, null, false);
+            byte[] bytes = Files.readAllBytes(p);
+            if (isBinary(bytes)) return new FileState(p, null, false);
+            return new FileState(p, new String(bytes, StandardCharsets.UTF_8), false);
+        } catch (IOException e) {
+            return new FileState(p, null, false);
+        }
+    }
+
+    /**
+     * R407: give the files a turn touched for the FIRST time to the point
+     * that PRECEDES that turn.
+     *
+     * <p>★ WHY THE POINT BEFORE THE TURN ★ a point's job is "the tree as
+     * it was at this moment". The file the next turn creates did not
+     * exist at this moment, so this point has to say so — otherwise
+     * restoring it leaves that file behind, and the restore reports
+     * nothing at all.
+     *
+     * <p>★ THE TARGET IS THE LAST TURN POINT ★ not simply the last point:
+     * a cancel point sits after the turn it interrupts, and it records the
+     * SCENE where the run stopped — the files it must learn belong to the
+     * turn point before the cancelled turn.
+     *
+     * <p>Called from {@link #save} BEFORE the new point is created, so
+     * the new point never receives another turn's files.
+     */
+    private void settlePreTouches() {
+        if (unclaimedPreTouches.isEmpty()) return;
+        List<FileState> pending = new ArrayList<>(unclaimedPreTouches);
+        unclaimedPreTouches.clear();
+        Checkpoint target = lastTurnPoint();
+        if (target == null) return;
+        List<FileState> files = new ArrayList<>(target.files());
+        boolean changed = false;
+        for (FileState fs : pending) {
+            boolean already = false;
+            for (FileState known : files) {
+                if (known.path().equals(fs.path())) { already = true; break; }
+            }
+            if (already) continue;
+            files.add(fs);
+            changed = true;
+        }
+        if (!changed) return;
+        Checkpoint amended = new Checkpoint(target.id(), target.transcriptIndex(),
+                target.userMessageIndex(), target.summary(), target.kind(), files);
+        // put on an EXISTING key keeps the insertion order (LinkedHashMap
+        // in insertion mode), so the menu's numbering does not move.
+        checkpoints.put(amended.id(), amended);
+        if (disk != null) {
+            try {
+                disk.save(amended);
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("R407: could not persist the amended checkpoint {}: {}",
+                        amended.id(), e.getMessage());
+            }
+        }
+    }
+
+    /** R407: the last point that is a TURN point (a cancel point is not one). */
+    private Checkpoint lastTurnPoint() {
+        Checkpoint found = null;
+        for (Checkpoint cp : checkpoints.values()) {
+            if (!KIND_CANCEL.equals(cp.kind())) found = cp;
+        }
+        return found;
     }
 
     /**
@@ -458,6 +594,12 @@ public final class CodeCheckpointStore {
             Path cwd,
             String summary,
             String kind) {
+        // ★ R407: THE PREVIOUS POINT LEARNS THIS TURN'S NEW FILES ★
+        // before the new point exists, so the "last turn point" is the
+        // point BEFORE the turn that just ended. That point has to know
+        // about the files the turn touched for the first time — otherwise
+        // a restore of it undoes nothing and says nothing.
+        settlePreTouches();
         List<FileState> files = new ArrayList<>();
         for (Path p : touchedFiles(transcript, cwd)) {
             try {

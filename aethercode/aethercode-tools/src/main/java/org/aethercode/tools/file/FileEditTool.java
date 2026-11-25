@@ -107,6 +107,10 @@ public class FileEditTool {
             String updated = replaceAll
                     ? original.replace(oldStr, newStr)
                     : original.replaceFirst(java.util.regex.Pattern.quote(oldStr), java.util.regex.Matcher.quoteReplacement(newStr));
+            // ★ R407: THE STATE BEFORE THIS WRITE ★ the checkpoint that
+            // precedes this turn has to undo it, and the only moment that
+            // knows what the file held is the moment before the write.
+            org.aethercode.core.transcript.FileTouchRecorder.noteBeforeWrite(ctx, path);
             Files.writeString(path, updated, StandardCharsets.UTF_8);
 
             return new Tool.ToolResult(

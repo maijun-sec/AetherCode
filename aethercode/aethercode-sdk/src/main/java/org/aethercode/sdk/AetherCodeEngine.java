@@ -908,6 +908,12 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             if (lc == null) return java.util.Optional.empty();
             return lc.currentBuffer().map(buf -> (Object) buf);
         });
+        // ★ R407: THE WRITE TOOLS REPORT WHAT THEY ARE ABOUT TO TOUCH ★
+        // the checkpoint store has to know what a file looked like BEFORE
+        // the session's first write to it — otherwise the point before
+        // that turn cannot undo the turn, and a rewind reports success
+        // while changing nothing.
+        this.streamingToolExecutor.withFileTouchRecorder(this.fileTouchRecorder);
         // R718-B + R718-H: install the executor-level L3 dedup
         // cache + the metrics collector so L1 / L3 telemetry
         // bumps the snapshot the UI reads via getMetrics.
@@ -3018,6 +3024,42 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             LOG.warn("R403: could not mark the cancel point: {}", e.getMessage());
             return java.util.Optional.empty();
         }
+    }
+
+    /**
+     * R407: the recorder the write path reports to.
+     *
+     * <p>★ IT READS THE CURRENT STORE AT CALL TIME ★ the store is
+     * REPLACED when the engine binds to a session (R403), so a recorder
+     * that captured the store it was created with would keep reporting
+     * into the PREVIOUS session's points. A lambda over the field
+     * always answers with the store the engine is using now.
+     */
+    private final org.aethercode.core.transcript.FileTouchRecorder fileTouchRecorder =
+            path -> this.codeCheckpoints.beforeWrite(path);
+
+    /**
+     * R407: the recorder the write path reports to.
+     *
+     * @return the recorder (it always writes into the CURRENT store)
+     */
+    public org.aethercode.core.transcript.FileTouchRecorder fileTouchRecorder() {
+        return fileTouchRecorder;
+    }
+
+    /**
+     * R407: the recorder the WRITE PATH actually carries.
+     *
+     * <p>★ NOT THE FIELD — THE ONE THE EXECUTOR CARRIES ★ the wiring is
+     * the part that can rot quietly: a recorder that exists but was never
+     * installed leaves every rewind silently undoing nothing, and no
+     * other test would notice.
+     *
+     * @return the recorder the executor carries, or null when the write
+     *         path reports to nobody
+     */
+    public org.aethercode.core.transcript.FileTouchRecorder writePathRecorder() {
+        return streamingToolExecutor.fileTouchRecorder();
     }
 
     /** R388n: every code checkpoint, in creation order. */
