@@ -136,7 +136,9 @@ class QueryEngineIntentR405Test {
     }
 
     private static RunContext ctxFor(IntentClassifier.Intent intent, List<Tool> pool) {
-        Profile p = ProfileRegistry.forIntent(intent.kind());
+        // ★ R411: THE PRODUCTION PATH ★ the posture is resolved from the
+        // WHOLE verdict (domain + capability), not from the kind alone.
+        Profile p = ProfileRegistry.forIntent(intent);
         // The SAME tool instances the test counts on must be the ones
         // the executor resolves — otherwise the test counts a
         // different object than the one that ran.

@@ -155,15 +155,52 @@ public final class IntentClassifier {
     }
 
     /**
-     * The verdict: a kind, the signal that produced it, and a
-     * human-readable reason (shown in the UI so the user can see WHY
-     * the agent decided what it decided).
+     * The verdict: a kind, the signal that produced it, a human-readable
+     * reason (shown in the UI so the user can see WHY the agent decided
+     * what it decided), and — R411 — the CAPABILITY axis.
+     *
+     * <h2>★ TWO AXES, NOT ONE ★</h2>
+     * <p>{@link #kind()} is the DOMAIN axis: "what KIND of task is this?"
+     * (code, diagnosis, research, …). It answers "how should the agent
+     * approach this?" and it is what picks the posture's wording.
+     *
+     * <p>{@link #requestsWorkspaceChange()} is the CAPABILITY axis: "does
+     * the user ask for something in the working tree to CHANGE or to be
+     * WRITTEN?" It answers "may this turn touch the disk?" and it is what
+     * decides whether the write channel is handed over.
+     *
+     * <p>★ WHY THEY MUST BE SEPARATE ★ R408 measured the cost of
+     * pretending they are the same thing: "write a poem about autumn and
+     * save it to poem.txt" is not code work, so the domain axis said
+     * UNCERTAIN, so the read-only profile was chosen, so the write tool
+     * was PRUNED — and the user's file was never written. The product
+     * (a poem) had nothing to do with the requirement (a file on disk).
+     * A domain table cannot answer "may I write?", and a write-capability
+     * table cannot answer "what kind of work is this?".
      */
-    public record Intent(Kind kind, String reason) {
+    public record Intent(Kind kind, String reason, boolean requestsWorkspaceChange) {
+
+        /** the two-argument form — a verdict with no capability claim. */
+        public Intent(Kind kind, String reason) {
+            this(kind, reason, false);
+        }
 
         public Intent {
             if (kind == null) kind = Kind.UNCERTAIN;
             if (reason == null) reason = "";
+        }
+
+        /**
+         * ★ THE CAPABILITY AXIS ★ "the user asks for the working tree to
+         * change". The domain axis says what KIND of work this is; this
+         * says whether the answer has to land ON DISK.
+         *
+         * <p>It is deliberately NOT derived from {@link #kind()}: a poem
+         * is not code, and a saved SQL fix is not code either, but both
+         * have to be written to a file.
+         */
+        public boolean requestsWorkspaceChange() {
+            return requestsWorkspaceChange;
         }
 
         /** the stable wire token. */
@@ -404,6 +441,94 @@ public final class IntentClassifier {
             "this method", "this function", "this module", "the codebase"
     );
 
+    /**
+     * R411: demonstratives ("this one", "that one") on their own are NOT
+     * a local anchor — "this framework" is a concept question that belongs
+     * on the web. A demonstrative pointed at a CONCRETE ARTIFACT is: "this
+     * SQL", "that error", "the log file above" all name something that
+     * lives in this tree.
+     *
+     * <p>★ WHY TWO LISTS AND NOT ONE ★ The pairing is the signal. "这条"
+     * alone ("this rule") is a concept; "这条 SQL" ("this SQL statement")
+     * is a row in someone's database. Firing on the demonstrative alone
+     * would send concept questions to the local tree; firing on the
+     * artifact alone would fire on every mention of "SQL" in the world.
+     * The pair is the smallest rule that is right for both.
+     */
+    private static final List<String> DEMONSTRATIVES = List.of(
+            "这条", "这份", "这批", "这段", "这行",
+            "刚才那个", "刚刚那个", "上面那个", "上述那个", "前面那个",
+            "这个", "那个");
+
+    /**
+     * R411: the artifacts a demonstrative can point at. Deliberately
+     * concrete: a file, a statement, a record, a piece of configuration.
+     *
+     * <p>★ "消息" IS NOT HERE ★ "this message" / "this news item" is a
+     * concept question, and treating it as local would send the agent
+     * looking for it in the repository instead of asking the web.
+     */
+    private static final List<String> ANCHORED_ARTIFACTS = List.of(
+            "语句", "查询", "代码", "记录", "日志", "报错", "错误", "异常",
+            "工具", "脚本", "配置", "字段", "组件", "页面", "服务", "命令",
+            "事务", "索引", "表结构", "字段值");
+
+    /**
+     * R411 — the CAPABILITY axis, part 1: the request names WHERE its
+     * result goes.
+     *
+     * <p>★ WHY A DIRECTION IS REQUIRED ★ "保存" alone ("save") is also
+     * the word in "保存当前进度" and in "怎么保存" — both of which are
+     * not a request for a file. Every entry here carries the direction
+     * (到 / 成 / 为 / 进 / 盘 / 文件) or the English preposition, so the
+     * marker only fires when a DESTINATION is named.
+     */
+    private static final List<String> PERSIST_MARKERS = List.of(
+            "保存到", "存到", "存进", "存成", "存为", "另存",
+            "写入", "写进", "落盘", "落到文件",
+            "导出到", "输出到", "导出成", "输出成",
+            "生成文件", "写成文件", "写入文件", "存文件",
+            "save to", "save as", "saved to", "write to", "written to",
+            "export to", "output to", "dump to", "persist to", "store in");
+
+    /**
+     * R411 — the CAPABILITY axis, part 2: the request asks for an existing
+     * thing to CHANGE.
+     *
+     * <p>It is {@link #CODE_VERBS} plus the verbs that mean "make this
+     * better" without naming a language artefact. The two lists are
+     * UNIONED rather than copied, because a copy is a list that drifts
+     * (R410's Lesson 1552).
+     */
+    private static final List<String> CHANGE_VERBS = union(CODE_VERBS, List.of(
+            "调优", "提速", "写好", "做好", "改好", "修好", "处理好", "优化成",
+            "优化好", "改到位", "理顺", "顺一下",
+            "tweak", "speed up", "clean up", "improve", "polish"));
+
+    /**
+     * R411 — the request hints that the user is ASKING FOR SOMETHING, not
+     * asking about it. R405 already had a list of request PREFIXES, but
+     * those only work at the START of the prompt ("please …", "帮我 …"),
+     * and the sentence that needs this signal puts the hint in the
+     * MIDDLE: "这条 SQL 查询很慢，帮我看看怎么优化".
+     *
+     * <p>★ WHY "请" IS NOT HERE ★ "请" is the first character of "请问",
+     * which is a QUESTION word. A list containing "请" would read every
+     * polite question as a request, and every polite question would get
+     * the write channel.
+     */
+    private static final List<String> REQUEST_HINTS = List.of(
+            "帮我", "帮忙", "麻烦", "替我", "给我", "我要", "我想让", "我想",
+            "please", "can you", "could you", "would you", "help me",
+            "i need you to", "i want you to", "for me", "go ahead");
+
+    /** union of two lists, order preserved. */
+    private static List<String> union(List<String> a, List<String> b) {
+        java.util.ArrayList<String> out = new java.util.ArrayList<>(a);
+        out.addAll(b);
+        return List.copyOf(out);
+    }
+
     /** A path-like token: something with a directory separator or a
      *  recognisable source extension. */
     private static final Pattern PATH_LIKE = Pattern.compile(
@@ -446,10 +571,92 @@ public final class IntentClassifier {
      */
     public static Intent classify(String prompt) {
         try {
-            return classifyInternal(prompt);
+            Intent base = classifyInternal(prompt);
+            // ★ R411: THE CAPABILITY AXIS IS COMPUTED HERE ★ the domain
+            // axis says WHAT KIND of work this is; the capability axis
+            // says whether the answer has to LAND ON DISK. They are
+            // computed from the same prompt but they answer different
+            // questions, and only the second one decides whether the
+            // write channel is handed over.
+            return new Intent(base.kind(), base.reason(),
+                    requestsWorkspaceChange(base.kind(), prompt));
         } catch (RuntimeException e) {
             return Intent.uncertain("classifier failed: " + e.getMessage());
         }
+    }
+
+    // ------------------------------------------------------------------
+    // R411 — the capability axis
+    // ------------------------------------------------------------------
+
+    /**
+     * ★ THE CAPABILITY AXIS ★ "does the user ask for the working tree to
+     * change (or to receive a file)?"
+     *
+     * <p>Three ways to answer yes, and every one of them is about the
+     * DELIVERABLE rather than about the DOMAIN:
+     *
+     * <ol>
+     *   <li><b>the domain already means "change"</b> — CODE_CHANGE and
+     *       OPS are requests to change something by definition;</li>
+     *   <li><b>the request names where the result goes</b> — "保存到
+     *       poem.txt", "save to notes.md". This is the case R408
+     *       measured: a POEM is not code work, but the file it has to
+     *       land in is the user's requirement;</li>
+     *   <li><b>a request wearing a question mark</b> — a question-shaped
+     *       prompt that carries a request hint ("帮我"), points at a
+     *       local artefact ("这条 SQL") and asks for a change ("优化").
+     *       Without all three it stays a question.</li>
+     * </ol>
+     *
+     * <h2>★ WHY A QUESTION NEVER GRANTS THE WRITE CHANNEL ON ITS OWN ★</h2>
+     * <p>R401's hard invariant: a misfire on the write path costs the
+     * user their working tree, and a misfire on the read path costs one
+     * turn. So a question only reaches the write channel when it is
+     * wearing a request's clothes — and then only when it also points at
+     * something LOCAL.
+     *
+     * <p>★ THE EXAMPLE IS QUESTION-SHAPED ON PURPOSE ★ "帮我优化这个算法
+     * 要注意什么？" wears a request's clothes and asks for a change, but
+     * it points at NOTHING in this tree ⇒ it stays read-only. (A
+     * non-question "帮我优化一下这个算法" is a CODE_CHANGE on the DOMAIN
+     * axis and gets the write channel from there — a different rule, and
+     * one that predates R411.)
+     */
+    private static boolean requestsWorkspaceChange(Kind kind, String prompt) {
+        if (kind == Kind.CODE_CHANGE || kind == Kind.OPS) return true;
+        if (prompt == null || prompt.isBlank()) return false;
+        String p = prompt.trim();
+        String lower = p.toLowerCase(Locale.ROOT);
+        boolean question = QUESTION_SHAPED.matcher(p).find();
+        boolean requestHint = hasRequestHint(lower);
+
+        // (2) the request names where the result goes. A question only
+        //     counts when it is also a REQUEST ("怎么保存到 X?" is a
+        //     question about saving; "帮我保存到 X" is a request to
+        //     save).
+        if (firstHit(lower, PERSIST_MARKERS) != null && (!question || requestHint)) {
+            return true;
+        }
+
+        // (3) a request wearing a question mark, pointed at a local
+        //     artefact.
+        if (question && requestHint && hasLocalAnchor(p, lower)
+                && firstHit(lower, CHANGE_VERBS) != null) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Does the prompt ASK for something? R405's {@link #REQUEST_PREFIXES}
+     * only work at the START of a prompt; this list is found anywhere.
+     */
+    private static boolean hasRequestHint(String lower) {
+        for (String h : REQUEST_HINTS) {
+            if (lower.contains(h)) return true;
+        }
+        return false;
     }
 
     private static Intent classifyInternal(String prompt) {
@@ -571,7 +778,25 @@ public final class IntentClassifier {
 
     private static boolean hasLocalAnchor(String p, String lower) {
         if (containsAny(lower, LOCAL_ANCHORS)) return true;
-        return PATH_LIKE.matcher(p).find();
+        if (PATH_LIKE.matcher(p).find()) return true;
+        // ★ R411: a demonstrative pointed at a concrete artefact ★
+        if (containsAny(lower, DEMONSTRATIVES) && hasAnchoredArtefact(lower)) return true;
+        return false;
+    }
+
+    /**
+     * ★ THE ARTEFACT HALF OF THE PAIR ★ "sql" has to be a STANDALONE
+     * word — "nosql" and "mysql" contain it, and those are concept
+     * questions, not rows in this tree.
+     */
+    private static boolean hasAnchoredArtefact(String lower) {
+        if (containsAny(lower, ANCHORED_ARTIFACTS)) return true;
+        int at = lower.indexOf("sql");
+        while (at >= 0) {
+            if (isStandaloneAt(lower, at, "sql")) return true;
+            at = lower.indexOf("sql", at + 1);
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------

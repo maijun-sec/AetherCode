@@ -33,6 +33,7 @@ import java.util.stream.Stream;
 
 import org.aethercode.core.llm.ChatClient;
 import org.aethercode.core.message.Message;
+import org.aethercode.core.profile.ProfileRegistry;
 import org.aethercode.core.stream.StreamEvent;
 import org.aethercode.core.tool.Tool;
 import org.aethercode.protocol.jsonrpc.JsonRpcNotification;
@@ -149,7 +150,16 @@ class AetherCodeMethodsProfileR401Test {
         assertThat((String) r.get("error")).contains("reseacher");
         // the valid names travel with the error so a renderer never
         // has to hard-code them.
-        assertThat(((List<?>) r.get("profiles")).size()).isEqualTo(7);
+        //
+        // ★ R411: THE COUNT IS THE REGISTRY'S, NOT A COPY ★ the pin used
+        // to be the literal 7, and R411 added a profile (producer) — so
+        // it went red on a change that was CORRECT. The wire's
+        // contract is "it carries EVERY profile the registry has", and
+        // the registry's own list is pinned in
+        // ProfileRegistryR401Test — so the pair pins the vocabulary
+        // once and the completeness once, and neither copy drifts.
+        assertThat(((List<?>) r.get("profiles")).size())
+                .isEqualTo(ProfileRegistry.names().size());
         assertThat(((List<?>) r.get("profiles")).get(0).toString()).contains("builder");
         // ★ the previous override must SURVIVE the rejected call.
         assertThat(rig.engine.appState().profileOverride()).isEqualTo("researcher");
@@ -163,7 +173,12 @@ class AetherCodeMethodsProfileR401Test {
         // renderer renders the LABEL and sends the NAME back, so it
         // never needs its own copy of the vocabulary.
         List<?> profiles = (List<?>) r.get("profiles");
-        assertThat(profiles).hasSize(7);
+        // ★ R411: THE LIST IS THE REGISTRY'S ★ the wire must carry
+        // EXACTLY what the registry has — no more, no less, in the
+        // registry's order. The vocabulary itself is pinned once, in
+        // ProfileRegistryR401Test; this test pins that the wire does
+        // not filter or invent.
+        assertThat(profiles).hasSize(ProfileRegistry.names().size());
         java.util.List<String> names = new java.util.ArrayList<>();
         for (Object o : profiles) {
             @SuppressWarnings("unchecked")
@@ -171,8 +186,7 @@ class AetherCodeMethodsProfileR401Test {
             names.add((String) m.get("name"));
             assertThat((String) m.get("label")).isNotBlank();
         }
-        assertThat(names).containsExactly("builder", "debugger", "researcher", "analyst",
-                "reviewer", "operator", "navigator");
+        assertThat(names).containsExactlyElementsOf(ProfileRegistry.names());
     }
 
     // ------------------------------------------------------------------

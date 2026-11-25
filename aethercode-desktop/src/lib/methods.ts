@@ -853,8 +853,14 @@ export class AetherCodeRpc {
    * R401: override the intent classifier's profile for this session.
    *
    * `profile` is a profile name (`builder` / `debugger` / `researcher` /
-   * `analyst` / `reviewer` / `operator` / `navigator`) or `null` /
-   * `'auto'` to hand the decision back to the classifier.
+   * `analyst` / `reviewer` / `operator` / `navigator` / `producer`) or
+   * `null` / `'auto'` to hand the decision back to the classifier.
+   *
+   * ★ R411: THIS LIST IS A COPY, AND IT IS ONLY A COMMENT ★ the
+   * registry grew a profile (`producer` — a turn whose deliverable has
+   * to land on disk but is not code). The picker does NOT read this
+   * list: it reads the names the daemon sends back. Keep the comment
+   * roughly in step, but never let it become the source.
    *
    * The daemon REJECTS an unknown name (it does not silently fall back
    * to "auto") — a typo that fell back would look like the override

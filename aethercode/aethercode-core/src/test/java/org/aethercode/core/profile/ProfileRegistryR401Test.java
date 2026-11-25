@@ -76,7 +76,11 @@ class ProfileRegistryR401Test {
 
     @Test
     void anUnknownIntentFallsBackToTheReadOnlyProfile() {
-        assertSame(ProfileRegistry.NAVIGATOR, ProfileRegistry.forIntent(null));
+        // ★ R411: THE CAST IS NOT COSMETIC ★ `forIntent` now has two
+        // overloads (a Kind, and the whole Intent), so a bare `null` is
+        // ambiguous. The cast says WHICH null is meant: the KIND.
+        assertSame(ProfileRegistry.NAVIGATOR,
+                ProfileRegistry.forIntent((IntentClassifier.Kind) null));
         // UNCERTAIN is the "no signal" verdict — it must land on the
         // READ-ONLY posture, because "we do not know what you want"
         // must not become "so we wrote some files".
@@ -230,8 +234,13 @@ class ProfileRegistryR401Test {
     void theRegistryIsTheSingleSourceOfProfileNames() {
         // The wire exposes the names; a renderer must not hard-code
         // them. The registry is the truth.
+        //
+        // ★ R411: THE LIST GREW ★ `producer` is the write-capable
+        // posture for a turn whose deliverable is not code (a poem saved
+        // to a file, a SQL fix written out). It is LAST because it was
+        // added last — the order IS the registry's registration order.
         assertEquals(List.of("builder", "debugger", "researcher", "analyst",
-                        "reviewer", "operator", "navigator"),
+                        "reviewer", "operator", "navigator", "producer"),
                 ProfileRegistry.names());
         assertEquals(ProfileRegistry.names().size(), ProfileRegistry.all().size());
         for (Profile p : ProfileRegistry.all()) {
@@ -244,9 +253,17 @@ class ProfileRegistryR401Test {
         // The directive text lives in the profile — the classifier
         // names the kind, the profile owns the wording. Two copies of
         // the same wording would drift.
+        //
+        // ★ R411: THE PIN IS THE SHAPE, NOT THE ROUND NUMBER ★ the
+        // marker used to be the literal "# Task posture (R401", and
+        // R411 added a profile whose directive is marked "(R411, …)" —
+        // so the pin went red on a change that was CORRECT. The
+        // invariant is "every profile in the registry carries a per-turn
+        // task-posture directive", and the round number inside the
+        // marker is a spelling detail (R384's Lesson 1233).
         for (Profile p : ProfileRegistry.all()) {
-            assertTrue(p.systemPrompt().contains("# Task posture (R401"),
-                    p.name() + " directive does not carry the R401 marker");
+            assertTrue(p.systemPrompt().startsWith("# Task posture ("),
+                    p.name() + " directive is not a per-turn task posture");
         }
     }
 

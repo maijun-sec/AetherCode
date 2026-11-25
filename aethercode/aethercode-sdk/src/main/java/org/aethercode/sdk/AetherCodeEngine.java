@@ -4014,7 +4014,13 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
             // back to the classifier's verdict instead.
             if (p != null) return p;
         }
-        return org.aethercode.core.profile.ProfileRegistry.forIntent(intent.kind());
+        // ★ R411: THE WHOLE VERDICT, NOT JUST THE KIND ★ the domain
+        // axis picks the posture; the capability axis ("does this turn
+        // ask for the working tree to change?") decides whether the
+        // write channel is handed over. Passing only the kind would
+        // drop the second axis — and a turn that has to land on disk
+        // (a poem saved to a file) would be pruned back to read-only.
+        return org.aethercode.core.profile.ProfileRegistry.forIntent(intent);
     }
 
     /**

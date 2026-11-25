@@ -304,6 +304,55 @@ public final class ProfileRegistry {
             null,
             Set.of());
 
+    /**
+     * R411: PRODUCER — the turn asks for a DELIVERABLE to be written to
+     * disk, and the deliverable is not code.
+     *
+     * <p>★ WHY THIS PROFILE EXISTS ★ The domain axis and the capability
+     * axis answer different questions, and R408 measured what happens
+     * when one table has to answer both. "Write a poem about autumn and
+     * save it to poem.txt" is not code work, so the domain said
+     * UNCERTAIN, so the read-only {@link #NAVIGATOR} was chosen, so the
+     * write tool was PRUNED — and the user's file was never written. The
+     * poem had nothing to do with the requirement, and the requirement
+     * had nothing to do with the poem.
+     *
+     * <p>So a turn that must land ON DISK gets THIS posture when its
+     * domain profile is read-only. The posture is deliberately
+     * domain-neutral: it says "produce what was asked, where it was
+     * asked for", and it explicitly forbids the model from turning the
+     * request into a different KIND of work.
+     *
+     * <p>★ IT MUST NOT LIE ★ A posture that said "this turn is
+     * read-only" while the turn held {@code file_write} would be the
+     * exact defect R401 was written to remove (a prompt that says one
+     * thing while the structure says another). That is why this is a
+     * separate profile and not the read-only one with an extra line
+     * appended.
+     */
+    public static final Profile PRODUCER = new Profile(
+            "producer",
+            "写入产出",
+            "把产物按要求写进工作树（产物可以是代码、文档、诗或数据）",
+            """
+                    # Task posture (R411, per-turn)
+
+                    This turn asks for a **deliverable to be written to disk**. The product may be
+                    code, a document, a note, a query or anything else — the request decides what
+                    it is, not this profile.
+
+                    - Produce exactly what was asked, and put it where the user said. If they named
+                      a file, write that file; if they named a place, use that place.
+                    - Read the target before you change it, when the target already exists.
+                    - Do not reshape the request into different work: a poem stays a poem, a SQL
+                      fix stays a SQL fix. Do not add files, scaffolding, samples or documentation
+                      that nobody asked for.
+                    - If the request needs material from outside this tree, gather it first
+                      (`web_search` / `web_fetch`), then write the result.
+                    - Finish by saying what you wrote and where.""",
+            null,
+            Set.of());
+
     /** UNCERTAIN — the classifier found no usable signal. This is the
      *  DEFAULT posture and it is deliberately READ-ONLY: "we do not know
      *  what you want" must not become "so we wrote some files". The
@@ -341,6 +390,7 @@ public final class ProfileRegistry {
         REGISTRY.put(REVIEWER.name(), REVIEWER);
         REGISTRY.put(OPERATOR.name(), OPERATOR);
         REGISTRY.put(NAVIGATOR.name(), NAVIGATOR);
+        REGISTRY.put(PRODUCER.name(), PRODUCER);
     }
 
     /** every profile name, in registration order. */
@@ -405,6 +455,62 @@ public final class ProfileRegistry {
             case UNCERTAIN:
             default:         return NAVIGATOR;
         }
+    }
+
+    /**
+     * The profile for a WHOLE verdict — R411.
+     *
+     * <p>The domain axis picks the posture's wording; the capability
+     * axis decides whether the write channel is handed over. They are
+     * separate questions, so this method answers both:
+     *
+     * <ol>
+     *   <li>the domain profile — {@link #forIntent(Kind)};</li>
+     *   <li>if that profile is read-only AND the turn asks for the
+     *       working tree to change, the turn is escalated to
+     *       {@link #PRODUCER}, which is write-capable and
+     *       domain-neutral.</li>
+     * </ol>
+     *
+     * <p>★ WHY THE ESCALATION IS NOT "ADD THE WRITE TOOLS TO THE
+     * READ-ONLY PROFILE" ★ the read-only postures say, in their own
+     * words, "do not create or modify files". A write-capable turn
+     * running under that wording is a prompt that contradicts the tool
+     * set — the defect R401 was written to remove. So the escalated
+     * turn gets a posture that says what it is.
+     *
+     * <p>★ AND WHY THE WRITE-CAPABLE DOMAINS ARE NOT TOUCHED ★
+     * CODE_CHANGE and OPS already grant the write channel, and their
+     * postures are worth keeping: "read the surrounding code before you
+     * write" is better advice than "produce exactly what was asked".
+     */
+    public static Profile forIntent(IntentClassifier.Intent intent) {
+        if (intent == null) return NAVIGATOR;
+        Profile base = forIntent(intent.kind());
+        if (intent.requestsWorkspaceChange() && !grantsWrite(base)) {
+            return PRODUCER;
+        }
+        return base;
+    }
+
+    /**
+     * Does this profile leave a write channel in the pool?
+     *
+     * <p>★ THE DENY SET IS THE TRUTH ★ a profile that denies none of
+     * the write tools keeps them; one that denies any of them does not.
+     * The question is asked of the DENY LIST rather than of a list of
+     * "write-capable profiles", because a new profile would otherwise
+     * have to be added to that list — and a list nobody updates is a
+     * list that silently loses a capability.
+     */
+    public static boolean grantsWrite(Profile profile) {
+        if (profile == null) return false;
+        Set<String> denied = profile.deniedTools();
+        if (denied == null || denied.isEmpty()) return true;
+        for (String w : WRITE_TOOLS) {
+            if (denied.contains(w)) return false;
+        }
+        return true;
     }
 
     /**
