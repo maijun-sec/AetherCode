@@ -1771,6 +1771,12 @@ interface AppState {
    *  show it and the user can override it. */
   intentKind: string | null;
   intentLabel: string | null;
+  /** R412: WHY the daemon decided what it decided ("no intent signal",
+   * "implementation verb: create the"). The label says what happened;
+   * this says why — and "why" is the question a user asks when the
+   * decision looks wrong. It travels on the `run_start` frame AND on
+   * the polled `getState` payload, under the same key. */
+  intentReason: string | null;
   profileName: string | null;
   profileLabel: string | null;
   /** R401: the user's PROFILE OVERRIDE for this session. `null` = auto
@@ -2987,8 +2993,12 @@ export const useStore = create<AppState>((set, get) => {
           const kl = typeof (ev as any).intentLabel === 'string' ? (ev as any).intentLabel : null;
           const p = typeof (ev as any).profile === 'string' ? (ev as any).profile : null;
           const pl = typeof (ev as any).profileLabel === 'string' ? (ev as any).profileLabel : null;
+          // R412: the WHY. The label says what the daemon decided; the
+          // reason says why it decided it — which is the thing a user
+          // needs when the decision looks wrong.
+          const kr = typeof (ev as any).intentReason === 'string' ? (ev as any).intentReason : null;
           if (k || p) {
-            set({ intentKind: k, intentLabel: kl, profileName: p, profileLabel: pl });
+            set({ intentKind: k, intentLabel: kl, intentReason: kr, profileName: p, profileLabel: pl });
           }
         }
         // Begin of a new run. Reset watchdog timer so it doesn't
@@ -4801,6 +4811,8 @@ export const useStore = create<AppState>((set, get) => {
     // R401: no verdict yet (the daemon sends it on `run_start`).
     intentKind: null,
     intentLabel: null,
+    // R412: no "why" yet.
+    intentReason: null,
     profileName: null,
     profileLabel: null,
     // R401: no override — the classifier decides.
@@ -5953,6 +5965,21 @@ export const useStore = create<AppState>((set, get) => {
         // global (one preference, applies to every
         // session until the user changes it).
         cumulativeCostUsd: 0,
+        // R412: THE VERDICT IS PER-SESSION. The header chip shows the
+        // daemon's verdict for the turn; that verdict belongs to the
+        // session we are LEAVING. Keeping it would show session A's
+        // verdict while the user reads session B — and the chip is the
+        // one thing the user trusts to describe the current turn, so a
+        // stale verdict here is worse than no verdict at all.
+        //
+        // The new session's own verdict arrives with the next
+        // `getState` poll (or with its next `run_start`), so clearing
+        // here costs nothing but buys the absence of a lie.
+        intentKind: null,
+        intentLabel: null,
+        intentReason: null,
+        profileName: null,
+        profileLabel: null,
       });
       // reset the module-scope step-boundary flag so the
       // first text_delta of the new session takes the
@@ -8555,6 +8582,61 @@ export const useStore = create<AppState>((set, get) => {
                 ? mapDaemonToUiPermission(r.permissionMode)
                 : get().permissionMode,
         } as Partial<AppState>);
+        // R412: THE VERDICT, READ BACK FROM THE DAEMON.
+        //
+        // ★ WHY THIS IS NOT A MIRROR OF THE EVENT ★ the verdict used to
+        // travel only on the `run_start` frame, so the renderer could
+        // show it only while a run was streaming. After a reload, a
+        // reconnect or a session switch there was nothing to show — and
+        // that is exactly when the user wants to know "what did the
+        // agent think this turn was about, and why". The daemon now
+        // carries the same verdict on the POLLED state, under the same
+        // key names, so one parser reads both.
+        //
+        // ★ NULL DOES NOT ERASE ★ a session that has not run yet has no
+        // verdict, and the daemon says so with nulls. Wiping the
+        // header on every 15 s poll would make the chip flicker, and it
+        // would also erase a verdict the `run_start` frame just
+        // delivered. So: only a verdict that is actually PRESENT is
+        // applied; a null leaves whatever we already know in place.
+        // (The exception is `profileOverride`, where null IS a value —
+        // it means "auto" — so that one is applied whenever the daemon
+        // sends the key at all.)
+        {
+          const verdict: Partial<AppState> = {};
+          if (typeof r.intent === 'string' && r.intent.length > 0) {
+            verdict.intentKind = r.intent;
+            verdict.intentLabel =
+              typeof r.intentLabel === 'string' ? r.intentLabel : null;
+            verdict.intentReason =
+              typeof r.intentReason === 'string' ? r.intentReason : null;
+          }
+          if (typeof r.profile === 'string' && r.profile.length > 0) {
+            verdict.profileName = r.profile;
+            verdict.profileLabel =
+              typeof r.profileLabel === 'string' ? r.profileLabel : null;
+          }
+          // "auto" is a real answer: the user asked the classifier to
+          // decide. Apply it whenever the daemon speaks about the
+          // override — an ABSENT key means an older daemon that knows
+          // nothing about overrides, and that must not erase what this
+          // client already knows.
+          if ('profileOverride' in r) {
+            verdict.profileOverride =
+              typeof r.profileOverride === 'string' ? r.profileOverride : null;
+          }
+          // the vocabulary for the picker. Without it the chip renders
+          // but its dropdown is EMPTY, so "one click to correct" has
+          // nothing to click — the picker must survive a reload.
+          if (Array.isArray(r.profiles)) {
+            verdict.profiles = r.profiles as Array<{
+              name: string;
+              label: string;
+              description: string;
+            }>;
+          }
+          if (Object.keys(verdict).length > 0) set(verdict);
+        }
         // R749 (2026-10-21): reconcile the local streaming flag
         // against the engine's AUTHORITATIVE in-flight registry.
         //

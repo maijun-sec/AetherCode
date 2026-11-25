@@ -78,6 +78,27 @@ public class AppState {
      *  {@code query}); the subagent path only READS it. Null when no
      *  main turn is running. */
     private volatile org.aethercode.core.profile.Profile activeProfile = null;
+    /**
+     * R412: the INTENT verdict of the last MAIN turn — the kind, its
+     * label and the classifier's reason for it.
+     *
+     * <p>★ WHY THE PROFILE WAS NOT ENOUGH ★ {@link #activeProfile}
+     * answers "which tools did this turn get", but the user's question
+     * is "what did the agent think this turn WAS about". The profile
+     * name ("navigator") is an implementation word; the intent ("未识别")
+     * and its reason ("no intent signal") are the ones that explain it.
+     *
+     * <p>★ WHY IT IS PUBLISHED AND NOT JUST STREAMED ★ the verdict
+     * used to live ONLY on the {@code run_start} event, so it was
+     * visible only DURING a run. After a reload, a reconnect or a
+     * session switch the desktop had nothing to show — which is
+     * exactly when the user wants to know why the agent behaved the
+     * way it did. Published next to the profile, it is readable for as
+     * long as the session lives.
+     *
+     * <p>Null when no main turn has run yet.
+     */
+    private volatile org.aethercode.core.intent.IntentClassifier.Intent activeIntent = null;
     private final java.util.List<Message> transcript = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final java.util.List<Tool> toolPool = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, Object> attributes = new ConcurrentHashMap<>();
@@ -180,6 +201,13 @@ public class AppState {
      *  right now, or null when no main turn is running. */
     public org.aethercode.core.profile.Profile activeProfile() { return activeProfile; }
     public AppState activeProfile(org.aethercode.core.profile.Profile p) { this.activeProfile = p; return this; }
+    /** R412: the INTENT verdict of the last main turn (kind + label +
+     *  reason), or null when no main turn has run yet. */
+    public org.aethercode.core.intent.IntentClassifier.Intent activeIntent() { return activeIntent; }
+    public AppState activeIntent(org.aethercode.core.intent.IntentClassifier.Intent i) {
+        this.activeIntent = i;
+        return this;
+    }
     public String mainLoopModel() { return mainLoopModel; }
     public AppState mainLoopModel(String m) { this.mainLoopModel = m; return this; }
     public List<Message> transcript() { return transcript; }

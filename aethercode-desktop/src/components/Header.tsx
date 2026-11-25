@@ -101,6 +101,7 @@ export function Header({
   // the daemon itself published, so the vocabulary lives in exactly
   // one place.
   const intentLabel = useStore((s) => s.intentLabel);
+  const intentReason = useStore((s) => s.intentReason);
   const profileLabel = useStore((s) => s.profileLabel);
   const profileName = useStore((s) => s.profileName);
   const profileOverride = useStore((s) => s.profileOverride);
@@ -479,8 +480,8 @@ export function Header({
               onClick={() => setIntentOpen((v) => !v)}
               title={
                 profileOverride
-                  ? `档案已锁定为 ${profileOverride}（点击切换回自动）`
-                  : `意图：${intentLabel} · 档案：${profileLabel ?? profileName ?? '—'}（点击切换档案）`
+                  ? `档案已锁定为 ${profileOverride}（点击切换回自动）${intentReason ? `\n判定依据：${intentReason}` : ''}`
+                  : `意图：${intentLabel} · 档案：${profileLabel ?? profileName ?? '—'}（点击切换档案）${intentReason ? `\n判定依据：${intentReason}` : ''}`
               }
               data-testid="header-intent-chip"
             >

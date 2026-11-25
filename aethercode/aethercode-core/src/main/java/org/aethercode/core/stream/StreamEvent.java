@@ -44,14 +44,28 @@ public sealed interface StreamEvent {
      * from the daemon). Null means "no verdict" — a run started
      * outside the main loop (a subagent's inner loop, a test).
      *
-     * <p>The 2-arg constructor is kept so the ~50 existing call sites
-     * (tests, the stream-json emitter) keep compiling unchanged.
+     * <p>R412: the fifth field is the classifier's REASON — the "why"
+     * behind the verdict ("implementation verb: create the"). A label
+     * alone ("未识别") tells the user what the agent decided but not
+     * why it decided it, and "why" is the question a user asks when
+     * the decision looks wrong.
+     *
+     * <p>The 2-arg and 6-arg constructors are kept so the ~50 existing
+     * call sites (tests, the stream-json emitter) keep compiling
+     * unchanged.
      */
     record RunStart(String runId, String model,
                     String intent, String intentLabel,
-                    String profile, String profileLabel) implements StreamEvent {
+                    String profile, String profileLabel,
+                    String intentReason) implements StreamEvent {
         public RunStart(String runId, String model) {
-            this(runId, model, null, null, null, null);
+            this(runId, model, null, null, null, null, null);
+        }
+
+        public RunStart(String runId, String model,
+                        String intent, String intentLabel,
+                        String profile, String profileLabel) {
+            this(runId, model, intent, intentLabel, profile, profileLabel, null);
         }
     }
 

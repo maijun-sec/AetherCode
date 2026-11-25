@@ -126,6 +126,29 @@ export interface EngineState {
   // the user can accept the suggestion via the existing
   // setPermissionMode RPC.
   permissionModeSuggestion?: { mode: string; reasons: string[] } | null;
+  // ★ R412: THE VERDICT FOR THIS SESSION ★ the daemon's answer to
+  // "what did the agent think this turn was about, and therefore which
+  // tools may it touch?".
+  //
+  // The key names are the run_start EVENT's names on purpose: one
+  // vocabulary, two carriers, and a client parses the verdict the same
+  // way whether it came from the live event or from this polled state.
+  //
+  // ★ WHY THE POLLED STATE CARRIES IT ★ the event only fires WHILE a
+  // run streams. After a reload, a reconnect or a session switch there
+  // was nothing left to show — and that is exactly when the user asks
+  // "why did it do that?".
+  intent?: string | null;
+  intentLabel?: string | null;
+  /** the classifier's WHY ("implementation verb: create the"). */
+  intentReason?: string | null;
+  /** the RESOLVED profile — the override when set, else the classifier's pick. */
+  profile?: string | null;
+  profileLabel?: string | null;
+  /** the user's override for this session (null = "auto"). */
+  profileOverride?: string | null;
+  /** the vocabulary for the profile picker: the registry is the truth. */
+  profiles?: Array<{ name: string; label: string; description: string }>;
   // loop-detector thresholds. -1 on either axis
   // means "disabled" (the engine's QueryEngine maps
   // any non-positive value to -1). The Settings

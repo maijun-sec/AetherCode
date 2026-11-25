@@ -2981,6 +2981,50 @@ public class AetherCodeMethods {
                 // never auto-allowed are not in the map.
                 "byTool",   target.skipStatsByTool()
         ));
+        // R412: THE VERDICT FOR THIS SESSION, ON THE POLLED STATE.
+        //
+        // ★ WHY IT HAS TO BE HERE AND NOT ONLY ON THE EVENT ★ the
+        // verdict used to travel ONLY on the run_start event, so the
+        // renderer could show it only WHILE a run was streaming. After a
+        // reload, a reconnect or a session switch there was nothing to
+        // show — and that is exactly when the user wants to know "what
+        // did the agent think this turn was about, and why".
+        //
+        // ★ THE KEY NAMES ARE THE EVENT'S ★ intent / intentLabel /
+        // profile / profileLabel are the names the run_start event
+        // already uses, so a client reads the verdict from either
+        // source with one parser and the two cannot drift.
+        org.aethercode.core.intent.IntentClassifier.Intent verdict =
+                target.appState().activeIntent();
+        org.aethercode.core.profile.Profile resolved = target.appState().activeProfile();
+        // ★ THE VERDICT IS A UNIT ★ the intent and the profile describe
+        // the SAME turn, so they are reported together or not at all.
+        //
+        // The profile alone can outlive the turn it belongs to: it is
+        // deliberately NOT cleared on a session switch (it is the live
+        // restriction a running parent turn needs — see
+        // AetherCodeEngine.loadSession), and one engine serves many
+        // sessions. So a session that has not run yet would otherwise
+        // report ANOTHER session's posture as its own — half a verdict,
+        // and the half the user would read as "this session runs under
+        // this posture".
+        //
+        // No intent => no verdict => both null. The next turn in this
+        // session sets both again.
+        boolean hasVerdict = verdict != null;
+        r.put("intent",       hasVerdict ? verdict.token() : null);
+        r.put("intentLabel",  hasVerdict ? verdict.label() : null);
+        r.put("intentReason", hasVerdict ? verdict.reason() : null);
+        r.put("profile",      hasVerdict && resolved != null ? resolved.name() : null);
+        r.put("profileLabel", hasVerdict && resolved != null ? resolved.label() : null);
+        // the user's override for this session (null = "auto"). The
+        // renderer must show the DAEMON's truth here: a lock icon that
+        // only this client instance knows about is a lock icon that
+        // lies after a reload.
+        r.put("profileOverride", target.appState().profileOverride());
+        // the vocabulary for the picker. The registry is the truth; the
+        // renderer must not keep its own copy of the names.
+        r.put("profiles", org.aethercode.core.profile.ProfileRegistry.describeAll());
         return r;
     }
 
@@ -9562,6 +9606,10 @@ public class AetherCodeMethods {
             r.put("intentLabel", rs.intentLabel());
             r.put("profile",     rs.profile());
             r.put("profileLabel", rs.profileLabel());
+            // R412: the WHY behind the verdict. The label says what the
+            // agent decided; this says why it decided it — and "why" is
+            // the question a user asks when the decision looks wrong.
+            r.put("intentReason", rs.intentReason());
         } else if (ev instanceof StreamEvent.TextDelta td) {
             r.put("type", "text_delta");
             r.put("text", td.text());

@@ -2737,6 +2737,32 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // the engine's startup sessionId, which the user can't
         // ever escape.
         appState.sessionId(sessionId);
+        // R412: THE VERDICT BELONGS TO THE SESSION THAT RAN THE TURN.
+        //
+        // ★ WHY THIS IS HERE ★ one engine serves MANY sessions: the
+        // daemon registers this engine under the new id
+        // (syncSessionManagerRegistration, below), so the AppState —
+        // and with it the verdict — is shared across the sessions this
+        // engine has served. The verdict it still carries belongs to
+        // the PREVIOUS session's turn.
+        //
+        // The desktop clears the chip on a session switch — and the very
+        // next poll (every 15 s) would bring the old verdict straight
+        // back, so the leak has to be closed HERE, not in the renderer.
+        //
+        // ★ AND WHY THE PROFILE IS DELIBERATELY NOT CLEARED ★
+        // activeProfile is not only a display fact: the subagent path
+        // prunes the CHILD's tool pool with it, so a running read-only
+        // parent must keep its restriction even when the user walks
+        // away to another session. Clearing it here would let that
+        // parent launder writes through a child — exactly the hole
+        // R401 closed.
+        //
+        // The verdict is different: it is a statement about a turn, and
+        // the newly-loaded session's last turn is one we do not know
+        // (it was never persisted). "No verdict" is the honest answer;
+        // the next turn in this session sets it again.
+        appState.activeIntent(null);
         // R403: the checkpoints belong to a session, so switching
         // sessions switches the checkpoint store — and loads the new
         // session's points from disk.
@@ -3994,6 +4020,14 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // here, and a stale profile only ever errs towards MORE
         // restriction. The next main turn overwrites it.
         appState.activeProfile(profile);
+        // R412: publish the INTENT too, next to the profile. The
+        // verdict used to travel only on the run_start event, so it was
+        // visible only DURING a run — and a user who reloads the app
+        // or switches sessions has no way to ask "what did the agent
+        // think this turn was about?". Published here, it is readable
+        // for as long as the session lives, and the wire can carry it
+        // in the polled state.
+        appState.activeIntent(intent);
         return queryInternal(userInput, override,
                 new org.aethercode.core.intent.RunContext(intent, profile, pool));
     }

@@ -2239,6 +2239,12 @@ public class QueryEngine {
                 (ctx != null && ctx.profile() != null) ? ctx.profile().name() : null;
         final String profileLabel =
                 (ctx != null && ctx.profile() != null) ? ctx.profile().label() : null;
+        // R412: the classifier's REASON — the "why" behind the verdict.
+        // The label says what the agent decided; the reason says why,
+        // and "why" is the question a user asks when the decision
+        // looks wrong.
+        final String intentReason =
+                (ctx != null && ctx.intent() != null) ? ctx.intent().reason() : null;
         // per-query loop detector. Built fresh each query so
         // prior-session history doesn't bleed into the new one. The
         // detector's window/threshold come from the live volatile
@@ -2482,7 +2488,8 @@ private Stream<StreamEvent> currentLlmStream;
                         if (!runStartEmitted) {
                             runStartEmitted = true;
                             emit(new StreamEvent.RunStart(runId, effectiveChatClient.modelId(),
-                                    intentToken, intentLabel, profileName, profileLabel));
+                                    intentToken, intentLabel, profileName, profileLabel,
+                                    intentReason));
                         }
                         // emit any sub-task transitions BEFORE the LLM
                         // stream starts. On the first turn, this surfaces the
