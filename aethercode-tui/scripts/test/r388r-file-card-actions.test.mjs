@@ -71,6 +71,7 @@ const CARD = join(ROOT, "src", "components", "FileChangesCard.tsx");
 const ACTIONS = join(ROOT, "src", "fileCardActions.ts");
 const CHANGES = join(ROOT, "src", "fileChanges.ts");
 const SCROLLBACK = join(ROOT, "src", "components", "Scrollback.tsx");
+const CHATBLOCKS = join(ROOT, "src", "components", "ChatBlocks.tsx");
 const TUI = join(ROOT, "src", "tui.tsx");
 const PROBE_FIXTURE = join(ROOT, "scripts", "test", "fixtures", "r388r-routing-probe.tsx");
 const GROUPING_FIXTURE = join(ROOT, "scripts", "test", "fixtures", "r388r-grouping-probe.ts");
@@ -527,17 +528,37 @@ test("R388r: the Scrollback PASSES the callbacks down", () => {
   // the name in place, so the test stayed green. So the check is on
   // the WIRING: the card's `onUndo` prop must be handed the app's
   // `onUndoFileCard`.
+  // ★ R389 — THE CHAIN HAS TWO HOPS NOW ★ The card is no longer
+  // rendered by the Scrollback: the chat column is the desktop's flat
+  // document, and the file-changes summary is a BLOCK of it. So the
+  // callbacks travel Scrollback → ChatBlocks → the card.
+  //
+  // What is pinned is the CHAIN, not the number of hops: the app's
+  // callback must reach the card. A gate that pinned "the Scrollback
+  // calls it" would go red on a correct refactor (Lesson 1233), and
+  // a gate that pinned only the LAST hop would pass while the middle
+  // hop dropped it on the floor.
   const scroll = readFileSync(SCROLLBACK, "utf8");
+  const chatBlocks = readFileSync(CHATBLOCKS, "utf8");
   const wiring = [
     ["onShowFiles", "onShowFileCardFiles"],
     ["onUndo", "onUndoFileCard"],
     ["onReview", "onReviewFileCard"],
   ];
   for (const [cardProp, appProp] of wiring) {
+    // Hop 1: the Scrollback hands the app's callback DOWN.
     assert.match(
       scroll,
-      new RegExp(cardProp + "=\\{\\(\\) => " + appProp + "\\?\\.\\(group\\.turn\\.id\\)\\}"),
-      "r388r: the Scrollback does not hand '" +
+      new RegExp(appProp + "=\\{" + appProp + "\\}"),
+      "r388r: the Scrollback does not pass the app's '" +
+        appProp +
+        "' down to the chat column — the card's action would do nothing.",
+    );
+    // Hop 2: the chat column hands it to the card.
+    assert.match(
+      chatBlocks,
+      new RegExp(cardProp + "=\\{\\(\\) => " + appProp + "\\?\\.\\("),
+      "r388r: the chat column does not hand '" +
         cardProp +
         "' the app's '" +
         appProp +

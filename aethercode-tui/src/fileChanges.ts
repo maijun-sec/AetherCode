@@ -214,14 +214,84 @@ export function fileChangeGroupIdAt(
   index: number,
 ): number | undefined {
   const t = turns[index];
-  if (!t || !fileChangeOfTurnParts(t.role, t.toolName, t.toolArgs)) return undefined;
-  let start = index;
-  while (start > 0) {
-    const prev = turns[start - 1];
-    if (!fileChangeOfTurnParts(prev.role, prev.toolName, prev.toolArgs)) break;
-    start--;
+  if (!t) return undefined;
+  return fileChangeGroupIds(turns).get(t.id);
+}
+
+/**
+ * ★ R389 — THE GROUPING, COMPUTED ONCE ★
+ *
+ * <p>Three places need to know which run of consecutive file-changing
+ * turns a turn belongs to:
+ *
+ * <ul>
+ *   <li>the APP, which asks "which card does the `u` key act on?"
+ *       (`fileChangeGroupIdAt`);</li>
+ *   <li>the CARD, which groups the turns it renders (`groupTurns` in
+ *       `Scrollback.tsx`);</li>
+ *   <li>the CHAT COLUMN, which collapses the same runs into one
+ *       summary row inside the agent block (`chat/blocks.ts`).</li>
+ * </ul>
+ *
+ * <p>★ THREE CALLERS, ONE ALGORITHM ★ If any two of them disagreed,
+ * a key would act on a card the user is not looking at — which is the
+ * exact failure the R388r gate was written to catch. So the scan
+ * lives HERE, once, and the other two read this.
+ *
+ * <p>The scan is the same one the old backward-walking
+ * `fileChangeGroupIdAt` did: a run of consecutive file-changing turns,
+ * broken by any turn that is not one.
+ *
+ * @param turns the turns, in order
+ * @returns turn id → the run's FIRST turn id
+ */
+export function fileChangeGroupIds(
+  turns: ReadonlyArray<{ id: number; role?: string; toolName?: string; toolArgs?: string }>,
+): Map<number, number> {
+  const groups = new Map<number, number>();
+  for (const run of fileChangeRuns(turns)) {
+    for (const id of run.turnIds) groups.set(id, run.startId);
   }
-  return turns[start].id;
+  return groups;
+}
+
+/**
+ * ★ R389 — THE RUNS, AS RUNS ★
+ *
+ * <p>The same scan as `fileChangeGroupIds`, but the result keeps the
+ * run's MEMBER ids — which is what the chat column needs to collapse
+ * a run of file-changing tool calls into ONE summary row.
+ *
+ * @param turns the turns, in order
+ * @returns the runs, in order
+ */
+export function fileChangeRuns(
+  turns: ReadonlyArray<{ id: number; role?: string; toolName?: string; toolArgs?: string }>,
+): FileChangeRun[] {
+  const runs: FileChangeRun[] = [];
+  let run: number[] = [];
+  const close = () => {
+    if (run.length === 0) return;
+    runs.push({ startId: run[0], turnIds: run });
+    run = [];
+  };
+  for (const t of turns) {
+    if (fileChangeOfTurnParts(t.role, t.toolName, t.toolArgs)) {
+      run.push(t.id);
+      continue;
+    }
+    close();
+  }
+  close();
+  return runs;
+}
+
+/** One run of consecutive file-changing turns. */
+export interface FileChangeRun {
+  /** The run's FIRST turn id — the group's id. */
+  startId: number;
+  /** Every turn id in the run, in order. */
+  turnIds: number[];
 }
 
 /**

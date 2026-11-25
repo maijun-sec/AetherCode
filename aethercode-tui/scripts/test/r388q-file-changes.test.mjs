@@ -57,13 +57,26 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(fileURLToPath(new URL("../..", import.meta.url)));
 const CARD = join(ROOT, "src", "components", "FileChangesCard.tsx");
 const FILE_CHANGES = join(ROOT, "src", "fileChanges.ts");
 const SCROLLBACK = join(ROOT, "src", "components", "Scrollback.tsx");
 const TUI = join(ROOT, "src", "tui.tsx");
+
+// ★ THE REAL GROUPING MODULE ★ `fileChanges.ts` is a pure module with
+// no imports, so Node can load it directly (type stripping) — no
+// bundler, no fixture, and the MUTATION sandbox's copy is the one that
+// gets loaded, so a mutation IS measured.
+//
+// ★ WHY IT IS LOADED HERE ★ The grouping rule used to be asserted by
+// GREPPING the Scrollback's source for `pending = null;`. That is a
+// LOOKUP, and a lookup can be satisfied without the rule holding: any
+// mutation that broke the grouping in another shape left the text in
+// place and the gate stayed GREEN. So the gate CALLS the rule and
+// asserts on the VALUES.
+const changes = await import(pathToFileURL(FILE_CHANGES).href);
 
 // ═══════════════════════════════════════════════════════════════════
 // THE MEASUREMENT
@@ -557,15 +570,64 @@ test("R388q: the Scrollback GROUPS the file changes — a bash turn breaks the g
   // the middle of a batch of writes silently merges the writes on
   // either side of it into one summary — a summary that claims to be
   // one batch of changes but is two.
-  const src = readFileSync(SCROLLBACK, "utf8");
-  assert.match(src, /function groupTurns/, "R388q: the Scrollback no longer groups the turns.");
-  // The group must be BROKEN by a non-file change.
-  const grouper = src.slice(src.indexOf("function groupTurns"));
-  const seg = grouper.slice(0, grouper.indexOf("\n}\n"));
-  assert.match(
-    seg,
-    /pending = null;[\s\S]{0,200}groups\.push/,
+  //
+  // ★ MEASURED, NOT GREPPED ★ The turns are: write, write, bash,
+  // write. The bash BREAKS the group, so the runs are [1,2] and [4].
+  // The previous version of this test read the source and looked for
+  // `pending = null;` — a LOOKUP that a mutation could satisfy
+  // without the rule holding.
+  // ★ THE ARGS MUST BE BUILT WITH JSON.stringify ★ A hand-written
+  // `"content":"a\n"` in a JS string carries a REAL newline, so the
+  // JSON is malformed, `JSON.parse` throws, and the rule reports "not
+  // a file change" — which looks like a broken rule and is really a
+  // broken fixture. (This is the same trap the R388r grouping probe
+  // documents.)
+  const turns = [
+    {
+      id: 1,
+      role: "tool",
+      toolName: "file_write",
+      toolArgs: JSON.stringify({ file_path: "a.ts", content: "a\n" }),
+    },
+    {
+      id: 2,
+      role: "tool",
+      toolName: "file_edit",
+      toolArgs: JSON.stringify({ file_path: "b.ts", old_string: "x", new_string: "y" }),
+    },
+    {
+      id: 3,
+      role: "tool",
+      toolName: "bash",
+      toolArgs: JSON.stringify({ command: "ls" }),
+    },
+    {
+      id: 4,
+      role: "tool",
+      toolName: "file_write",
+      toolArgs: JSON.stringify({ file_path: "c.ts", content: "c\n" }),
+    },
+  ];
+  const runs = changes.fileChangeRuns(turns);
+  assert.deepEqual(
+    runs.map((r) => r.turnIds),
+    [[1, 2], [4]],
     "R388q: a non-file-change turn no longer ends the group — two batches of writes would merge into one summary.",
+  );
+  // ★ AND THE CARD AND THE APP READ THAT ONE RULE ★ If either side
+  // kept a copy, the card the user sees and the card the `u` key acts
+  // on could drift apart.
+  const scroll = readFileSync(SCROLLBACK, "utf8");
+  assert.match(
+    scroll,
+    /fileChangeRuns/,
+    "R388q: the Scrollback does not read the shared grouping rule — it must not keep its own copy.",
+  );
+  const tui = readFileSync(TUI, "utf8");
+  assert.match(
+    tui,
+    /fileChangeGroupIdAt|fileChangeGroupIds/,
+    "R388q: the app does not read the shared grouping rule.",
   );
 });
 

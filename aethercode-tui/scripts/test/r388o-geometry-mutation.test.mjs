@@ -150,7 +150,14 @@ function runMutatedGate(file, find, withText) {
     const run = spawnSync(process.execPath, ["--test", "scripts/test/r388o-geometry.test.mjs"], {
       cwd: dir,
       encoding: "utf8",
-      timeout: 300_000,
+      // ★ THE BOUND IS FOR A HANG, NOT FOR SLOWNESS ★ This gate
+      // bundles the WHOLE app once per frame it renders, so a run
+      // legitimately takes ~2–5 minutes — and under the suite's parallel
+      // load it was measured at 287s, 293s, 301s, 302s across two runs.
+      // A 300s bound was a COIN FLIP: three mutations timed out on a
+      // perfectly good tree. The bound is now twice the observed worst
+      // case, which still catches a hung gate.
+      timeout: 600_000,
       env: { ...process.env, NODE_TEST_CONTEXT: undefined },
     });
     const output = (run.stdout ?? "") + (run.stderr ?? "");

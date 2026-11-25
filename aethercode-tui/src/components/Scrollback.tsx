@@ -76,15 +76,25 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import type { Turn, PermissionAsk } from "../state.js";
+import type { Turn, PermissionAsk, SubTaskView } from "../state.js";
 import { t, icon } from "../theme.js";
 import { Markdown } from "./Markdown.js";
-import { ToolCard } from "./ToolCard.js";
+// R389: the chat column's block renderer — the desktop's flat
+// document, drawn in a terminal.
+import { ChatBlocks } from "./ChatBlocks.js";
 // R388q: the FILE-CHANGES card — one card for the turn's file changes.
 import { FileChangesCard } from "./FileChangesCard.js";
-import { fileChangeOfTurnParts, summarizeFileChanges, type FileChange } from "../fileChanges.js";
+import {
+  fileChangeOfTurnParts,
+  fileChangeRuns,
+  summarizeFileChanges,
+  type FileChange,
+  type FileChangeRun,
+} from "../fileChanges.js";
+// R389: the timeline — what the transcript IS, independent of how it
+// looks.
+import { buildTimeline, type TimelineEvent } from "../chat/blocks.js";
 import { PlanList } from "./PlanList.js";
-import { SummaryFooter, splitAssistantMessage, type Summary } from "./chat/SummaryFooter.js";
 // R383: the shared stop-kind type — one definition, not one per component.
 import type { StopKind } from "../stopKind.js";
 // R388m: the permission deadline contract — one countdown, one wording.
@@ -107,6 +117,14 @@ const COLUMN_INSET = 2;
 
 interface Props {
   turns: Turn[];
+  /**
+   * R389 — the sub-tasks the model declared.
+   *
+   * <p>They carry the `##` heading and the `结果` footer of each
+   * agent block. Before R389 the TUI ignored the daemon's
+   * `sub_task_start` / `sub_task_end` events entirely.
+   */
+  subTasks?: SubTaskView[];
   height: number;
   showWelcome: boolean;
   welcomeCtx: { model: string; cwd: string; sessionId: string; mode?: string };
@@ -138,6 +156,14 @@ interface Props {
   /** the live terminal width. Used to keep the reading column
    *  centred and never wider than the viewport. */
   terminalWidth?: number;
+  /**
+   * R389 — is a run in flight?
+   *
+   * <p>The desktop's fold policy opens the LAST block while the run
+   * is live, so new output arrives visible without a click. The
+   * terminal needs the same signal.
+   */
+  isLive?: boolean;
   /**
    * R388r: the file-changes card's actions.
    *
@@ -174,11 +200,9 @@ interface Props {
 // has no per-turn clock, and a transcript with a clock on every line
 // reads as a LOG rather than a conversation. The time is still
 // available where it is useful — the stop banner and the error card.
-
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return s.slice(0, Math.max(0, n - 1)) + "…";
-}
+//
+// R389: `truncate` moved too — the chat column's previews are the
+// block model's job now (`chat/blocks.ts`).
 
 /**
  * R388q: a turn, grouped with the file changes it carries.
@@ -203,6 +227,16 @@ export interface TurnGroup {
   changes: FileChange[];
   /** How many tool turns this group covers. */
   count: number;
+  /**
+   * R389 — every turn id in the group, in order.
+   *
+   * <p>The chat column collapses a run of file-changing calls into ONE
+   * summary row, and it needs the run's MEMBER ids to do it. The
+   * grouping rule is the shared one (`fileChanges.ts`), and this is
+   * the card's side of it — so the block model is fed the runs from
+   * here rather than re-deriving them.
+   */
+  turnIds: number[];
 }
 
 /**
@@ -237,29 +271,60 @@ export function fileChangeOf(turn: Turn): FileChange | null {
  * the probe run the card's REAL grouping and compare it with the
  * app's.
  *
+ * <p>★ R389 — THE GROUPING ITSELF IS NOT RE-DERIVED HERE ★ The runs
+ * come from the shared scan (`fileChangeRuns` in `fileChanges.ts`);
+ * this function only dresses them up for the card.
+ *
  * @param turns the visible turns
  * @returns the groups, in order
  */
 export function groupTurns(turns: ReadonlyArray<Turn>): TurnGroup[] {
+  // ★ ONE SCAN, NOT TWO ★ R389: this function used to carry its OWN
+  // grouping loop — a second implementation of the rule that also lives
+  // in `fileChanges.ts` (for the app's key targeting) and in the chat
+  // column's block model. Three copies of one rule is Lesson 1207's
+  // shape: they drift silently, and a drift here means the `u` key acts
+  // on a card the user is not looking at.
+  //
+  // So the runs come from the SHARED scan (`fileChangeRuns`), and this
+  // function only dresses them up for the card: the group's head turn,
+  // its per-file changes, and its member ids.
+  //
+  // ★ AND THE RULE ITSELF IS UNCHANGED ★ A non-file-change turn still
+  // ENDS the group — so a bash command in the middle of a batch of
+  // writes does not silently merge the writes on either side of it into
+  // one summary. That rule now lives in ONE place.
+  const runs = fileChangeRuns(turns);
+  const runByStart = new Map<number, FileChangeRun>();
+  for (const run of runs) runByStart.set(run.startId, run);
+
+  const turnsById = new Map<number, Turn>();
+  for (const turn of turns) turnsById.set(turn.id, turn);
+
   const groups: TurnGroup[] = [];
-  let pending: TurnGroup | null = null;
+  const emitted = new Set<number>();
   for (const turn of turns) {
-    const change = fileChangeOf(turn);
-    if (change) {
-      if (pending) {
-        pending.changes.push(change);
-        pending.count += 1;
-        continue;
-      }
-      pending = { turn, changes: [change], count: 1 };
-      groups.push(pending);
+    // A turn that is a member of a run that was already emitted.
+    if (emitted.has(turn.id)) continue;
+    const run = runByStart.get(turn.id);
+    if (!run) {
+      // Not a file change: the turn stands alone.
+      groups.push({ turn, changes: [], count: 1, turnIds: [turn.id] });
       continue;
     }
-    // A non-file-change turn ENDS the group — so a bash command in
-    // the middle of a batch of writes does not silently merge the
-    // writes on either side of it into one summary.
-    pending = null;
-    groups.push({ turn, changes: [], count: 1 });
+    const changes: FileChange[] = [];
+    for (const id of run.turnIds) {
+      emitted.add(id);
+      const member = turnsById.get(id);
+      const change = member ? fileChangeOf(member) : null;
+      if (change) changes.push(change);
+    }
+    groups.push({
+      turn,
+      changes,
+      count: run.turnIds.length,
+      turnIds: [...run.turnIds],
+    });
   }
   return groups;
 }
@@ -455,125 +520,49 @@ const PermissionCard: React.FC<{ ask: PermissionAsk; expanded: boolean }> = ({ a
   );
 };
 
-const TurnLine: React.FC<{ turn: Turn; effectiveCollapsed: boolean }> = ({
-  turn,
-  effectiveCollapsed,
-}) => {
-  switch (turn.role) {
-    case "user":
-      // R388h: an accent bar, not a timestamp + marker. The bar is
-      // the terminal's equivalent of the desktop's right-aligned
-      // user bubble: it says "this was you" without needing an
-      // alignment a terminal cannot guarantee.
-      return (
-        <Box flexDirection="row">
-          <Text color={t.user} bold>
-            {"▌ "}
-          </Text>
-          <Box flexDirection="column" flexGrow={1}>
-            {turn.text.split("\n").map((line, i) => (
-              <Text key={i}>{line}</Text>
-            ))}
-          </Box>
-        </Box>
-      );
-    case "assistant": {
-      // T-6-14: extract the `## Summary` block from the
-      // assistant message. The lead (everything before
-      // `## Summary`) is the body; the summary is rendered
-      // separately as the always-visible footer card.
-      const { lead, summary } = splitAssistantMessage(turn.text);
+/**
+ * R389 — the user's own words.
+ *
+ * <p>An accent bar, not a timestamp + marker. The bar is the
+ * terminal's equivalent of the desktop's right-aligned user bubble:
+ * it says "this was you" without needing an alignment a terminal
+ * cannot guarantee.
+ */
+const UserBlock: React.FC<{ turn: Turn }> = ({ turn }) => (
+  <Box flexDirection="row">
+    <Text color={t.user} bold>
+      {"▌ "}
+    </Text>
+    <Box flexDirection="column" flexGrow={1}>
+      {turn.text.split("\n").map((line, i) => (
+        <Text key={i}>{line}</Text>
+      ))}
+    </Box>
+  </Box>
+);
 
-      // if collapsed, show a one-line preview instead of full markdown.
-      if (effectiveCollapsed) {
-        return (
-          <Box flexDirection="column">
-            <Text dimColor>Assistant</Text>
-            <Text dimColor>
-              {truncate(lead.replace(/\n+/g, " "), turn.previewChars)} · Tab to expand
-            </Text>
-            {/* T-6-14: summary footer is ALWAYS visible,
-                even when the rest of the turn is collapsed. */}
-            <SummaryFooter summary={summary} />
-          </Box>
-        );
-      }
-      return (
-        <Box flexDirection="column">
-          <Text dimColor>Assistant</Text>
-          {lead ? <Markdown text={lead} /> : <Text dimColor>…</Text>}
-          {/* T-6-14: summary footer rendered as the LAST
-              line of the assistant message; never collapsed. */}
-          <SummaryFooter summary={summary} />
-        </Box>
-      );
-    }
-    case "thinking": {
-      // dim, collapsible sub-section. Renders with a leading
-      // "🧠 Thinking" header so it's visually distinct from the
-      // actual reply. When collapsed, just a one-line preview.
-      if (effectiveCollapsed) {
-        return (
-          <Text dimColor>
-            Thinking · {truncate(turn.text.replace(/\n+/g, " "), turn.previewChars)} · Tab to expand
-          </Text>
-        );
-      }
-      return (
-        <Box flexDirection="column">
-          <Text dimColor>Thinking</Text>
-          <Text dimColor>{turn.text}</Text>
-        </Box>
-      );
-    }
-    case "tool":
-      // T-6-14: tool calls render collapsed by default —
-      // matches the existing `turn.collapsed` default
-      // (set to `true` in the reducer on creation). The
-      // Tab / Ctrl-E handler toggles `turn.collapsed` to
-      // expand. The ToolCard itself reads the `collapsed`
-      // prop and renders the appropriate form.
-      return (
-        <ToolCard
-          turn={turn}
-          showResult={turn.toolStatus !== "running"}
-          collapsed={effectiveCollapsed}
-        />
-      );
-    case "plan":
-      // T-6-14: plan cards render collapsed by default
-      // (the user clicks them to expand). When the
-      // `effectiveCollapsed` flag is set (per-turn
-      // collapsed OR the global collapseAll), we render
-      // a one-line summary instead of the full PlanList.
-      if (effectiveCollapsed) {
-        const items = turn.planItems ?? [];
-        return (
-          <Text dimColor>
-            {icon.plan} {turn.text || "Plan"} · {items.length} item{items.length === 1 ? "" : "s"} ·
-            Tab to expand
-          </Text>
-        );
-      }
-      return <PlanList items={turn.planItems ?? []} title={turn.text || "Plan"} />;
-    case "system":
-      return <Text dimColor>{turn.text}</Text>;
-    case "error":
-      return (
-        <Text color={t.err}>
-          {icon.err} {turn.text}
-        </Text>
-      );
-    case "permission":
-      // not rendered here — the active permission card lives
-      // at the top of the scrollback (rendered before the turns
-      // list). Older, resolved permission turns could appear here
-      // for a historical view, but the current turn type is
-      // unused — kept in the union for future expansion.
-      return null;
-    default:
-      return <Text>{turn.text}</Text>;
+/**
+ * R389 — a system note (the engine's own `[loop_warn]` style lines).
+ *
+ * <p>Dim, one line per line, no label — the same as the desktop's
+ * system row.
+ */
+const SystemBlock: React.FC<{ turn: Turn }> = ({ turn }) => <Text dimColor>{turn.text}</Text>;
+
+/**
+ * R389 — a plan.
+ */
+const PlanBlock: React.FC<{ turn: Turn; collapsed: boolean }> = ({ turn, collapsed }) => {
+  const items = turn.planItems ?? [];
+  if (collapsed) {
+    return (
+      <Text dimColor>
+        {icon.plan} {turn.text || "Plan"} · {items.length} item{items.length === 1 ? "" : "s"} · Tab
+        to expand
+      </Text>
+    );
   }
+  return <PlanList items={items} title={turn.text || "Plan"} />;
 };
 
 /**
@@ -614,6 +603,7 @@ const EmptyState: React.FC<{ model: string; cwd: string; width: number }> = ({
 
 export const Scrollback: React.FC<Props> = ({
   turns,
+  subTasks = [],
   height,
   showWelcome,
   welcomeCtx,
@@ -626,6 +616,7 @@ export const Scrollback: React.FC<Props> = ({
   permissionAsk,
   decisionCardExpanded,
   terminalWidth,
+  isLive = false,
   focusedFileCardTurnId,
   fileCardActionsLive = true,
   onShowFileCardFiles,
@@ -687,7 +678,27 @@ export const Scrollback: React.FC<Props> = ({
   const leftPad = Math.max(0, Math.floor((cols - columnWidth) / 2));
 
   // R388q: the file-changing turns collapse into ONE card per group.
+  //
+  // ★ THE CARD'S GROUPING IS THE SHARED RULE ★ `groupTurns` reads
+  // `fileChangeOfTurnParts` — the same predicate the app's targeting
+  // and the chat column's block model use — so the card the user sees
+  // and the card the `u` key acts on cannot drift apart.
   const groups = groupTurns(visible);
+  const fileRuns = new Map<number, number[]>();
+  for (const g of groups) {
+    if (g.changes.length > 0) fileRuns.set(g.turn.id, g.turnIds);
+  }
+
+  // R389: the TIMELINE. What the transcript IS, independent of how it
+  // looks: the user's words, the engine's notes, the plans, and the
+  // agent's blocks — in the order they happened.
+  const timeline = buildTimeline(visible, subTasks, fileRuns);
+  // The turns, by id. The FULL list, not the slice: a block may
+  // reference a turn that is scrolled out of view (a file-change
+  // run's head), and a block that cannot find its turn renders
+  // nothing — which would make the card flicker as the user scrolls.
+  const turnsById = new Map<number, Turn>();
+  for (const turn of turns) turnsById.set(turn.id, turn);
 
   // R388o: the transcript is BOUNDED BY ROWS, not by turns.
   //
@@ -768,30 +779,26 @@ export const Scrollback: React.FC<Props> = ({
         {errorCard ? <Box marginBottom={1}>{errorCard}</Box> : null}
         {banner ? <Box marginBottom={1}>{banner}</Box> : null}
         {permCard ? <Box marginBottom={1}>{permCard}</Box> : null}
-        {groups.map((group, idx) => (
-          <Box key={group.turn.id} flexDirection="column" marginTop={idx === 0 ? 0 : 1}>
-            {group.changes.length > 0 ? (
-              // ★ THE FILE-CHANGES CARD ★ One card for the whole group:
-              // the count, the diff totals, and the actions.
-              //
-              // ★ R388r: THE CARD IS WIRED ★ The callbacks are the
-              // card's whole interaction surface, and the focus is a
-              // PROP — so the card cannot show a key that nothing
-              // handles, and the app knows which card a key means.
-              <FileChangesCard
-                summary={summarizeFileChanges(group.changes)}
-                width={Math.max(20, columnWidth - 2)}
-                expanded={!group.turn.collapsed}
-                focused={focusedFileCardTurnId === group.turn.id}
-                actionsLive={fileCardActionsLive}
-                onShowFiles={() => onShowFileCardFiles?.(group.turn.id)}
-                onUndo={() => onUndoFileCard?.(group.turn.id)}
-                onReview={() => onReviewFileCard?.(group.turn.id)}
-              />
+        {timeline.map((ev, idx) => (
+          <Box key={eventKey(ev, idx)} flexDirection="column" marginTop={idx === 0 ? 0 : 1}>
+            {ev.kind === "user" ? (
+              <UserBlock turn={ev.turn} />
+            ) : ev.kind === "system" ? (
+              <SystemBlock turn={ev.turn} />
+            ) : ev.kind === "plan" ? (
+              <PlanBlock turn={ev.turn} collapsed={collapseAll || ev.turn.collapsed} />
             ) : (
-              <TurnLine
-                turn={group.turn}
-                effectiveCollapsed={collapseAll || group.turn.collapsed}
+              <ChatBlocks
+                group={ev.group}
+                turnsById={turnsById}
+                isLive={isLive}
+                collapseAll={collapseAll}
+                width={columnWidth}
+                focusedFileCardTurnId={focusedFileCardTurnId}
+                fileCardActionsLive={fileCardActionsLive}
+                onShowFileCardFiles={onShowFileCardFiles}
+                onUndoFileCard={onUndoFileCard}
+                onReviewFileCard={onReviewFileCard}
               />
             )}
           </Box>
@@ -800,6 +807,21 @@ export const Scrollback: React.FC<Props> = ({
     </Box>
   );
 };
+
+/**
+ * R389 — a stable key for one timeline event.
+ *
+ * <p>An agent group is keyed by its sub-task id, so the group's
+ * blocks keep their identity as the run streams. A preamble has no
+ * sub-task, so it falls back to its first block's id.
+ */
+function eventKey(ev: TimelineEvent, idx: number): string {
+  if (ev.kind === "agent") {
+    const first = ev.group.blocks[0];
+    return `a-${ev.group.id || "pre"}-${first ? first.id : idx}`;
+  }
+  return `${ev.kind}-${ev.turn.id}`;
+}
 
 function renderStopBanner(kind: StopKind, reason: string | null): React.ReactNode {
   if (kind == null || kind === "ok" || kind === "empty") return null;

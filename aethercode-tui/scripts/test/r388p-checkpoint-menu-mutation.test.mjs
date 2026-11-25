@@ -262,7 +262,10 @@ for (const m of MUTATIONS) {
         ["--test", join(dir, "scripts", "test", "r388p-checkpoint-menu.test.mjs")],
         {
           encoding: "utf8",
-          timeout: 300_000,
+          // ★ THE BOUND IS FOR A HANG, NOT FOR SLOWNESS ★ The gate
+          // bundles the component per probe, so a run legitimately takes
+          // minutes under the suite's parallel load.
+          timeout: 600_000,
           cwd: dir,
           env: {
             ...process.env,

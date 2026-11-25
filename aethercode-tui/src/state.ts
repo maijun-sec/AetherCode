@@ -144,9 +144,49 @@ export interface Turn {
    * Persisted in the reducer so it survives across re-renders.
    */
   toolExpanded?: boolean;
+  /**
+   * R389 — the sub-task this turn belongs to.
+   *
+   * <p>The composite id the daemon's `sub_task_start` carries
+   * (`taskId:subTaskId`). Empty / undefined means "no sub-task was
+   * open" — the turn belongs to the preamble.
+   *
+   * <p>Why the turn carries it: the desktop's chat column shows a
+   * `##` heading per sub-task and nests the tool calls under it. To
+   * draw that line, something has to know which sub-task a tool call
+   * happened in. The daemon knows (it opens and closes sub-tasks);
+   * the renderer cannot guess it from the turn's position.
+   */
+  subTaskId?: string;
 }
 
 export type ToolCategory = "read" | "write" | "search" | "run" | "agent" | "other";
+
+/**
+ * R389 — a sub-task the model declared.
+ *
+ * <p>The daemon opens one with `sub_task_start` (taskId, subTaskId,
+ * content, status) and closes it with `sub_task_end` (taskId,
+ * subTaskId, status, summary). The composite id is
+ * `${taskId}:${subTaskId}` — the SAME key the desktop's store uses,
+ * so the two renderers describe the same sub-task with the same id.
+ */
+export interface SubTaskView {
+  /** The composite id: `${taskId}:${subTaskId}`. */
+  id: string;
+  /** The parent top-level todo's index. */
+  taskId: number;
+  /** The id the model assigned to the sub-task. */
+  subTaskId: string;
+  /** The business concept the model committed to. */
+  content: string;
+  /** pending / in_progress / completed / failed / skipped. */
+  status: string;
+  /** The closing one-liner the model wrote when it closed the sub-task. */
+  summary?: string;
+  startedAt: number;
+  endedAt?: number;
+}
 
 /* ===================================================================
  * R362 — Ink panel host state
@@ -344,6 +384,24 @@ export interface State {
   pending: number;
   permissionMode: string;
   turns: Turn[];
+  /**
+   * R389 — the sub-tasks the model declared in this session.
+   *
+   * <p>Before R389 the TUI ignored `sub_task_start` / `sub_task_end`
+   * entirely (zero occurrences in the whole source tree), so the
+   * daemon's own statement of "this is the task I am working on" was
+   * never shown. The desktop rendered it as a `##` heading with a
+   * `结果` footer; the TUI rendered nothing at all.
+   */
+  subTasks: SubTaskView[];
+  /**
+   * R389 — the sub-task that is currently open, if any.
+   *
+   * <p>The reducer stamps this id onto every turn it creates while
+   * the sub-task is open, which is how the renderer knows which
+   * heading a tool call belongs under.
+   */
+  currentSubTaskId: string | null;
   input: string;
   history: string[];
   historyCursor: number; // index into history, -1 = current draft
@@ -1346,6 +1404,29 @@ export type Action =
     }
   | { type: "sideNote"; kind: string; message: string }
   | { type: "plan"; items: string[] }
+  /**
+   * R389 — the model opened a sub-task.
+   *
+   * <p>The daemon sends `{type:"sub_task_start", taskId, subTaskId,
+   * content, status}` (see `AetherCodeMethods.eventToMap`). The
+   * status is `in_progress` when the sub-task is actually being
+   * worked on; a `pending` declaration does not open it.
+   */
+  | {
+      type: "subTaskStart";
+      taskId: number;
+      subTaskId: string;
+      content: string;
+      status: string;
+    }
+  /** R389 — the model closed a sub-task, with an optional summary. */
+  | {
+      type: "subTaskEnd";
+      taskId: number;
+      subTaskId: string;
+      status: string;
+      summary?: string;
+    }
   | { type: "log"; message: string }
   | { type: "showHelp"; show: boolean }
   | { type: "exit" }
@@ -1515,6 +1596,9 @@ export const INITIAL: State = {
   pending: 0,
   permissionMode: MODE.DEFAULT,
   turns: [],
+  // R389 — no sub-task is open until the daemon says one is.
+  subTasks: [],
+  currentSubTaskId: null,
   input: "",
   history: [],
   historyCursor: -1,
@@ -2073,9 +2157,63 @@ export function reducer(state: State, action: Action): State {
             ts: Date.now(),
             collapsed: defaultCollapsed("assistant"),
             previewChars: 240,
+            // R389: a turn belongs to the sub-task that is open
+            // right now. Without the stamp the renderer cannot
+            // tell which `##` heading a reply belongs under.
+            subTaskId: state.currentSubTaskId ?? undefined,
           },
         ],
       };
+    /**
+     * R389 — the model opened a sub-task.
+     *
+     * <p>The desktop's store does the same thing (see
+     * `store/index.ts` `case 'sub_task_start'`): a sub-task whose
+     * status is `in_progress` BECOMES the current one, and every
+     * turn created from then on is stamped with its id.
+     *
+     * <p>A `pending` declaration does NOT open the sub-task — the
+     * model is announcing a plan, not working on it. The desktop
+     * keeps `currentSubTaskId` unchanged in that case, and so does
+     * this reducer.
+     */
+    case "subTaskStart": {
+      const compositeId = `${action.taskId}:${action.subTaskId}`;
+      const existing = state.subTasks.find((st) => st.id === compositeId);
+      const subTasks = existing
+        ? state.subTasks.map((st) =>
+            st.id === compositeId ? { ...st, status: action.status } : st,
+          )
+        : [
+            ...state.subTasks,
+            {
+              id: compositeId,
+              taskId: action.taskId,
+              subTaskId: action.subTaskId,
+              content: action.content,
+              status: action.status,
+              startedAt: Date.now(),
+            },
+          ];
+      return {
+        ...state,
+        subTasks,
+        currentSubTaskId: action.status === "in_progress" ? compositeId : state.currentSubTaskId,
+      };
+    }
+    /** R389 — the model closed a sub-task. */
+    case "subTaskEnd": {
+      const compositeId = `${action.taskId}:${action.subTaskId}`;
+      return {
+        ...state,
+        subTasks: state.subTasks.map((st) =>
+          st.id === compositeId
+            ? { ...st, status: action.status, summary: action.summary, endedAt: Date.now() }
+            : st,
+        ),
+        currentSubTaskId: state.currentSubTaskId === compositeId ? null : state.currentSubTaskId,
+      };
+    }
     case "streamText": {
       // split <think>...</think> content into a separate
       // "thinking" turn. Algorithm:
@@ -2162,6 +2300,8 @@ export function reducer(state: State, action: Action): State {
               // screen. The user can expand with the toggle.
               collapsed: seg.mode === "thinking",
               previewChars: seg.mode === "thinking" ? 80 : 240,
+              // R389: stamp the open sub-task (if any).
+              subTaskId: state.currentSubTaskId ?? undefined,
             },
           ]);
         }
@@ -2191,6 +2331,9 @@ export function reducer(state: State, action: Action): State {
             toolCategory: categorizeTool(action.name),
             collapsed: defaultCollapsed("tool"),
             previewChars: 80,
+            // R389: stamp the open sub-task (if any) — this is the
+            // line the `##` heading is drawn from.
+            subTaskId: state.currentSubTaskId ?? undefined,
           },
         ],
       };
@@ -2849,6 +2992,11 @@ export function reducer(state: State, action: Action): State {
         sessionId: action.sessionId,
         turns: nextTurns,
         todos: [],
+        // R389 — the sub-tasks belong to the session we just left.
+        // Keeping them would put the OLD session's `##` headings
+        // over the NEW session's turns.
+        subTasks: [],
+        currentSubTaskId: null,
         // `status` is this renderer's streaming flag (`AppStatus`),
         // not a separate `streaming` boolean.
         status: state.connected ? "ready" : state.status,

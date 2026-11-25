@@ -105,6 +105,17 @@ const CATEGORY_ICON: Record<ToolCategory, string> = {
   other: icon.catOther,
 };
 
+/**
+ * R389 — the category icon + colour are EXPORTED.
+ *
+ * <p>The chat column's flat tool row (see `ChatBlocks.tsx`) draws the
+ * same icon in the same colour as this card. Before R389 the maps
+ * were private, so the flat row would have had to restate them — and
+ * a restated map is a map that drifts: the row would keep saying
+ * "read" is a circle while the card said it was a magnifier.
+ */
+export { CATEGORY_ICON };
+
 const CATEGORY_COLOR: Record<ToolCategory, string> = {
   read: t.catRead,
   write: t.catWrite,
@@ -113,6 +124,9 @@ const CATEGORY_COLOR: Record<ToolCategory, string> = {
   agent: t.catAgent,
   other: t.catOther,
 };
+
+/** R389 — exported so the flat chat row can use the SAME colours. */
+export { CATEGORY_COLOR };
 
 function formatArgs(args?: string): string {
   if (!args) return "";

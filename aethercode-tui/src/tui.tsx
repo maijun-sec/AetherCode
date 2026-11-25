@@ -384,6 +384,35 @@ function handleStreamEvent(dispatch: (a: Action) => void, ev: Record<string, unk
         items: Array.isArray(ev.items) ? ev.items.map((x) => String(x)) : [],
       });
       break;
+    /**
+     * R389 — the model opened a sub-task.
+     *
+     * <p>The daemon sends `{type:"sub_task_start", taskId, subTaskId,
+     * content, status}` (see `AetherCodeMethods.eventToMap`). Until
+     * R389 the TUI dropped these on the floor — the `default: break`
+     * at the bottom of this switch — so the daemon's own statement of
+     * "this is the task I am working on" never reached the screen.
+     * The desktop rendered it as a `##` heading with a `结果` footer.
+     */
+    case "sub_task_start":
+      dispatch({
+        type: "subTaskStart",
+        taskId: Number(ev.taskId ?? 0),
+        subTaskId: String(ev.subTaskId ?? ""),
+        content: String(ev.content ?? ""),
+        status: String(ev.status ?? "pending"),
+      });
+      break;
+    /** R389 — the model closed a sub-task, with an optional summary. */
+    case "sub_task_end":
+      dispatch({
+        type: "subTaskEnd",
+        taskId: Number(ev.taskId ?? 0),
+        subTaskId: String(ev.subTaskId ?? ""),
+        status: String(ev.status ?? "completed"),
+        summary: typeof ev.summary === "string" ? ev.summary : undefined,
+      });
+      break;
     default:
       break;
   }
@@ -4536,8 +4565,22 @@ const App: React.FC<{
       return;
     }
     if (key.ctrl && (input === "e" || input === "E")) {
-      // Ctrl-E toggles the most recent turn.
-      const last = state.turns[state.turns.length - 1];
+      // Ctrl-E toggles a foldable block.
+      //
+      // ★ R389 — THE LAST FOLDABLE BLOCK, NOT THE LAST TURN ★ The
+      // chat column is the desktop's flat document now: a `##`
+      // heading, folded think blocks, folded tool rows, the answer.
+      // The last turn is usually the ANSWER, so folding "the last
+      // turn" would fold the answer — the one block the desktop
+      // refuses to hide.
+      //
+      // So the key picks the last block that is actually FOLDABLE
+      // (a think or a tool), and falls back to the last turn when
+      // there is none. That is the block the user is looking at.
+      const foldable = [...state.turns]
+        .reverse()
+        .find((t) => t.role === "tool" || t.role === "thinking");
+      const last = foldable ?? state.turns[state.turns.length - 1];
       if (last) dispatch({ type: "toggleTurn", id: last.id });
       return;
     }
@@ -5969,6 +6012,13 @@ const App: React.FC<{
                     permissionAsk={state.permissionAsk}
                     decisionCardExpanded={state.decisionCardExpanded}
                     terminalWidth={cols}
+                    /* R389: the chat column's blocks. The sub-tasks
+                       carry the `##` heading and the `结果` footer of
+                       each agent block — the daemon's own statement of
+                       "this is the task I am working on", which the
+                       TUI ignored until R389. */
+                    subTasks={state.subTasks}
+                    isLive={state.status === "streaming" || state.status === "running-tool"}
                     /* R388r: the file-changes card's actions. The
                        APP owns the keys (a letter typed into the
                        prompt is TEXT, so the card's keys are live

@@ -115,7 +115,22 @@ const MUTABLE = [
  * @returns {string} the sandbox's root
  */
 function makeSandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "r388q-mut-"));
+  // ★ THE SANDBOX MUST HAVE A PARENT OF ITS OWN ★ The gate reads the
+  // daemon's Java source at `ROOT/../aethercode/aethercode-protocol`,
+  // so the sandbox has to carry that sibling — and the sibling's path
+  // is `dir/..`, i.e. the sandbox's PARENT. A parent of its own means
+  // that path is UNIQUE to this sandbox.
+  //
+  // ★ WHY THAT MATTERS ★ Two mutation gates used the SAME parent (the
+  // OS temp directory), and one of them DELETED `<parent>/aethercode`
+  // when it was done. So the other one read a file that was being
+  // deleted underneath it: the wire-contract assertion died with
+  // ENOENT — red for the wrong reason, and red only when the two files
+  // happened to run in parallel. A shared mutable path between two
+  // test files is a race, and a race is a flake.
+  const parent = mkdtempSync(join(tmpdir(), "r388q-mut-"));
+  const dir = join(parent, "sandbox");
+  mkdirSync(dir, { recursive: true });
   // ★ THE WHOLE src/ TREE COMES ALONG ★ The card imports
   // `../theme.js` and `../cellWidth.js`, so copying only the four
   // mutable files leaves the component's own imports unresolvable —
@@ -123,9 +138,14 @@ function makeSandbox() {
   // WRONG reason (a build failure, not an assertion failure).
   cpSync(join(ROOT, "src"), join(dir, "src"), { recursive: true });
   // The sibling Java tree — the daemon's wire contract.
-  const javaSrc = join(ROOT, "..", "aethercode", "aethercode-protocol");
-  const javaDst = join(dir, "..", "aethercode", "aethercode-protocol");
-  mkdirSync(join(dir, "..", "aethercode"), { recursive: true });
+  //
+  // ★ ONLY `src/` IS COPIED ★ The gate reads SOURCES, and the module's
+  // `target/` is build output (8 MB of jars) that no gate reads. Copying
+  // it twelve times — once per mutation — is a minute of the suite's
+  // time for nothing.
+  const javaSrc = join(ROOT, "..", "aethercode", "aethercode-protocol", "src");
+  const javaDst = join(parent, "aethercode", "aethercode-protocol", "src");
+  mkdirSync(join(parent, "aethercode", "aethercode-protocol"), { recursive: true });
   cpSync(javaSrc, javaDst, { recursive: true });
   // The gate itself must run from the copy, at the same relative path,
   // so its ROOT resolves to the sandbox.
@@ -133,6 +153,15 @@ function makeSandbox() {
   mkdirSync(testDir, { recursive: true });
   cpSync(GATE, join(testDir, "r388q-file-changes.test.mjs"));
   return dir;
+}
+
+/**
+ * Remove a sandbox AND the unique parent that holds it.
+ *
+ * @param {string} dir the sandbox
+ */
+function removeSandbox(dir) {
+  rmSync(join(dir, ".."), { recursive: true, force: true });
 }
 
 /**
@@ -158,7 +187,11 @@ function runGate(dir) {
     {
       cwd: dir,
       encoding: "utf8",
-      timeout: 300_000,
+      // ★ THE BOUND IS FOR A HANG, NOT FOR SLOWNESS ★ The gate renders
+      // the card several times (an esbuild bundle per render), so a run
+      // legitimately takes minutes — 296s was measured under the suite's
+      // parallel load, which is a coin flip against a 300s bound.
+      timeout: 600_000,
       env,
     },
   );
@@ -227,7 +260,7 @@ test("R388q: the gate is GREEN against the pristine sources", () => {
       `R388q: the gate is RED against the pristine sources — a mutation test needs a green baseline. Output:\n${output.slice(-4000)}`,
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeSandbox(dir);
   }
 });
 
@@ -273,11 +306,17 @@ const MUTATIONS = [
   },
   {
     name: "the LINK is removed (the seven-parts assertion must catch it)",
+    // ★ R388r MOVED THE LINK'S TEXT INTO THE REGISTRY ★ The card used
+    // to spell the link out ("查看文件 f"); it now reads the label and
+    // the key from `FILE_CARD_ACTION_INFO`, so the old literal is gone
+    // and this mutation had been measuring NOTHING since R388r — the
+    // gate reported "the anchor occurs 0 times", which is the honest
+    // half of the message: the ANCHOR moved, the defect did not.
     apply: (dir) =>
       mutate(
         dir,
         ["src", "components", "FileChangesCard.tsx"],
-        "{showLink ? <Text dimColor> 查看文件 f </Text> : null}",
+        "{showLink ? <Text dimColor>{` ${showFiles.label} ${showFiles.key} `}</Text> : null}",
         "{null}",
       ),
   },
@@ -287,7 +326,7 @@ const MUTATIONS = [
       mutate(
         dir,
         ["src", "components", "FileChangesCard.tsx"],
-        '<CardAction label="撤销" keyHint="u" active={focused} />',
+        "<CardAction label={undo.label} keyHint={undo.key} active={focused && live} />",
         "{null}",
       ),
   },
@@ -297,7 +336,7 @@ const MUTATIONS = [
       mutate(
         dir,
         ["src", "components", "FileChangesCard.tsx"],
-        '<CardAction label="审查" keyHint="r" active={focused} />',
+        "<CardAction label={review.label} keyHint={review.key} active={focused && live} />",
         "{null}",
       ),
   },
@@ -347,12 +386,19 @@ const MUTATIONS = [
   },
   {
     name: "the group is NOT broken by a non-file turn (the grouping assertion must catch it)",
+    // ★ R389 — THE RULE LIVES IN ONE PLACE ★ The grouping used to be
+    // implemented twice (once in the Scrollback for the card, once in
+    // `fileChanges.ts` for the app's key targeting), and this mutation
+    // broke the Scrollback's copy. The copies are gone: `groupTurns`
+    // now reads the shared scan, so the ONE place that decides where a
+    // run ends is `fileChangeRuns` — and that is what this mutation
+    // breaks.
     apply: (dir) =>
       mutate(
         dir,
-        ["src", "components", "Scrollback.tsx"],
-        "pending = null;\n    groups.push({ turn, changes: [], count: 1 });",
-        "groups.push({ turn, changes: [], count: 1 });",
+        ["src", "fileChanges.ts"],
+        "    close();\n  }\n  close();",
+        "    // R388q mutation: the run is never broken\n  }\n  close();",
       ),
   },
 ];
@@ -368,7 +414,7 @@ for (const m of MUTATIONS) {
         `R388q: the gate stayed GREEN after the mutation — ${m.name}. The gate has no teeth.\n${output.slice(-4000)}`,
       );
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeSandbox(dir);
     }
   });
 }
@@ -398,6 +444,6 @@ test("R388q: the gate is red for the RIGHT reason — the shape assertion, not a
       `R388q: the gate went red for the WRONG reason — it must be the rounded-frame assertion that failed, not a crash. Output:\n${output.slice(-4000)}`,
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeSandbox(dir);
   }
 });

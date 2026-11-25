@@ -43,28 +43,42 @@ const scrollbackPath = join(root, "src", "components", "Scrollback.tsx");
 const summaryPath = join(root, "src", "components", "chat", "SummaryFooter.tsx");
 const toolCardPath = join(root, "src", "components", "ToolCard.tsx");
 const planListPath = join(root, "src", "components", "PlanList.tsx");
+const chatBlocksPath = join(root, "src", "components", "ChatBlocks.tsx");
 
 // ----- 1. File exists + imports SummaryFooter --------------------------
 
-test("T-6-14: Scrollback.tsx imports SummaryFooter from ./chat/SummaryFooter.js", () => {
+// ★ R389 — THE LOCATION MOVED, THE INVARIANT DID NOT ★
+//
+// The assistant turn is no longer rendered by the Scrollback: the
+// chat column is the desktop's flat document now, and the assistant
+// turn is one BLOCK of it (`ChatBlocks.tsx`). So this gate reads the
+// block renderer.
+//
+// What is being pinned is the INVARIANT — "the body renders as
+// markdown, and the summary footer renders AFTER it, and the footer
+// is never hidden" — not the file that happens to hold the code. A
+// pin that names a LOCATION goes red on a REFACTOR; this one names
+// the rule.
+test("T-6-14: the chat column imports SummaryFooter from ./chat/SummaryFooter.js", () => {
   assert.ok(existsSync(scrollbackPath));
   assert.ok(existsSync(summaryPath));
-  const src = readFileSync(scrollbackPath, "utf-8");
+  assert.ok(existsSync(chatBlocksPath));
+  const src = readFileSync(chatBlocksPath, "utf-8");
   // The integration import.
   assert.match(src, /import \{[^}]*SummaryFooter[^}]*\} from "\.\/chat\/SummaryFooter\.js";/);
   // The splitAssistantMessage import.
   assert.match(src, /splitAssistantMessage/);
   // The Summary type import (for explicit reference).
-  assert.match(src, /SummaryFooter,[\s\S]{0,200}?splitAssistantMessage,[\s\S]{0,200}?type Summary/);
+  assert.match(src, /SummaryFooter,[\s\S]{0,200}?splitAssistantMessage/);
 });
 
 // ----- 2. Scrollback: assistant turn renders SummaryFooter below body --
 
 test("T-6-14: assistant turn renders SummaryFooter below the body", () => {
-  const src = readFileSync(scrollbackPath, "utf-8");
+  const src = readFileSync(chatBlocksPath, "utf-8");
   // The body is rendered via Markdown, then a SummaryFooter
   // mounted after it.
-  assert.match(src, /<Markdown text=\{lead\} \/>/);
+  assert.match(src, /<Markdown text=\{body\} \/>/);
   assert.match(src, /<SummaryFooter summary=\{summary\} \/>/);
   // R388h: the `marginTop={1}` WRAPPER around the SummaryFooter is
   // gone — the flat transcript gives each turn its own spacing, and
@@ -74,7 +88,7 @@ test("T-6-14: assistant turn renders SummaryFooter below the body", () => {
   // So assert the order, not the wrapper. (An earlier version of
   // this gate pinned the wrapper's exact spelling, which is the
   // "a pin that names a LOCATION goes red on a REFACTOR" trap.)
-  const markdownAt = src.indexOf("<Markdown text={lead} />");
+  const markdownAt = src.indexOf("<Markdown text={body} />");
   const footerAt = src.indexOf("<SummaryFooter summary={summary} />", markdownAt);
   assert.ok(markdownAt >= 0, "the assistant body must render the markdown");
   assert.ok(footerAt > markdownAt, "the SummaryFooter must render AFTER the body");
@@ -83,19 +97,30 @@ test("T-6-14: assistant turn renders SummaryFooter below the body", () => {
 // ----- 3. Scrollback: tool / plan collapsed form exists ----------------
 
 test("T-6-14: tool + plan turns render a collapsed form when effectiveCollapsed is true", () => {
-  const src = readFileSync(scrollbackPath, "utf-8");
-  // Tool case: ToolCard receives `collapsed={effectiveCollapsed}`.
-  assert.match(src, /case "tool":/);
-  assert.match(src, /<ToolCard[\s\S]*collapsed=\{effectiveCollapsed\}/);
-  // Plan case: collapsed form renders a one-line summary.
-  assert.match(src, /case "plan":/);
-  assert.match(src, /effectiveCollapsed\) \{[\s\S]*?Tab to expand/);
+  // ★ R389 — THE PLAN STAYS IN THE SCROLLBACK, THE TOOL MOVED ★
+  //
+  // A plan is its own timeline event, so the Scrollback still
+  // renders it — and it still collapses to a one-line summary. A
+  // tool call is a BLOCK of the agent's document now, so its
+  // collapsed form is a fold row in the block renderer.
+  const scroll = readFileSync(scrollbackPath, "utf-8");
+  assert.match(scroll, /const PlanBlock/);
+  // ★ WHITESPACE-TOLERANT ★ The invariant is "the collapsed plan says
+  // the reader can expand it with Tab" — NOT "those two words sit on
+  // one line". A prettier reflow broke the single-space spelling and
+  // the gate went red on a CORRECT file: Lesson 1348/R376, the
+  // formatter blinding a gate.
+  assert.match(scroll, /PlanBlock[\s\S]*?Tab\s+to\s+expand/);
+  const blocks = readFileSync(chatBlocksPath, "utf-8");
+  // The tool row: a chevron + the tool's name, folded by default.
+  assert.match(blocks, /const ToolBlock/);
+  assert.match(blocks, /open \? "▾ " : "▸ "/);
 });
 
 // ----- 4. Scrollback: SummaryFooter is ALWAYS visible -----------------
 
 test("T-6-14: SummaryFooter is always visible — not gated by effectiveCollapsed", () => {
-  const src = readFileSync(scrollbackPath, "utf-8");
+  const src = readFileSync(chatBlocksPath, "utf-8");
   // In the collapsed branch, the SummaryFooter is rendered
   // without a `visible={false}` guard. In the expanded branch,
   // it's also always there.

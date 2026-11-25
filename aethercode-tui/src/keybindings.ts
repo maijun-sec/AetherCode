@@ -297,7 +297,12 @@ export const KEYBINDINGS: ReadonlyArray<Keybinding> = [
   {
     keys: ["ctrl+e"],
     label: "Ctrl+E",
-    desc: "expand or collapse the last turn",
+    // ★ R389 — THE LAST FOLDABLE BLOCK ★ It used to say "the last
+    // turn" — but the last turn is usually the ANSWER, and the chat
+    // column never folds the answer (the desktop's rule: the final
+    // reasoning is always visible). So the key now folds the last
+    // THINK or TOOL, which is the block the user is looking at.
+    desc: "expand or collapse the last think / tool block",
     group: "editing",
   },
   {

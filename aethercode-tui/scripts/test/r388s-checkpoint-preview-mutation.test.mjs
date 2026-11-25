@@ -82,13 +82,22 @@ const GATE = join(ROOT, "scripts", "test", "r388s-checkpoint-preview.test.mjs");
  * @returns {string} the sandbox's root
  */
 function makeSandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "r388s-mut-"));
+  // ★ THE SANDBOX MUST HAVE A PARENT OF ITS OWN ★ The sibling tree
+  // lives at `dir/..`, i.e. the sandbox's PARENT — and this gate DELETES
+  // that path when it is done. So the parent has to be UNIQUE: with the
+  // OS temp directory as the parent, this gate deleted a path another
+  // gate was reading from, and that other gate died with ENOENT —
+  // red for the wrong reason, and red only when the two happened to run
+  // in parallel.
+  const parent = mkdtempSync(join(tmpdir(), "r388s-mut-"));
+  const dir = join(parent, "sandbox");
+  mkdirSync(dir, { recursive: true });
   // The whole src/ tree — the menu imports ../theme.js, ../cellWidth.js
   // and ../checkpointPreview.js, so copying only the mutable files
   // leaves the component's own imports unresolvable, and the probe
   // then dies on a BUILD error — which is red for the WRONG reason.
   cpSync(join(ROOT, "src"), join(dir, "src"), { recursive: true });
-  const sibling = join(dir, "..", "aethercode");
+  const sibling = join(parent, "aethercode");
   mkdirSync(sibling, { recursive: true });
   cpSync(join(ROOT, "..", "aethercode", "aethercode-core"), join(sibling, "aethercode-core"), {
     recursive: true,
@@ -106,8 +115,7 @@ function makeSandbox() {
  * @param {string} dir the sandbox
  */
 function cleanup(dir) {
-  rmSync(dir, { recursive: true, force: true });
-  rmSync(join(dir, "..", "aethercode"), { recursive: true, force: true });
+  rmSync(join(dir, ".."), { recursive: true, force: true });
 }
 
 /**
@@ -142,7 +150,10 @@ function runGate(dir) {
     {
       cwd: dir,
       encoding: "utf8",
-      timeout: 300_000,
+      // ★ THE BOUND IS FOR A HANG, NOT FOR SLOWNESS ★ The gate bundles
+      // the component per probe, so a run legitimately takes minutes
+      // under the suite's parallel load.
+      timeout: 600_000,
       env,
     },
   );

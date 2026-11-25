@@ -12,12 +12,14 @@ import assert from "node:assert/strict";
 import {
   readFileSync,
   writeFileSync,
-  copyFileSync,
+  cpSync,
+  mkdirSync,
   mkdtempSync,
   rmSync,
   existsSync,
+  symlinkSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -39,42 +41,119 @@ if (process.env.R388N_MUTATION_DEBUG) {
   }
 }
 
-/** Snapshot every file, mutate one, run the gate, restore. */
+/**
+ * Make a sandbox of the tree the gate reads.
+ *
+ * ★ R389 — THE MUTATION MUST NOT HAPPEN IN THE WORKING TREE ★
+ *
+ * This gate used to mutate the REAL `src/` files and restore them
+ * afterwards. That is a landmine, in three separate ways:
+ *
+ * <ol>
+ *   <li>★ IT CAN EAT UNCOMMITTED WORK ★ The "restore" copies a
+ *       backup over the file. If the process is killed between the
+ *       mutation and the restore — a timeout, a Ctrl-C, a crash — the
+ *       mutation is what is left on disk, and the user never learns
+ *       that their source was rewritten.</li>
+ *   <li>★ IT MAKES THE WHOLE SUITE FLAKY ★ The suite runs test FILES
+ *       in parallel, and this one was rewriting `src/tui.tsx` and
+ *       `src/permissionComment.ts` WHILE other files were reading
+ *       them. A reader that caught the mutated file saw a DIFFERENT
+ *       product — so `r388n-auto-mode.test.mjs` failed with
+ *       `'deny' !== 'allow'` while running against a perfectly good
+ *       tree. The failure looked like a defect in the feature; it was a
+ *       defect in the test harness.</li>
+ *   <li>★ IT MAKES THE GATE NON-DETERMINISTIC ★ Whether the gate went
+ *       red depended on the scheduler.</li>
+ * </ol>
+ *
+ * So the mutation happens in a COPY — a real copy of the FILES, in the
+ * OS temp directory, under a parent of its own so two sandboxes never
+ * share a path.
+ *
+ * <p>★ AND `node_modules` IS A JUNCTION ★ The gate loads the real
+ * modules with esbuild, and esbuild has to be resolvable from the
+ * sandbox. A COPY of `node_modules` would be enormous; a junction
+ * resolves to the real one, which is exactly right — the DEPS are
+ * shared, the MUTATED FILES are not.
+ *
+ * @returns {string} the sandbox's root
+ */
+function makeSandbox() {
+  const parent = mkdtempSync(join(tmpdir(), "r388n-mut-"));
+  const dir = join(parent, "sandbox");
+  mkdirSync(dir, { recursive: true });
+  cpSync(join(root, "src"), join(dir, "src"), { recursive: true });
+  // The gate file itself, plus the helper it imports.
+  cpSync(join(root, "scripts"), join(dir, "scripts"), { recursive: true });
+  // ★ THE DAEMON'S JAVA SOURCE COMES ALONG ★ The gate pins the wire
+  // contract by reading `AetherCodeMethods.java`, and it reaches it at
+  // `root/../aethercode/aethercode-protocol` — one level ABOVE the
+  // sandbox. So the sandbox has to carry that sibling, or the contract
+  // assertion dies on a missing file — and a gate that dies on a
+  // missing file is red for the WRONG reason.
+  //
+  // Only `src/` is copied: the gate reads SOURCES, and the module's
+  // `target/` is build output (8 MB of jars) that no gate reads.
+  const javaSrc = join(root, "..", "aethercode", "aethercode-protocol", "src");
+  const javaDst = join(parent, "aethercode", "aethercode-protocol", "src");
+  mkdirSync(join(parent, "aethercode", "aethercode-protocol"), { recursive: true });
+  cpSync(javaSrc, javaDst, { recursive: true });
+  symlinkSync(join(root, "node_modules"), join(dir, "node_modules"), "junction");
+  return dir;
+}
+
+/**
+ * The sandbox's copy of a file in the real tree.
+ *
+ * @param {string} dir the sandbox
+ * @param {string} file the real file's path
+ * @returns {string} the sandbox's path for it
+ */
+function inSandbox(dir, file) {
+  return join(dir, relative(root, file));
+}
+
+/**
+ * Mutate a COPY of a file, in the sandbox, and run the gate there.
+ *
+ * @param {string} file the file to mutate (a real path)
+ * @param {(src: string) => string} mutate the mutation
+ * @param {(dir: string) => boolean} run what to run against the sandbox
+ * @returns {boolean} whatever `run` returned
+ */
 function withMutation(file, mutate, run) {
-  const backupDir = mkdtempSync(join(tmpdir(), "r388n-mut-"));
-  const backups = new Map();
-  for (const [name, path] of Object.entries(FILES)) {
-    const dest = join(backupDir, name);
-    copyFileSync(path, dest);
-    backups.set(name, dest);
-  }
+  const dir = makeSandbox();
   try {
-    const src = readFileSync(file, "utf8");
+    const target = inSandbox(dir, file);
+    const src = readFileSync(target, "utf8");
     const mutated = mutate(src);
     assert.notEqual(mutated, src, "the mutation must actually change the file");
-    writeFileSync(file, mutated, "utf8");
+    writeFileSync(target, mutated, "utf8");
     // ★ The mutation MUST be on disk when the gate reads it. Assert it
     // here — a mutation test that silently mutated nothing is worse
     // than no mutation test, because it reports "the gate survived".
-    const onDisk = readFileSync(file, "utf8");
+    const onDisk = readFileSync(target, "utf8");
     assert.notEqual(onDisk, src, "the mutation must be ON DISK before the gate runs");
     if (process.env.R388N_MUTATION_DEBUG) {
       console.error(
         `[mutation] file=${file}\n[mutation] on-disk contains 'm' key: ${onDisk.includes('key: "m"')}`,
       );
     }
-    return run();
+    return run(dir);
   } finally {
-    for (const [name, dest] of backups) {
-      copyFileSync(dest, FILES[name]);
-    }
-    rmSync(backupDir, { recursive: true, force: true });
+    rmSync(join(dir, ".."), { recursive: true, force: true });
   }
 }
 
-/** Run the gate and return whether it failed. */
-function gateFails() {
-  const gatePath = join(root, "scripts", "test", "r388n-auto-mode.test.mjs");
+/**
+ * Run the gate against the SANDBOX and return whether it failed.
+ *
+ * @param {string} dir the sandbox
+ * @returns {boolean} whether the gate went red
+ */
+function gateFails(dir) {
+  const gatePath = join(dir, "scripts", "test", "r388n-auto-mode.test.mjs");
   try {
     // ★ `NODE_TEST_CONTEXT` MUST be cleared. ★
     //
@@ -93,7 +172,7 @@ function gateFails() {
     const env = { ...process.env };
     delete env.NODE_TEST_CONTEXT;
     execFileSync(process.execPath, ["--test", gatePath], {
-      cwd: root,
+      cwd: dir,
       stdio: "pipe",
       encoding: "utf8",
       env,
@@ -178,25 +257,23 @@ $1);`,
 });
 
 test("R388n gate: chaining setPermissionMode onto the reply turns it red", () => {
-  const src = readFileSync(FILES.tui, "utf8");
   // Rewrite the reply into a chained form: the mode RPC moves INSIDE
   // the reply's promise chain.
-  const chained = src.replace(
-    /  void client\n    \.request\(\n      "permissionResponse",[\s\S]{0,400}?\n    \)\n    \.catch\(\(e: Error\) => \{\n      dispatch\(\{ type: "log", message: `permission reply failed: \$\{e\.message\}` \}\);\n    \}\);/,
-    `  void client
+  const failed = withMutation(
+    FILES.tui,
+    (src) =>
+      src.replace(
+        /  void client\n    \.request\(\n      "permissionResponse",[\s\S]{0,400}?\n    \)\n    \.catch\(\(e: Error\) => \{\n      dispatch\(\{ type: "log", message: `permission reply failed: \$\{e\.message\}` \}\);\n    \}\);/,
+        `  void client
     .request("permissionResponse", { requestId: ask.requestId, decision })
     .then(() => client.request("setPermissionMode", { mode: mode ?? MODE.DEFAULT }))
     .catch((e: Error) => {
       dispatch({ type: "log", message: \`permission reply failed: \${e.message}\` });
     });`,
+      ),
+    gateFails,
   );
-  assert.notEqual(chained, src, "the chain mutation must change the file");
-  writeFileSync(FILES.tui, chained, "utf8");
-  try {
-    assert.ok(gateFails(), "the gate must FAIL when the mode change is chained onto the reply");
-  } finally {
-    writeFileSync(FILES.tui, src, "utf8");
-  }
+  assert.ok(failed, "the gate must FAIL when the mode change is chained onto the reply");
 });
 
 test("R388n gate: sending setPermissionMode unconditionally turns it red", () => {
@@ -244,45 +321,41 @@ test("R388n gate: a mode field on the wire but never applied turns it red", () =
   //
   // → **Lesson 1319 — a needle that is not unique lands on the wrong
   // occurrence and pretends to have tested something.**
-  const src = readFileSync(FILES.line, "utf8");
-  const replyIdx = src.indexOf('"permissionResponse"');
-  assert.ok(replyIdx > 0, "the line renderer must reply to the permission");
-  const tail = src.slice(replyIdx);
-  assert.match(
-    tail,
-    /client\.request\(\s*"setPermissionMode"/,
-    "the permission reply must issue setPermissionMode",
+  const failed = withMutation(
+    FILES.line,
+    (src) => {
+      const replyIdx = src.indexOf('"permissionResponse"');
+      assert.ok(replyIdx > 0, "the line renderer must reply to the permission");
+      const tail = src.slice(replyIdx);
+      assert.match(
+        tail,
+        /client\.request\(\s*"setPermissionMode"/,
+        "the permission reply must issue setPermissionMode",
+      );
+      return (
+        src.slice(0, replyIdx) +
+        tail.replace(
+          /client\.request\(\s*"setPermissionMode"/,
+          'client.request("setPermissionModeXXX"',
+        )
+      );
+    },
+    gateFails,
   );
-  const mutated =
-    src.slice(0, replyIdx) +
-    tail.replace(
-      /client\.request\(\s*"setPermissionMode"/,
-      'client.request("setPermissionModeXXX"',
-    );
-  assert.notEqual(mutated, src, "the mutation must change the file");
-  writeFileSync(FILES.line, mutated, "utf8");
-  try {
-    assert.ok(gateFails(), "the gate must FAIL when the line renderer stops applying the mode");
-  } finally {
-    writeFileSync(FILES.line, src, "utf8");
-  }
+  assert.ok(failed, "the gate must FAIL when the line renderer stops applying the mode");
 });
 
 test("R388n gate: chaining the LINE mode RPC onto the reply turns it red", () => {
-  const src = readFileSync(FILES.line, "utf8");
-  // Rewrite the reply into a chained form: the mode RPC moves INSIDE
-  // the reply's promise chain.
-  const chained = src.replace(
-    /await client\.request\(\s*"permissionResponse",[\s\S]{0,800}?\n\s*\);/,
-    `await client
+  const failed = withMutation(
+    FILES.line,
+    (src) =>
+      src.replace(
+        /await client\.request\(\s*"permissionResponse",[\s\S]{0,800}?\n\s*\);/,
+        `await client
             .request("permissionResponse", { requestId, decision: "allow" })
             .then(() => client.request("setPermissionMode", { mode: MODE.ACCEPT_TASK }));`,
+      ),
+    gateFails,
   );
-  assert.notEqual(chained, src, "the line-chain mutation must change the file");
-  writeFileSync(FILES.line, chained, "utf8");
-  try {
-    assert.ok(gateFails(), "the gate must FAIL when the line mode RPC is chained onto the reply");
-  } finally {
-    writeFileSync(FILES.line, src, "utf8");
-  }
+  assert.ok(failed, "the gate must FAIL when the line mode RPC is chained onto the reply");
 });

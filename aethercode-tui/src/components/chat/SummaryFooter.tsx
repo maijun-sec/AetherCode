@@ -172,10 +172,10 @@ interface Props {
 }
 
 /**
- * T-6-13: the always-visible summary card.
+ * T-6-13: the always-visible summary block.
  *
- * <p>Renders as a compact, single-line (or 2-3 line) card with
- * a yellow border. The badge is:
+ * <p>Renders as a compact label + the summary's own lines.
+ * The badge is:
  * <ul>
  *   <li>{@code SUMMARY} — the LLM wrote it.</li>
  *   <li>{@code ⚠ AUTO-SUMMARY PENDING} — the runtime
@@ -187,39 +187,27 @@ interface Props {
  *       follow-up model to summarise, and pasted the
  *       result here".</li>
  * </ul>
+ *
+ * ★ R389 — NO BOX ★ This card used to be drawn with a yellow border.
+ * The chat column is the desktop's flat document now, and the desktop
+ * has no boxes in it — every bordered block was another crate in a
+ * stack. The label + the text carry the same information without the
+ * frame.
  */
 export const SummaryFooter: React.FC<Props> = ({ summary, visible = true }) => {
   if (!visible) return null;
 
   if (summary == null) {
     return (
-      <Box
-        flexDirection="row"
-        marginY={0}
-        marginLeft={2}
-        paddingX={1}
-        borderStyle="single"
-        borderColor={t.warn}
-      >
-        <Text>
-          <Text color={t.warn} bold>
-            ⚠ auto-summary pending
-          </Text>
-        </Text>
+      <Box flexDirection="row" marginY={0} marginLeft={2}>
+        <Text color={t.warn}>⚠ auto-summary pending</Text>
       </Box>
     );
   }
 
   if (summary.autoInjected) {
     return (
-      <Box
-        flexDirection="column"
-        marginY={0}
-        marginLeft={2}
-        paddingX={1}
-        borderStyle="single"
-        borderColor={t.warn}
-      >
+      <Box flexDirection="column" marginY={0} marginLeft={2}>
         <Text>
           <Text color={t.warn} bold>
             ⚠ auto-summary
@@ -234,14 +222,7 @@ export const SummaryFooter: React.FC<Props> = ({ summary, visible = true }) => {
   }
 
   return (
-    <Box
-      flexDirection="column"
-      marginY={0}
-      marginLeft={2}
-      paddingX={1}
-      borderStyle="single"
-      borderColor="yellowBright"
-    >
+    <Box flexDirection="column" marginY={0} marginLeft={2}>
       <Text>
         <Text color="yellowBright" bold>
           SUMMARY

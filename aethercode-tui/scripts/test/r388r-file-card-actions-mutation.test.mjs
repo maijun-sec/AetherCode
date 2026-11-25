@@ -110,7 +110,10 @@ function runGate(dir) {
     {
       cwd: dir,
       encoding: "utf8",
-      timeout: 300_000,
+      // ★ THE BOUND IS FOR A HANG, NOT FOR SLOWNESS ★ The gate bundles
+      // the component per probe, so a run legitimately takes minutes
+      // under the suite's parallel load.
+      timeout: 600_000,
       env,
     },
   );
@@ -249,12 +252,18 @@ const MUTATIONS = [
   },
   {
     name: "the Scrollback stops passing the undo callback (the key does nothing)",
+    // ★ R389 — THE CHAIN HAS TWO HOPS ★ The card is no longer rendered
+    // by the Scrollback: the chat column is the desktop's flat
+    // document, and the file-changes summary is a BLOCK of it. So the
+    // callbacks travel Scrollback → ChatBlocks → the card, and the hop
+    // this mutation breaks is the FIRST one: the Scrollback stops
+    // handing the app's callback down.
     apply: (dir) =>
       mutate(
         dir,
         ["src", "components", "Scrollback.tsx"],
-        "onUndo={() => onUndoFileCard?.(group.turn.id)}",
-        "onUndo={undefined}",
+        "onUndoFileCard={onUndoFileCard}",
+        "onUndoFileCard={undefined}",
       ),
     expect: /Scrollback PASSES the callbacks down/,
   },
@@ -329,17 +338,28 @@ const MUTATIONS = [
   },
   {
     name: "the shared grouping rule stops breaking a group at a non-file turn",
+    // ★ R389 — ONE RULE, ONE PLACE ★ The card's grouping and the app's
+    // grouping are now the SAME scan (`fileChangeRuns`), so this is the
+    // one place where a run can stop being broken — and breaking it
+    // here must take BOTH sides with it.
     apply: (dir) =>
       mutate(
         dir,
         ["src", "fileChanges.ts"],
-        "    if (!fileChangeOfTurnParts(prev.role, prev.toolName, prev.toolArgs)) break;",
-        "    // mutated: the run never breaks",
+        "    close();\n  }\n  close();",
+        "    // R388r mutation: the run is never broken\n  }\n  close();",
       ),
     // The measured test asserts several things about the same rule, so
     // any of them naming the grouping is the right reason.
+    //
+    // ★ AND THE NEEDLES ARE THE MESSAGE'S OWN WORDS ★ This regex used
+    // to say "the way the card does", while the gate's message says
+    // "the way the rule says" — so the mutation went red for exactly
+    // the right reason and the gate called it the WRONG reason. A
+    // "right reason" needle is a needle too, and it goes stale like
+    // any other.
     expect:
-      /does not group the turns the way the card does|does not target the most recent file-change group|do not share a group id/,
+      /does not group the turns|does not target the most recent file-change group|do not share a group id|target DIFFERENT groups/,
   },
 ];
 
