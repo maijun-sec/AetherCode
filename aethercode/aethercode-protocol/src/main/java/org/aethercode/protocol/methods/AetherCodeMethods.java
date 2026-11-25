@@ -4036,7 +4036,11 @@ public class AetherCodeMethods {
     public Object setSystemPrompt(Object params) {
         Map<String, Object> p = asMap(params);
         String prompt = stringOrThrow(p, "prompt");
-        engine.queryEngine().setSystemPrompt(prompt);
+        // R409: the engine-level setter, so the prompt the model gets and
+        // the prompt the /prompt preview shows are the SAME string. (The
+        // QueryEngine's setter drops the per-turn renderer — an explicit
+        // prompt is an explicit prompt.)
+        engine.setSystemPromptText(prompt);
         return Map.of("ok", true, "length", prompt.length());
     }
 

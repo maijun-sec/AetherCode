@@ -91,7 +91,19 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
     private final java.util.concurrent.ConcurrentHashMap<String,
             java.util.concurrent.atomic.AtomicLong> skipStatsByTool =
             new java.util.concurrent.ConcurrentHashMap<>();
-    private final org.aethercode.prompts.SystemPrompt systemPrompt;
+    /** R409: the prompt's SECTIONS (not a rendered string). The per-turn
+     *  renderer re-renders it with this turn's tool table and the session's
+     *  current cwd, so the two per-turn facts are never frozen.
+     *
+     *  <p>Volatile because the rules watcher and the config watcher
+     *  replace it when the project's rules / workflow mode change; the
+     *  renderer reads it on every turn. */
+    private volatile org.aethercode.prompts.SystemPrompt systemPrompt;
+    /** R409: the prompt of the LAST turn — the one the model actually
+     *  received. The {@code /prompt} preview shows this, so the window
+     *  into the prompt shows the same tool table the model was given
+     *  (a pruned one), not the session's full pool. */
+    private volatile org.aethercode.prompts.SystemPrompt lastTurnPrompt;
     private volatile String planModeSuffix = "";
     private final QueryEngine queryEngine;
     private final HookRegistry hookRegistry;
@@ -960,6 +972,25 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         this.queryEngine = new QueryEngine(
                 appState, chatClient, policy, systemPrompt.render(),
                 null, this.metrics, this.costTracker, this.streamingToolExecutor, compactor, null);
+        // R409: the prompt is rendered PER TURN, from this turn's tool pool
+        // and the session's CURRENT cwd.
+        //
+        // Before R409 the prompt was rendered ONCE, here, from the FULL
+        // tool pool and the construction-time cwd — and then frozen for
+        // every turn that ever followed. R408 measured what that costs:
+        //
+        //   - the prompt advertised tools the API had not offered (the API
+        //     carries the pool PRUNED to the turn's profile), so the model
+        //     called them and got "unknown tool" — 48 calls to a shell that
+        //     was not in the pool;
+        //   - the prompt's working directory was the one the engine was
+        //     BUILT with, so a later switchProject left the prompt and the
+        //     session pointing at different directories.
+        //
+        // The renderer is installed on the QueryEngine, not called here:
+        // the tool pool is decided per TURN (the profile's prune), so the
+        // rendering has to happen where the turn is known.
+        this.queryEngine.setTurnPromptRenderer(this::renderTurnPrompt);
         // R284: forward the snapshot store to QueryEngine
         // now that the engine exists. The session id is
         // already set on AppState at this point.
@@ -1056,8 +1087,12 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 if (key.equals(lastFired[0])) return;
                 lastFired[0] = key;
                 try {
-                    String newPrompt = renderDefaultSystemPrompt(b);
-                    this.queryEngine.setSystemPrompt(newPrompt);
+                    // R409: replace the prompt's SECTIONS, not the
+                    // QueryEngine's rendered string. The per-turn renderer
+                    // reads this object, so the next turn picks the new
+                    // rules up AND still gets this turn's tool table and
+                    // the session's current cwd.
+                    this.systemPrompt = defaultSystemPrompt(b);
                 } catch (Exception ex) {
                     LOG.warn("prior round: rules reload failed: {}", ex.getMessage());
                 }
@@ -1102,8 +1137,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                         }
                     }
                     // 2. re-render the system prompt (workflow mode may have changed).
-                    String newPrompt = renderDefaultSystemPrompt(b);
-                    this.queryEngine.setSystemPrompt(newPrompt);
+                    // R409: replace the prompt's SECTIONS — the per-turn
+                    // renderer reads this object, so the next turn sees the
+                    // new workflow mode AND this turn's tool table.
+                    this.systemPrompt = defaultSystemPrompt(b);
                     // 3. apply the project's default skip count if it changed.
                     this.skipConfirmationRegistry.applyDefault(b.sessionId, fresh);
                     // 4. re-compute the permission-mode
@@ -4954,9 +4991,14 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *  and pushes the new value into the QueryEngine). The
      *  returned object is a fresh build (prior round), not
      *  a cached reference, so callers that mutate the
-     *  returned object do not see surprising aliasing. */
+     *  returned object do not see surprising aliasing.
+     *
+     *  <p>R409: the rendered prompt is the one THIS session would
+     *  send — the current tool pool and the current cwd — so the
+     *  preview does not show a stale table of tools the model
+     *  cannot call. */
     public org.aethercode.prompts.RenderedPrompt currentRenderedPrompt() {
-        return systemPrompt.renderWithSources();
+        return renderForTurn().renderWithSources();
     }
 
     /** convenience for the QueryEngine's
@@ -4964,6 +5006,82 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *  listener. Returns just the rendered String, which
      *  is what the LLM call site consumes. */
     public String currentSystemPromptText() {
-        return systemPrompt.render();
+        return renderForTurn().render();
+    }
+
+    // ------------------------------------------------------------------
+    //  R409 — the per-turn rendering
+    // ------------------------------------------------------------------
+
+    /**
+     * R409: the prompt for the CURRENT turn.
+     *
+     * <p>Two facts are per-turn and were frozen before R409:
+     * the tool table (the profile prunes the pool per turn) and the
+     * working directory (the session's cwd changes). Both are read
+     * live here.
+     *
+     * <p>★ WHAT THE PREVIEW SHOWS ★ The LAST turn's prompt — the one the
+     * model actually received. Not the session's full pool: the preview
+     * is the user's window into the prompt, and a window that shows a
+     * tool table the model cannot call is a window that lies (the R383
+     * failure mode, one layer down). Before the first turn there is no
+     * last turn, so the session's pool is shown.
+     *
+     * <p>When the user replaced the prompt verbatim (the {@code /prompt}
+     * RPC), the engine's prompt IS that string — the renderer is dropped
+     * on purpose, and this method must not re-add a tool table the user
+     * did not ask for.
+     */
+    private org.aethercode.prompts.SystemPrompt renderForTurn() {
+        org.aethercode.prompts.SystemPrompt base = this.systemPrompt;
+        if (base == null) return org.aethercode.prompts.SystemPrompt.builder().build();
+        if (queryEngine == null || !queryEngine.hasTurnPromptRenderer()) {
+            // The prompt was replaced verbatim: show exactly that.
+            return base;
+        }
+        org.aethercode.prompts.SystemPrompt last = this.lastTurnPrompt;
+        if (last != null) return last;
+        return base
+                .withEnvironment(appState.cwd(), System.getProperty("os.name"))
+                .withTooling(appState.toolPool());
+    }
+
+    /**
+     * R409: render the base prompt for one turn.
+     *
+     * <p>Called by the QueryEngine with the turn's tool pool (already
+     * pruned) and the session's current cwd. The rendered prompt is kept
+     * so the {@code /prompt} preview can show what the model got.
+     */
+    private String renderTurnPrompt(java.util.List<org.aethercode.core.tool.Tool> turnTools,
+                                    java.nio.file.Path cwd) {
+        org.aethercode.prompts.SystemPrompt base = this.systemPrompt;
+        if (base == null) return "";
+        org.aethercode.prompts.SystemPrompt turn = base
+                .withEnvironment(cwd, System.getProperty("os.name"))
+                .withTooling(turnTools);
+        this.lastTurnPrompt = turn;
+        return turn.render();
+    }
+
+    /**
+     * R409: replace the system prompt VERBATIM.
+     *
+     * <p>This is the {@code /prompt} RPC: the user typed a prompt and
+     * wants exactly that, with no tool table and no environment section
+     * re-written under it. The engine's per-turn renderer is dropped for
+     * the same reason — an explicit prompt is an explicit prompt.
+     */
+    public void setSystemPromptText(String prompt) {
+        String p = prompt == null ? "" : prompt;
+        this.systemPrompt = org.aethercode.prompts.SystemPrompt.builder()
+                .identity(p)
+                .build();
+        // ★ THE LAST TURN'S PROMPT IS STALE NOW ★ the user replaced the
+        // prompt; the preview must show THAT, not the turn that ran under
+        // the previous one.
+        this.lastTurnPrompt = null;
+        if (this.queryEngine != null) this.queryEngine.setSystemPrompt(p);
     }
 }

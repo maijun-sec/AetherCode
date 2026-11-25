@@ -117,6 +117,13 @@ public class QueryEngine {
     /** per-call token usage is also billed here. May be null. */
     private final org.aethercode.core.cost.CostTracker costTracker;
     private volatile String systemPrompt;
+    /** R409: renders the system prompt for ONE turn (the tool table of
+     *  THIS turn + the session's CURRENT cwd). Null = no renderer, and the
+     *  frozen {@link #systemPrompt} string is the base for every turn.
+     *
+     *  <p>The SDK installs one; a bare {@code QueryEngine} (tests, embedders)
+     *  does not have to. */
+    private volatile TurnPromptRenderer turnPromptRenderer;
     /** R379: the DEFAULT agent's system-prompt block. When the user
      *  marks an agent as the default, its body is prepended to every
      *  subsequent turn — that is what makes "default agent" a
@@ -1764,11 +1771,54 @@ public class QueryEngine {
      *  agent. The new prompt is used for ALL subsequent queries
      *  until {@code setSystemPrompt(...)} is called again. The
      *  memory section and plan mode suffix are still appended
-     *  on top of this base prompt. */
+     *  on top of this base prompt.
+     *
+     *  <p>R409: this ALSO drops the per-turn renderer. The caller asked
+     *  for one exact prompt; the renderer's whole job is to rewrite the
+     *  prompt's tool table and working directory, which is exactly what
+     *  an explicit prompt must not have rewritten under it. */
     public void setSystemPrompt(String prompt) {
         this.systemPrompt = prompt == null ? "" : prompt;
+        this.turnPromptRenderer = null;
     }
     public String systemPrompt() { return systemPrompt; }
+
+    /** R409: install (or clear) the per-turn prompt renderer.
+     *
+     *  <p>With a renderer installed, the base prompt for each turn is
+     *  rendered from the turn's tool pool and the session's current cwd
+     *  instead of being the frozen construction-time string. Without one,
+     *  the frozen string stays the base (the pre-R409 behaviour). */
+    public void setTurnPromptRenderer(TurnPromptRenderer renderer) {
+        this.turnPromptRenderer = renderer;
+    }
+
+    /** R409: is a per-turn renderer installed? The SDK asks so that the
+     *  {@code /prompt} preview shows the SAME prompt the model gets. */
+    public boolean hasTurnPromptRenderer() {
+        return turnPromptRenderer != null;
+    }
+
+    /** R409: the base prompt for one turn.
+     *
+     *  <p>With a renderer: the renderer decides (it owns the prompt's
+     *  section format). Without: the frozen string.
+     *
+     *  <p>A renderer that throws must not take the turn down: the frozen
+     *  prompt is a worse answer than the right one, but it is an answer.
+     */
+    private String renderTurnBase(java.util.List<org.aethercode.core.tool.Tool> turnTools) {
+        TurnPromptRenderer renderer = this.turnPromptRenderer;
+        if (renderer == null) return systemPrompt;
+        try {
+            String rendered = renderer.render(turnTools, appState.cwd());
+            return rendered == null ? systemPrompt : rendered;
+        } catch (Throwable t) {
+            LOG.warn("R409: the per-turn prompt renderer failed ({}); falling back to the base prompt",
+                    t.toString());
+            return systemPrompt;
+        }
+    }
 
     /** R379: install (or clear) the default agent's system-prompt
      *  block. Appended to the base prompt on every turn, so setting
@@ -1798,8 +1848,9 @@ public class QueryEngine {
      *  re-enters itself for subagents, and a field would be
      *  overwritten by the child's turn while the parent's turn is
      *  still running. */
-    private String buildSystemForTurn(String memory, String plan, String posture) {
-        StringBuilder sb = new StringBuilder(systemPrompt);
+    private String buildSystemForTurn(String memory, String plan, String posture,
+                                      String base) {
+        StringBuilder sb = new StringBuilder(base == null ? systemPrompt : base);
         // R379: the default agent's block sits right after the base
         // prompt and BEFORE the memory section, because it is part of
         // "who you are", not part of "what you know right now".
@@ -2161,6 +2212,23 @@ public class QueryEngine {
         // so the model cannot call it.
         final java.util.List<org.aethercode.core.tool.Tool> visibleTools =
                 explicitTools != null ? explicitTools : appState.toolPool();
+        // R409: the BASE prompt for THIS turn, rendered NOW — not at
+        // construction time, and not at stream-consumption time.
+        //
+        // Why now: the prompt's tool table must list the tools the model
+        // may actually call (the pool above, already pruned by the
+        // profile), and its working directory must be the session's
+        // CURRENT one. Both are per-turn facts. R408 measured what
+        // happens when the prompt is frozen: the model read a tool table
+        // that advertised tools the API had not offered, called them,
+        // and burned 48 calls hunting for the "real" name of a tool that
+        // was never going to exist.
+        //
+        // Why captured here and not inside the spliterator: the prompt
+        // must be a SNAPSHOT of the turn that started the run, exactly
+        // like `visibleTools`. A subagent that re-enters this engine
+        // mid-turn must not change what the parent turn is told.
+        final String turnBasePrompt = renderTurnBase(visibleTools);
         final String posturePrompt =
                 (ctx != null && ctx.profile() != null) ? ctx.profile().systemPrompt() : "";
         final String intentToken =
@@ -2436,7 +2504,8 @@ private Stream<StreamEvent> currentLlmStream;
                         // query, not the live field. effectiveSystem() reads
                         // the live field; we temporarily swap it in via a
                         // local-only path here.
-                        String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix, posturePrompt);
+                        String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix, posturePrompt,
+                turnBasePrompt);
                         // R716: filter orphan tool results before handing
                         // the transcript to the chat client. Some providers
                         // (notably MiniMax-M3's OpenAI-compat endpoint) strictly

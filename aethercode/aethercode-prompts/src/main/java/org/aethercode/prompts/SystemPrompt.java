@@ -207,27 +207,105 @@ public class SystemPrompt {
         public Builder designFirst(String s) { this.designFirst = s == null ? "" : s; return this; }
 
         public Builder environmentFrom(Path cwd, String os) {
-            this.environment = """
-                    Current working directory: %s
-                    Platform: %s
-                    Today's date: %s
-                    """.formatted(cwd, os, java.time.LocalDate.now()).strip();
+            this.environment = environmentSection(cwd, os);
             return this;
         }
 
         public Builder toolingFrom(List<Tool> tools) {
-            StringBuilder sb = new StringBuilder("# Tools\n");
-            for (Tool t : tools) {
-                sb.append("\n## ").append(t.name()).append("\n");
-                sb.append(t.description()).append("\n");
-                sb.append("Input schema:\n```json\n").append(
-                        org.aethercode.core.tool.ToolsJson.toJson(t.inputSchema())).append("\n```\n");
-            }
-            this.tooling = sb.toString();
+            this.tooling = toolingSection(tools);
             return this;
         }
 
         public SystemPrompt build() { return new SystemPrompt(this); }
+    }
+
+    // ----------------------------------------------------------------------------------
+    //  R409 — the two PER-TURN sections
+    // ----------------------------------------------------------------------------------
+
+    /**
+     * R409: the ENVIRONMENT section's text.
+     *
+     * <p>One format, two entry points: the builder (construction time) and
+     * {@link #withEnvironment(Path, String)} (turn time). They MUST render the
+     * same thing — a second copy of this format is how the prompt ends up
+     * saying one thing at boot and another thing at runtime.
+     */
+    private static String environmentSection(Path cwd, String os) {
+        return """
+                Current working directory: %s
+                Platform: %s
+                Today's date: %s
+                """.formatted(cwd, os, java.time.LocalDate.now()).strip();
+    }
+
+    /**
+     * R409: the TOOLING section's text.
+     *
+     * <p>★ THE SCHEMA IS NOT HERE ★ Each tool's JSON schema used to be
+     * rendered in this section as well. It does not need to be: the API call
+     * already carries it. The {@code ChatClient} hands the tool pool to the
+     * provider, which sends name + description + parameters for every tool
+     * (see {@code SpringAiChatClient}'s {@code FunctionCallback}). R408
+     * measured the prompt's copy as a SECOND copy of the same information —
+     * and a STALE one, because it was rendered from the full pool while the
+     * API carried the pool pruned to the turn's profile. A stale copy of the
+     * tool list is worse than no copy: the model reads it and calls tools the
+     * API never offered (R408 measured 48 calls to a shell that was not in
+     * the turn's pool, each answered "unknown tool").
+     *
+     * <p>What stays is the name + description list: it is the one place the
+     * prompt can say "these are the tools you may call" in prose, and it
+     * survives a provider that ignores the {@code tools} parameter.
+     */
+    private static String toolingSection(List<Tool> tools) {
+        StringBuilder sb = new StringBuilder("# Tools\n");
+        if (tools == null) return sb.toString();
+        for (Tool t : tools) {
+            if (t == null) continue;
+            sb.append("\n## ").append(t.name()).append("\n");
+            sb.append(t.description()).append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * R409: a copy of this prompt whose TOOLING section lists exactly these
+     * tools — the tools of THIS turn, never the full pool.
+     *
+     * <p>Used by the engine's per-turn rendering: the profile's prune decides
+     * what the model may call, and the prompt has to say the same thing.
+     */
+    public SystemPrompt withTooling(List<Tool> tools) {
+        if (tools == null) return this;
+        return copyWith(this.environment, toolingSection(tools));
+    }
+
+    /**
+     * R409: a copy of this prompt whose ENVIRONMENT section describes the
+     * given working directory.
+     *
+     * <p>A null cwd keeps the current section — a session with no directory
+     * is not a session whose directory is "null".
+     */
+    public SystemPrompt withEnvironment(Path cwd, String os) {
+        if (cwd == null) return this;
+        return copyWith(environmentSection(cwd, os), this.tooling);
+    }
+
+    /** R409: copy every section except the two per-turn ones. */
+    private SystemPrompt copyWith(String environment, String tooling) {
+        Builder b = new Builder();
+        b.identity = identity;
+        b.environment = environment;
+        b.tooling = tooling;
+        b.workflow = workflow;
+        b.memory = memory;
+        b.planMode = planMode;
+        b.rules = rules;
+        b.designFirst = designFirst;
+        b.agents = agents;
+        return new SystemPrompt(b);
     }
 
     // ----------------------------------------------------------------------------------
