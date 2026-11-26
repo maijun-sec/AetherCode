@@ -545,6 +545,144 @@ public final class IntentClassifier {
             "please", "can you", "could you", "would you", "help me",
             "i need you to", "i want you to", "for me", "go ahead");
 
+    /**
+     * R414: WEAK research markers — "查一下 X", "搜一下 X".
+     *
+     * <h2>★ WHY THIS IS NOT IN {@link #RESEARCH_MARKERS} ★</h2>
+     * <p>{@code RESEARCH_MARKERS} is RULE 1: it wins over everything,
+     * including the local anchor. And that is right for its entries —
+     * "web search", "github", "官方文档" name an EXTERNAL source
+     * explicitly. But "查一下 X" does NOT: the user said "look it up",
+     * and the question is WHERE — the web or this tree. Putting it in
+     * rule 1 would send "查一下这个文件" to the internet for a file that
+     * is sitting right there.
+     *
+     * <p>⇒ The weak marker is resolved by the LOCAL ANCHOR instead:
+     * "查一下这个仓库的 X" is a question about this tree (ANSWER), and
+     * "查一下 Java 21 的虚拟线程" is a lookup on the web (RESEARCH).
+     *
+     * <h2>★ MEASURED (R414) ★</h2>
+     * <p>Before this list existed, "查一下 Java 21 的虚拟线程" and
+     * "搜一下 Spring Boot 4 的新特性" classified as
+     * {@link Kind#UNCERTAIN} — the read-only {@code navigator} posture,
+     * whose directive says "the shape of this request was not
+     * recognised". The user asked for a lookup and got a shrug. The
+     * strong markers had never covered the plain "查一下/搜一下"
+     * phrasing, which is how Chinese speakers usually ask.
+     */
+    private static final List<String> WEAK_RESEARCH_MARKERS = List.of(
+            "查一下", "查一查", "查查", "搜一下", "搜一搜", "搜搜",
+            "搜索一下", "查下", "看下资料",
+            "look up", "search for", "find out about");
+
+    /**
+     * R414: the Chinese 把-construction.
+     *
+     * <p>Chinese puts the OBJECT first and the VERB last: "把 X 改成 Y",
+     * "把 X 删掉". R405's imperative-position rule looks for the verb at
+     * the HEAD of the sentence, so every 把-construction fell through to
+     * {@link Kind#UNCERTAIN} — measured: "把 AppConfig 里的
+     * MAX_RETRIES 改成 5" and "把这条 SQL 改成参数化的" both landed on
+     * the read-only navigator, i.e. the user asked for a code change and
+     * the agent was not allowed to make one.
+     *
+     * <p>★ THE CONSTRUCTION IS THE IMPERATIVE MARKER ★ in English the
+     * position of the verb says whether the sentence is an instruction
+     * ("Update pom.xml" vs "the updated pom.xml"). In the 把-construction
+     * the position says nothing — 把 itself is the marker, and the verb
+     * is at the END. So the verb is looked up ANYWHERE after 把.
+     *
+     * <p>★ ONLY THE CHINESE VERBS ★ the 把-construction is a Chinese
+     * grammar, so only the Chinese entries of
+     * {@link #AMBIGUOUS_CODE_VERBS} qualify. That keeps an English
+     * noun phrase inside a Chinese sentence ("把 status update 的说明
+     * 翻译一下") from being read as a code change.
+     */
+    private static final String BA_CONSTRUCTION = "把";
+
+    /**
+     * R414: the verbs a 把-construction may carry.
+     *
+     * <p>★ WHY THIS IS NOT THE AMBIGUOUS LIST ★
+     * {@link #AMBIGUOUS_CODE_VERBS} contains verbs that also form NOUN
+     * phrases ("修改记录" = the change log, "调整方案" = the adjustment
+     * plan). In a 把-construction those noun phrases are the OBJECT:
+     * "把修改记录给我看看" asks to be SHOWN the change log, and reading
+     * it as a code change hands the write tools to a read request.
+     *
+     * <p>The list here therefore holds only verbs that do not head a
+     * noun phrase in this position — "改成/换成/设为/变成" always take an
+     * object, and "翻译成/翻译为" is the same shape.
+     *
+     * <p>★ AND THE OBJECT STILL HAS TO LOOK LIKE CODE ★ the rule below
+     * also requires a code-shaped token BETWEEN 把 and the verb. That is
+     * what separates "把 AppConfig 里的 MAX_RETRIES 改成 5" (an edit)
+     * from "把说明文档改成英文" (still an edit — 文档 is an artefact) and
+     * from "把 status update 的说明改成中文" (not an edit — no code-shaped
+     * token in the object).
+     */
+    private static final List<String> BA_CHANGE_VERBS = List.of(
+            "改成", "换成", "设为", "变成", "翻译成", "翻译为", "改写为");
+
+    /**
+     * R414: the Chinese artefact words that make a 把-object a real
+     * target of a change (a file, a document, a piece of code).
+     */
+    private static final List<String> BA_ARTEFACT_WORDS = List.of(
+            "文档", "文件", "代码", "脚本", "配置", "常量", "方法", "字段",
+            "类", "接口", "函数", "语句", "测试", "注释", "日志");
+
+    /**
+     * R414: a code-shaped IDENTIFIER — a CamelCase name ("AppConfig") or
+     * an UPPER_SNAKE constant ("MAX_RETRIES", "SQL").
+     *
+     * <p>★ WHY AN IDENTIFIER COUNTS AS "A THING IN THIS TREE" ★ the
+     * 把-object of a real edit is usually a symbol, not a word: "把
+     * AppConfig 里的 MAX_RETRIES 改成 5". Neither artefact word nor
+     * path matches it, so without this the most ordinary Chinese code
+     * request would still fall through to
+     * {@link Kind#UNCERTAIN}.
+     *
+     * <p>★ THE CAMEL-CASE HALF IS NOT WORD-ANCHORED ★ "AppConfig" has no
+     * word boundary before its inner capital ("pC" sits inside the word),
+     * so {@code \b[a-z][A-Z]} would never match it. The pattern
+     * therefore looks for the lowercase-to-uppercase TRANSITION
+     * anywhere, and only the UPPER_SNAKE half keeps the word boundary it
+     * needs ("SQL" must be a word of its own, not the "SQL" inside
+     * "MySQL").
+     */
+    private static final Pattern IDENTIFIER_SHAPED = Pattern.compile(
+            "[a-z][A-Z]|\\b[A-Z][A-Z0-9_]{2,}\\b");
+
+    /**
+     * R414: where one request ends and the next begins.
+     *
+     * <p>★ WHY A CLAUSE IS THE UNIT ★ one Chinese line can carry two
+     * requests: "查一下 X，并把 Y 改成 Z" is a lookup AND an edit. The
+     * lookup's object is the clause it lives in, so a code verb INSIDE
+     * that clause is part of the subject ("查一下这个改名的方法" asks
+     * ABOUT a method called 改名, and must not be read as "rename it"),
+     * while a code verb OUTSIDE the clause is a coordinated request that
+     * needs the write channel.
+     *
+     * <p>★ "并且" AND NOT "并" ★ 并 also opens 并发 ("concurrency"), and
+     * cutting a clause there would split "查一下 Java 的并发实现" in the
+     * middle of a word. The conjunction forms that cannot be a word are
+     * listed instead.
+     */
+    private static final List<String> CLAUSE_BOUNDARIES = List.of(
+            "，", ",", "；", ";", "。", "!", "！", "?", "？",
+            "然后", "并且", "并把", "同时把", "再把");
+
+    /**
+     * R414: 并 followed by something that can only be a VERB — "并重命名",
+     * "并删除". It is a clause boundary, but it cannot be listed as a
+     * literal, because 并 also opens 并发 ("concurrency") and 重新
+     * ("again") — cutting a clause there would split a word.
+     */
+    private static final Pattern CONJUNCTION_EDIT = Pattern.compile(
+            "并(?=[改重删移新增创建生成加写修优整理清换设变提封装迁移补转翻])");
+
     /** union of two lists, order preserved. */
     private static List<String> union(List<String> a, List<String> b) {
         java.util.ArrayList<String> out = new java.util.ArrayList<>(a);
@@ -785,14 +923,36 @@ public final class IntentClassifier {
             return new Intent(Kind.RESEARCH, "concept question with no local anchor");
         }
 
-        // 6. Not a question: an explicit implementation verb means code
+        // 6. R414: the Chinese 把-construction. The verb sits at the END of
+        //    the sentence, so the implementation-verb rule (which reads the
+        //    HEAD of the sentence) cannot see it — measured: "把 AppConfig
+        //    里的 MAX_RETRIES 改成 5" and "把这条 SQL 改成参数化的" both
+        //    landed on UNCERTAIN, i.e. the user asked for a code change and
+        //    the write channel was pruned away.
+        String baVerb = baChangeRequest(p, lower);
+        if (baVerb != null) {
+            return new Intent(Kind.CODE_CHANGE,
+                    "Chinese 把-construction asking for a change: " + baVerb);
+        }
+
+        // 7. R414: a LOOKUP — "查一下 X", "搜一下 X". The marker is an
+        //    INFORMATION verb, so the turn is a lookup, and the anchor
+        //    decides WHERE it looks: this tree, or the web.
+        String lookup = lookupRequest(p, lower);
+        if (lookup != null) {
+            return local
+                    ? new Intent(Kind.ANSWER, "lookup about this repository: " + lookup)
+                    : new Intent(Kind.RESEARCH, "lookup request with no local anchor: " + lookup);
+        }
+
+        // 8. Not a question: an explicit implementation verb means code
         //    work.
         String codeHit = firstHit(lower, CODE_VERBS);
         if (codeHit != null) {
             return new Intent(Kind.CODE_CHANGE, "implementation verb: " + codeHit);
         }
 
-        // 6b. R405: an AMBIGUOUS verb — the same word is a noun as often
+        // 8b. R405: an AMBIGUOUS verb — the same word is a noun as often
         //     as a verb, so it fires only when it stands alone AND
         //     either opens the sentence (imperative position) or has a
         //     path-like object.
@@ -809,7 +969,7 @@ public final class IntentClassifier {
             return new Intent(Kind.CODE_CHANGE, why + ambiguous);
         }
 
-        // 7. Nothing matched.
+        // 9. Nothing matched.
         return Intent.uncertain("no intent signal");
     }
 
@@ -834,6 +994,164 @@ public final class IntentClassifier {
             at = lower.indexOf("sql", at + 1);
         }
         return false;
+    }
+
+    // ------------------------------------------------------------------
+    // R414 — the two constructions a keyword table cannot see
+    // ------------------------------------------------------------------
+
+    /**
+     * R414: the Chinese 把-construction, resolved.
+     *
+     * <p>★ THREE THINGS HAVE TO LINE UP ★
+     * <ol>
+     *   <li>the sentence carries 把;</li>
+     *   <li>a change verb from {@link #BA_CHANGE_VERBS} appears AFTER 把 —
+     *       Chinese puts the object first and the verb last, so the
+     *       verb's POSITION is the instruction, and a verb that never
+     *       takes an object ("修改记录" = the change log) is not in the
+     *       list;</li>
+     *   <li>the OBJECT — the text between 把 and the verb — looks like
+     *       something in this tree.</li>
+     * </ol>
+     *
+     * <p>★ WHY THE THIRD CONDITION IS NOT OPTIONAL ★ "把 status update 的
+     * 说明改成中文" has the construction but no local target: the user
+     * wants the answer in the CHAT. Reading it as a code change hands
+     * the write tools to a translation request — the exact misfire the
+     * whole posture table exists to prevent.
+     *
+     * @param p the prompt AS THE USER WROTE IT — the code-shape check
+     *           needs the CASE, and the classifier lower-cases the text
+     *           for its keyword tables (measured: "AppConfig" and
+     *           "MAX_RETRIES" became "appconfig" and "max_retries", and
+     *           then no identifier can ever be recognised)
+     * @param lower the same prompt, lower-cased
+     * @return the change verb, or null when this is not a 把-request
+     */
+    private static String baChangeRequest(String p, String lower) {
+        int ba = lower.indexOf(BA_CONSTRUCTION);
+        while (ba >= 0) {
+            int after = ba + BA_CONSTRUCTION.length();
+            String verb = null;
+            int verbAt = -1;
+            for (String v : BA_CHANGE_VERBS) {
+                int at = lower.indexOf(v, after);
+                if (at >= 0 && (verbAt < 0 || at < verbAt)) {
+                    verb = v;
+                    verbAt = at;
+                }
+            }
+            if (verb != null
+                    && baObjectIsCodeShaped(p.substring(after, verbAt))) {
+                return verb;
+            }
+            ba = lower.indexOf(BA_CONSTRUCTION, ba + 1);
+        }
+        return null;
+    }
+
+    /**
+     * R414: does the 把-object name something that lives in this tree?
+     *
+     * <p>Three shapes qualify: an artefact word ("文档", "字段", "测试"),
+     * a path ("src/OrderDao.java") or an identifier ("AppConfig",
+     * "MAX_RETRIES", "SQL").
+     */
+    private static boolean baObjectIsCodeShaped(String object) {
+        if (containsAny(object, BA_ARTEFACT_WORDS)) return true;
+        if (PATH_LIKE.matcher(object).find()) return true;
+        return IDENTIFIER_SHAPED.matcher(object).find();
+    }
+
+    /**
+     * R414: a LOOKUP request — "查一下 X", "搜一下 X", "look up X".
+     *
+     * <p>★ THE MARKER IS AN INFORMATION VERB ★ so the turn is a lookup,
+     * not a modification. But WHERE it looks is decided by the anchor:
+     * a local subject is answered from this tree, an external one from
+     * the web.
+     *
+     * <p>★ WHY THE CLAUSE MATTERS ★ "查一下这个改名的方法" asks ABOUT a
+     * method called 改名 — the verb "改名" is part of the SUBJECT, not
+     * a second request. "查一下 X，并把 Y 改成 Z" is two requests, and
+     * the second one needs the write channel. The difference is the
+     * CLAUSE, so that is what this reads.
+     *
+     * @return the marker, or null when this is not a lookup
+     */
+    private static String lookupRequest(String p, String lower) {
+        String hit = null;
+        int at = -1;
+        for (String m : WEAK_RESEARCH_MARKERS) {
+            int i = lower.indexOf(m);
+            if (i >= 0 && (at < 0 || i < at)) {
+                hit = m;
+                at = i;
+            }
+        }
+        if (hit == null) return null;
+        List<int[]> bounds = clauseBoundaries(lower);
+        int start = clauseStart(bounds, at);
+        int end = clauseEnd(bounds, at);
+        String outside = p.substring(0, start)
+                + (end < 0 ? "" : p.substring(end));
+        if (carriesEditSignal(outside)) return null;
+        return hit;
+    }
+
+    /**
+     * R414: does this text ask for the tree to CHANGE?
+     *
+     * <p>★ THE SAME QUESTION THE CODE-VERB RULE ASKS ★ so the lookup
+     * rule and the implementation-verb rule agree about what an edit
+     * is — a lookup does not get to call an edit "not an edit".
+     */
+    private static boolean carriesEditSignal(String text) {
+        if (text == null || text.isBlank()) return false;
+        String low = text.toLowerCase(Locale.ROOT);
+        if (baChangeRequest(text, low) != null) return true;
+        return containsAny(low, CODE_VERBS);
+    }
+
+    /**
+     * R414: every clause boundary in the text, as {@code {index, length}}
+     * pairs, ordered by index.
+     */
+    private static List<int[]> clauseBoundaries(String lower) {
+        List<int[]> out = new java.util.ArrayList<>();
+        for (String b : CLAUSE_BOUNDARIES) {
+            int i = lower.indexOf(b);
+            while (i >= 0) {
+                out.add(new int[] { i, b.length() });
+                i = lower.indexOf(b, i + 1);
+            }
+        }
+        java.util.regex.Matcher m = CONJUNCTION_EDIT.matcher(lower);
+        while (m.find()) {
+            out.add(new int[] { m.start(), m.end() - m.start() });
+        }
+        out.sort((a, b) -> Integer.compare(a[0], b[0]));
+        return out;
+    }
+
+    /** the start of the clause that contains {@code at}. */
+    private static int clauseStart(List<int[]> bounds, int at) {
+        int start = 0;
+        for (int[] b : bounds) {
+            if (b[0] + b[1] <= at) start = Math.max(start, b[0] + b[1]);
+        }
+        return start;
+    }
+
+    /** the index of the boundary that ENDS the clause containing {@code at},
+     *  or -1 when the clause runs to the end of the prompt. */
+    private static int clauseEnd(List<int[]> bounds, int at) {
+        int end = -1;
+        for (int[] b : bounds) {
+            if (b[0] >= at && (end < 0 || b[0] < end)) end = b[0];
+        }
+        return end;
     }
 
     // ------------------------------------------------------------------

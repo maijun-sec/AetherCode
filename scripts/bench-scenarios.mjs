@@ -56,12 +56,12 @@
  *   SCENARIOS_PORT=22996 node scripts/bench-scenarios.mjs
  */
 
-import { spawn } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, "..");
@@ -69,7 +69,15 @@ const REPO = resolve(__dirname, "..");
 const JAR = process.env.SCENARIOS_JAR
   ?? join(REPO, "aethercode", "aethercode-cli", "target", "aethercode-cli-0.1.0-SNAPSHOT-shaded.jar");
 const PORT = Number(process.env.SCENARIOS_PORT ?? 22996);
-const ROOT = process.env.SCENARIOS_ROOT ?? join(REPO, ".aethercode", "bench-scenarios");
+// ★ R414: THE SANDBOX MUST LIVE OUTSIDE THE REPOSITORY ★
+// R413 put it in <repo>/.aethercode/bench-scenarios, and R414's live run
+// measured what that costs: the O1 scenario ("跑一下单元测试") ran in an
+// EMPTY sandbox, found nothing to do, and walked UP -- "ls ../..", "ls
+// ../../.." -- until it was reading the user's real repository: the git
+// log, the bench script itself, the whole tree. The subject was reading
+// the user's working tree, and nothing in the bench would have noticed.
+// A sandbox that the subject can leave is not a sandbox.
+const ROOT = process.env.SCENARIOS_ROOT ?? join(tmpdir(), "aethercode-bench-scenarios");
 const ONLY = (process.env.SCENARIOS_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 const JAVA = process.env.SCENARIOS_JAVA ?? "java";
 
@@ -172,6 +180,22 @@ const FIX = {
   repo: {
     "src/CheckpointStore.java": `package demo;\n\nimport java.nio.file.Path;\n\n/** Stores the checkpoint snapshots of a session. */\npublic class CheckpointStore {\n    private final Path root;\n\n    public CheckpointStore(Path root) {\n        this.root = root;\n    }\n\n    /** Writes a snapshot of the transcript under the session directory. */\n    public Path save(String sessionId, String transcript) {\n        return root.resolve(sessionId + ".jsonl");\n    }\n}\n`,
   },
+  // ★ R414: THE CONSISTENCY FIXTURE ★ the constant lives in TWO places and
+  // a TEST asserts its value — change one and the tree is inconsistent.
+  cons: {
+    "src/AppConfig.java": `package demo;\n\npublic class AppConfig {\n    /** how many times a failed call is retried */\n    public static final int MAX_RETRIES = 3;\n}\n`,
+    "src/LegacyConfig.java": `package demo;\n\n/** the same constant, kept for the legacy module */\npublic class LegacyConfig {\n    public static final int MAX_RETRIES = 3;\n}\n`,
+    "src/AppConfigTest.java": `package demo;\n\npublic class AppConfigTest {\n    public static void main(String[] args) {\n        assertEquals(3, AppConfig.MAX_RETRIES);\n    }\n\n    static void assertEquals(int expected, int actual) {\n        if (expected != actual) throw new AssertionError(expected + " != " + actual);\n    }\n}\n`,
+  },
+  // ★ R414: THE PRECISION FIXTURE ★ the third file only LOOKS like a copy:
+  // its name CONTAINS the token but it is a different constant. A greedy
+  // consistency sweep changes it, and that is the "乱七八糟的操作" the
+  // user complained about.
+  cons2: {
+    "src/AppConfig.java": `package demo;\n\npublic class AppConfig {\n    /** how many times a failed call is retried */\n    public static final int MAX_RETRIES = 3;\n}\n`,
+    "src/LegacyConfig.java": `package demo;\n\n/** the same constant, kept for the legacy module */\npublic class LegacyConfig {\n    public static final int MAX_RETRIES = 3;\n}\n`,
+    "src/Metrics.java": `package demo;\n\npublic class Metrics {\n    /** a DIFFERENT constant whose name merely starts the same way */\n    public static final int MAX_RETRIES_DEFAULT = 30;\n}\n`,
+  },
 };
 
 // ---------------------------------------------------------------- scenarios
@@ -181,10 +205,18 @@ const FIX = {
 //   "ro"  read-only posture: no file may appear, no write channel may be used
 //   "wo"  write posture: the named file must land on disk, non-empty
 //   "chg" write posture: the named file must CHANGE
+//   "new" write posture: a file with the named BASE NAME must land, and
+//         nothing else may be created (the path is the agent's choice)
 //   "ans" read the local file, answer with file:line evidence
 //   "diag" read the local file, cite file:line, and change NOTHING
+//         (a diagnosis OR a review — both were asked to REPORT)
 //   "fix" read the local file, do NOT go to the web, and change it
 //   "ops" run a real command
+//   "cons" the CONSISTENCY contract: every copy of the token must carry the
+//         new value, the look-alikes must be untouched, and the report must
+//         name the copies
+//   "cons2" the PRECISION half of the same contract: the copies change
+//         together AND the look-alike stays exactly as it was
 const SCENARIOS = [
   {
     id: "Q1", cat: "a plain question (external concept)", files: [], attempts: 1,
@@ -252,6 +284,94 @@ const SCENARIOS = [
     prompt: "跑一下单元测试",
     expect: ["ops", "operator"], mode: "ops", watch: [],
   },
+
+  // ------------------------------------------------------------------
+  // R414 — the task types the R413 matrix did not cover
+  // ------------------------------------------------------------------
+
+  {
+    id: "K1", cat: "research: a lookup about the WORLD", files: [], attempts: 1,
+    prompt: "查一下 Java 21 的虚拟线程",
+    // ★ R414: THIS PROMPT WAS UNCERTAIN ★ the strong markers held
+    // "查资料" and "官方文档", never the plain "查一下" that a Chinese
+    // speaker actually types — so the turn ran in the read-only
+    // navigator, whose directive says "the shape of this request was not
+    // recognised".
+    expect: ["research", "researcher"], mode: "ro", watch: [],
+  },
+  {
+    id: "K2", cat: "research: a lookup about THIS tree", files: ["repo"], attempts: 1,
+    prompt: "查一下这个仓库的 checkpoint 快照放在哪儿",
+    // The same verb, a local subject: the answer is in the working tree,
+    // so the tree is read and the turn stays read-only.
+    expect: ["answer", "analyst"], mode: "ans", watch: ["src/CheckpointStore.java"],
+  },
+  {
+    id: "K3", cat: "development: the Chinese 把-construction", files: ["sql"], attempts: 2,
+    prompt: "把这条 SQL 改成参数化的",
+    // ★ R414: THIS PROMPT WAS UNCERTAIN ★ Chinese puts the object first
+    // and the verb last, so the implementation-verb rule — which reads the
+    // HEAD of the sentence — could not see it. The user asked for a code
+    // change and the write channel was pruned away.
+    expect: ["code_change", "builder"], mode: "chg", watch: ["src/OrderDao.java"],
+  },
+  {
+    id: "K4", cat: "development: CONSISTENCY (change a contract, change its copies)",
+    files: ["cons"], attempts: 2,
+    prompt: "把 AppConfig 里的 MAX_RETRIES 改成 5",
+    // ★ THE CONSISTENCY CONTRACT ★ the constant lives in two files and a
+    // test asserts its value. Changing one of the three leaves the tree
+    // inconsistent — and the user has to find the leftover.
+    expect: ["code_change", "builder"], mode: "cons", watch: [],
+    consistency: {
+      token: "MAX_RETRIES", old: "3", neu: "5",
+      copies: ["src/AppConfig.java", "src/LegacyConfig.java", "src/AppConfigTest.java"],
+      lookalikes: [],
+      // ★ THE REPORT HALF ★ the copies the agent changed must be NAMED.
+      // The test file is checked on disk (the invariant) but is not
+      // required to be named — "AppConfig" is a substring of
+      // "AppConfigTest", so naming it would satisfy the check for the
+      // other one anyway.
+      report: ["AppConfig", "LegacyConfig"],
+    },
+  },
+  {
+    id: "K5", cat: "development: CONSISTENCY precision (a look-alike is not a copy)",
+    files: ["cons2"], attempts: 2,
+    prompt: "把 AppConfig 里的 MAX_RETRIES 改成 5",
+    // ★ THE SAME PROMPT, A DIFFERENT TREE ★ the behaviour must follow the
+    // TREE, not the wording: here the third file merely LOOKS like a copy
+    // (its name contains the token, its value is a different constant).
+    // Changing it would be exactly the "乱七八糟的操作" the user
+    // complained about.
+    expect: ["code_change", "builder"], mode: "cons2", watch: [],
+    consistency: {
+      token: "MAX_RETRIES", old: "3", neu: "5",
+      copies: ["src/AppConfig.java", "src/LegacyConfig.java"],
+      lookalikes: ["src/Metrics.java"],
+      report: ["AppConfig", "LegacyConfig"],
+    },
+  },
+  {
+    id: "K6", cat: "review: report on the code, change nothing", files: ["sql"], attempts: 1,
+    prompt: "帮我看看这个改动有没有问题",
+    expect: ["review", "reviewer"], mode: "diag", watch: ["src/OrderDao.java"],
+  },
+  {
+    id: "K7", cat: "development: write a TEST", files: ["lru"], attempts: 2,
+    prompt: "给 LruCache 写一个单元测试",
+    expect: ["code_change", "builder"], mode: "new", watch: ["LruCacheTest.java"],
+  },
+  {
+    id: "K8", cat: "development: a refactor", files: ["sql"], attempts: 2,
+    prompt: "重构一下 OrderDao，把 SQL 拼接抽出来",
+    expect: ["code_change", "builder"], mode: "chg", watch: ["src/OrderDao.java"],
+  },
+  {
+    id: "K9", cat: "research: an English lookup", files: [], attempts: 1,
+    prompt: "look up the Java 21 virtual thread model",
+    expect: ["research", "researcher"], mode: "ro", watch: [],
+  },
 ];
 
 // ---------------------------------------------------------------- helpers
@@ -271,6 +391,51 @@ function filesIn(dir) {
 const sha = (p) => existsSync(p) ? createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 12) : "MISSING";
 const citesLocal = (t) => /\b[\w./-]+\.(java|kt|ts|tsx|js|py|go|rs|sql|md|txt|json|ya?ml)\s*[:：]\s*\d+/.test(t);
 const WRITE_TOOLS = ["file_write", "file_edit", "notebook_edit", "bash"];
+const baseName = (f) => f.split("/").pop();
+
+/**
+ * ★ THE CONSISTENCY INVARIANT (R414) ★
+ *
+ * <p>★ WHY IT IS NOT "THE FILE CHANGED" ★ the contract is not that a
+ * file was TOUCHED — it is that the copies AGREE. An agent that changes
+ * two files to two DIFFERENT values has touched both and is still
+ * inconsistent, and the user still has to find the leftover.
+ *
+ * <p>★ AND THE LOOK-ALIKE HALF ★ a `grep` for "MAX_RETRIES" also hits
+ * "MAX_RETRIES_DEFAULT", and that is NOT a copy. Changing it is the
+ * "乱七八糟的操作" the user complained about, so the invariant pins the
+ * look-alikes as UNTOUCHED.
+ *
+ * @param before the file hashes taken before the turn
+ * @returns {{ok: boolean, stale: string[], touchedLookalikes: string[]}}
+ */
+function consistencyState(sc, dir, before) {
+  const c = sc.consistency;
+  const stale = [];
+  const oldRe = new RegExp("(?<![0-9A-Za-z_])" + c.old + "(?![0-9A-Za-z_])");
+  for (const f of c.copies) {
+    const p = join(dir, f);
+    if (!existsSync(p)) { stale.push(f + " (missing)"); continue; }
+    const body = readFileSync(p, "utf8");
+    let ok = false;
+    for (const line of body.split(/\r?\n/)) {
+      if (!line.includes(c.token)) continue;
+      if (line.includes(c.neu) && !oldRe.test(line)) ok = true;
+      else stale.push(f + ": " + line.trim());
+    }
+    if (!ok) stale.push(f + ": no line carries " + c.token + " = " + c.neu);
+  }
+  const touchedLookalikes = [];
+  for (const f of (c.lookalikes ?? [])) {
+    const p = join(dir, f);
+    if (!existsSync(p) || sha(p) !== before.get(f)) touchedLookalikes.push(f);
+  }
+  return {
+    ok: stale.length === 0 && touchedLookalikes.length === 0,
+    stale,
+    touchedLookalikes,
+  };
+}
 
 /**
  * ★ THE AGENT REGISTRY GUARD ★ R408 measured a read-only turn rewriting
@@ -293,12 +458,52 @@ function snapshotAgents() {
   return out;
 }
 
+/**
+ * ★ THE REPOSITORY GUARD (R414) ★ the subject must not touch the USER'S
+ * working tree.
+ *
+ * <p>★ WHY THIS GUARD EXISTS ★ R413's sandbox lived INSIDE the repo
+ * (<code>&lt;repo&gt;/.aethercode/bench-scenarios</code>), so "the sandbox"
+ * and "the user's tree" were the same disk — and R414's live run measured
+ * the consequence: the O1 scenario ran in an empty sandbox, found nothing
+ * to do, and walked <code>..</code> until it was reading the user's
+ * repository. The sandbox now lives outside the repo, and this guard
+ * PROVES it: every TRACKED file's hash, before and after the whole run.
+ *
+ * @returns the map, or null when git is unavailable (the guard then says
+ *          so instead of pretending it passed)
+ */
+function snapshotRepo() {
+  let files = [];
+  try {
+    const res = spawnSync("git", ["ls-files"], { cwd: REPO, encoding: "utf8" });
+    if (res.status !== 0 || !res.stdout) return null;
+    files = res.stdout.split(/\r?\n/).filter(Boolean);
+  } catch { return null; }
+  const out = {};
+  for (const f of files) {
+    const p = join(REPO, f);
+    try {
+      // ★ NOT EVERY TRACKED PATH IS A FILE ★ `git ls-files` also lists a
+      // submodule as a single DIRECTORY entry, and reading a directory
+      // throws EISDIR -- which would abort the guard instead of guarding.
+      if (!statSync(p).isFile()) continue;
+      out[f] = sha(p);
+    } catch { /* unreadable: the comparison simply skips it */ }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- run
 rmSync(ROOT, { recursive: true, force: true });
 mkdirSync(ROOT, { recursive: true });
 console.log(`== AetherCode scenario matrix ==\n   jar  = ${JAR}\n   port = ${PORT}\n`);
 
 const agentsBefore = snapshotAgents();
+const repoBefore = snapshotRepo();
+if (!repoBefore) {
+  console.log("  ....  (the repository guard is UNAVAILABLE -- git ls-files failed)");
+}
 const summary = [];
 for (const sc of SCENARIOS) {
   if (ONLY.length && !ONLY.includes(sc.id)) continue;
@@ -338,15 +543,28 @@ for (const sc of SCENARIOS) {
       raw = [];
       const q = await rpc("query", { sessionId: sid, prompt: sc.prompt });
       check(`${sc.id}: turn ${i} accepted`, q?.accepted === true, `runId=${q?.runId}`);
-      end = await waitForRunEnd(600_000);
+      end = await waitForRunEnd(900_000);
       check(`${sc.id}: turn ${i} finished`, !!end, end ? `stopReason=${end.stopReason}` : "NO run_end");
       if (!end) break;
-      const landed = sc.watch.length > 0 && sc.watch.every((f) => {
-        const p = join(dir, f);
-        if (!existsSync(p)) return false;
-        return sc.mode === "chg" ? sha(p) !== before.get(f) : true;
-      });
-      if (landed || sc.mode === "ro" || sc.mode === "ans" || sc.mode === "diag"
+      // ★ WHAT COUNTS AS "DELIVERED" ★ per mode: the file landed, the file
+      // changed, the file with that base name landed, or — for the
+      // consistency modes — the copies AGREE.
+      const nowFiles = filesIn(dir);
+      const nowCreated = nowFiles.filter((f) => !before.has(f));
+      let delivered;
+      if (sc.mode === "cons" || sc.mode === "cons2") {
+        delivered = consistencyState(sc, dir, before).ok;
+      } else if (sc.mode === "new") {
+        const wanted = sc.watch.map((f) => baseName(f));
+        delivered = nowCreated.some((f) => wanted.includes(baseName(f)));
+      } else {
+        delivered = sc.watch.length > 0 && sc.watch.every((f) => {
+          const p = join(dir, f);
+          if (!existsSync(p)) return false;
+          return sc.mode === "chg" ? sha(p) !== before.get(f) : true;
+        });
+      }
+      if (delivered || sc.mode === "ro" || sc.mode === "ans" || sc.mode === "diag"
           || sc.mode === "ops" || i >= sc.attempts) break;
       note(`the deliverable did not land; retrying with the SAME prompt (${i})`);
     }
@@ -435,6 +653,43 @@ for (const sc of SCENARIOS) {
     if (sc.mode === "ops") {
       check(`${sc.id}: ★ it ran a REAL command`, tools.includes("bash"), `tools=[${[...new Set(tools)].join(", ")}]`);
     }
+    if (sc.mode === "new") {
+      // ★ THE PATH IS THE AGENT'S CHOICE ★ "写一个单元测试" does not name
+      // a path, so the bench looks the deliverable up by its BASE NAME.
+      const wanted = sc.watch.map((f) => baseName(f));
+      const found = createdFiles.filter((f) => wanted.includes(baseName(f)));
+      check(`${sc.id}: ★ ${wanted[0]} was created`, found.length > 0,
+        `created=[${createdFiles.join(", ")}]`);
+      check(`${sc.id}: ★ ${wanted[0]} is not empty`,
+        found.length > 0 && readFileSync(join(dir, found[0]), "utf8").trim().length > 0);
+      const extra = createdFiles.filter((f) => !wanted.includes(baseName(f)));
+      check(`${sc.id}: ★ no file nobody asked for`, extra.length === 0,
+        `extra=[${extra.join(", ")}]`);
+    }
+    if (sc.mode === "cons" || sc.mode === "cons2") {
+      // ★ THE CONSISTENCY CONTRACT (R414) ★
+      const st = consistencyState(sc, dir, before);
+      check(`${sc.id}: ★ every copy of ${sc.consistency.token} now carries ${sc.consistency.neu}`,
+        st.stale.length === 0, `stale=[${st.stale.join(" | ")}]`);
+      if ((sc.consistency.lookalikes ?? []).length > 0) {
+        check(`${sc.id}: ★ the look-alike was NOT touched`,
+          st.touchedLookalikes.length === 0,
+          `touched=[${st.touchedLookalikes.join(", ")}]`);
+      }
+      // ★ THE REPORT HALF ★ the consistency contract has a second half:
+      // the copies that changed have to be NAMED, or the user cannot check
+      // the claim without diffing the tree himself.
+      for (const name of (sc.consistency.report ?? [])) {
+        check(`${sc.id}: ★ the report names ${name}`, text.includes(name),
+          `text=${text.slice(-400).replace(/\s+/g, " ")}`);
+      }
+      // ★ THE LITTER HALF ★ a consistency fix EDITS files; it creates
+      // none. R414's live run measured the K5 scenario compiling the
+      // project to verify its change and leaving three .class files behind
+      // — nobody asked for them, and the user has to delete them.
+      check(`${sc.id}: ★ nothing else was left behind`, createdFiles.length === 0,
+        `created=[${createdFiles.join(", ")}]`);
+    }
 
     row.verdict = { intent: state?.intent, profile: state?.profile, reason: state?.intentReason };
     row.tools = [...new Set(tools)];
@@ -463,7 +718,20 @@ const agentDiff = agentKeys.filter((k) => agentsBefore[k] !== agentsAfter[k]);
 check("★ the agent registry is UNCHANGED after the whole run", agentDiff.length === 0,
   `changed=[${agentDiff.join(", ")}]`);
 
+// ---- the USER'S WORKING TREE must be byte-identical --------------------------
+// ★ R414 ★ the subject must not leave its sandbox and touch the repo. The
+// guard hashes every TRACKED file before and after the run.
+let repoGuard = null;
+if (repoBefore) {
+  const repoAfter = snapshotRepo();
+  const repoKeys = [...new Set([...Object.keys(repoBefore), ...Object.keys(repoAfter ?? {})])].sort();
+  const repoDiff = repoKeys.filter((k) => (repoBefore[k] ?? null) !== ((repoAfter ?? {})[k] ?? null));
+  check("★ the USER'S WORKING TREE is UNCHANGED after the whole run", repoDiff.length === 0,
+    `changed=[${repoDiff.slice(0, 8).join(", ")}]`);
+  repoGuard = { files: repoKeys.length, changed: repoDiff };
+}
+
 console.log(`\n== scenario matrix: ${pass} passed / ${fail} failed ==`);
 writeFileSync(join(ROOT, "summary.json"),
-  JSON.stringify({ pass, fail, rows: summary, agentRegistryChanged: agentDiff }, null, 2), "utf8");
+  JSON.stringify({ pass, fail, rows: summary, agentRegistryChanged: agentDiff, repoGuard }, null, 2), "utf8");
 process.exit(fail === 0 ? 0 : 1);
