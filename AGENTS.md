@@ -66,7 +66,15 @@ memory at `C:\Users\maijun\.minimax\agents\mavis\memory\MEMORY.md`.
   explicit bypasses the guard).
 - `MemoryMethods` RPC round-trips are exercised at the daemon
   level — verify with `curl -X POST http://127.0.0.1:22888/rpc
-  -d '{"method":"memory/list","params":{"scope":"project"}}'`.
+  -d '{"jsonrpc":"2.0","id":1,"method":"memory/list","params":{"scope":"project"}}'`.
+  ★ The `jsonrpc` field is NOT optional: `JsonRpcCodec` rejects a
+  request without `"jsonrpc":"2.0"` with `-32603 missing or invalid
+  jsonrpc version`, and that codec is shared by EVERY transport
+  (stdio and HTTP alike). The recipe above used to omit it, so the
+  documented verification step could only ever fail. Readiness is
+  `GET /healthz` (there is no `/health`). On Windows, `curl -d '{...}'`
+  loses the double quotes to the shell — put the body in a file and
+  use `--data-binary @file.json`.
 
 ## Code style
 
