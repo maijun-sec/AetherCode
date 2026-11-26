@@ -149,7 +149,10 @@ function colorForKind(kind: State["lastStopKind"]): string {
     case "loop":
       return t.err;
     case "max_turns":
-      return t.warn;
+      // ★ R416: the daemon reports a budget stop as a FAILURE (the
+      // request was not finished) and the desktop renders it red —
+      // this renderer must not disagree with the verdict.
+      return t.err;
     case "error":
       return t.err;
     default:

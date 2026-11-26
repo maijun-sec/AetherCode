@@ -165,6 +165,10 @@ public final class ProgressLoopDetector {
          *  model can't self-correct and a soft warning
          *  would just delay the inevitable. */
         private int emptyInputStreakThreshold = 2;
+        /** R416: how many consecutive turns that produced NO NEW
+         * INFORMATION before the stall pattern starts climbing the
+         * warn ladder. Default 3. */
+        private int noNewInfoThreshold = 3;
 
         public Builder window(int v) {
             if (v < 1) throw new IllegalArgumentException("window must be >= 1");
@@ -209,11 +213,20 @@ public final class ProgressLoopDetector {
             this.emptyInputStreakThreshold = v;
             return this;
         }
+        /** R416: configure the stall threshold — how many consecutive
+         *  turns that bring NO new information before the pattern
+         *  starts climbing the warn ladder. See
+         *  {@link ProgressLoopDetector#noNewInfoThreshold}. */
+        public Builder noNewInfoThreshold(int v) {
+            if (v < 1) throw new IllegalArgumentException("noNewInfoThreshold must be >= 1");
+            this.noNewInfoThreshold = v;
+            return this;
+        }
         public ProgressLoopDetector build() {
             int fp = Math.min(fingerprintThreshold, window);
             return new ProgressLoopDetector(this, window, fp, sameErrorThreshold,
                     longOutputThreshold, longOutputConsecutive, warnBeforeStop,
-                    emptyInputStreakThreshold);
+                    emptyInputStreakThreshold, noNewInfoThreshold);
         }
     }
 
@@ -382,11 +395,43 @@ public final class ProgressLoopDetector {
      *  (so the same pattern doesn't immediately re-fire). */
     private String lastLoopKind = null;
 
+    /** R416: how many consecutive turns that brought NO NEW INFORMATION
+     * before the stall pattern starts climbing the warn ladder.
+     *
+     * <p>★ WHY A NEW PATTERN AND NOT A TURN COUNT ★ R83 removed the
+     * per-query turn cap and named {@code TodoRunController} as the
+     * replacement ("the source of truth for 'this is taking too long'").
+     * But the todo controller bounds a turn that HAS a todo list. A
+     * research turn with no todos — the shape R415's matrix caught in
+     * K9, where the model fetched the same document from twenty
+     * mirrors — has no bound at all. A turn count would be the wrong
+     * unit (the user's own long rounds are hundreds of turns and must
+     * not be cut off), so R416 bounds the turn by the thing that
+     * actually runs out: INFORMATION.
+     *
+     * <p>★ THE UNIT IS THE RESULT, NOT THE CALL ★ the call fingerprints
+     * were never the problem: twenty mirrors are twenty DIFFERENT calls.
+     * The RESULT is the same document every time, and a turn that keeps
+     * producing results it has already seen is not making progress no
+     * matter how different the calls look. */
+    private final int noNewInfoThreshold;
+    /** R416: the information digests this run has already produced.
+     * A turn whose results are ALL already in this set brought nothing
+     * new. */
+    private final java.util.Set<String> seenInformation = new java.util.HashSet<>();
+    /** R416: the call fingerprints this run has already TRIED. A turn
+     * whose calls are all in this set repeated itself — that is the
+     * call-level loop's business, not the stall's. */
+    private final java.util.Set<String> triedCallFingerprints = new java.util.HashSet<>();
+    /** R416: consecutive turns that brought no new information. */
+    private int noNewInfoStreak = 0;
+
     private ProgressLoopDetector(Builder ignored, int window, int fingerprintThreshold,
                                   int sameErrorThreshold, int longOutputThreshold,
                                   int longOutputConsecutive,
                                   int warnBeforeStop,
-                                  int emptyInputStreakThreshold) {
+                                  int emptyInputStreakThreshold,
+                                  int noNewInfoThreshold) {
         this.window = window;
         this.fingerprintThreshold = fingerprintThreshold;
         this.sameErrorThreshold = sameErrorThreshold;
@@ -394,6 +439,7 @@ public final class ProgressLoopDetector {
         this.longOutputConsecutive = longOutputConsecutive;
         this.warnBeforeStop = warnBeforeStop;
         this.emptyInputStreakThreshold = emptyInputStreakThreshold;
+        this.noNewInfoThreshold = noNewInfoThreshold;
     }
 
     /** R136.3: number of file_write tool calls seen
@@ -607,6 +653,10 @@ public final class ProgressLoopDetector {
         // continues to emit empty inputs, we won't fire
         // again on the same in-flight sequence.
         this.emptyInputStreak = 0;
+        // R416: an explicit user ack also clears the stall streak —
+        // "this is intentional, keep going" must not immediately
+        // re-fire the same pattern.
+        this.noNewInfoStreak = 0;
         // Don't clear history — that would erase the window
         // and the same pattern would re-fire on the next
         // batch regardless. Instead, the caller (the
@@ -671,6 +721,10 @@ public final class ProgressLoopDetector {
         // successful tool call doesn't leave the
         // streak intact.
         this.emptyInputStreak = 0;
+        // R416: progress also clears the stall streak — a turn that
+        // produced a real write has, by definition, produced something
+        // the run had not seen before.
+        this.noNewInfoStreak = 0;
     }
 
     /** how many times {@link #notifyProgress} has been called
@@ -697,6 +751,64 @@ public final class ProgressLoopDetector {
                             .append(String.valueOf(e.getValue())).append(';'));
         }
         return sb.toString();
+    }
+
+    // ---- R416: the INFORMATION digest -----------------------------------
+    //
+    // ★ WHAT IS NORMALIZED AND WHY ★ a raw comparison of two tool
+    // results would never notice that twenty mirror pages are the same
+    // page: the URL differs, the timestamp differs, the tool-call id
+    // differs. Those three are exactly the parts that carry NO
+    // information — the information is the body. So the digest drops
+    // them and keeps everything else.
+    //
+    // ★ WHAT IS NOT NORMALIZED ★ hex blobs, numbers and identifiers
+    // stay. A result that differs only in a hash IS a different result
+    // (that hash is content, e.g. a git SHA), and normalising it away
+    // would merge two genuinely different results into one — which is
+    // how a stall detector starts firing on real work.
+    private static final java.util.regex.Pattern DIGEST_URL =
+            java.util.regex.Pattern.compile("https?://\\S+");
+    private static final java.util.regex.Pattern DIGEST_CALL_ID =
+            java.util.regex.Pattern.compile("\\b(?:call|chatcmpl-tool|toolu)_[A-Za-z0-9_\\-]{3,}\\b");
+    private static final java.util.regex.Pattern DIGEST_TIMESTAMP =
+            java.util.regex.Pattern.compile("\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?");
+    private static final java.util.regex.Pattern DIGEST_DURATION =
+            java.util.regex.Pattern.compile("\\b\\d+(?:\\.\\d+)?\\s?(?:ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)\\b");
+    private static final java.util.regex.Pattern DIGEST_WHITESPACE =
+            java.util.regex.Pattern.compile("\\s+");
+
+    /**
+     * R416: the digest of a tool RESULT — the unit "new information"
+     * is measured in.
+     *
+     * @param output the tool's output body
+     * @return the digest, or {@code null} when the output carries no
+     *         information at all (null / blank)
+     */
+    public static String informationDigest(String output) {
+        if (output == null) return null;
+        String s = output;
+        if (s.isBlank()) return null;
+        s = DIGEST_URL.matcher(s).replaceAll("<url>");
+        s = DIGEST_CALL_ID.matcher(s).replaceAll("<id>");
+        s = DIGEST_TIMESTAMP.matcher(s).replaceAll("<ts>");
+        s = DIGEST_DURATION.matcher(s).replaceAll("<dur>");
+        s = DIGEST_WHITESPACE.matcher(s).replaceAll(" ").trim();
+        if (s.isEmpty()) return null;
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(d.length * 2);
+            for (byte b : d) hex.append(Character.forDigit((b >> 4) & 0xF, 16))
+                    .append(Character.forDigit(b & 0xF, 16));
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // SHA-256 is required of every JRE; if it is somehow absent,
+            // fall back to the normalized text itself rather than
+            // pretending the results are all the same.
+            return s;
+        }
     }
 
     /**
@@ -992,6 +1104,37 @@ public final class ProgressLoopDetector {
             if (e.getValue() > best) { best = e.getValue(); hot = e.getKey(); }
         }
 
+        // R416: the fingerprints this run has already TRIED.
+        //
+        // ★ WHY NOT THE WINDOWED `counts` MAP ★ the engine calls this
+        // method TWICE per turn — once before the tools run (no results
+        // yet) and once after — and BOTH calls merge the turn's
+        // fingerprint into `counts`. So by the time the call that has
+        // the results runs, the CURRENT turn's own fingerprint is
+        // already in the window, and "is this call new?" would answer
+        // "no" for every turn. This set is written ONLY by the call
+        // that carries results, so it holds the fingerprints of the
+        // PREVIOUS turns — which is the question the stall asks.
+        //
+        // ★ AND WHY THE WINDOWED MAP IS LEFT ALONE ★ `counts` drives
+        // the call-level same_fingerprint pattern, whose windowing is
+        // deliberate (a fingerprint that left the window is "new
+        // again"). Changing it for the stall's sake would change that
+        // pattern's contract.
+        boolean triedSomethingNew = false;
+        if (outputs != null && !outputs.isEmpty()) {
+            for (ContentBlock.ToolUseBlock b : batch) {
+                if (b == null) continue;
+                if (!triedCallFingerprints.contains(fingerprint(b))) {
+                    triedSomethingNew = true;
+                    break;
+                }
+            }
+            for (ContentBlock.ToolUseBlock b : batch) {
+                if (b != null) triedCallFingerprints.add(fingerprint(b));
+            }
+        }
+
         // the high-risk tool check has been removed. The old logic
         // was a numeric cap on sensitive commands that the user couldn't
         // override, and it produced false positives on legitimate
@@ -1074,10 +1217,147 @@ public final class ProgressLoopDetector {
                     "long output + repeated tool call (" + assistantTextChars + " chars)");
         }
 
+        // 5. R416: THE STALL — the bound that replaced the turn cap does
+        //    not cover a turn without todos.
+        //
+        //    ★ WHY THIS IS A SEPARATE PATTERN ★ R83 removed the
+        //    per-query turn cap and named TodoRunController as the
+        //    replacement. The todo controller bounds a turn that HAS a
+        //    todo list. A research turn (R415's K9: the same document
+        //    fetched from twenty mirrors) has NO todos — so nothing
+        //    bounded it, and the turn ran until the user stopped it.
+        //
+        //    ★ THE UNIT IS THE RESULT ★ twenty mirrors are twenty
+        //    DIFFERENT call fingerprints, so the call-level pattern
+        //    (same_fingerprint) could never see them. The RESULT is the
+        //    same document every time. A turn whose results are all
+        //    ones it has already seen is not making progress, however
+        //    different the calls look.
+        //
+        //    ★ ONLY THE POST-BATCH CALL COUNTS ★ the engine calls this
+        //    method twice per turn: once BEFORE the tools run (with no
+        //    results yet) and once after. Only the second call has
+        //    results, so only it can answer "did this turn bring
+        //    anything new". Counting the pre-batch call would make
+        //    every turn look information-free.
+        //
+        //    ★ AND ONLY A TURN THAT TRIED SOMETHING NEW ★ a turn that
+        //    repeats a call the window already knows is the call-level
+        //    loop's business (R171: warn, don't end the run). The stall
+        //    is the OTHER shape: the model changed something and got
+        //    the same answer back.
+        if (outputs != null && !outputs.isEmpty() && triedSomethingNew) {
+            boolean sawNewInformation = false;
+            boolean sawContent = false;
+            for (BatchResult r : outputs) {
+                if (r == null || r.isError()) {
+                    // An error is not information — but the same_error
+                    // pattern owns errors and reports a far more
+                    // actionable diagnosis, so leave it alone here.
+                    continue;
+                }
+                String body = r.output();
+                String digest = informationDigest(body);
+                if (digest == null || isNothingFound(body)) {
+                    // ★ NOTHING WAS FOUND ★ a turn whose results are all
+                    // "(no matches)" / "(empty file)" told the model
+                    // NOTHING, and told it so again and again. Three
+                    // searches that found nothing is legitimate
+                    // exploration, not a stall — so such a turn neither
+                    // advances nor resets the counter.
+                    continue;
+                }
+                sawContent = true;
+                if (seenInformation.add(digest)) sawNewInformation = true;
+            }
+            if (anyFileWrite) {
+                // A write is progress by definition: the tree changed.
+                sawNewInformation = true;
+                sawContent = true;
+            }
+            if (!sawContent) {
+                // Nothing but empty results — see above. Skip the turn.
+                return null;
+            }
+            if (sawNewInformation) {
+                noNewInfoStreak = 0;
+            } else {
+                noNewInfoStreak++;
+            }
+            if (noNewInfoStreak >= noNewInfoStopStreak()) {
+                // ★ THE STALL ESCALATES ON ITS OWN ★ the shared tier is
+                // bumped by every pattern, so a run that had already
+                // warned twice elsewhere would reach "loop_detected" on
+                // the stall's FIRST hit. This pattern keeps its own
+                // ladder: the streak decides, not the shared counter.
+                currentTier++;
+                this.lastLoopKind = "no_new_information";
+                return new LoopInfo("loop_detected",
+                        "the last " + noNewInfoStreak + " turns produced nothing new — every tool "
+                                + "result was one this run had already seen (the same file, the same "
+                                + "document from another mirror, the same command with the same output). "
+                                + "The run is being stopped: continuing would keep paying for the same answer.",
+                        "no new information in " + noNewInfoStreak + " turns",
+                        currentTier);
+            }
+            if (noNewInfoStreak >= noNewInfoThreshold) {
+                // The warning tier. The kind starts with "loop_warn_" so
+                // the engine's existing warning path surfaces it, and
+                // the tier is WARN_BEFORE_STOP so the SideNote is
+                // emitted (the engine only emits warnings at that tier
+                // or above).
+                this.lastLoopKind = "no_new_information";
+                return new LoopInfo("loop_warn_stall",
+                        "the last " + noNewInfoStreak + " turns produced nothing new — every tool "
+                                + "result was one this run had already seen.",
+                        "no new information in " + noNewInfoStreak + " turns",
+                        WARN_BEFORE_STOP);
+            }
+        }
         return null;
     }
 
-    /** wrap a raw (kind, description, summary) tuple in the
+    /**
+     * R416: is this body a "found nothing" answer?
+ *
+ * <p>★ WHY THE MARKERS ARE EXPLICIT ★ the tools' own "nothing here"
+ * answers are a handful of fixed strings (grep and glob print
+ * "(no matches)", file_read prints "(empty file)"). A turn that
+ * produced one of them learned nothing — and learning nothing is not
+ * the same as "the model is looping". Three searches that found
+ * nothing is legitimate exploration.
+ *
+ * <p>The list is small on purpose: a general "does this look empty"
+ * heuristic would start classifying real answers as emptiness, and a
+ * stall detector that cannot tell an answer from a shrug is a stall
+ * detector that cries wolf.
+ */
+    private static final java.util.Set<String> NOTHING_FOUND = java.util.Set.of(
+            "(no matches)",
+            "no matches",
+            "(no results)",
+            "no results",
+            "(nothing found)",
+            "(empty file)",
+            "(empty)");
+
+    static boolean isNothingFound(String body) {
+        if (body == null) return false;
+        return NOTHING_FOUND.contains(body.trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * R416: the streak at which the stall becomes a hard stop: two
+     *  turns after the warning starts. */
+    public int noNewInfoStopStreak() {
+        return noNewInfoThreshold + 2;
+    }
+
+    /** R416: how many consecutive turns have produced nothing new. */
+    public int noNewInfoStreak() {
+        return noNewInfoStreak;
+    }
+     /** wrap a raw (kind, description, summary) tuple in the
      *  tier-aware form. Bumps {@code currentTier} by 1 and chooses
      *  the public {@code kind} string based on the tier:
      *  <ul>
@@ -1142,6 +1422,11 @@ public final class ProgressLoopDetector {
         bigOutputCount = 0;     // R146 smart-skip counter
         turnCount = 0;
         noFileWriteStreak = 0;
+        // R416: the stall state is per-query too — the information a
+        // previous query saw is not information this one has.
+        seenInformation.clear();
+        triedCallFingerprints.clear();
+        noNewInfoStreak = 0;
     }
 
     /** Snapshot of the current history for diagnostics / tests. */

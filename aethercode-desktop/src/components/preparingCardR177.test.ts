@@ -524,8 +524,14 @@ describe('R200: 7 fixes from one user feedback round', () => {
     // transcript, drowning the actual conversation. R200
     // keeps the full message in `loopWarn.message` (so
     // the banner is intact) but trims the chat-line copy.
+    //
+    // ★ R416: THE ARM'S SPELLING ★ the arm used to be
+    // `kind === 'loop-warn-1' || kind === 'loop-warn-2'` — DASHES —
+    // while the engine emits "loop_warn_<tier>" (underscores). The
+    // arm therefore never matched anything, so the truncation it
+    // guards never ran either. It now keys on the engine's prefix.
     expect(storeSrc).toMatch(
-      /loop-warn-1' \|\| kind === 'loop-warn-2'[\s\S]*?shortMsg\s*=/,
+      /kind\.startsWith\('loop_warn_'\)[\s\S]*?shortMsg\s*=/,
     );
     expect(storeSrc).toMatch(/msg\.length > 100 \? msg\.slice\(0, 97\) \+ '\.\.\.'/);
   });

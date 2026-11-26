@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.aethercode.core.writescope;
+package org.aethercode.core.scope;
 
 import org.aethercode.core.app.AppState;
 import org.aethercode.core.tool.Tool;
@@ -188,5 +188,31 @@ public final class SessionPaths {
     public static boolean isWindows() {
         String os = System.getProperty("os.name");
         return os != null && os.toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    /**
+     * R416: the directory the engine offloads large tool results into.
+     *
+     * <p>★ WHY IT LIVES HERE ★ two places need the same answer: the
+     * executor that writes the offload file, and the read scope that
+     * must let the model read it back (the engine's own stub tells
+     * the model to {@code file_read} that path — a read scope that
+     * refused it would break a working feature). Two answers to one
+     * question drift.
+     *
+     * <p>Resolution: {@code AETHERCODE_HOME} if set, else
+     * {@code $HOME/.aethercode}; the offload root is the {@code
+     * sessions} directory under it.
+     *
+     * @return the offload root, or null when no home is known
+     */
+    public static Path offloadRoot() {
+        String home = System.getenv("AETHERCODE_HOME");
+        if (home == null || home.isBlank()) {
+            String userHome = System.getProperty("user.home");
+            if (userHome == null || userHome.isBlank()) return null;
+            home = userHome + "/.aethercode";
+        }
+        return Path.of(home, "sessions").toAbsolutePath().normalize();
     }
 }

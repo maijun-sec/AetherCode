@@ -1875,7 +1875,7 @@ public class QueryEngine {
      *  overwritten by the child's turn while the parent's turn is
      *  still running. */
     private String buildSystemForTurn(String memory, String plan, String posture,
-                                      String base) {
+                                      String base, String budget) {
         StringBuilder sb = new StringBuilder(base == null ? systemPrompt : base);
         // R379: the default agent's block sits right after the base
         // prompt and BEFORE the memory section, because it is part of
@@ -1912,7 +1912,46 @@ public class QueryEngine {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(lang);
         }
+        // R416: the turn-budget directive. LAST, for the same reason the
+        // language lock is last (R737): the tail of the prompt is the
+        // closest to the model's "now", and a budget that is about to
+        // run out is the most "now" thing there is.
+        if (budget != null && !budget.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(budget);
+        }
         return sb.toString();
+    }
+
+    /**
+     * R416: the per-turn budget directive, or "" when there is no
+     * budget or the turn is nowhere near it.
+     *
+     * <p>★ WHY A DIRECTIVE AND NOT JUST A HARD STOP ★ the hard stop
+     * ends the user's work mid-step. The directive gives the model a
+     * chance to FINISH first: it says how many model turns are left and
+     * asks it to converge. The countdown shrinks every turn, so the
+     * model can see the wall coming.
+     *
+     * <p>★ THE WARNING ZONE ★ the last fifth of the budget. A budget
+     * of 50 warns at turn 41.
+     *
+     * @param turnNumber the turn that is about to start (1-based)
+     */
+    private String turnBudgetDirective(int turnNumber) {
+        int cap = maxTurnsPerQuery;
+        if (cap <= 0) return "";
+        int remaining = cap - turnNumber;
+        if (remaining > cap / 5) return "";
+        return """
+                # Turn budget (R416, per-turn)
+
+                This turn has a hard budget of %d model turns and %d of them are left.
+                Every model turn costs the user money and time, so spend what is left on
+                FINISHING, not on exploring: complete the step you are on, then report
+                what is done and what is not. If the work does not fit in the budget, say
+                so plainly — the user can continue the task in a new turn.""".formatted(
+                        cap, Math.max(remaining, 0));
     }
 
     /**
@@ -2487,6 +2526,43 @@ private Stream<StreamEvent> currentLlmStream;
                     }
 
                     if (currentLlmStream == null) {
+                        // ★ R416: THE TURN BUDGET IS ENFORCED ★ the knob
+                        // (`maxTurnsPerQuery`) was plumbed to the CLI, the
+                        // SDK and the wire, and the CLI's --help told the
+                        // user "Cap on model turns per query (default 50)"
+                        // — but R83 removed the cap and NOTHING enforced
+                        // it. A knob that does nothing is worse than no
+                        // knob: the user believes in it.
+                        //
+                        // The default is now UNBOUNDED (0 / -1), which is
+                        // what the engine always said (-1) and what R83's
+                        // decision ("the todo controller is the source of
+                        // truth") implies. The bound that actually covers
+                        // a turn WITHOUT a todo list is R416's stall
+                        // detector. A user who wants a hard cap sets one
+                        // (--max-turns N / AETHERCODE_MAX_TURNS).
+                        //
+                        // ★ WHY THE CHECK IS HERE ★ this branch is "a turn
+                        // is about to start". Checking before the model
+                        // call means the budget is not spent on a call
+                        // that will be cut off anyway.
+                        if (maxTurnsPerQuery > 0 && turnsTaken >= maxTurnsPerQuery) {
+                            emit(new StreamEvent.SideNote(
+                                    "max_iterations",
+                                    "R416: this turn reached its budget of " + maxTurnsPerQuery
+                                            + " model turns, so it is being stopped. The work is "
+                                            + "unfinished on purpose — nothing was lost. Ask for the "
+                                            + "rest, or narrow the request."));
+                            stopReason = "max_iterations: the turn reached its budget of "
+                                    + maxTurnsPerQuery + " model turns";
+                            finished = true;
+                            emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                            // R750: drain the buffer one event per call BEFORE
+                            // terminating (a RunEnd left buffered strands the
+                            // desktop in the green ● Idle state).
+                            if (!pendingEvents.isEmpty()) return drainOne(action);
+                            return false;
+                        }
                         // the per-query turn cap is gone. Per-todo adaptive
                         // control in TodoRunController is the source of truth
                         // for "this is taking too long".
@@ -2538,7 +2614,7 @@ private Stream<StreamEvent> currentLlmStream;
                         // the live field; we temporarily swap it in via a
                         // local-only path here.
                         String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix, posturePrompt,
-                turnBasePrompt);
+                turnBasePrompt, turnBudgetDirective(turnsTaken + 1));
                         // R716: filter orphan tool results before handing
                         // the transcript to the chat client. Some providers
                         // (notably MiniMax-M3's OpenAI-compat endpoint) strictly
@@ -3314,6 +3390,54 @@ private Stream<StreamEvent> currentLlmStream;
                             // BEFORE terminating. `return false` with a
                             // RunEnd still buffered would strand it and
                             // leave the desktop in the green ● Idle state.
+                            if (!pendingEvents.isEmpty()) return drainOne(action);
+                            return false;
+                        }
+                        // R416: hard-stop the run on a STALL — a turn
+                        // that stopped producing new information.
+                        //
+                        // ★ WHY THIS IS A STOP AND NOT A WARNING ★ the
+                        // other loop kinds keep R171's soft treatment
+                        // ("ending the run is the user's call"), because
+                        // more exploration may still pay off. A stall is
+                        // different: the run has already SEEN the answer
+                        // and is paying again for it. R83 removed the
+                        // per-query turn cap and named TodoRunController
+                        // as the replacement — but the todo controller
+                        // bounds a turn that HAS a todo list, and a
+                        // research turn has none (R415's K9 fetched one
+                        // document from twenty mirrors and kept going).
+                        // Nothing else bounded that turn; this does.
+                        //
+                        // ★ THE BARE KIND IS loop_detected ★ the stall
+                        // is a loop, and `loop_detected` is already a
+                        // failure kind and a deterministic hard stop in
+                        // the engine's taxonomy — so the verdict and
+                        // the kind travel to the wire with no new
+                        // vocabulary on either client. The specific
+                        // cause ("no_new_information") travels INSIDE
+                        // the decoration, which is where a detector's
+                        // kind belongs (R385).
+                        if (postInfo != null && postInfo.shouldStop()
+                                && "no_new_information".equals(loopDetector.lastLoopKind())
+                                && loopDetector.noNewInfoStreak() >= loopDetector.noNewInfoStopStreak()) {
+                            LOG.warn("R416: hard-stopping run on a stall (tier={}, turns={}): {}",
+                                    postInfo.tier(), turnsTaken, postInfo.description());
+                            emit(new StreamEvent.SideNote(
+                                    "no_new_information_hard_stop",
+                                    "R416: the last " + loopDetector.noNewInfoStreak()
+                                            + " turns produced nothing new — every tool result was one "
+                                            + "this run had already seen — so the run is being stopped. "
+                                            + "Ask for a narrower question, or continue and accept the cost. "
+                                            + "Reason: " + postInfo.description()));
+                            stopReason = "loop_detected: no_new_information ("
+                                    + loopDetector.noNewInfoStreak()
+                                    + " consecutive turns produced nothing new)";
+                            finished = true;
+                            emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                            // R750: drain the buffer one event per call
+                            // BEFORE terminating (see the same_error
+                            // branch above for why).
                             if (!pendingEvents.isEmpty()) return drainOne(action);
                             return false;
                         }

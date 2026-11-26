@@ -69,9 +69,24 @@ public class GlobTool {
             return Tool.ToolResult.error("pattern is required");
         }
         Path base = input.containsKey("base_dir") && input.get("base_dir") != null
-                ? Path.of((String) input.get("base_dir")).toAbsolutePath()
-                : Path.of("").toAbsolutePath();
+                ? org.aethercode.core.scope.SessionPaths.resolve(
+                        (String) input.get("base_dir"),
+                        org.aethercode.core.scope.SessionPaths.cwdOf(ctx))
+                : org.aethercode.core.scope.SessionPaths.cwdOf(ctx);
         int cap = input.get("max_results") instanceof Number n ? n.intValue() : MAX_RESULTS;
+        if (base == null) {
+            return Tool.ToolResult.error("base_dir is not a valid path");
+        }
+        // ★ R416: THE READ SCOPE ★ this tool had NO boundary check at
+        // all: `base_dir` could point anywhere on the filesystem, and
+        // the model used exactly that to go looking for a build system
+        // OUTSIDE the tree (R415's K8). The tree is the boundary for
+        // reads too.
+        org.aethercode.core.scope.ScopeDecision scope =
+                org.aethercode.core.scope.ReadScope.fromContext(ctx).check(base);
+        if (!scope.allowed()) {
+            return Tool.ToolResult.error(scope.message());
+        }
         if (!Files.isDirectory(base)) {
             return Tool.ToolResult.error("base_dir is not a directory: " + base);
         }

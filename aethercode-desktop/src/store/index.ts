@@ -1899,9 +1899,12 @@ interface AppState {
     stepEvents: Record<string, import('./types').ChildStepEvent[]>;
   } | null;
   /** when the engine's loop detector hits tier 1 or
-   *  tier 2, it emits a side_note of kind "loop-warn-1" /
-   *  "loop-warn-2" with the raw cause kind (e.g. "long_output",
-   *  "same_fingerprint"). The LoopGuardBanner reads this state
+   *  tier 2, it emits a side_note of kind "loop_warn_1" /
+   *  "loop_warn_2" (the detector's OWN prefix — see
+   *  ProgressLoopDetector.tiered) with the raw cause kind (e.g.
+   *  "long_output", "same_fingerprint"). R416 adds
+   *  "loop_warn_stall" for the new stall pattern.
+   *  The LoopGuardBanner reads this state
    *  and shows the soft warning + "continue" / "stop" buttons.
    *  Null when no warning is active. Cleared on:
    *    - user clicking "continue" → acknowledgeLoop() RPC resets
@@ -3509,12 +3512,24 @@ export const useStore = create<AppState>((set, get) => {
           // spiral matched nothing and fell through to ● Idle with no
           // ↻ retry button. "max_turns" was wrong too: it is a
           // DISPLAY kind (the TUI's bucket), not an engine stop
-          // reason — the engine emits "max_iterations", and a turn cap
-          // is not a failure (the daemon's taxonomy agrees). The two
+          // reason — the engine's kind is "max_iterations" (R416 gave
+          // it a producer; see the entry below). The two
           // consumer-side terminals the daemon reports as failures
           // were added.
           'loop_detected',
           'same_error_hard_stop',
+          // ★ R416: THE TURN BUDGET ★ the engine now HAS a producer
+          // for this kind (R83 removed the turn cap and left the knob
+          // behind; R416 made the knob real). A turn that ran out of
+          // budget ENDED without finishing the user's request, so the
+          // daemon reports it as a failure — and the desktop must show
+          // it as one, not as a green ● Idle.
+          //
+          // The old comment here said "a turn cap is not a failure (the
+          // daemon's taxonomy agrees)". That was true only because the
+          // daemon had NO producer for the kind at all: the rule was
+          // about a case that could not happen.
+          'max_iterations',
           'awaiting_user_decision',
           'runtime_exception',
           'stale_force_end',
@@ -3831,7 +3846,7 @@ export const useStore = create<AppState>((set, get) => {
         // system-message path.
         //
         // the engine emits side_note of kind
-        // "loop-warn-1" / "loop-warn-2" when the loop detector
+        // "loop_warn_1" / "loop_warn_2" when the loop detector
         // fires at tier 1 or 2 (i.e. before it would have
         // hard-stopped legacy). The desktop stores the most
         // recent one in `loopWarn` and the LoopGuardBanner
@@ -3854,7 +3869,17 @@ export const useStore = create<AppState>((set, get) => {
               : s.messages,
             lastChunkTs: Date.now(),
           }));
-        } else if (kind === 'loop-warn-1' || kind === 'loop-warn-2') {
+        } else if (kind.startsWith('loop_warn_')) {
+          // ★ R416: THE ENGINE'S SPELLING ★ the detector emits
+          // "loop_warn_<tier>" (ProgressLoopDetector.tiered) and R416
+          // adds "loop_warn_stall". This arm used to look for
+          // "loop-warn-1" / "loop-warn-2" — DASHES — so it never
+          // matched a single thing the engine has ever sent: the
+          // LoopGuardBanner could not mount, and the loop warning
+          // fell into the R208 fallback (which pushes nothing). The
+          // rule is now the SAME prefix the engine's own isWarning()
+          // uses, so a new warning kind needs no change here.
+          //
           // capture the warn in the loopWarn state so the
           // banner can mount. We also push a system message so
           // the warn shows in the transcript. The banner
@@ -3862,7 +3887,7 @@ export const useStore = create<AppState>((set, get) => {
           // The runId is taken from the wrapper params so the
           // banner's "continue" can pass it back to the RPC.
           const runId = (params as any)?.runId ?? '';
-          const tier: 1 | 2 = kind === 'loop-warn-1' ? 1 : 2;
+          const tier: 1 | 2 = kind.endsWith('_1') ? 1 : 2;
           // truncate the verbose `msg` (the engine's
           // full loop-detection report can be ~9 KB) to one
           // short line. The user can still see the full
@@ -4868,7 +4893,7 @@ export const useStore = create<AppState>((set, get) => {
     // step list. Null when no sub-task is in_progress.
     currentSubTaskId: null,
     // no active loop warn. Set by the side_note handler
-    // when a "loop-warn-1" or "loop-warn-2" event arrives, and
+    // when a "loop_warn_1" or "loop_warn_2" event arrives, and
     // cleared by acknowledgeLoop() (user clicked "continue") /
     // dismissLoopWarn() (user clicked "stop" or 8s auto-dismiss
     // fired) / on a fresh run_start.

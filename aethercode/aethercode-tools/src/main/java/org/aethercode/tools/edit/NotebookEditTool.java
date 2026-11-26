@@ -83,13 +83,13 @@ public class NotebookEditTool {
         // ★ R415: THE PATH GUARD THIS TOOL NEVER HAD ★ like file_edit,
         // notebook_edit resolved the path and wrote it with no scope
         // check — it could rewrite a notebook anywhere on the filesystem.
-        Path p = org.aethercode.core.writescope.SessionPaths.resolve(
-                path, org.aethercode.core.writescope.SessionPaths.cwdOf(ctx));
+        Path p = org.aethercode.core.scope.SessionPaths.resolve(
+                path, org.aethercode.core.scope.SessionPaths.cwdOf(ctx));
         if (p == null) {
             return Tool.ToolResult.error("notebook_path is not a valid path: " + path);
         }
-        org.aethercode.core.writescope.WriteScope.Decision scope =
-                org.aethercode.core.writescope.WriteScope.fromContext(ctx).check(p);
+        org.aethercode.core.scope.ScopeDecision scope =
+                org.aethercode.core.scope.WriteScope.fromContext(ctx).check(p);
         if (!scope.allowed()) {
             return Tool.ToolResult.error(scope.message());
         }

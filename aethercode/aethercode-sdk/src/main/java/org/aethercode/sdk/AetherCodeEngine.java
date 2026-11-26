@@ -1110,10 +1110,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // here, silently. A boundary that stops being a boundary without
         // saying so is worse than none: the user believes in it. One
         // line in the daemon log says it out loud, once.
-        if (org.aethercode.core.writescope.WriteScope.allowAnyPath()) {
+        if (org.aethercode.core.scope.WriteScope.allowAnyPath()) {
             LOG.warn("R415: THE WRITE SCOPE IS DISABLED ({}=1) — writes in this session "
                     + "are not boundary-checked.",
-                    org.aethercode.core.writescope.WriteScope.ALLOW_ANY_PATH_ENV);
+                    org.aethercode.core.scope.WriteScope.ALLOW_ANY_PATH_ENV);
         }
         // per-query turn cap — bounds runaway tool loops. -1 / 0 disables.
         if (b.maxTurnsPerQuery > 0) {
@@ -3210,15 +3210,15 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      * tree and the changes this turn's commands made. Both are turn
      * state, so both die with the session.
      */
-    private final org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector =
-            new org.aethercode.core.writescope.ShellWriteDetector();
+    private final org.aethercode.core.scope.ShellWriteDetector shellWriteDetector =
+            new org.aethercode.core.scope.ShellWriteDetector();
 
     /**
      * R415: the shell write detector.
      *
      * @return the detector (the bash tool reads it out of the call context)
      */
-    public org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector() {
+    public org.aethercode.core.scope.ShellWriteDetector shellWriteDetector() {
         return shellWriteDetector;
     }
 
@@ -3233,7 +3233,7 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      *
      * @return the detector on the executor (null when it was never installed)
      */
-    public org.aethercode.core.writescope.ShellWriteDetector shellWriteDetectorOnExecutor() {
+    public org.aethercode.core.scope.ShellWriteDetector shellWriteDetectorOnExecutor() {
         return this.streamingToolExecutor.shellWriteDetector();
     }
 
@@ -4710,14 +4710,22 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
          *  that don't have a provider spec (e.g. the
          *  --api-key / --base-url CLI path). */
         private org.aethercode.core.providers.ProviderSpec provider;
-        /** per-query model-turn cap. Default 50 — bounds runaway tool
-         *  loops but leaves comfortable headroom for real work. A simple
-         *  chat finishes in 1 turn; a short tool flow uses 3-5; a long
-         *  multi-step refactor can easily reach 20-30. Set to 0 or -1 to
-         *  disable the cap (rely on the loop detector alone). The loop
-         *  detector (window 8 / threshold 3) catches pathological "same
-         *  tool call 3 times in a row" patterns regardless. */
-        private int maxTurnsPerQuery = 50;
+        /** per-query model-turn cap. Default 0 — UNBOUNDED.
+         *  ★ R416 ★ the old default was 50 and NOTHING enforced it: the
+         *  CLI's --help told the user "Cap on model turns per query
+         *  (default 50)" while the engine never read the value (R83
+         *  removed the cap and left the knob behind). A knob that does
+         *  nothing is worse than no knob. The default is now what the
+         *  engine always said (-1 = unbounded), and the bound that
+         *  actually covers a turn is the loop detector plus R416's
+         *  stall detector. A user who wants a hard cap sets one
+         *  (CLI: --max-turns N; env: AETHERCODE_MAX_TURNS).
+         *
+         *  <p>When a cap IS set: the engine tells the model to wrap up
+         *  in the last fifth of the budget, and ends the turn with
+         *  stopReason "max_iterations" when the cap is reached. Set to
+         *  0 or -1 for no cap. */
+        private int maxTurnsPerQuery = 0;
         /** loop-detector sliding window. The same tool-call
          *  fingerprint appearing this many times in the window triggers
          *  a stop. Default 8. Pass 0 / negative to disable. */

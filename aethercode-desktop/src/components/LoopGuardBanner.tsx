@@ -179,7 +179,7 @@ export function LoopGuardBanner() {
 
   const { tier, message, kind } = loopWarn;
   // Human label for the underlying kind. The engine emits
-  // a raw kind like "loop-warn-1" wrapped around the actual
+  // a raw kind like "loop_warn_1" wrapped around the actual
   // cause kind (e.g. "long_output", "same_fingerprint");
   // we surface the cause as a tag in the banner.
   const causeLabel = (() => {

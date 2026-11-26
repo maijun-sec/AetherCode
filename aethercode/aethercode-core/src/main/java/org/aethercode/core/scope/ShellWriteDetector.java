@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.aethercode.core.writescope;
+package org.aethercode.core.scope;
 
 import org.aethercode.core.consistency.ConsistencyVerdict;
 import org.aethercode.core.consistency.ConsistencyVerifier;

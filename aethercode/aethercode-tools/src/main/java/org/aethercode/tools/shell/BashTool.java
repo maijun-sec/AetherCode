@@ -202,12 +202,12 @@ public class BashTool {
         // same defect the write tools had (R415's D3): a relative path
         // resolved against the JVM's launch directory is never what the
         // model meant.
-        java.nio.file.Path sessionRoot = org.aethercode.core.writescope.SessionPaths.cwdOf(ctx);
+        java.nio.file.Path sessionRoot = org.aethercode.core.scope.SessionPaths.cwdOf(ctx);
         java.nio.file.Path resolvedCwd =
-                org.aethercode.core.writescope.SessionPaths.resolve(cwd.getPath(), sessionRoot);
-        boolean scopeEscaped = org.aethercode.core.writescope.WriteScope.fromContext(ctx).isEscapeActive();
+                org.aethercode.core.scope.SessionPaths.resolve(cwd.getPath(), sessionRoot);
+        boolean scopeEscaped = org.aethercode.core.scope.WriteScope.fromContext(ctx).isEscapeActive();
         if (!scopeEscaped && resolvedCwd != null && sessionRoot != null
-                && !org.aethercode.core.writescope.SessionPaths.isInside(resolvedCwd, sessionRoot)) {
+                && !org.aethercode.core.scope.SessionPaths.isInside(resolvedCwd, sessionRoot)) {
             return Tool.ToolResult.error(
                     "command refused by the write scope: the working directory "
                             + resolvedCwd + " is outside the session's working directory ("
@@ -262,8 +262,8 @@ public class BashTool {
         // path, so the only way to know what it wrote is to look at the
         // tree before and after. The baseline is cached, so consecutive
         // commands pay for one scan, not two.
-        org.aethercode.core.writescope.ShellWriteDetector detector =
-                org.aethercode.core.writescope.ShellWriteDetector.fromContext(ctx);
+        org.aethercode.core.scope.ShellWriteDetector detector =
+                org.aethercode.core.scope.ShellWriteDetector.fromContext(ctx);
         java.nio.file.Path watchRoot = null;
         org.aethercode.core.consistency.ProjectIndex baseline = null;
         if (detector != null && sessionRoot != null && !isReadOnly(input)) {
@@ -278,9 +278,9 @@ public class BashTool {
         Tool.ToolResult result = runForeground(command, cwd, timeout, stream, ctx);
 
         if (detector != null && watchRoot != null && baseline != null) {
-            org.aethercode.core.writescope.ShellWriteDetector.Observation observation =
+            org.aethercode.core.scope.ShellWriteDetector.Observation observation =
                     detector.end(watchRoot, baseline);
-            String report = org.aethercode.core.writescope.ShellWriteDetector.report(observation, watchRoot);
+            String report = org.aethercode.core.scope.ShellWriteDetector.report(observation, watchRoot);
             if (report != null) {
                 result = appendReport(result, report);
             }
@@ -316,9 +316,33 @@ public class BashTool {
      * belongs in a future R-round.
      */
     private static String checkScopeEscape(String command, File engineCwd) {
+        return checkScopeEscape(command, engineCwd, shellEnv());
+    }
+
+    /**
+     * The scope check with an explicit environment.
+     *
+     * <p>★ R416: THE ENVIRONMENT IS PART OF THE COMMAND ★ the shell expands
+     * the environment references in the command text BEFORE it runs
+     * anything, so a command that names {@code %SCENARIOS_ROOT%\L1\escape.txt}
+     * writes to an absolute path outside the tree while the text the
+     * checker sees carries no absolute path at all. R416's live matrix
+     * measured it: the write scope refused the literal path twice and the
+     * model copied the file out through a variable.
+     *
+     * <p>⇒ the check now runs on the text the SHELL will act on, and the
+     * refusal names the variable the path came from — the diagnosis decides
+     * what the model does next.
+     */
+    private static String checkScopeEscape(String command, File engineCwd,
+            java.util.Map<String, String> env) {
         if (command == null || engineCwd == null) return null;
+        // ★ THE EXPANDED TEXT IS THE TEXT THE SHELL SEES ★
+        org.aethercode.core.scope.ScopeEnvExpansion.Result expansion =
+                org.aethercode.core.scope.ScopeEnvExpansion.expand(command, env, isWindows());
+        String effective = expansion.text();
         // The cd / pushd / popd "go up" subcommand.
-        String trimmed = command.strip();
+        String trimmed = effective.strip();
         // ★ R415: A `cd` TO SOMEWHERE ELSE, ANYWHERE IN THE COMMAND ★ the
         // earlier rule was `command.startsWith("cd ..")` plus ONE
         // `indexOf("cd ")` for an absolute target. Both missed the
@@ -405,8 +429,8 @@ public class BashTool {
         // decides); but a command that can WRITE must not be pointed
         // outside the tree. The tree is the boundary, and a copy is a
         // write.
-        if (!isReadOnlyCommand(command)) {
-            java.util.regex.Matcher ap = ABS_PATH.matcher(command);
+        if (!isReadOnlyCommand(effective)) {
+            java.util.regex.Matcher ap = ABS_PATH.matcher(effective);
             while (ap.find()) {
                 String p = ap.group(1);
                 if (p == null || p.isEmpty()) continue;
@@ -416,14 +440,72 @@ public class BashTool {
                 // rule checked only redirects, and the general rule
                 // caught /dev/null ⇒ the test went red).
                 if (isNullDevice(p)) continue;
+                // ★ A SINGLE-LETTER SEGMENT IS A FLAG, NOT A PATH ★
+                // `dir /s /b .` is a Windows command with two flags, and
+                // the boundary used to read `/s` as a POSIX absolute path
+                // and refuse the command — with the absurd reason "the
+                // command names '/s', which is outside the working
+                // directory". R416's live matrix measured the cost: three
+                // refusals in one turn, each of which the model answered
+                // by rewording the same command. The rule is stated ONCE
+                // and is not platform-dependent: a one-character segment
+                // is a flag on every platform.
+                if (isSingleLetterSegment(p)) continue;
                 if (!isInsideCwd(p, engineCwd)) {
                     return "the command names '" + p
                             + "', which is outside the working directory, and a command that can "
-                            + "write may not name a path outside the tree";
+                            + "write may not name a path outside the tree"
+                            + sourceNote(expansion, p);
                 }
             }
         }
         return null;
+    }
+
+    /**
+     * A one-character path segment: {@code /s}, {@code /a}, {@code /n}.
+     *
+     * <p>★ ONE RULE, NO PLATFORM BRANCH ★ the null device needed two
+     * platform-dependent branches and was rewritten to name both; this one
+     * needs none, because a one-character segment is a flag everywhere.
+     */
+    private static boolean isSingleLetterSegment(String token) {
+        if (token == null || token.length() != 2) return false;
+        if (token.charAt(0) != '/' && token.charAt(0) != '\\') return false;
+        return Character.isLetter(token.charAt(1));
+    }
+
+    /**
+     * The variable a refused path came from, when it came from one.
+     *
+     * <p>★ THE DIAGNOSIS DECIDES WHAT THE MODEL DOES NEXT ★ "the command
+     * names 'D:\…\escape.txt'" leaves the model hunting for a path it
+     * never wrote; "… (from %SCENARIOS_ROOT%)" names the thing it has to
+     * change.
+     */
+    private static String sourceNote(org.aethercode.core.scope.ScopeEnvExpansion.Result expansion,
+            String path) {
+        if (expansion == null || expansion.expanded() == null) return "";
+        for (java.util.Map.Entry<String, String> e : expansion.expanded().entrySet()) {
+            String value = e.getValue();
+            if (value == null || value.isEmpty()) continue;
+            if (path.equals(value) || path.startsWith(value)) {
+                return " (from %" + e.getKey() + "%)";
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Test hook: the scope check with an explicit environment.
+     *
+     * <p>★ THE MACHINE'S OWN ENVIRONMENT IS NOT A FIXTURE ★ %TEMP% means
+     * something different on every machine, so the test says which
+     * environment it means.
+     */
+    static String checkScopeEscapeForTest(String command, File engineCwd,
+            java.util.Map<String, String> env) {
+        return checkScopeEscape(command, engineCwd, env);
     }
 
     /**
@@ -494,10 +576,22 @@ public class BashTool {
      * an absolute path would refuse every download. The lookbehind keeps
      * a path that starts a word (or follows a quote, a bracket or an
      * equals sign) and drops the one that continues a word.
+     *
+     * <p>★ AND WHY THE DRIVE FORM NEEDS A LOOKAHEAD ★ R416's live matrix
+     * measured what the drive form did to a URL: in
+     * {@code curl -sI https://repo1.maven.org} the scheme's last letter
+     * and its colon read as a DRIVE LETTER, so the boundary refused the
+     * command with the reason "the command names
+     * 's://repo1.maven.org', which is outside the working directory".
+     * The model then tried eight different ways to download the same jar
+     * and was refused eight times, with a reason it could not act on.
+     * ⇒ a drive path is a letter, a colon, and ONE separator: {@code C:\}
+     * or {@code C:/}. A scheme's {@code ://} is two separators, and a
+     * URL is not a path.
      */
     private static final java.util.regex.Pattern ABS_PATH =
             java.util.regex.Pattern.compile(
-                    "(?i)([A-Za-z]:[\\\\/][^\\s\"'<>|;)]*|\\\\\\\\[^\\s\"'<>|;)]*"
+                    "(?i)([A-Za-z]:[\\\\/](?!/)[^\\s\"'<>|;)]*|\\\\\\\\[^\\s\"'<>|;)]*"
                             + "|(?<![\\w:])(?<!/)/[^\\s\"'<>|;)]+)");
 
     /**
@@ -695,7 +789,66 @@ public class BashTool {
         }
         pb.directory(cwd);
         pb.redirectErrorStream(false);
+        // ★ R416: THE CHILD MUST NOT INHERIT THE DAEMON'S CREDENTIALS ★
+        // the shell is a CHILD of the daemon, so it inherited the daemon's
+        // whole environment — and the daemon's environment carries the
+        // user's provider keys. R416's live matrix measured the cost: the
+        // model ran `set`, and every key in the environment landed in the
+        // model's context AND in the session transcript on disk.
+        // ⇒ the child gets the environment MINUS the credentials, and the
+        // scope check expands against the SAME map — so the checker and
+        // the shell see one environment, by construction.
+        pb.environment().clear();
+        pb.environment().putAll(shellEnv());
         return pb.start();
+    }
+
+    /**
+     * The environment the shell child runs with.
+     *
+     * <p>★ ONE MAP, TWO USERS ★ the scope check expands the command
+     * against this map and the child process runs with this map. If they
+     * were two maps, the boundary would again be looking at a different
+     * language than the one that runs (R416's lesson).
+     */
+    private static java.util.Map<String, String> shellEnv() {
+        java.util.Map<String, String> env = System.getenv();
+        if ("1".equals(env.get("AETHERCODE_BASH_ALLOW_CREDENTIALS"))) {
+            // ★ THE OPT-OUT ★ a task that genuinely needs a credential in
+            // the shell (a deploy with a token in the environment) can ask
+            // for it by name. The model cannot set it: the switch is read
+            // from the DAEMON's environment, not from the shell's.
+            return env;
+        }
+        return sanitizedEnv(env);
+    }
+
+    /**
+     * The environment without the credential-shaped names.
+     *
+     * <p>★ ONE RULE, STATED ONCE ★ a name is credential-shaped when it
+     * carries API_KEY / APIKEY / TOKEN / SECRET / PASSWORD / PASSWD /
+     * CREDENTIAL / PRIVATE_KEY. The rule is by NAME and not by value, so
+     * it never has to look at a secret to decide.
+     */
+    static java.util.Map<String, String> sanitizedEnv(java.util.Map<String, String> env) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (env == null) return out;
+        for (java.util.Map.Entry<String, String> e : env.entrySet()) {
+            if (isCredentialName(e.getKey())) continue;
+            out.put(e.getKey(), e.getValue());
+        }
+        return out;
+    }
+
+    /** Is this an environment variable whose NAME says it carries a secret? */
+    static boolean isCredentialName(String name) {
+        if (name == null) return false;
+        String n = name.toUpperCase(java.util.Locale.ROOT);
+        return n.contains("API_KEY") || n.contains("APIKEY")
+                || n.contains("TOKEN") || n.contains("SECRET")
+                || n.contains("PASSWORD") || n.contains("PASSWD")
+                || n.contains("CREDENTIAL") || n.contains("PRIVATE_KEY");
     }
 
     /**

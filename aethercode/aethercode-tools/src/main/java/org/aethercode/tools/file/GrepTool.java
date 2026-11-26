@@ -68,10 +68,25 @@ public class GrepTool {
             return Tool.ToolResult.error("pattern is required");
         }
         Path base = input.containsKey("base_dir") && input.get("base_dir") != null
-                ? Path.of((String) input.get("base_dir")).toAbsolutePath()
-                : Path.of("").toAbsolutePath();
+                ? org.aethercode.core.scope.SessionPaths.resolve(
+                        (String) input.get("base_dir"),
+                        org.aethercode.core.scope.SessionPaths.cwdOf(ctx))
+                : org.aethercode.core.scope.SessionPaths.cwdOf(ctx);
         int cap = input.get("max_results") instanceof Number n ? n.intValue() : MAX_RESULTS;
         String include = (String) input.get("include");
+        // ★ R416: THE READ SCOPE ★ this tool had NO boundary check at
+        // all: `base_dir` could point anywhere on the filesystem, so
+        // the model could search the whole disk (R415's K8: globbing
+        // upward for a pom.xml and finding the bench harness itself).
+        // The tree is the boundary for reads too.
+        if (base == null) {
+            return Tool.ToolResult.error("base_dir is not a valid path");
+        }
+        org.aethercode.core.scope.ScopeDecision scope =
+                org.aethercode.core.scope.ReadScope.fromContext(ctx).check(base);
+        if (!scope.allowed()) {
+            return Tool.ToolResult.error(scope.message());
+        }
         java.nio.file.PathMatcher includeMatcher = include == null
                 ? null
                 : base.getFileSystem().getPathMatcher("glob:" + include);

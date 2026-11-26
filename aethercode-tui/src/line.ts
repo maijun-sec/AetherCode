@@ -261,7 +261,12 @@ function stopKindColor(kind: StopKind): string {
     case "loop":
       return C.red;
     case "max_turns":
-      return C.yellow;
+      // ★ R416: THE VERDICT IS THE DAEMON'S ★ the engine reports a
+      // budget stop as a FAILURE (the user's request was not
+      // finished), and the desktop renders it red. A yellow "stopped"
+      // here would be this renderer disagreeing with the daemon's
+      // verdict — the exact drift R383 removed.
+      return C.red;
     case "error":
       return C.red;
     case "empty":

@@ -23,7 +23,7 @@
 package org.aethercode.core.consistency;
 
 import org.aethercode.core.tool.Tool;
-import org.aethercode.core.writescope.SessionPaths;
+import org.aethercode.core.scope.SessionPaths;
 
 import java.nio.file.Path;
 import java.util.List;

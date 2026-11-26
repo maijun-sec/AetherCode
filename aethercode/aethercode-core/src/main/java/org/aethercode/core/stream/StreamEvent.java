@@ -227,7 +227,11 @@ public sealed interface StreamEvent {
                 // R181 / R739 same-error death spiral.
                 || "same_error_hard_stop".equals(kind)
                 // R721 user-initiated cancel.
-                || "cancelled".equals(kind);
+                || "cancelled".equals(kind)
+                // R416: the turn ran out of its budget. The engine will
+                // not continue by itself — the user decides whether to
+                // spend more.
+                || "max_iterations".equals(kind);
     }
 
     /**
@@ -269,6 +273,12 @@ public sealed interface StreamEvent {
             case "same_error_hard_stop", "loop_detected" -> true;
             // R750b surfaced a stalled first-chunk read as a timeout.
             case "stale_force_end" -> true;
+            // R416: the turn hit its budget. The run ENDED, but the
+            // user's request was NOT finished — so it is a failure
+            // verdict, not a clean ending. (It is not the model's
+            // fault, and it is not a crash; the desktop shows it as a
+            // failure because the work is unfinished.)
+            case "max_iterations" -> true;
             // Backpressure is a provider-capacity signal the user retries;
             // reported separately by AetherCodeMethods, so not here.
             default -> false;

@@ -85,13 +85,12 @@ public class StreamingToolExecutor {
      * when {@link #offloadRoot()} returns null).
      */
     private static Path offloadRoot() {
-        String home = System.getenv("AETHERCODE_HOME");
-        if (home == null || home.isBlank()) {
-            String userHome = System.getProperty("user.home");
-            if (userHome == null || userHome.isBlank()) return null;
-            home = userHome + "/.aethercode";
-        }
-        return java.nio.file.Paths.get(home, "sessions");
+        // ★ R416: ONE IMPLEMENTATION ★ the answer moved to
+        // SessionPaths.offloadRoot(), because the read scope needs the
+        // same directory (the engine tells the model to file_read the
+        // offloaded body, and a read scope that refused that path would
+        // break the offload feature).
+        return org.aethercode.core.scope.SessionPaths.offloadRoot();
     }
 
     /**
@@ -324,7 +323,7 @@ public class StreamingToolExecutor {
      * tree before and after. Both travel in the call context, and both
      * feed the one consistency judge.
      */
-    private volatile org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector;
+    private volatile org.aethercode.core.scope.ShellWriteDetector shellWriteDetector;
 
     /**
      * Install the shell write detector.
@@ -333,13 +332,13 @@ public class StreamingToolExecutor {
      * @return this for chaining
      */
     public StreamingToolExecutor withShellWriteDetector(
-            org.aethercode.core.writescope.ShellWriteDetector detector) {
+            org.aethercode.core.scope.ShellWriteDetector detector) {
         this.shellWriteDetector = detector;
         return this;
     }
 
     /** The installed shell write detector (null when there is none). */
-    public org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector() {
+    public org.aethercode.core.scope.ShellWriteDetector shellWriteDetector() {
         return shellWriteDetector;
     }
 
@@ -387,7 +386,7 @@ public class StreamingToolExecutor {
         // it cannot report what it wrote the way the write tools do. It
         // reports through a diff of the tree instead.
         if (shellWriteDetector != null) {
-            extras.put(org.aethercode.core.writescope.ShellWriteDetector.EXTRAS_KEY, shellWriteDetector);
+            extras.put(org.aethercode.core.scope.ShellWriteDetector.EXTRAS_KEY, shellWriteDetector);
         }
         // working memory buffer (boxed as Object to avoid a
         // hard dep on the memory module). Stash it under the key the

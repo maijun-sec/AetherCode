@@ -79,6 +79,11 @@ export const ENGINE_ERROR_KINDS = [
   "same_error_hard_stop",
   "loop_detected",
   "stale_force_end",
+  // R416: the turn hit its budget. The run ENDED, but the user's
+  // request was not finished — so the daemon reports it as a failure.
+  // (This kind had no producer since R83 removed the turn cap; the
+  // TUI's `MAX_TURN_KINDS` branch for it was unreachable until now.)
+  "max_iterations",
 ] as const;
 
 /**

@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.aethercode.core.writescope;
+package org.aethercode.core.scope;
 
 import org.aethercode.core.app.AppState;
 import org.aethercode.core.message.ContentBlock;
@@ -93,6 +93,9 @@ public final class WriteScope {
     /** The key the scope travels under in {@link Tool.CallContext#extras()}. */
     public static final String EXTRAS_KEY = "aethercode.write_scope";
 
+    /** The verb used in the refusal message ("write refused: …"). */
+    public static final String VERB = "write";
+
     /** ★ THE ESCAPE HATCH ★ the same environment variable the existing
      *  write guard honours: when it is {@code "1"}, the tree boundary and
      *  the tool-owned directories are not enforced. A user who sets it is
@@ -134,84 +137,6 @@ public final class WriteScope {
             Map.entry("Cargo.toml", List.of("cargo", "rust")),
             Map.entry("pyproject.toml", List.of("pyproject", "poetry", "pip ")),
             Map.entry(".gitignore", List.of("gitignore", "git ignore")));
-
-    /**
-     * The verdict for one write.
-     *
-     * @param allowed may this write happen?
-     * @param resolved where the write would land
-     * @param reason why it was refused (null when allowed); when the
-     *               scope is ESCAPED, it is what WOULD have refused it
-     */
-    public record Decision(boolean allowed, Path resolved, String reason) {
-
-        public static Decision allow(Path p) {
-            return new Decision(true, p, null);
-        }
-
-        public static Decision deny(Path p, String reason) {
-            return new Decision(false, p, reason);
-        }
-
-        /**
-         * A write that broke a rule but was ALLOWED — because the user
-         * switched the boundary off.
-         *
-         * <p>★ WHY THIS STATE MUST EXIST ★ the escape hatch is an
-         * environment variable, and on this machine it is set at the
-         * USER level: the scope never refuses anything, and the writes
-         * look exactly like the ones the scope allows. A boundary that
-         * silently stops being a boundary is worse than no boundary —
-         * because the user believes in it.
-         *
-         * @param p where the write would land
-         * @param reason what the rules would have said
-         */
-        public static Decision escaped(Path p, String reason) {
-            return new Decision(true, p, reason);
-        }
-
-        /**
-         * The message the MODEL sees.
-         *
-         * <p>★ IT MUST SAY WHAT TO DO NEXT ★ a refusal that only says "no"
-         * makes the model guess; a refusal that names the rule and the
-         * next action lets it comply in one step.
-         */
-        public String message() {
-            if (allowed) return null;
-            return "write refused: " + reason;
-        }
-
-        /**
-         * The note that says "the boundary was off, and this write broke
-         * it anyway" — or null when there is nothing to say.
-         *
-         * <p>★ SILENCE WOULD BE A LIE ★ an allowed write that the rules
-         * would have refused must say so, because the user is looking at
-         * a transcript that says "wrote N bytes" and has no way to know
-         * the scope was not applied.
-         */
-        public String escapeNotice() {
-            if (!allowed || reason == null) return null;
-            return "note: the write scope is disabled (" + ALLOW_ANY_PATH_ENV
-                    + "=1), so this write was allowed even though " + reason + ".";
-        }
-
-        /**
-         * The result body, with the escape note appended when there is
-         * one.
-         *
-         * @param body the body the tool produced
-         * @return the body to hand back
-         */
-        public String applyNotice(String body) {
-            String notice = escapeNotice();
-            if (notice == null) return body;
-            String base = body == null ? "" : body;
-            return base + "\n\n" + notice;
-        }
-    }
 
     /** The session's working directory — the boundary of W1. */
     private final Path root;
@@ -299,17 +224,17 @@ public final class WriteScope {
      *
      * @param target the absolute, normalized path the write would land on
      */
-    public Decision check(Path target) {
+    public ScopeDecision check(Path target) {
         if (target == null) {
-            return Decision.deny(null, "the path could not be resolved");
+            return ScopeDecision.deny(null, VERB, "the path could not be resolved");
         }
         // ★ THE RULES ARE EVALUATED EVEN WHEN THE BOUNDARY IS OFF ★
         // that is the whole point of the escaped state: the write
         // happens, and the caller is told which rule it broke. Silently
         // allowing it would make the escape invisible.
-        Decision violation = violationOf(target);
-        if (violation == null) return Decision.allow(target);
-        if (escapeActive) return Decision.escaped(target, violation.reason());
+        ScopeDecision violation = violationOf(target);
+        if (violation == null) return ScopeDecision.allow(target, VERB);
+        if (escapeActive) return ScopeDecision.escaped(target, VERB, violation.reason());
         return violation;
     }
 
@@ -319,17 +244,17 @@ public final class WriteScope {
      * <p>★ THE THREE RULES, IN ONE PLACE ★ so the escaped path and the
      * enforced path cannot disagree about what a rule says.
      */
-    private Decision violationOf(Path target) {
+    private ScopeDecision violationOf(Path target) {
         // ---- W1: the tree is the boundary --------------------------------
         if (root != null && !SessionPaths.isInside(target, root)) {
-            return Decision.deny(target,
+            return ScopeDecision.deny(target, VERB,
                     target + " is outside the working directory (" + root
                             + "). Work inside the tree the session is pointed at.");
         }
         // ---- W2: tool-owned directories ---------------------------------
         String denied = deniedDirectoryOf(target);
         if (denied != null) {
-            return Decision.deny(target,
+            return ScopeDecision.deny(target, VERB,
                     target + " is inside '" + denied + "/', which the tooling owns. "
                             + "Write the change where it belongs instead.");
         }
@@ -348,7 +273,7 @@ public final class WriteScope {
      *
      * @return the refusal, or null when the write is fine
      */
-    private Decision checkScaffold(Path target) {
+    private ScopeDecision checkScaffold(Path target) {
         Path file = target.getFileName();
         if (file == null) return null;
         String name = file.toString();
@@ -366,7 +291,7 @@ public final class WriteScope {
         for (String marker : markers) {
             if (request.contains(marker)) return null;
         }
-        return Decision.deny(target,
+        return ScopeDecision.deny(target, VERB,
                 "this project has no build system, and '" + name + "' would be one. "
                         + "Write the code that was asked for and say that there is "
                         + "nothing here to run it with; do not add a build system nobody asked for.");

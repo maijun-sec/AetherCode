@@ -24,7 +24,7 @@ package org.aethercode.tools.file;
 
 import org.aethercode.core.app.AppState;
 import org.aethercode.core.tool.Tool;
-import org.aethercode.core.writescope.WriteScope;
+import org.aethercode.core.scope.WriteScope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

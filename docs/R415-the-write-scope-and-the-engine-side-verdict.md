@@ -40,7 +40,7 @@ structural form of that answer is what R415 built.
 
 ## 2. The write scope (hard boundary)
 
-`org.aethercode.core.writescope.WriteScope` — three rules, and only three.
+`org.aethercode.core.scope.WriteScope` — three rules, and only three.
 
 | Rule | What it refuses | Why |
 |------|-----------------|-----|

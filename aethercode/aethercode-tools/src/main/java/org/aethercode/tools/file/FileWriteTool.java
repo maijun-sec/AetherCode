@@ -145,8 +145,8 @@ public class FileWriteTool {
         // pointed at D:/tmp/proj aimed at <launch dir>/src/Foo.java and
         // was then refused as "outside the working directory". The model
         // was right; the resolution was wrong.
-        Path path = org.aethercode.core.writescope.SessionPaths.resolve(
-                pathStr, org.aethercode.core.writescope.SessionPaths.cwdOf(ctx));
+        Path path = org.aethercode.core.scope.SessionPaths.resolve(
+                pathStr, org.aethercode.core.scope.SessionPaths.cwdOf(ctx));
         if (path == null) {
             return Tool.ToolResult.error("file_path is not a valid path: " + pathStr);
         }
@@ -154,8 +154,8 @@ public class FileWriteTool {
         // ★ R415: THE WRITE SCOPE ★ the tree is the boundary, the
         // tool-owned directories are off limits, and a project without a
         // build system does not get one invented in it.
-        org.aethercode.core.writescope.WriteScope.Decision scope =
-                org.aethercode.core.writescope.WriteScope.fromContext(ctx).check(path);
+        org.aethercode.core.scope.ScopeDecision scope =
+                org.aethercode.core.scope.WriteScope.fromContext(ctx).check(path);
         if (!scope.allowed()) {
             return Tool.ToolResult.error(scope.message());
         }
@@ -286,6 +286,6 @@ public class FileWriteTool {
      * ({@code SessionPaths.isInsideSession}) instead of two that drifted.
      */
     public static boolean isPathAllowed(Path p, Tool.CallContext ctx) {
-        return org.aethercode.core.writescope.SessionPaths.isInsideSession(p, ctx);
+        return org.aethercode.core.scope.SessionPaths.isInsideSession(p, ctx);
     }
 }

@@ -93,13 +93,13 @@ public class FileEditTool {
         // refuse paths outside the configured cwd". The claim was false
         // for this tool, and a boundary that is only written down is not
         // a boundary.
-        Path path = org.aethercode.core.writescope.SessionPaths.resolve(
-                pathStr, org.aethercode.core.writescope.SessionPaths.cwdOf(ctx));
+        Path path = org.aethercode.core.scope.SessionPaths.resolve(
+                pathStr, org.aethercode.core.scope.SessionPaths.cwdOf(ctx));
         if (path == null) {
             return Tool.ToolResult.error("file_path is not a valid path: " + pathStr);
         }
-        org.aethercode.core.writescope.WriteScope.Decision scope =
-                org.aethercode.core.writescope.WriteScope.fromContext(ctx).check(path);
+        org.aethercode.core.scope.ScopeDecision scope =
+                org.aethercode.core.scope.WriteScope.fromContext(ctx).check(path);
         if (!scope.allowed()) {
             return Tool.ToolResult.error(scope.message());
         }

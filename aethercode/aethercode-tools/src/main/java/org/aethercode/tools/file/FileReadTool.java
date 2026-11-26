@@ -92,18 +92,20 @@ public class FileReadTool {
         if (pathStr == null || pathStr.isBlank()) {
             return Tool.ToolResult.error("file_path is required");
         }
-        Path path = Path.of(pathStr).toAbsolutePath().normalize();
+        Path path = org.aethercode.core.scope.SessionPaths.resolve(
+                pathStr, org.aethercode.core.scope.SessionPaths.cwdOf(ctx));
         Object offsetRaw = input.get("offset");
         Object limitRaw  = input.get("limit");
         int offset = offsetRaw instanceof Number n ? n.intValue() : -1;
         int limit  = limitRaw  instanceof Number n ? n.intValue() : -1;
 
-        // mirror R88's FileWriteTool sandbox. The model
-        // can read freely inside the engine's cwd; reads
-        // outside are refused. Set AETHERCODE_ALLOW_ANY_PATH=1
-        // to opt out (test/CI use case).
-        if (!isPathAllowed(path, ctx)) {
-            return Tool.ToolResult.error("read refused: " + path + " is outside the working directory");
+        // ★ R416: THE READ SCOPE ★ the tree is the boundary for reads
+        // too — the same boundary the write scope draws, with its own
+        // rules (the tool-owned directories are READABLE: reading a
+        // build report under target/ is legitimate work).
+        org.aethercode.core.scope.ScopeDecision scope = readScope(path, ctx);
+        if (!scope.allowed()) {
+            return Tool.ToolResult.error(scope.message());
         }
 
         if (!Files.exists(path)) {
@@ -125,7 +127,9 @@ public class FileReadTool {
                     return Tool.ToolResult.error(
                             "image too large: " + size + " bytes (max " + MAX_IMAGE_BYTES + ")");
                 }
-                return readImage(path, mime);
+                Tool.ToolResult img = readImage(path, mime);
+                return new Tool.ToolResult(scope.applyNotice(String.valueOf(img.output())),
+                        img.attachments(), img.isError());
             }
             // Non-image files: existing path. Detect binary by
             // NUL-byte ratio in the first 4 KiB.
@@ -144,9 +148,9 @@ public class FileReadTool {
                 sb.append(String.format("%" + width + "d\t%s%n", i + 1, lines.get(i)));
             }
             if (lines.isEmpty()) {
-                return Tool.ToolResult.of("(empty file)\n");
+                return Tool.ToolResult.of(scope.applyNotice("(empty file)\n"));
             }
-            return Tool.ToolResult.of(sb.toString());
+            return Tool.ToolResult.of(scope.applyNotice(sb.toString()));
         } catch (IOException e) {
             return Tool.ToolResult.error("read failed: " + e.getMessage());
         }
@@ -200,19 +204,25 @@ public class FileReadTool {
     public static boolean isReadOnly(Map<String, Object> input) { return true; }
 
     /**
-     * mirror of {@code FileWriteTool.isPathAllowed}.
-     * Refuses reads outside the engine's cwd unless
-     * {@code AETHERCODE_ALLOW_ANY_PATH=1} is set. Case-
-     * insensitive on Windows to match the file system.
+     * ★ R416: THE READ SCOPE ★ the tree is the boundary for reads too.
      *
-     * <p>★ R415: THE COPY IS GONE ★ this was a SECOND implementation of
-     * the "inside the cwd" rule, and it was the <b>weaker</b> one: it
-     * compared with a plain string {@code startsWith}, so
-     * {@code D:\tmp\abcde} counted as inside {@code D:\tmp\abc}. The rule
-     * now lives once, in {@code SessionPaths.isInsideSession}.
+     * <p>This used to be {@code SessionPaths.isInsideSession} — a
+     * boolean. It is now a <b>decision</b>, because the scope has three
+     * states, not two: allowed, refused, and <b>allowed although the
+     * rules would have refused it</b> (the escape hatch). The third
+     * state has to SAY SO, or the user believes in a boundary that is
+     * not being applied.
+     *
+     * <p>★ AND THE PATH IS RESOLVED AGAINST THE SESSION ★ the old code
+     * did {@code Path.of(pathStr).toAbsolutePath()}, which resolves a
+     * relative path against the JVM's {@code user.dir} — the directory
+     * the daemon happened to start in. R415 fixed that for writes; the
+     * read side kept the defect, so a session pointed at
+     * {@code D:/tmp/proj} asking for {@code src/Foo.java} read
+     * {@code <daemon launch dir>/src/Foo.java}.
      */
-    private static boolean isPathAllowed(Path p, Tool.CallContext ctx) {
-        return org.aethercode.core.writescope.SessionPaths.isInsideSession(p, ctx);
+    private static org.aethercode.core.scope.ScopeDecision readScope(Path p, Tool.CallContext ctx) {
+        return org.aethercode.core.scope.ReadScope.fromContext(ctx).check(p);
     }
 
     private static byte[] readHead(Path p, int n) throws IOException {

@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.aethercode.core.writescope;
+package org.aethercode.core.scope;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -60,14 +60,14 @@ class WriteScopeR415Test {
 
     @Test
     void aPathInsideTheTreeIsAllowed(@TempDir Path root) {
-        WriteScope.Decision d = scope(root, "").check(root.resolve("src/AppConfig.java"));
+        ScopeDecision d = scope(root, "").check(root.resolve("src/AppConfig.java"));
         assertThat(d.allowed()).isTrue();
         assertThat(d.reason()).isNull();
     }
 
     @Test
     void aPathOutsideTheTreeIsRefused(@TempDir Path root) {
-        WriteScope.Decision d = scope(root, "").check(root.getParent().resolve("elsewhere/File.java"));
+        ScopeDecision d = scope(root, "").check(root.getParent().resolve("elsewhere/File.java"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains("outside the working directory");
     }
@@ -77,7 +77,7 @@ class WriteScopeR415Test {
         // ★ THE ONE-LETTER ESCAPE ★ `root` is ".../abc"; ".../abcde" is a
         // DIFFERENT directory. A plain string prefix would call it inside.
         Path sibling = root.resolveSibling(root.getFileName() + "de");
-        WriteScope.Decision d = scope(root, "").check(sibling.resolve("File.java"));
+        ScopeDecision d = scope(root, "").check(sibling.resolve("File.java"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains("outside the working directory");
     }
@@ -88,14 +88,14 @@ class WriteScopeR415Test {
 
     @Test
     void aWriteIntoTheGitDirectoryIsRefused(@TempDir Path root) {
-        WriteScope.Decision d = scope(root, "").check(root.resolve(".git/config"));
+        ScopeDecision d = scope(root, "").check(root.resolve(".git/config"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains(".git");
     }
 
     @Test
     void aWriteIntoNodeModulesIsRefused(@TempDir Path root) {
-        WriteScope.Decision d = scope(root, "").check(root.resolve("node_modules/left-pad/index.js"));
+        ScopeDecision d = scope(root, "").check(root.resolve("node_modules/left-pad/index.js"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains("node_modules");
     }
@@ -104,14 +104,14 @@ class WriteScopeR415Test {
     void aWriteIntoATargetDirectoryIsRefused(@TempDir Path root) {
         // ★ BUILD OUTPUT IS NOT THE MODEL'S ★ a class file or a build
         // artefact under target/ belongs to the build, not to the turn.
-        WriteScope.Decision d = scope(root, "").check(root.resolve("target/classes/App.class"));
+        ScopeDecision d = scope(root, "").check(root.resolve("target/classes/App.class"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains("target");
     }
 
     @Test
     void aWriteIntoAPythonCacheIsRefused(@TempDir Path root) {
-        WriteScope.Decision d = scope(root, "").check(root.resolve("__pycache__/mod.cpython-312.pyc"));
+        ScopeDecision d = scope(root, "").check(root.resolve("__pycache__/mod.cpython-312.pyc"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains("__pycache__");
     }
@@ -124,7 +124,7 @@ class WriteScopeR415Test {
     void inventingAPomInAProjectWithNoBuildIsRefused(@TempDir Path root) {
         // ★ THE MEASURED FAILURE ★ R414's live matrix: asked for ONE unit
         // test, the turn scaffolded a whole Maven project.
-        WriteScope.Decision d = scope(root, "给 LruCache 写一个单元测试").check(root.resolve("pom.xml"));
+        ScopeDecision d = scope(root, "给 LruCache 写一个单元测试").check(root.resolve("pom.xml"));
         assertThat(d.allowed()).isFalse();
         assertThat(d.message()).contains("no build system");
     }
@@ -133,7 +133,7 @@ class WriteScopeR415Test {
     void inventingAPomWhenTheRequestAsksForMavenIsAllowed(@TempDir Path root) {
         // ★ THE ESCAPE ★ the user asked for a Maven build; refusing it
         // would block work the user asked for.
-        WriteScope.Decision d = scope(root, "给这个项目加一个 maven 构建").check(root.resolve("pom.xml"));
+        ScopeDecision d = scope(root, "给这个项目加一个 maven 构建").check(root.resolve("pom.xml"));
         assertThat(d.allowed()).isTrue();
     }
 
@@ -142,7 +142,7 @@ class WriteScopeR415Test {
         // ★ A PROJECT THAT HAS A BUILD ★ the failure being prevented is a
         // project that has NO build suddenly acquiring one.
         Files.writeString(root.resolve("build.gradle"), "plugins { id 'java' }\n");
-        WriteScope.Decision d = scope(root, "写一个单元测试").check(root.resolve("pom.xml"));
+        ScopeDecision d = scope(root, "写一个单元测试").check(root.resolve("pom.xml"));
         assertThat(d.allowed()).isTrue();
     }
 
@@ -151,13 +151,13 @@ class WriteScopeR415Test {
         // ★ A MULTI-MODULE PROJECT ★ module/pom.xml under a root that has
         // one is normal; the rule is about the ROOT.
         Files.writeString(root.resolve("pom.xml"), "<project/>\n");
-        WriteScope.Decision d = scope(root, "写一个单元测试").check(root.resolve("module/pom.xml"));
+        ScopeDecision d = scope(root, "写一个单元测试").check(root.resolve("module/pom.xml"));
         assertThat(d.allowed()).isTrue();
     }
 
     @Test
     void aGitignoreInAProjectWithNoBuildIsRefused(@TempDir Path root) {
-        WriteScope.Decision d = scope(root, "写一个单元测试").check(root.resolve(".gitignore"));
+        ScopeDecision d = scope(root, "写一个单元测试").check(root.resolve(".gitignore"));
         assertThat(d.allowed()).isFalse();
     }
 
@@ -165,7 +165,7 @@ class WriteScopeR415Test {
     void anOrdinarySourceFileIsNeverScaffolding(@TempDir Path root) {
         // ★ THE SCOPE DOES NOT OVER-REACH ★ a test file in a project with
         // no build is the normal case, not a scaffold.
-        WriteScope.Decision d = scope(root, "给 LruCache 写一个单元测试")
+        ScopeDecision d = scope(root, "给 LruCache 写一个单元测试")
                 .check(root.resolve("src/test/java/demo/LruCacheTest.java"));
         assertThat(d.allowed()).isTrue();
     }
@@ -181,7 +181,7 @@ class WriteScopeR415Test {
         // the USER level — and a boundary that is silently inert is worse
         // than no boundary, because it looks like it is working.
         WriteScope scope = new WriteScope(root, "写测试", true);
-        WriteScope.Decision d = scope.check(root.getParent().resolve("elsewhere/File.java"));
+        ScopeDecision d = scope.check(root.getParent().resolve("elsewhere/File.java"));
         assertThat(d.allowed()).isTrue();
         assertThat(scope.isEscapeActive()).isTrue();
     }
@@ -199,7 +199,7 @@ class WriteScopeR415Test {
         // exactly like a write that obeys them. The user is reading
         // "wrote N bytes" and has no other way to know.
         WriteScope escaped = new WriteScope(root, "写测试", true);
-        WriteScope.Decision d = escaped.check(root.getParent().resolve("elsewhere/File.java"));
+        ScopeDecision d = escaped.check(root.getParent().resolve("elsewhere/File.java"));
 
         assertThat(d.allowed()).isTrue();
         assertThat(d.escapeNotice())
@@ -213,7 +213,7 @@ class WriteScopeR415Test {
         // ★ NO NOISE ★ an ordinary write must not carry a notice; the
         // notice is for the writes that broke a rule.
         WriteScope escaped = new WriteScope(root, "写测试", true);
-        WriteScope.Decision d = escaped.check(root.resolve("src/AppConfig.java"));
+        ScopeDecision d = escaped.check(root.resolve("src/AppConfig.java"));
 
         assertThat(d.allowed()).isTrue();
         assertThat(d.escapeNotice()).isNull();

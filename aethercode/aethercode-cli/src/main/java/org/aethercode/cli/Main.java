@@ -158,8 +158,8 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--context-window"}, description = "Context window in tokens (default 0 = AutoCompact's 200K; 1_000_000 for million-token models).")
     int contextWindow = 0;
 
-    @Option(names = {"--max-turns"}, description = "Cap on model turns per query (default 50). 0/-1 = unbounded. The loop detector (see --loop-detect-*) also stops pathological repetition regardless.")
-    int maxTurns = 50;
+    @Option(names = {"--max-turns"}, description = "Hard cap on model turns per query (default 0 = UNBOUNDED). When it is set, the engine tells the model to wrap up in the last fifth of the budget and ends the turn with stopReason=max_iterations if the cap is reached. The loop detectors (--loop-detect-*) and the stall detector stop pathological repetition regardless of this cap. Env: AETHERCODE_MAX_TURNS.")
+    int maxTurns = 0;
 
     @Option(names = {"--loop-detect-window"}, description = "Prior round: sliding-window size for the loop detector (default 8). Set to 0 to disable. The same tool call must appear --loop-detect-threshold times in this many turns to trigger a stop.")
     int loopDetectWindow = 8;
@@ -972,7 +972,7 @@ public class Main implements Callable<Integer> {
                 // the user never passes --model.
                 .model(resolveModel(model, providerSpec))
                 .apiKey(apiKey)
-                .maxTurnsPerQuery(maxTurns)
+                .maxTurnsPerQuery(effectiveMaxTurns())
                 .loopDetector(loopDetectWindow, loopDetectThreshold)
                 .contextWindow(contextWindow)
                 .permissionMode(permissionMode)
@@ -1152,6 +1152,51 @@ public class Main implements Callable<Integer> {
             return providerSpec.defaultModel();
         }
         return "MiniMax-M3";
+    }
+
+    /**
+     * R416: the effective per-query turn budget.
+     *
+     * <p>★ WHY THE ENV VAR EXISTS ★ the desktop launches the daemon
+     * with a fixed argument list, so a user who wants a hard cap on a
+     * long-running agent would otherwise have to rebuild the desktop.
+     * The environment reaches the daemon without a rebuild.
+     *
+     * <p>★ THE PRECEDENCE ★ the command line wins; the env var is
+     * consulted only when the flag was left at its default (0 =
+     * unbounded). A malformed value is ignored with a warning rather
+     * than crashing the daemon at start-up.
+     *
+     * @return the cap, or 0 for "unbounded"
+     */
+    int effectiveMaxTurns() {
+        return resolveMaxTurns(maxTurns, System.getenv("AETHERCODE_MAX_TURNS"));
+    }
+
+    /**
+     * R416: resolve the turn budget from the flag and the environment.
+     *
+     * <p>★ WHY IT IS A STATIC WITH PARAMETERS ★ the environment cannot
+     * be set from inside a test, so a method that read
+     * {@code System.getenv} directly could only be exercised on a
+     * machine that happens to have the variable set. Taking the two
+     * values as parameters makes every branch testable.
+     *
+     * @param cliValue the {@code --max-turns} value (0 = not set)
+     * @param envValue the {@code AETHERCODE_MAX_TURNS} value (may be null)
+     * @return the cap, or 0 for "unbounded"
+     */
+    static int resolveMaxTurns(int cliValue, String envValue) {
+        if (cliValue > 0) return cliValue;
+        if (envValue == null || envValue.isBlank()) return 0;
+        try {
+            int v = Integer.parseInt(envValue.trim());
+            return v > 0 ? v : 0;
+        } catch (NumberFormatException e) {
+            System.err.println("[aethercode] AETHERCODE_MAX_TURNS is not an integer ("
+                    + envValue + ") — ignoring it; the turn budget stays unbounded.");
+            return 0;
+        }
     }
 
     private static Tool prefixMcpTool(Tool original) {
