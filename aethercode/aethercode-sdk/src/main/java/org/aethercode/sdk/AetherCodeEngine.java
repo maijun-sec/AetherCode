@@ -926,6 +926,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // that turn cannot undo the turn, and a rewind reports success
         // while changing nothing.
         this.streamingToolExecutor.withFileTouchRecorder(this.fileTouchRecorder);
+        // ★ R415: THE SHELL CHANNEL GETS ITS OWN WITNESS ★ the write
+        // tools report through the recorder; the shell names no path, so
+        // it reports through a diff of the tree.
+        this.streamingToolExecutor.withShellWriteDetector(this.shellWriteDetector);
         // R718-B + R718-H: install the executor-level L3 dedup
         // cache + the metrics collector so L1 / L3 telemetry
         // bumps the snapshot the UI reads via getMetrics.
@@ -1031,6 +1035,15 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         // menu's numbering and the restore's boundary cannot drift.
         this.queryEngine.setOnTurnBoundary(prompt -> {
             try {
+                // ★ R415: THE TURN'S CHANGES START HERE ★ the consistency
+                // check compares "before this turn" with "now", so the
+                // tracker's memory has to end at the previous turn.
+                this.turnChanges.beginTurn();
+                // ★ R415: the shell's changes are turn state too ★
+                // yesterday's command is not this turn's change, and
+                // reporting it again is the noise the user complained
+                // about.
+                this.shellWriteDetector.beginTurn();
                 java.util.List<org.aethercode.core.message.Message> t = appState.transcript();
                 int ordinal =
                         org.aethercode.core.transcript.CodeCheckpointStore.userTurnIndices(t).size();
@@ -1040,6 +1053,68 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
                 LOG.warn("R388n: code checkpoint failed: {}", cpErr.getMessage());
             }
         });
+        // R415: the engine's own CONSISTENCY PROBE. The engine asks it
+        // once, at the end of the turn, when the tree is in its final
+        // state. The probe knows the session's cwd and the turn's changed
+        // files; the engine knows when to ask.
+        //
+        // ★ IT REPORTS ONLY WHEN THERE IS SOMETHING TO REPORT ★ a turn
+        // that changed no value-bearing declaration produces no report —
+        // otherwise every turn would end with a note about nothing.
+        this.queryEngine.setConsistencyProbe(() -> {
+            try {
+                // ★ R415: ALL THREE CHANNELS, ONE JUDGE ★ the write
+                // tools (which know the content before the write) and the
+                // shell (which knows only the tree before and after) both
+                // produce "what this file declared, before and now" —
+                // and the same judge reads them.
+                java.util.Map<java.nio.file.Path,
+                        org.aethercode.core.consistency.ConsistencyVerifier.FileSymbols> merged =
+                        new java.util.LinkedHashMap<>();
+                for (org.aethercode.core.consistency.ConsistencyVerifier.FileSymbols fs :
+                        org.aethercode.core.consistency.ConsistencyVerifier.symbolsOf(this.turnChanges.changes())) {
+                    merged.put(fs.file().toAbsolutePath().normalize(), fs);
+                }
+                // ★ THE WRITE TOOLS WIN ★ the tracker's "after" is read
+                // at the end of the turn, so it is the FINAL value; the
+                // shell's "after" is from the last command, which may be
+                // older. Taking both would make the judge see two values
+                // for one constant and call it a contradiction.
+                for (org.aethercode.core.consistency.ConsistencyVerifier.FileSymbols fs :
+                        this.shellWriteDetector.pendingChanges()) {
+                    merged.putIfAbsent(fs.file().toAbsolutePath().normalize(), fs);
+                }
+                if (merged.isEmpty()) return null;
+                org.aethercode.core.consistency.ProjectIndex index =
+                        org.aethercode.core.consistency.ProjectIndex.scan(appState.cwd());
+                org.aethercode.core.consistency.ConsistencyVerdict verdict =
+                        org.aethercode.core.consistency.ConsistencyVerifier.verifySymbols(
+                                new java.util.ArrayList<>(merged.values()), index);
+                if (verdict.missed().isEmpty() && verdict.overReach().isEmpty()) {
+                    // ★ ONLY FAILURES REACH THE WIRE ★ a turn that changed
+                    // every copy together has nothing to say, and a note
+                    // that says "everything is fine" on every turn is
+                    // exactly the noise the R208 side-note contract
+                    // forbids.
+                    return null;
+                }
+                return verdict.report();
+            } catch (RuntimeException ex) {
+                LOG.warn("R415: consistency probe failed: {}", ex.getMessage());
+                return null;
+            }
+        });
+        // ★ R415: THE ESCAPE HATCH IS DECLARED AT STARTUP ★ the write
+        // scope is enforced by an environment variable, and this machine
+        // sets it at the USER level — so the boundary is off by default
+        // here, silently. A boundary that stops being a boundary without
+        // saying so is worse than none: the user believes in it. One
+        // line in the daemon log says it out loud, once.
+        if (org.aethercode.core.writescope.WriteScope.allowAnyPath()) {
+            LOG.warn("R415: THE WRITE SCOPE IS DISABLED ({}=1) — writes in this session "
+                    + "are not boundary-checked.",
+                    org.aethercode.core.writescope.WriteScope.ALLOW_ANY_PATH_ENV);
+        }
         // per-query turn cap — bounds runaway tool loops. -1 / 0 disables.
         if (b.maxTurnsPerQuery > 0) {
             this.queryEngine.setMaxTurnsPerQuery(b.maxTurnsPerQuery);
@@ -3097,9 +3172,79 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
      * that captured the store it was created with would keep reporting
      * into the PREVIOUS session's points. A lambda over the field
      * always answers with the store the engine is using now.
+     *
+     * <p>★ AND THE TRACKER IS READ AT CALL TIME TOO ★ this composite
+     * used to capture {@code this.turnChanges} <b>as a value</b> while
+     * the field initialisers ran — and a field declared LATER is still
+     * null at that moment. The composite skips null parts, so the
+     * tracker was silently never notified: the wiring looked complete
+     * and the consistency check saw nothing. Reading the field inside
+     * the lambda removes the ordering trap entirely.
      */
     private final org.aethercode.core.transcript.FileTouchRecorder fileTouchRecorder =
-            path -> this.codeCheckpoints.beforeWrite(path);
+            org.aethercode.core.transcript.FileTouchRecorder.composite(
+                    path -> this.codeCheckpoints.beforeWrite(path),
+                    path -> this.turnChanges.beforeWrite(path),
+                    // ★ R415: A TOOL WRITE INVALIDATES THE SHELL BASELINE ★
+                    // the baseline is an index of the tree; a tool write
+                    // changes the tree, so the next shell diff would blame
+                    // the shell for the tool's change.
+                    path -> this.shellWriteDetector.invalidate());
+
+    /**
+     * R415: what THIS TURN changed.
+     *
+     * <p>★ TWO CONSUMERS, ONE MOMENT ★ the checkpoint store remembers a
+     * file for a rewind (the session's first touch); the turn tracker
+     * remembers it for the consistency check (this turn's touch). Both
+     * need the moment BEFORE the write, so they are combined into the one
+     * recorder the write path carries.
+     */
+    private final org.aethercode.core.consistency.TurnChangeTracker turnChanges =
+            new org.aethercode.core.consistency.TurnChangeTracker();
+
+    /**
+     * R415: the SHELL WRITE DETECTOR — the third write channel.
+     *
+     * <p>★ WHY IT IS SESSION-SCOPED ★ it holds the baseline index of the
+     * tree and the changes this turn's commands made. Both are turn
+     * state, so both die with the session.
+     */
+    private final org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector =
+            new org.aethercode.core.writescope.ShellWriteDetector();
+
+    /**
+     * R415: the shell write detector.
+     *
+     * @return the detector (the bash tool reads it out of the call context)
+     */
+    public org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector() {
+        return shellWriteDetector;
+    }
+
+    /**
+     * R415: the detector the BASH TOOL will actually find.
+     *
+     * <p>★ THE SEAT, NOT THE INSTANCE ★ the engine owns a detector and
+     * installs it on the executor; the bash tool reads it out of the call
+     * context. An engine that owns one but never installs it has a
+     * detector that watches nothing — so the two are exposed separately
+     * and a test can compare them.
+     *
+     * @return the detector on the executor (null when it was never installed)
+     */
+    public org.aethercode.core.writescope.ShellWriteDetector shellWriteDetectorOnExecutor() {
+        return this.streamingToolExecutor.shellWriteDetector();
+    }
+
+    /**
+     * R415: the turn-change tracker.
+     *
+     * @return the tracker (the consistency check reads it at the end of a turn)
+     */
+    public org.aethercode.core.consistency.TurnChangeTracker turnChanges() {
+        return turnChanges;
+    }
 
     /**
      * R407: the recorder the write path reports to.

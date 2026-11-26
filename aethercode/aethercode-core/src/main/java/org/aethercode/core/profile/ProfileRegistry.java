@@ -210,9 +210,54 @@ public final class ProfileRegistry {
                  AND every copy you deliberately did not touch. A silent leftover is worse than a
                  named one.
               4. ★ Leave nothing else behind ★ a compile, a test run or a scratch copy must not add
-                 files to the tree (build outside it, or clean up after yourself). Verify by READING
+                 files to the tree. ★ THE TREE IS THE WRITE BOUNDARY (R415) ★ the scope is closed by
+                 default, so a build cannot happen outside the tree — and it must not happen inside
+                 it either: if the project has no build, do NOT build (say what there is nothing to
+                 run the code with), and if the user wants a build, ASK for the scope to be opened
+                 for it. ★ R415's live matrix measured the cost of the other wording — one that told
+                 the model to build there and clean up afterwards contradicted the scaffold rule two
+                 bullets above it, and the model believed the wrong one: asked for ONE unit test, it
+                 built a verification harness of 34 files inside the user's tree. Verify by READING
                  what you wrote whenever you can. The working tree should hold the change and
-                 nothing else.""";
+                 nothing else. ★ THE TREE IS THE WHOLE WORLD (R415, second live round) ★ the rule
+                 above only says a build may not happen OUTSIDE the tree; it did not say the model
+                 may not GO LOOKING for one out there — and the model did exactly that: asked to
+                 refactor a class, it globbed upward for a pom.xml and landed outside the tree. Do
+                 not search outside the tree for a build system, a config file, or anything else: if
+                 the tree has no build system, there is none, and if the user wants one, ask them to
+                 open the scope.""";
+
+    /**
+     * R415: THE LOCATION CONTRACT — a report about the code must say WHERE
+     * the evidence lives.
+     *
+     * <h2>★ WHY IT IS ONE CONSTANT AND NOT FOUR COPIES ★</h2>
+     * <p>A contract that lives in one posture and not in the others is a
+     * contract the others quietly break — R410's lesson: a copy is a list
+     * that drifts. The consistency procedure above already learned that
+     * lesson in this same registry; this is the same shape.
+     *
+     * <h2>★ WHAT R415'S LIVE MATRIX FOUND ★</h2>
+     * <p>The scenario matrix checks every reporting turn's answer for
+     * {@code file:line} evidence — for the ANALYST, the INVESTIGATOR and
+     * the REVIEWER alike. The live run found the REVIEWER red, and the
+     * cause was not the model: two of the three postures had always said
+     * "quote the file and line" / "report the root cause with
+     * {@code file:line} evidence", and the REVIEWER never had — it asked
+     * for "a concrete fix", which is a different promise. ⇒ the check was
+     * measuring a promise the product had never made, and the same prompt
+     * cited the location 16 times in one run and 0 times in the next.
+     *
+     * <p>★ And nothing pinned the reviewer's contract before this round:
+     * R413's test pins the investigator's, R414's pins the builder's, and
+     * the reviewer's was pinned by nothing at all. ⇒ that is how a
+     * contract drifts for a whole release.
+     */
+    static final String LOCATION_EVIDENCE = """
+            - ★ R415: POINT AT THE SPOT ★ every finding and every claim you report must carry
+              its location as `file:line` (for example `src/OrderDao.java:6`), so the user can
+              jump straight to it. A finding the user cannot locate is a finding they have to
+              re-find.""";
 
     /** CODE_CHANGE — the user asked for code. Writes allowed. */
     public static final Profile BUILDER = new Profile(
@@ -255,12 +300,12 @@ public final class ProfileRegistry {
 
                     - Find the cause before you touch anything. Read the code, the logs and the error
                       output; reproduce if that is cheap.
-                    - Report the root cause with `file:line` evidence. Name the mechanism, not the
-                      symptom.
+                    - Name the mechanism, not the symptom.
                     - If the user asked for a fix, make the SMALLEST fix that addresses the
                       root cause, then say what you changed and why.
                     - If the user only asked what is wrong, do NOT modify files.
                     """
+                    + LOCATION_EVIDENCE
                     + CONSISTENCY_STEPS,
             null,
             Set.of());
@@ -299,13 +344,13 @@ public final class ProfileRegistry {
 
                     - Find the cause before you touch anything. Read the code, the logs and the error
                       output with `file_read`, `grep` and `glob`.
-                    - Report the root cause with `file:line` evidence. Name the mechanism, not the
-                      symptom.
+                    - Name the mechanism, not the symptom.
                     - Do NOT create, modify or delete ANY file — not the file under investigation, not
                       a reproduction script, not a scratch file. There is no shell in this turn, so a
                       reproduction program cannot be built or run either; say what you would run and
                       why, and ask for the go-ahead.
-                    - If the fix is obvious, describe it in prose and ask before you write anything.""",
+                    - If the fix is obvious, describe it in prose and ask before you write anything."""
+                    + LOCATION_EVIDENCE,
             null,
             READ_ONLY_DENY);
 
@@ -353,10 +398,10 @@ public final class ProfileRegistry {
                       first — do not answer from imagination.
                     - Do NOT create or modify files. The user asked a question, not for a
                       change. If they want a change, they will ask for it next.
-                    - Quote the file and line that supports each claim.
                     - There is no shell in this turn: read with `file_read`, `grep` and `glob`.
                       Nothing here can change the working tree, and trying a command only
-                      wastes the turn.""",
+                      wastes the turn."""
+                    + LOCATION_EVIDENCE,
             null,
             READ_ONLY_DENY);
 
@@ -374,7 +419,8 @@ public final class ProfileRegistry {
                       missing tests, unclear naming.
                     - Order the findings by severity and give each one a concrete fix.
                     - Do NOT rewrite the code. The user asked for an assessment.
-                    - There is no shell in this turn: read with `file_read`, `grep` and `glob`.""",
+                    - There is no shell in this turn: read with `file_read`, `grep` and `glob`."""
+                    + LOCATION_EVIDENCE,
             null,
             READ_ONLY_DENY);
 

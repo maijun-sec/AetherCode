@@ -190,6 +190,32 @@ public class QueryEngine {
      * user's turn.
      */
     private volatile java.util.function.Consumer<String> onTurnBoundary = s -> {};
+
+    /**
+     * R415: the engine's own CONSISTENCY PROBE, asked once at the end of a
+     * turn.
+     *
+     * <p>★ WHY THE ENGINE ASKS INSTEAD OF COMPUTING ★ the engine is in
+     * {@code aethercode-core} and knows nothing about the session's
+     * working directory, the turn's changed files or the tree. The probe
+     * is installed by the engine's owner, which does.
+     *
+     * <p>★ THE PROBE'S ANSWER IS A REPORT, NOT A VERDICT THE ENGINE
+     * ACTS ON ★ the engine renders it as a {@code side_note} and finishes
+     * the turn. A probe that throws yields no report and no damage.
+     */
+    private volatile org.aethercode.core.consistency.ConsistencyProbe consistencyProbe = null;
+
+    /**
+     * R415: install the probe that answers "did this turn leave the tree
+     * consistent?".
+     *
+     * @param probe the probe, or null to turn the check off
+     */
+    public void setConsistencyProbe(org.aethercode.core.consistency.ConsistencyProbe probe) {
+        this.consistencyProbe = probe;
+    }
+
     private final AtomicInteger runCounter = new AtomicInteger();
     /** R719: anchor turn stride. Every K turns the engine
      *  auto-appends a USER-role session-anchor message whose
@@ -2853,6 +2879,26 @@ private Stream<StreamEvent> currentLlmStream;
                                 }
                             }
                         }
+                        // ★ R415: THE ENGINE'S OWN CONSISTENCY VERDICT ★
+                        // the turn is over and the tree is in its final
+                        // state, so this is the moment the copies can be
+                        // compared. The report is emitted BEFORE the
+                        // RunEnd, so it reaches the wire before the turn
+                        // closes — the user sees the verdict and the end
+                        // of the run, in that order.
+                        org.aethercode.core.consistency.ConsistencyProbe probe = consistencyProbe;
+                        if (probe != null) {
+                            try {
+                                String report = probe.report();
+                                if (report != null && !report.isBlank()) {
+                                    emit(new StreamEvent.SideNote("consistency", report));
+                                }
+                            } catch (RuntimeException ex) {
+                                // ★ A BROKEN PROBE MUST NEVER BREAK A TURN ★
+                                java.util.logging.Logger.getLogger(QueryEngine.class.getName())
+                                        .warning("R415 consistency probe failed: " + ex.getMessage());
+                            }
+                        }
                         finished = true;
                         emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
                         // R750: deliver any events this turn buffered before
@@ -2934,18 +2980,62 @@ private Stream<StreamEvent> currentLlmStream;
                         // calls — start a new session or
                         // rephrase" with a one-click "Reset
                         // session" action.
+                        //
+                        // ★ R415: THE VERDICT MUST NAME THE CAUSE ★
+                        // The old wording here said "this is a
+                        // model-side bug … please start a new
+                        // session or rephrase your prompt". The
+                        // R415 live matrix MEASURED that this
+                        // attribution is usually WRONG:
+                        //
+                        //   - a census over every matrix session
+                        //     counted 370 native tool calls:
+                        //       349 carried a full argument object
+                        //       (ids `call_*`), and 21 carried an
+                        //       EMPTY argument object (ids
+                        //       `chatcmpl-tool-*`) — 21 of 21,
+                        //       i.e. every call of that shape
+                        //       arrived parameterless;
+                        //   - the `chatcmpl-tool-*` id shape is
+                        //     minted by the UPSTREAM provider —
+                        //     it appears nowhere in this repo or
+                        //     in any of our dependencies;
+                        //   - the provider's streaming protocol
+                        //     splits a tool call's arguments into
+                        //     fragments (first chunk: id + name +
+                        //     `arguments: ""`), and on that one
+                        //     path the fragments never arrive.
+                        //
+                        // So the empty input is usually the
+                        // ARGUMENTS BEING DROPPED IN TRANSPORT,
+                        // not the model forgetting a field. The
+                        // old advice ("rephrase your prompt")
+                        // blamed the user's prompt for a
+                        // transport fault, and "start a new
+                        // session" threw away a session whose
+                        // transcript is fine. The run is still
+                        // ended — the model cannot recover from a
+                        // call that arrives without its
+                        // arguments, because re-sending the
+                        // IDENTICAL call cannot help — but the
+                        // verdict now says what actually
+                        // happened and what the user can do.
                         if (preInfo != null && "loop_detected".equals(preInfo.kind())
                                 && "empty_tool_input".equals(loopDetector.lastLoopKind())) {
                             emit(new StreamEvent.SideNote(
                                     "empty_tool_input",
                                     "the model sent " + loopDetector.emptyInputStreak()
-                                            + " consecutive tool calls with empty input. "
-                                            + "this is a model-side bug — the engine rejected each call with the expected JSON shape "
-                                            + "but the model could not re-emit a correct call. "
-                                            + "the run is being ended; please start a new session or rephrase your prompt."));
+                                            + " consecutive tool calls whose input was EMPTY — "
+                                            + "each call arrived with a tool name and an id but no arguments at all. "
+                                            + "the engine rejected every one of them with the expected JSON shape, "
+                                            + "so the arguments never arrived. "
+                                            + "this is usually the upstream provider dropping the parameters "
+                                            + "(AetherCode R415 measured 21 of 21 calls of that shape arriving empty), "
+                                            + "not a bad prompt: re-sending the identical call cannot help, "
+                                            + "but retrying the turn usually works."));
                             stopReason = "loop_detected: empty_tool_input ("
                                     + loopDetector.emptyInputStreak()
-                                    + " consecutive empty tool calls)";
+                                    + " consecutive tool calls arrived with an empty argument object)";
                             finished = true;
                             emit(new StreamEvent.RunEnd(stopReason, List.of()));
                             // R750: deliver any events this turn buffered before

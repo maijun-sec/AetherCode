@@ -39,11 +39,41 @@ public final class Hooks {
     private Hooks() {}
 
     public static StreamingToolExecutor.HookBridge asPreBridge(HookRegistry registry) {
-        return (phase, tool, id, input, result, appState) -> {
-            if (phase != StreamingToolExecutor.HookBridge.Phase.PRE) return true;
-            Hook.Outcome o = registry.runAll(Hook.Kind.PRE_TOOL_USE,
-                    Hook.HookContext.forPre(appState.sessionId(), tool.name(), input)).join();
-            return o instanceof Hook.Outcome.Continue;
+        // ★ R415: THE REFUSAL REASON REACHES THE MODEL ★ this used to
+        // collapse a Block into a boolean, so the executor emitted the
+        // literal "blocked by pre-hook" and the hook's own explanation —
+        // the part that says what to do next — was thrown away. A hook
+        // that refuses a write must be able to say WHY, or the model
+        // cannot comply.
+        return new StreamingToolExecutor.HookBridge() {
+            @Override
+            public boolean run(StreamingToolExecutor.HookBridge.Phase phase,
+                               org.aethercode.core.tool.Tool tool, String id,
+                               Map<String, Object> input,
+                               Tool.ToolResult result,
+                               org.aethercode.core.app.AppState appState) {
+                StreamingToolExecutor.HookBridge.Outcome o =
+                        runWithOutcome(phase, tool, id, input, result, appState);
+                return o == null || o.verdict() == StreamingToolExecutor.HookBridge.Verdict.CONTINUE;
+            }
+
+            @Override
+            public StreamingToolExecutor.HookBridge.Outcome runWithOutcome(
+                    StreamingToolExecutor.HookBridge.Phase phase,
+                    org.aethercode.core.tool.Tool tool, String id,
+                    Map<String, Object> input,
+                    Tool.ToolResult result,
+                    org.aethercode.core.app.AppState appState) {
+                if (phase != StreamingToolExecutor.HookBridge.Phase.PRE) {
+                    return StreamingToolExecutor.HookBridge.Outcome.continue_();
+                }
+                Hook.Outcome o = registry.runAll(Hook.Kind.PRE_TOOL_USE,
+                        Hook.HookContext.forPre(appState.sessionId(), tool.name(), input)).join();
+                if (o instanceof Hook.Outcome.Block b) {
+                    return StreamingToolExecutor.HookBridge.Outcome.block(b.reason());
+                }
+                return StreamingToolExecutor.HookBridge.Outcome.continue_();
+            }
         };
     }
 
@@ -120,8 +150,9 @@ public final class Hooks {
                             nextIsError);
                     return StreamingToolExecutor.HookBridge.Outcome.replace(replacement);
                 }
-                if (o instanceof Hook.Outcome.Block) {
-                    return StreamingToolExecutor.HookBridge.Outcome.block();
+                if (o instanceof Hook.Outcome.Block b) {
+                    // ★ R415: the reason travels too.
+                    return StreamingToolExecutor.HookBridge.Outcome.block(b.reason());
                 }
                 return StreamingToolExecutor.HookBridge.Outcome.continue_();
             }

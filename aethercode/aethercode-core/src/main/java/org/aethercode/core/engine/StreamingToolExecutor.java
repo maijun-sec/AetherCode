@@ -315,6 +315,34 @@ public class StreamingToolExecutor {
         return fileTouchRecorder;
     }
 
+    /**
+     * R415: the detector that watches what the SHELL changed.
+     *
+     * <p>★ WHY A SEPARATE SEAT ★ the write tools report through the
+     * recorder (they know the file's content before the write); the shell
+     * knows nothing, so it needs a different witness — an index of the
+     * tree before and after. Both travel in the call context, and both
+     * feed the one consistency judge.
+     */
+    private volatile org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector;
+
+    /**
+     * Install the shell write detector.
+     *
+     * @param detector the detector, or null to turn the observation off
+     * @return this for chaining
+     */
+    public StreamingToolExecutor withShellWriteDetector(
+            org.aethercode.core.writescope.ShellWriteDetector detector) {
+        this.shellWriteDetector = detector;
+        return this;
+    }
+
+    /** The installed shell write detector (null when there is none). */
+    public org.aethercode.core.writescope.ShellWriteDetector shellWriteDetector() {
+        return shellWriteDetector;
+    }
+
     public StreamingToolExecutor withToolResultCache(org.aethercode.core.tool.ToolResultCache cache) {
         this.toolResultCache = cache;
         return this;
@@ -355,6 +383,12 @@ public class StreamingToolExecutor {
         if (fileTouchRecorder != null) {
             extras.put(org.aethercode.core.transcript.FileTouchRecorder.EXTRAS_KEY, fileTouchRecorder);
         }
+        // ★ R415: THE SHELL WRITE DETECTOR ★ the shell names no path, so
+        // it cannot report what it wrote the way the write tools do. It
+        // reports through a diff of the tree instead.
+        if (shellWriteDetector != null) {
+            extras.put(org.aethercode.core.writescope.ShellWriteDetector.EXTRAS_KEY, shellWriteDetector);
+        }
         // working memory buffer (boxed as Object to avoid a
         // hard dep on the memory module). Stash it under the key the
         // wm_* tools look up.
@@ -392,12 +426,41 @@ public class StreamingToolExecutor {
          * result. The {@code newResult} field is non-null only
          * when the hook wants to mutate the tool's output body
          * (e.g. append a recovery hint to a failed edit).
+         *
+         * <p>★ R415: THE BLOCK REASON IS CARRIED ★ the {@code reason}
+         * field is what the MODEL sees when a hook refuses a call. Before
+         * it existed, a refusal was flattened into the literal
+         * {@code "blocked by pre-hook"} — so a hook that carefully wrote
+         * "either read the file first, or pass overwrite:true, or use
+         * file_edit" never got that sentence to the model. The model was
+         * told "no" and nothing else, which is the one kind of refusal it
+         * cannot act on.
          */
-        record Outcome(Verdict verdict, Tool.ToolResult newResult) {
-            public static Outcome continue_() { return new Outcome(Verdict.CONTINUE, null); }
-            public static Outcome block() { return new Outcome(Verdict.BLOCK, null); }
+        record Outcome(Verdict verdict, Tool.ToolResult newResult, String reason) {
+            public static Outcome continue_() { return new Outcome(Verdict.CONTINUE, null, null); }
+            public static Outcome block() { return new Outcome(Verdict.BLOCK, null, null); }
+            /**
+             * A refusal whose REASON the model must see.
+             *
+             * @param reason the explanation, or null for the generic message
+             */
+            public static Outcome block(String reason) {
+                return new Outcome(Verdict.BLOCK, null, reason);
+            }
             public static Outcome replace(Tool.ToolResult r) {
-                return r == null ? continue_() : new Outcome(Verdict.CONTINUE, r);
+                return r == null ? continue_() : new Outcome(Verdict.CONTINUE, r, null);
+            }
+            /**
+             * The text the tool result carries for a refusal.
+             *
+             * <p>★ THE FALLBACK IS STILL THERE ★ a bridge that blocks
+             * without a reason must not produce an empty tool result —
+             * the model would read "blocked" with no explanation, which is
+             * what this whole change is about fixing.
+             */
+            public String blockMessage(String fallback) {
+                if (reason == null || reason.isBlank()) return fallback;
+                return reason;
             }
         }
 
@@ -654,9 +717,16 @@ public class StreamingToolExecutor {
 
         for (HookBridge h : preHooks) {
             try {
-                boolean ok = h.run(HookBridge.Phase.PRE, tool, call.id(), call.input(), null, appState);
-                if (!ok) {
-                    queue.offer(new Event.Completed(call.id(), "blocked by pre-hook", true));
+                // ★ R415: THE OUTCOME, NOT THE BOOLEAN ★ the boolean
+                // entry point cannot carry a refusal REASON, and the
+                // reason is the only part the model can act on. The
+                // default runWithOutcome delegates to run(), so a legacy
+                // bridge keeps working.
+                HookBridge.Outcome o = h.runWithOutcome(
+                        HookBridge.Phase.PRE, tool, call.id(), call.input(), null, appState);
+                if (o == null || o.verdict() == HookBridge.Verdict.BLOCK) {
+                    String why = o == null ? "blocked by pre-hook" : o.blockMessage("blocked by pre-hook");
+                    queue.offer(new Event.Completed(call.id(), why, true));
                     batchAbort.set(true);
                     return;
                 }
@@ -791,7 +861,8 @@ public class StreamingToolExecutor {
                 HookBridge.Outcome o = h.runWithOutcome(HookBridge.Phase.POST, tool, call.id(), finalInput, result, appState);
                 if (o == null) continue;
                 if (o.verdict() == HookBridge.Verdict.BLOCK) {
-                    result = Tool.ToolResult.error("rejected by post-hook");
+                    // ★ R415: THE POST REFUSAL CARRIES ITS REASON TOO ★
+                    result = Tool.ToolResult.error(o.blockMessage("rejected by post-hook"));
                 } else if (o.newResult() != null) {
                     // hook replaced the result. Use the
                     // replacement; the hook is responsible for
@@ -1006,9 +1077,13 @@ public class StreamingToolExecutor {
         sink.accept(new Event.Started(call.id(), call.name(), call.input()));
         for (HookBridge h : preHooks) {
             try {
-                boolean ok = h.run(HookBridge.Phase.PRE, tool, call.id(), call.input(), null, appState);
-                if (!ok) {
-                    sink.accept(new Event.Completed(call.id(), "blocked by pre-hook", true));
+                // ★ R415: same as the queue path — the refusal REASON
+                // travels with the outcome.
+                HookBridge.Outcome o = h.runWithOutcome(
+                        HookBridge.Phase.PRE, tool, call.id(), call.input(), null, appState);
+                if (o == null || o.verdict() == HookBridge.Verdict.BLOCK) {
+                    String why = o == null ? "blocked by pre-hook" : o.blockMessage("blocked by pre-hook");
+                    sink.accept(new Event.Completed(call.id(), why, true));
                     batchAbort.set(true);
                     return;
                 }
@@ -1090,7 +1165,8 @@ public class StreamingToolExecutor {
                 HookBridge.Outcome o = h.runWithOutcome(HookBridge.Phase.POST, tool, call.id(), finalInput, result, appState);
                 if (o == null) continue;
                 if (o.verdict() == HookBridge.Verdict.BLOCK) {
-                    result = Tool.ToolResult.error("rejected by post-hook");
+                    // ★ R415: the post refusal carries its reason too.
+                    result = Tool.ToolResult.error(o.blockMessage("rejected by post-hook"));
                 } else if (o.newResult() != null) {
                     // hook replaced the result.
                     result = o.newResult();
@@ -1161,9 +1237,38 @@ public class StreamingToolExecutor {
             Map<String, Object> input,
             ToolParamValidator.ValidationResult vr) {
         Map<String, Object> schema = tool.inputSchema();
+        // ★ R415: "the call arrived with NO arguments" and "the call
+        // arrived with SOME arguments, one of them missing" are two
+        // DIFFERENT failures, and the model can only act on one of
+        // them at a time.
+        //
+        // The R415 live matrix measured the first shape coming from
+        // the upstream provider: a native tool call whose id and name
+        // arrived but whose argument object was EMPTY — 21 of 21
+        // calls of that id shape, in every matrix session. The old
+        // message ("was called with missing required parameters …
+        // fill the placeholders") reads to the model as "you forgot
+        // one field", which is exactly wrong for that shape: there
+        // was no field to forget, and the arguments were dropped
+        // upstream. A model that believes it forgot a field re-emits
+        // the same broken call, which is the mirror loop the
+        // ProgressLoopDetector then has to break.
+        //
+        // So the empty case gets its OWN wording, and its own advice:
+        // re-emit with the FULL object, and if it keeps arriving
+        // empty, change strategy instead of repeating the call.
+        boolean emptyCall = input == null || input.isEmpty();
         StringBuilder sb = new StringBuilder();
-        sb.append("tool '").append(tool.name())
-          .append("' was called with missing required parameters.\n");
+        if (emptyCall) {
+            sb.append("tool '").append(tool.name())
+              .append("' was called with an EMPTY argument object — the call arrived with a tool name and an id, but no input at all.\n");
+            sb.append("this is NOT a missing-field slip: nothing was provided, so there is no one field to correct.\n");
+            sb.append("the arguments were most likely dropped in transport rather than omitted by you ")
+              .append("(AetherCode R415 measured 21 of 21 calls of this shape arriving empty, with an id minted upstream).\n");
+        } else {
+            sb.append("tool '").append(tool.name())
+              .append("' was called with missing required parameters.\n");
+        }
         // list missing fields with their declared types
         sb.append("missing fields:\n");
         @SuppressWarnings("unchecked")
@@ -1218,8 +1323,15 @@ public class StreamingToolExecutor {
         }
         sb.append("}}\n");
         sb.append("```\n");
-        sb.append("fix: re-emit the call with the required field(s) filled in. ")
-          .append("if you cannot determine the right value, STOP retrying and ask the user.");
+        if (emptyCall) {
+            sb.append("fix: re-emit the call with the FULL input object. ")
+              .append("if the arguments keep arriving empty, STOP retrying and change your approach ")
+              .append("(use another tool, or tell the user what you were trying to do) — ")
+              .append("sending the identical call again cannot help.");
+        } else {
+            sb.append("fix: re-emit the call with the required field(s) filled in. ")
+              .append("if you cannot determine the right value, STOP retrying and ask the user.");
+        }
         return sb.toString();
     }
 

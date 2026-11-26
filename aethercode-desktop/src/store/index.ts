@@ -3886,6 +3886,26 @@ export const useStore = create<AppState>((set, get) => {
             }],
             lastChunkTs: Date.now(),
           }));
+        } else if (kind === 'consistency') {
+          // ★ R415: THE ENGINE'S OWN CONSISTENCY VERDICT ★ the engine
+          // computed, from the TREE, whether the turn changed every copy
+          // of every declaration it touched. The model's own summary is
+          // not the evidence; the tree is.
+          //
+          // ★ THIS KIND EARNS A TRANSCRIPT LINE ★ unlike the control
+          // signals above, this one is a finding about the user's code:
+          // "you changed MAX_RETRIES in AppConfig.java and left the copy
+          // in LegacyConfig.java at the old value". The user has to see
+          // it, and the engine only emits the note when there is
+          // something to fix — so a clean turn stays quiet.
+          set((s) => ({
+            messages: [...s.messages, {
+              id: newId('system'), role: 'system' as const,
+              content: msg,
+              timestamp: Date.now(),
+            }],
+            lastChunkTs: Date.now(),
+          }));
         } else if (kind === 'workflow_step') {
           // workflow run progress. The engine emits one
           // workflow_step side note per declared step on

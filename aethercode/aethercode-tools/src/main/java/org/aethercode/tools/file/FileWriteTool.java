@@ -139,10 +139,25 @@ public class FileWriteTool {
                     "unsupported mode '" + mode + "'; expected 'overwrite' or 'append'");
         }
 
-        Path path = Path.of(pathStr).toAbsolutePath().normalize();
+        // ★ R415: RESOLVE AGAINST THE SESSION'S CWD ★ a relative path used
+        // to resolve against the JVM's user.dir — the daemon's launch
+        // directory — so a model that wrote "src/Foo.java" in a session
+        // pointed at D:/tmp/proj aimed at <launch dir>/src/Foo.java and
+        // was then refused as "outside the working directory". The model
+        // was right; the resolution was wrong.
+        Path path = org.aethercode.core.writescope.SessionPaths.resolve(
+                pathStr, org.aethercode.core.writescope.SessionPaths.cwdOf(ctx));
+        if (path == null) {
+            return Tool.ToolResult.error("file_path is not a valid path: " + pathStr);
+        }
 
-        if (!isPathAllowed(path, ctx)) {
-            return Tool.ToolResult.error("write refused: " + path + " is outside the working directory");
+        // ★ R415: THE WRITE SCOPE ★ the tree is the boundary, the
+        // tool-owned directories are off limits, and a project without a
+        // build system does not get one invented in it.
+        org.aethercode.core.writescope.WriteScope.Decision scope =
+                org.aethercode.core.writescope.WriteScope.fromContext(ctx).check(path);
+        if (!scope.allowed()) {
+            return Tool.ToolResult.error(scope.message());
         }
 
         boolean exists = Files.exists(path);
@@ -167,6 +182,12 @@ public class FileWriteTool {
             // write. Recorded here, not in the tool result: the result
             // is the model's output, not a contract.
             org.aethercode.core.transcript.FileTouchRecorder.noteBeforeWrite(ctx, path);
+            // ★ R415: THE CONTENT BEFORE THIS WRITE ★ the consistency
+            // check needs to know which declaration MOVED, and that needs
+            // both sides. This tool overwrites without reading, so the
+            // "before" has to be taken here — the same moment the
+            // recorder is told about the write.
+            String before = readBefore(path);
             Files.createDirectories(path.getParent());
             if (MODE_APPEND.equals(mode)) {
                 // append path: CREATE if absent, APPEND otherwise.
@@ -185,9 +206,44 @@ public class FileWriteTool {
             Files.writeString(path, content, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             long after = Files.size(path);
-            return Tool.ToolResult.of("wrote " + after + " bytes to " + path);
+            // ★ R415: THE IMMEDIATE ADVISORY ★ if this write moved a
+            // value-bearing declaration, the engine checks whether the
+            // COPIES of it moved with it — and says so in the tool
+            // result, which is where the model is looking.
+            String advisory = org.aethercode.core.consistency.ConsistencyAdvisory
+                    .check(ctx, path, before, content);
+            // ★ R415: THE ESCAPE IS SAID OUT LOUD ★ when the scope is
+            // switched off, a write that the rules would have refused
+            // still happens — and the result says so, because the user
+            // is reading "wrote N bytes" and has no other way to know
+            // the boundary was not applied.
+            return Tool.ToolResult.of(scope.applyNotice(
+                    org.aethercode.core.consistency.ConsistencyAdvisory.append(
+                            "wrote " + after + " bytes to " + path, advisory)));
         } catch (IOException e) {
             return Tool.ToolResult.error("write failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * R415: the file's content before the write, or null.
+     *
+     * <p>★ BIG FILES ARE NOT READ ★ the advisory only needs the text to
+     * compare the declarations; reading a 50 MB file to find out that it
+     * holds no constant would be a poor trade.
+     */
+    private static String readBefore(Path path) {
+        try {
+            if (!Files.isRegularFile(path)) return null;
+            if (Files.size(path) > 1_048_576L) return null;
+            byte[] bytes = Files.readAllBytes(path);
+            int probe = Math.min(bytes.length, 8192);
+            for (int i = 0; i < probe; i++) {
+                if (bytes[i] == 0) return null;
+            }
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            return null;
         }
     }
 
@@ -215,55 +271,21 @@ public class FileWriteTool {
         }
     }
 
-    private static boolean isPathAllowed(Path p, Tool.CallContext ctx) {
-        if ("1".equals(System.getenv("AETHERCODE_ALLOW_ANY_PATH"))) return true;
-        // prefer the SESSION's cwd from AppState (passed via
-        // CallContext.extras by StreamingToolExecutor). Each session
-        // is bound to a cwd (set by createSession / setCwd /
-        // switchProject), and file_write must respect that — not the
-        // JVM-launch cwd. legacy this code read the global
-        // `aethercode.cwd` system property which only ever matched the
-        // daemon's own --cwd argument, so a model that wrote to a
-        // session whose cwd differed (very common: user creates a
-        // session in D:\tmp\abc_1, then switches to a new one in
-        // D:\work\foo) hit `write refused: ... is outside the working
-        // directory` and gave up. The legacy fallback below
-        // (system property) is kept for ad-hoc tool invocations
-        // without an AppState.
-        Path cwd = null;
-        if (ctx != null) {
-            Object appStateObj = ctx.extra("app_state");
-            if (appStateObj != null) {
-                try {
-                    Object cwdObj = appStateObj.getClass().getMethod("cwd").invoke(appStateObj);
-                    if (cwdObj instanceof Path) cwd = (Path) cwdObj;
-                } catch (Exception reflect) {
-                    // Fall through to system-property path.
-                }
-            }
-        }
-        if (cwd == null) {
-            // Fallback: R16's original behaviour for ad-hoc usage
-            // without an engine (CLI direct invocation).
-            String engineCwd = System.getProperty("aethercode.cwd");
-            cwd = (engineCwd != null && !engineCwd.isBlank())
-                    ? Path.of(engineCwd).toAbsolutePath().normalize()
-                    : Path.of("").toAbsolutePath().normalize();
-        }
-        // case-insensitive comparison on Windows. Without this, a model
-        // that emits `D:\tmp\abc\pom.xml` (uppercase D, the Windows
-        // canonical form) is rejected when the user passed `--cwd d:\tmp\abc`
-        // (lowercase d, picocli preserves case). `Path.startsWith` is
-        // case-sensitive even on Windows; we lower-case both sides to match
-        // the OS's case-insensitive-but-case-preserving file system.
-        if (isWindows()) {
-            return p.toString().toLowerCase().startsWith(cwd.toString().toLowerCase());
-        }
-        return p.startsWith(cwd);
-    }
-
-    private static boolean isWindows() {
-        String os = System.getProperty("os.name");
-        return os != null && os.toLowerCase().contains("win");
+    /**
+     * Is this path inside the session's working directory?
+     *
+     * <p>★ R415: THE RULE MOVED ★ this used to be a private copy of the
+     * "inside the cwd" test, and {@code FileReadTool} carried a SECOND
+     * copy of it — and the two copies were not the same rule: this one
+     * compared with {@code startsWith} on the whole string, so
+     * {@code D:\tmp\abcde} counted as inside {@code D:\tmp\abc}. A
+     * boundary that a one-letter suffix defeats is not a boundary.
+     *
+     * <p>★ IT STAYS PUBLIC ★ the tests and the permission layer call it;
+     * what changed is that it now has ONE implementation
+     * ({@code SessionPaths.isInsideSession}) instead of two that drifted.
+     */
+    public static boolean isPathAllowed(Path p, Tool.CallContext ctx) {
+        return org.aethercode.core.writescope.SessionPaths.isInsideSession(p, ctx);
     }
 }

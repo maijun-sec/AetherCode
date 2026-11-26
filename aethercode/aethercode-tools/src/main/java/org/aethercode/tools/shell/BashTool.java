@@ -192,6 +192,30 @@ public class BashTool {
         boolean stream = !Boolean.FALSE.equals(input.get("stream"));  // default true
         boolean background = Boolean.TRUE.equals(input.get("background"));
 
+        // ★ R415: THE SHELL'S WORKING DIRECTORY IS INSIDE THE BOUNDARY ★
+        // the `cwd` parameter decides where the command runs, and a
+        // command that runs outside the session's tree can write
+        // anywhere. Before R415 the parameter was not checked at all: the
+        // command TEXT was checked for `cd ..`, but the parameter was
+        // not — so the one hole was the easiest one to walk through.
+        // ★ AND A RELATIVE `cwd` IS RESOLVED AGAINST THE SESSION ★ the
+        // same defect the write tools had (R415's D3): a relative path
+        // resolved against the JVM's launch directory is never what the
+        // model meant.
+        java.nio.file.Path sessionRoot = org.aethercode.core.writescope.SessionPaths.cwdOf(ctx);
+        java.nio.file.Path resolvedCwd =
+                org.aethercode.core.writescope.SessionPaths.resolve(cwd.getPath(), sessionRoot);
+        boolean scopeEscaped = org.aethercode.core.writescope.WriteScope.fromContext(ctx).isEscapeActive();
+        if (!scopeEscaped && resolvedCwd != null && sessionRoot != null
+                && !org.aethercode.core.writescope.SessionPaths.isInside(resolvedCwd, sessionRoot)) {
+            return Tool.ToolResult.error(
+                    "command refused by the write scope: the working directory "
+                            + resolvedCwd + " is outside the session's working directory ("
+                            + sessionRoot + "). Run the command inside the tree, or change the "
+                            + "session's working directory.");
+        }
+        if (resolvedCwd != null) cwd = resolvedCwd.toFile();
+
         // denylist with explicit reason. The earlier
         // isDenylisted() returns boolean only — the model
         // couldn't tell why the command was refused. R130
@@ -227,9 +251,54 @@ public class BashTool {
         }
 
         if (background) {
+            // ★ A BACKGROUND COMMAND OUTLIVES THE CALL ★ the "after"
+            // index would be taken while it still runs, so the shell
+            // channel is not observed for it. Saying so is better than
+            // reporting a half-finished diff.
             return spawnBackground(command, cwd, timeout, stream, ctx);
         }
-        return runForeground(command, cwd, timeout, stream, ctx);
+
+        // ★ R415: THE SHELL CHANNEL IS OBSERVED ★ the command names no
+        // path, so the only way to know what it wrote is to look at the
+        // tree before and after. The baseline is cached, so consecutive
+        // commands pay for one scan, not two.
+        org.aethercode.core.writescope.ShellWriteDetector detector =
+                org.aethercode.core.writescope.ShellWriteDetector.fromContext(ctx);
+        java.nio.file.Path watchRoot = null;
+        org.aethercode.core.consistency.ProjectIndex baseline = null;
+        if (detector != null && sessionRoot != null && !isReadOnly(input)) {
+            // ★ A READ-ONLY COMMAND IS NOT OBSERVED ★ the classifier
+            // refuses a redirect or a mutating command, so a command it
+            // calls read-only cannot have written anything — and the
+            // scan of the tree is not free.
+            watchRoot = sessionRoot;
+            baseline = detector.begin(watchRoot);
+        }
+
+        Tool.ToolResult result = runForeground(command, cwd, timeout, stream, ctx);
+
+        if (detector != null && watchRoot != null && baseline != null) {
+            org.aethercode.core.writescope.ShellWriteDetector.Observation observation =
+                    detector.end(watchRoot, baseline);
+            String report = org.aethercode.core.writescope.ShellWriteDetector.report(observation, watchRoot);
+            if (report != null) {
+                result = appendReport(result, report);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Append a note to a tool result, keeping its error flag and attachments.
+     *
+     * <p>★ THE ERROR FLAG SURVIVES ★ a command that failed AND changed
+     * files is still a failed command; the report must not turn it into a
+     * success.
+     */
+    private static Tool.ToolResult appendReport(Tool.ToolResult result, String report) {
+        if (result == null) return result;
+        String body = result.output() == null ? "" : result.output().toString();
+        return new Tool.ToolResult(body + "\n\n" + report, result.attachments(), result.isError());
     }
 
     /**
@@ -250,28 +319,199 @@ public class BashTool {
         if (command == null || engineCwd == null) return null;
         // The cd / pushd / popd "go up" subcommand.
         String trimmed = command.strip();
-        String lower = trimmed.toLowerCase();
-        if (lower.startsWith("cd ..") || lower.startsWith("pushd ..") || lower.startsWith("cd ../")
-                || lower.equals("cd ..") || lower.equals("pushd ..")) {
-            return "refusing 'cd ..' / 'pushd ..' that climbs above the engine cwd";
+        // ★ R415: A `cd` TO SOMEWHERE ELSE, ANYWHERE IN THE COMMAND ★ the
+        // earlier rule was `command.startsWith("cd ..")` plus ONE
+        // `indexOf("cd ")` for an absolute target. Both missed the
+        // CHAINED form: `echo hi && cd .. && echo x > out.txt` walks
+        // straight past a `startsWith` check, and a `cd` changes the
+        // working directory of the WHOLE invocation — so the rest of
+        // the chain writes one level above the tree. The climb is the
+        // request, wherever it sits in the command, so EVERY `cd` /
+        // `pushd` target is examined instead of just the first one.
+        //
+        // ★ AND THE TOKEN, NOT THE REST OF THE LINE ★ the old absolute
+        // check took everything after `cd ` ("/tmp && echo x"), resolved
+        // THAT as a path, and refused it — so `cd /inside/the/tree &&
+        // ...` was refused even though the target is inside. A boundary
+        // that cries wolf gets switched off.
+        java.util.regex.Matcher cd = CD_TARGET.matcher(trimmed);
+        while (cd.find()) {
+            String target = cd.group(2).replace("\"", "").replace("'", "");
+            if (target.isEmpty()) continue;
+            if (target.startsWith("..")) {
+                return "refusing 'cd ..' / 'pushd ..' that climbs above the engine cwd";
+            }
+            // Drive-absolute cd to a non-engine drive: refuse.
+            // The engine cwd is absolute; we reject any absolute
+            // cd target whose normalised form doesn't start
+            // with the engine cwd.
+            boolean absTarget = target.startsWith("/") || target.startsWith("\\")
+                    || (target.length() >= 2 && target.charAt(1) == ':');
+            if (absTarget && !isInsideCwd(target, engineCwd)) {
+                return "refusing 'cd' to absolute path outside the engine cwd: " + target;
+            }
         }
-        // Drive-absolute cd to a non-engine drive: refuse.
-        // The engine cwd is absolute; we reject any absolute
-        // cd target whose normalised form doesn't start
-        // with the engine cwd.
-        int cdIdx = lower.indexOf("cd ");
-        if (cdIdx >= 0) {
-            // crude tokenization
-            String after = trimmed.substring(cdIdx + 3).strip();
-            if (after.startsWith("/") || after.startsWith("\\")
-                    || (after.length() >= 2 && after.charAt(1) == ':')) {
-                // absolute target
-                if (!isInsideCwd(after, engineCwd)) {
-                    return "refusing 'cd' to absolute path outside the engine cwd: " + after;
+        // ★ R415: A PARENT-DIRECTORY PATH ★ the command text is a
+        // heuristic — but a "../" path is an explicit request to leave
+        // the tree, and the read and write tools already refuse that.
+        // Without this rule the shell was the one channel that could
+        // write outside the boundary: `echo x > ../escape.txt` names no
+        // absolute path and runs no `cd`, so it sailed through.
+        String unquoted = stripQuoted(trimmed);
+        if (PARENT_SEGMENT.matcher(unquoted).find()) {
+            return "the command names a parent-directory path ('..'), and the working "
+                    + "directory is the boundary";
+        }
+        // ★ R415: A REDIRECT OUT OF THE TREE ★ a redirect is a WRITE,
+        // and its target is named right there in the command. An
+        // absolute target is outside the tree by definition.
+        java.util.regex.Matcher m = REDIRECT.matcher(unquoted);
+        while (m.find()) {
+            String target = m.group(1).replace("\"", "").replace("'", "");
+            if (target.isEmpty()) continue;
+            // ★ THE NULL DEVICE IS NOT A WRITE OUTSIDE THE TREE ★
+            // `cmd > /dev/null` is the unix way of saying "discard the
+            // output" — it writes NOWHERE. On POSIX it is the kernel's
+            // null device; on Windows cmd.exe refuses the path outright
+            // ("The system cannot find the path specified.") and
+            // creates no D:\dev\null — MEASURED, not assumed. The
+            // R415 live matrix caught the cost of getting this wrong:
+            // a model's ordinary `... 2>/dev/null` was refused, so the
+            // model had to rephrase a read-only command. A boundary
+            // that cries wolf gets switched off.
+            if (isNullDevice(target)) continue;
+            boolean absolute = target.startsWith("/") || target.startsWith("\\")
+                    || (target.length() >= 2 && target.charAt(1) == ':');
+            if (absolute && !isInsideCwd(target, engineCwd)) {
+                return "the command redirects output to '" + target
+                        + "', which is outside the working directory";
+            }
+        }
+        // ★ R415: A COMMAND THAT CAN WRITE MAY NOT NAME A PATH OUTSIDE
+        // THE TREE ★ the live matrix caught the gap the two rules above
+        // leave: they cover a REDIRECT and a ".." segment, but a command
+        // that COPIES writes just as well. The model, refused by
+        // file_write, staged the file inside the tree and copied it out:
+        //
+        //   cp .stage_escape.txt "C:\…\escape.txt"
+        //
+        // — an absolute path outside the tree, written to, and the
+        // boundary did not notice. The boundary was not hard, and the
+        // only reason it was found is that a live scenario tried to
+        // leave the tree.
+        //
+        // ★ WHY "CAN WRITE" IS THE QUALIFIER ★ a read-only command may
+        // look wherever it likes (that is exactly what isReadOnly
+        // decides); but a command that can WRITE must not be pointed
+        // outside the tree. The tree is the boundary, and a copy is a
+        // write.
+        if (!isReadOnlyCommand(command)) {
+            java.util.regex.Matcher ap = ABS_PATH.matcher(command);
+            while (ap.find()) {
+                String p = ap.group(1);
+                if (p == null || p.isEmpty()) continue;
+                // ★ THE NULL DEVICE IS A SINK, NOT A LOCATION ★ the same
+                // carve-out the redirect rule uses — kept in ONE place so
+                // the two rules cannot drift (the first version of this
+                // rule checked only redirects, and the general rule
+                // caught /dev/null ⇒ the test went red).
+                if (isNullDevice(p)) continue;
+                if (!isInsideCwd(p, engineCwd)) {
+                    return "the command names '" + p
+                            + "', which is outside the working directory, and a command that can "
+                            + "write may not name a path outside the tree";
                 }
             }
         }
         return null;
+    }
+
+    /**
+     * Is this command one that cannot write?
+     *
+     * <p>The permission classifier's answer is reused on purpose: it is
+     * already the product's own line between "looking" and "writing", and
+     * a second, looser list here would be a second rule to drift.
+     */
+    private static boolean isReadOnlyCommand(String command) {
+        if (command == null || command.isBlank()) return false;
+        return isReadOnly(Map.of("command", command));
+    }
+
+    /**
+     * The null device: a sink, not a location.
+     *
+     * <p>★ WHY THE RULE IS PLATFORM-INDEPENDENT ★ the null device has
+     * two names — {@code /dev/null} on POSIX and {@code NUL} on
+     * Windows — and a rule with two platform-dependent branches has
+     * two behaviours and no single witness. The carve-out names both,
+     * so the rule has ONE meaning and ONE mutation that breaks it.
+     *
+     * <p>★ THE WINDOWS EDGE, STATED PLAINLY ★ on Windows {@code NUL}
+     * is the null device and {@code /dev/null} is a path — but cmd.exe
+     * does not create the missing {@code dev} directory, so the
+     * command fails and writes nothing (measured). The one hole is a
+     * machine that already has {@code D:\dev}: then
+     * {@code > /dev/null} would create {@code D:\dev\null}. That is a
+     * deliberate, documented trade for one rule and one witness.
+     */
+    private static boolean isNullDevice(String target) {
+        String t = target.trim().toLowerCase(java.util.Locale.ROOT);
+        return t.equals("/dev/null") || t.equals("/dev/nul") || t.equals("nul")
+                || t.equals("/dev/stdout") || t.equals("/dev/stderr");
+    }
+
+    /** A parent-directory path segment: "../x", "..\\x", or a bare "..". */
+    private static final java.util.regex.Pattern PARENT_SEGMENT =
+            java.util.regex.Pattern.compile("(^|[\\s\"'=:(,])\\.\\.[/\\\\]");
+
+    /**
+     * A {@code cd} / {@code pushd} and its target, anywhere in the command.
+     *
+     * <p>group(1) = the quote that may open the target, group(2) = the
+     * target itself. The prefix {@code (?:^|[^a-z0-9_])} keeps a word
+     * like {@code abcd} from being read as a {@code cd}.
+     */
+    private static final java.util.regex.Pattern CD_TARGET =
+            java.util.regex.Pattern.compile("(?i)(?:^|[^a-z0-9_])(?:cd|pushd)\\s+([\"']?)([^\\s;&|]+)");
+
+    /** A redirection and its target. */
+    private static final java.util.regex.Pattern REDIRECT =
+            java.util.regex.Pattern.compile(">>?\\s*([^\\s>]+)");
+
+    /**
+     * An absolute path anywhere in the command.
+     *
+     * <p>group(1) = the path. Three shapes:
+     * <ul>
+     *   <li>{@code C:\dir\file} — a drive path (Windows),</li>
+     *   <li>{@code \\server\share\file} — a UNC path,</li>
+     *   <li>{@code /dir/file} — a POSIX path.</li>
+     * </ul>
+     *
+     * <p>★ WHY THE POSIX FORM NEEDS A LOOKBEHIND ★ a URL contains slashes
+     * ("https://example.com/x"), and a rule that treats every slash as
+     * an absolute path would refuse every download. The lookbehind keeps
+     * a path that starts a word (or follows a quote, a bracket or an
+     * equals sign) and drops the one that continues a word.
+     */
+    private static final java.util.regex.Pattern ABS_PATH =
+            java.util.regex.Pattern.compile(
+                    "(?i)([A-Za-z]:[\\\\/][^\\s\"'<>|;)]*|\\\\\\\\[^\\s\"'<>|;)]*"
+                            + "|(?<![\\w:])(?<!/)/[^\\s\"'<>|;)]+)");
+
+    /**
+     * Replace every quoted segment with a placeholder.
+     *
+     * <p>★ WHY ★ a quote is how a shell says "this is TEXT". Without
+     * this, {@code grep "a > b"} looks like a redirection and
+     * {@code sed 's/>/x/'} looks like one too — and a boundary that
+     * cries wolf gets switched off.
+     */
+    private static String stripQuoted(String command) {
+        return command
+                .replaceAll("\"[^\"]*\"", "Q")
+                .replaceAll("'[^']*'", "Q");
     }
 
     /**
@@ -328,12 +568,16 @@ public class BashTool {
     private static boolean isInsideCwd(String target, File engineCwd) {
         if (target == null || target.isBlank() || engineCwd == null) return true;
         try {
-            File f = new File(target);
-            String engine = engineCwd.getCanonicalPath();
-            String tgt = f.getCanonicalPath();
-            String tLow = isWindows() ? tgt.toLowerCase() : tgt;
-            String eLow = isWindows() ? engine.toLowerCase() : engine;
-            return tLow.startsWith(eLow);
+            // ★ BY SEGMENT, NOT BY PREFIX ★ the old check was
+            // `tgt.startsWith(engine)`, so a SIBLING whose name merely
+            // starts with the tree's name counted as inside:
+            // "…\sb-L1X" is inside "…\sb-L1" as a string, and it is NOT
+            // inside it as a directory. (The same one-letter bug the
+            // write scope's SessionPaths had — Lesson 1604's shape: a
+            // boundary that is only a string comparison.)
+            java.nio.file.Path engine = engineCwd.getCanonicalFile().toPath();
+            java.nio.file.Path tgt = new File(target).getCanonicalFile().toPath();
+            return tgt.startsWith(engine);
         } catch (Exception e) {
             return true; // be permissive on IO errors
         }

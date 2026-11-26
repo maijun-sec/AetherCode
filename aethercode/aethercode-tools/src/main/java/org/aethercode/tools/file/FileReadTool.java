@@ -204,44 +204,15 @@ public class FileReadTool {
      * Refuses reads outside the engine's cwd unless
      * {@code AETHERCODE_ALLOW_ANY_PATH=1} is set. Case-
      * insensitive on Windows to match the file system.
+     *
+     * <p>★ R415: THE COPY IS GONE ★ this was a SECOND implementation of
+     * the "inside the cwd" rule, and it was the <b>weaker</b> one: it
+     * compared with a plain string {@code startsWith}, so
+     * {@code D:\tmp\abcde} counted as inside {@code D:\tmp\abc}. The rule
+     * now lives once, in {@code SessionPaths.isInsideSession}.
      */
     private static boolean isPathAllowed(Path p, Tool.CallContext ctx) {
-        if ("1".equals(System.getenv("AETHERCODE_ALLOW_ANY_PATH"))) return true;
-        // prefer the SESSION's cwd (passed via CallContext
-        // extras by StreamingToolExecutor). legacy only checked
-        // the JVM-launch cwd which is the daemon's --cwd, not
-        // the session's cwd — so a session whose cwd differs
-        // from the daemon's --cwd always got "read refused" on
-        // legitimate file_read calls. Fall back to the global
-        // system property for ad-hoc tool invocations without
-        // an engine.
-        Path cwd = null;
-        if (ctx != null) {
-            Object appStateObj = ctx.extra("app_state");
-            if (appStateObj != null) {
-                try {
-                    Object cwdObj = appStateObj.getClass().getMethod("cwd").invoke(appStateObj);
-                    if (cwdObj instanceof Path) cwd = (Path) cwdObj;
-                } catch (Exception reflect) {
-                    // Fall through to system-property path.
-                }
-            }
-        }
-        if (cwd == null) {
-            String engineCwd = System.getProperty("aethercode.cwd");
-            cwd = (engineCwd != null && !engineCwd.isBlank())
-                    ? Path.of(engineCwd).toAbsolutePath().normalize()
-                    : Path.of("").toAbsolutePath().normalize();
-        }
-        if (isWindows()) {
-            return p.toString().toLowerCase().startsWith(cwd.toString().toLowerCase());
-        }
-        return p.startsWith(cwd);
-    }
-
-    private static boolean isWindows() {
-        String os = System.getProperty("os.name");
-        return os != null && os.toLowerCase().contains("win");
+        return org.aethercode.core.writescope.SessionPaths.isInsideSession(p, ctx);
     }
 
     private static byte[] readHead(Path p, int n) throws IOException {

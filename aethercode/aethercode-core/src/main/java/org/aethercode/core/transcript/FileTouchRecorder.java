@@ -26,6 +26,8 @@ import java.nio.file.Path;
 
 import org.aethercode.core.tool.Tool;
 
+import java.util.List;
+
 /**
  * R407: somebody has to learn what a file looked like BEFORE the session
  * first wrote to it.
@@ -91,5 +93,38 @@ public interface FileTouchRecorder {
         if (ctx == null || path == null) return;
         Object recorder = ctx.extra(EXTRAS_KEY);
         if (recorder instanceof FileTouchRecorder r) r.beforeWrite(path);
+    }
+
+    /**
+     * R415: a recorder that forwards to SEVERAL recorders.
+     *
+     * <p>★ WHY ★ two consumers need the same moment: the checkpoint store
+     * (which remembers the file for a rewind) and the turn-change tracker
+     * (which remembers it for the consistency check). The write path
+     * carries ONE recorder in its context, so the two have to be combined
+     * here rather than by two lookups at every call site.
+     *
+     * <p>★ ONE FAILURE DOES NOT SWALLOW THE OTHERS ★ a recorder that
+     * throws must not stop the others from being told — a broken
+     * bookkeeping path is not a reason to lose the file's history.
+     *
+     * @param parts the recorders to notify, in order
+     * @return a recorder that notifies all of them
+     */
+    static FileTouchRecorder composite(FileTouchRecorder... parts) {
+        if (parts == null || parts.length == 0) {
+            return path -> { };
+        }
+        List<FileTouchRecorder> list = java.util.List.of(parts);
+        return path -> {
+            for (FileTouchRecorder r : list) {
+                if (r == null) continue;
+                try {
+                    r.beforeWrite(path);
+                } catch (RuntimeException ignored) {
+                    // one broken recorder must not silence the others
+                }
+            }
+        };
     }
 }

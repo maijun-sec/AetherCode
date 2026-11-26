@@ -80,7 +80,19 @@ public class NotebookEditTool {
         if (op == null)    return Tool.ToolResult.error("operation is required");
         if (!(idx instanceof Number)) return Tool.ToolResult.error("cell_index must be an integer");
         int cellIndex = ((Number) idx).intValue();
-        Path p = Path.of(path).toAbsolutePath();
+        // ★ R415: THE PATH GUARD THIS TOOL NEVER HAD ★ like file_edit,
+        // notebook_edit resolved the path and wrote it with no scope
+        // check — it could rewrite a notebook anywhere on the filesystem.
+        Path p = org.aethercode.core.writescope.SessionPaths.resolve(
+                path, org.aethercode.core.writescope.SessionPaths.cwdOf(ctx));
+        if (p == null) {
+            return Tool.ToolResult.error("notebook_path is not a valid path: " + path);
+        }
+        org.aethercode.core.writescope.WriteScope.Decision scope =
+                org.aethercode.core.writescope.WriteScope.fromContext(ctx).check(p);
+        if (!scope.allowed()) {
+            return Tool.ToolResult.error(scope.message());
+        }
         if (!Files.exists(p)) return Tool.ToolResult.error("notebook does not exist: " + p);
         try {
             JsonNode root = MAPPER.readTree(Files.newBufferedReader(p, StandardCharsets.UTF_8));
@@ -117,7 +129,8 @@ public class NotebookEditTool {
             // knows what the notebook held is the moment before the write.
             org.aethercode.core.transcript.FileTouchRecorder.noteBeforeWrite(ctx, p);
             Files.writeString(p, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(root), StandardCharsets.UTF_8);
-            return Tool.ToolResult.of("notebook edited (" + op + " at " + cellIndex + "), now " + arr.size() + " cells");
+            return Tool.ToolResult.of(scope.applyNotice(
+                    "notebook edited (" + op + " at " + cellIndex + "), now " + arr.size() + " cells"));
         } catch (IOException e) {
             return Tool.ToolResult.error("notebook edit failed: " + e.getMessage());
         }

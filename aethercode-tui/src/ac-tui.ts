@@ -297,6 +297,12 @@ async function runHeadless(
           process.stdout.write(String(ev.text ?? ""));
         } else if (ev.type === "side_note" && ev.kind === "memory") {
           process.stderr.write(`[memory] ${ev.message}\n`);
+        } else if (ev.type === "side_note" && ev.kind === "consistency") {
+          // ★ R415: THE ENGINE'S CONSISTENCY VERDICT ★ this mode writes
+          // the model's answer to stdout and the engine's findings to
+          // stderr. A verdict the user cannot see is a verdict that did
+          // not happen.
+          process.stderr.write(`[consistency] ${ev.message}\n`);
         } else if (ev.type === "run_end") {
           finished = true;
           setTimeout(() => {

@@ -86,7 +86,23 @@ public class FileEditTool {
                     "old_string and new_string are identical — no-op rejected.\n"
                     + HINT_RE_READ);
         }
-        Path path = Path.of(pathStr).toAbsolutePath();
+        // ★ R415: THE PATH GUARD THIS TOOL NEVER HAD ★
+        // file_edit resolved the path and wrote it. No scope check at
+        // all — it could edit any file on the whole filesystem, while
+        // ToolSafeList's comment claimed that "file_write / file_edit
+        // refuse paths outside the configured cwd". The claim was false
+        // for this tool, and a boundary that is only written down is not
+        // a boundary.
+        Path path = org.aethercode.core.writescope.SessionPaths.resolve(
+                pathStr, org.aethercode.core.writescope.SessionPaths.cwdOf(ctx));
+        if (path == null) {
+            return Tool.ToolResult.error("file_path is not a valid path: " + pathStr);
+        }
+        org.aethercode.core.writescope.WriteScope.Decision scope =
+                org.aethercode.core.writescope.WriteScope.fromContext(ctx).check(path);
+        if (!scope.allowed()) {
+            return Tool.ToolResult.error(scope.message());
+        }
         if (!Files.exists(path)) {
             return Tool.ToolResult.error("file does not exist: " + path);
         }
@@ -113,9 +129,20 @@ public class FileEditTool {
             org.aethercode.core.transcript.FileTouchRecorder.noteBeforeWrite(ctx, path);
             Files.writeString(path, updated, StandardCharsets.UTF_8);
 
+            // ★ R415: THE IMMEDIATE ADVISORY ★ the tool already holds both
+            // sides of the change (original and updated), so it is the
+            // cheapest place to ask "did this move a declaration that has
+            // copies elsewhere?" — and the answer goes into the tool
+            // result, where the model is looking.
+            String advisory = org.aethercode.core.consistency.ConsistencyAdvisory
+                    .check(ctx, path, original, updated);
+
             return new Tool.ToolResult(
-                    "edited " + path + " (" + (replaceAll ? count : 1) + " replacement" +
-                            (count == 1 && !replaceAll ? "" : "s") + ")",
+                    scope.applyNotice(
+                            org.aethercode.core.consistency.ConsistencyAdvisory.append(
+                                    "edited " + path + " (" + (replaceAll ? count : 1) + " replacement" +
+                                            (count == 1 && !replaceAll ? "" : "s") + ")",
+                                    advisory)),
                     List.of(new Tool.Attachment.DiffPreview(path.toString(), original, updated))
             );
         } catch (IOException e) {
