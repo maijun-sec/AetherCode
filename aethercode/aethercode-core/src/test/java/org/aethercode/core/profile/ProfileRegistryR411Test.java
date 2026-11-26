@@ -111,10 +111,19 @@ class ProfileRegistryR411Test {
         // READ-ONLY domain.
         assertEquals(ProfileRegistry.BUILDER,
                 ProfileRegistry.forIntent(IntentClassifier.classify("实现一个 LRU 缓存模块")));
-        assertEquals(ProfileRegistry.DEBUGGER,
-                ProfileRegistry.forIntent(IntentClassifier.classify("订单接口偶发超时，帮我定位一下原因")));
         assertEquals(ProfileRegistry.OPERATOR,
                 ProfileRegistry.forIntent(IntentClassifier.classify("跑一下测试")));
+        // ★ R413 ★ the DIAGNOSIS case now depends on the CAPABILITY axis,
+        // because R413 made the axis authoritative in BOTH directions:
+        // a diagnosis that asks for the FIX keeps the write-capable
+        // diagnosis posture (and is NOT escalated to the domain-neutral
+        // producer), while a diagnosis that only asks for the cause gets
+        // the read-only twin. The INVARIANT pinned here is "the domain
+        // keeps its own posture" — the write channel follows the axis.
+        assertEquals(ProfileRegistry.DEBUGGER,
+                ProfileRegistry.forIntent(IntentClassifier.classify("这个不生效，帮我修一下")));
+        assertEquals(ProfileRegistry.INVESTIGATOR,
+                ProfileRegistry.forIntent(IntentClassifier.classify("订单接口偶发超时，帮我定位一下原因")));
     }
 
     @Test

@@ -239,7 +239,12 @@ class ProfileRegistryR401Test {
         // posture for a turn whose deliverable is not code (a poem saved
         // to a file, a SQL fix written out). It is LAST because it was
         // added last — the order IS the registry's registration order.
-        assertEquals(List.of("builder", "debugger", "researcher", "analyst",
+        //
+        // ★ R413: THE LIST GREW AGAIN ★ `investigator` is the READ-ONLY
+        // twin of `debugger`: a diagnosis the user asked to LOCATE, not
+        // to fix. It sits next to `debugger` because the two are
+        // siblings — the same domain, two sides of the capability axis.
+        assertEquals(List.of("builder", "debugger", "investigator", "researcher", "analyst",
                         "reviewer", "operator", "navigator", "producer"),
                 ProfileRegistry.names());
         assertEquals(ProfileRegistry.names().size(), ProfileRegistry.all().size());

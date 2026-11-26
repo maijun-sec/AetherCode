@@ -517,6 +517,29 @@ public final class IntentClassifier {
      * polite question as a request, and every polite question would get
      * the write channel.
      */
+    /**
+     * R413: a DIAGNOSIS that asks for an ACTION — the fix, or a
+     * reproduction.
+     *
+     * <p>★ WHY THIS LIST EXISTS ★ R401 kept the write tools on the
+     * {@code debugger} posture, because "这个不生效" usually means "fix
+     * it". But R413's live scenario matrix measured what that costs when
+     * the user asked for NOTHING but the cause: the turn wrote a
+     * reproduction harness into the user's working tree
+     * ({@code repro/Repro.java}, {@code out/Repro.class}) — four files
+     * nobody asked for, while the verdict's own capability axis said
+     * {@code requestsWorkspaceChange=false} all along.
+     *
+     * <p>So R413 splits the two: a diagnosis that only asks WHERE the
+     * problem is gets NO write channel, and a diagnosis that asks for the
+     * fix (or for a reproduction) keeps it. THIS LIST is the second half.
+     */
+    private static final List<String> DIAGNOSE_ACTION_VERBS = List.of(
+            "修复", "修一下", "修好", "改好", "改一下", "帮我改", "改成",
+            "解决", "搞定", "复现", "重现",
+            "跑一下", "跑一遍", "试一下", "试试", "验证一下",
+            "fix", "fix it", "repair", "patch");
+
     private static final List<String> REQUEST_HINTS = List.of(
             "帮我", "帮忙", "麻烦", "替我", "给我", "我要", "我想让", "我想",
             "please", "can you", "could you", "would you", "help me",
@@ -630,6 +653,20 @@ public final class IntentClassifier {
         String lower = p.toLowerCase(Locale.ROOT);
         boolean question = QUESTION_SHAPED.matcher(p).find();
         boolean requestHint = hasRequestHint(lower);
+
+        // (1b) ★ R413: A DIAGNOSIS THAT ASKS FOR THE ACTION ★
+        //      "这个不生效，帮我修一下" is a diagnosis by symptom, but the
+        //      user asked for the FIX — the write channel must survive, or
+        //      the fix request becomes unanswerable.
+        //      ★ AND THE MIRROR ★ "帮我定位一下原因" asks for the CAUSE
+        //      only ⇒ no write channel ⇒ the turn may not leave a
+        //      reproduction harness in the user's tree (R413's matrix
+        //      measured exactly that: four files nobody asked for).
+        if (kind == Kind.DIAGNOSE
+                && firstHit(lower, DIAGNOSE_ACTION_VERBS) != null
+                && (!question || requestHint)) {
+            return true;
+        }
 
         // (2) the request names where the result goes. A question only
         //     counts when it is also a REQUEST ("怎么保存到 X?" is a

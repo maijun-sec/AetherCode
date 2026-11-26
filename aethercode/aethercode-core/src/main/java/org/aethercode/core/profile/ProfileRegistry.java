@@ -217,6 +217,50 @@ public final class ProfileRegistry {
             null,
             Set.of());
 
+    /**
+     * R413: INVESTIGATOR — a diagnosis the user asked to LOCATE, not to
+     * fix.
+     *
+     * <p>★ WHY A TWIN INSTEAD OF A LINE IN THE DEBUGGER POSTURE ★ R401
+     * kept the write tools on {@link #DEBUGGER}, because "这个不生效"
+     * usually means "fix it". But the verdict's CAPABILITY axis already
+     * answers the question the domain table cannot: does this turn ask
+     * for the working tree to CHANGE? For "订单接口偶发超时，帮我定位一下
+     * 原因" the answer was <b>no</b> — and yet the turn held
+     * {@code file_write} and {@code bash}.
+     *
+     * <p>R413's live matrix measured the cost: the model wrote
+     * {@code repro/Repro.java}, {@code repro/Repro2.java} and two
+     * {@code .class} files into the user's tree — a reproduction harness
+     * nobody asked for, on a turn that only asked for the cause.
+     *
+     * <p>⇒ The posture that denies the write tools is a STRUCTURAL fact
+     * (R401's whole point), so "don't change what wasn't asked" has to
+     * be structural too. This posture says what the turn IS and what it
+     * may NOT do, and the tool set makes it true.
+     */
+    public static final Profile INVESTIGATOR = new Profile(
+            "investigator",
+            "定位问题（只读）",
+            "只读定位：给 file:line 证据，不动工作树",
+            """
+                    # Task posture (R413, per-turn)
+
+                    This turn is a **DIAGNOSIS** — something is not working — and the user asked to FIND
+                    THE CAUSE, not to change anything.
+
+                    - Find the cause before you touch anything. Read the code, the logs and the error
+                      output with `file_read`, `grep` and `glob`.
+                    - Report the root cause with `file:line` evidence. Name the mechanism, not the
+                      symptom.
+                    - Do NOT create, modify or delete ANY file — not the file under investigation, not
+                      a reproduction script, not a scratch file. There is no shell in this turn, so a
+                      reproduction program cannot be built or run either; say what you would run and
+                      why, and ask for the go-ahead.
+                    - If the fix is obvious, describe it in prose and ask before you write anything.""",
+            null,
+            READ_ONLY_DENY);
+
     /** RESEARCH — a concept question whose answer is not in this tree.
      *  The strictest profile: no writes AND no shell, because a concept
      *  lookup has no business running commands in the user's repo. */
@@ -341,6 +385,12 @@ public final class ProfileRegistry {
                     code, a document, a note, a query or anything else — the request decides what
                     it is, not this profile.
 
+                    - ★ R413: Write ONLY the deliverable the user named. If they named one file, that
+                      is the ONLY file you may create: no helper script, no verification script,
+                      no scratch file, no report beside it. To check your own work, READ what you
+                      wrote — do not write a program to check a program. (R413's live matrix
+                      measured three write turns leaving 1, 4 and 13 extra files behind — the
+                      deliverable landed every time, and so did the litter.)
                     - Produce exactly what was asked, and put it where the user said. If they named
                       a file, write that file; if they named a place, use that place.
                     - Read the target before you change it, when the target already exists.
@@ -385,6 +435,7 @@ public final class ProfileRegistry {
     static {
         REGISTRY.put(BUILDER.name(), BUILDER);
         REGISTRY.put(DEBUGGER.name(), DEBUGGER);
+        REGISTRY.put(INVESTIGATOR.name(), INVESTIGATOR);
         REGISTRY.put(RESEARCHER.name(), RESEARCHER);
         REGISTRY.put(ANALYST.name(), ANALYST);
         REGISTRY.put(REVIEWER.name(), REVIEWER);
@@ -469,7 +520,10 @@ public final class ProfileRegistry {
      *   <li>if that profile is read-only AND the turn asks for the
      *       working tree to change, the turn is escalated to
      *       {@link #PRODUCER}, which is write-capable and
-     *       domain-neutral.</li>
+     *       domain-neutral;</li>
+     *   <li>★ R413: and if that profile DOES grant the write channel but
+     *       the turn did <em>not</em> ask for a change, the write
+     *       channel is taken away.</li>
      * </ol>
      *
      * <p>★ WHY THE ESCALATION IS NOT "ADD THE WRITE TOOLS TO THE
@@ -477,19 +531,57 @@ public final class ProfileRegistry {
      * words, "do not create or modify files". A write-capable turn
      * running under that wording is a prompt that contradicts the tool
      * set — the defect R401 was written to remove. So the escalated
-     * turn gets a posture that says what it is.
+ * turn gets a posture that says what it is.
      *
      * <p>★ AND WHY THE WRITE-CAPABLE DOMAINS ARE NOT TOUCHED ★
      * CODE_CHANGE and OPS already grant the write channel, and their
      * postures are worth keeping: "read the surrounding code before you
      * write" is better advice than "produce exactly what was asked".
+     *
+     * <p>★ R413: THE CAPABILITY AXIS IS AUTHORITATIVE IN BOTH
+     * DIRECTIONS ★ R411 wired HALF of it: it escalated a read-only
+     * domain to {@link #PRODUCER} when the turn asked for a change, but
+     * it never took the write channel AWAY from a domain profile that
+     * grants it. {@link #DEBUGGER} is exactly that case — it grants the
+     * write tools (R401: "这个不生效" usually means "fix it"), so a turn
+     * that only asked for the cause held {@code file_write} and
+     * {@code bash} anyway, and the live matrix measured the cost: four
+     * files ({@code repro/Repro.java}, {@code out/Repro.class}, …) left
+     * in the user's working tree by a turn that only asked WHERE the
+     * problem was.
+     *
+     * <p>⇒ The verdict's own capability axis said
+     * {@code requestsWorkspaceChange=false} while the tool pool said the
+     * opposite. A product that contradicts itself in the same breath is
+     * the defect R401 was written to remove, so the axis now decides
+     * BOTH ways, and the read-only diagnosis gets its own posture
+     * ({@link #INVESTIGATOR}) rather than a prompt that says "do not
+     * modify files" while the tools disagree.
      */
     public static Profile forIntent(IntentClassifier.Intent intent) {
         if (intent == null) return NAVIGATOR;
         Profile base = forIntent(intent.kind());
-        if (intent.requestsWorkspaceChange() && !grantsWrite(base)) {
-            return PRODUCER;
+        if (intent.requestsWorkspaceChange()) {
+            return grantsWrite(base) ? base : PRODUCER;
         }
+        // ★ R413: the turn did NOT ask for a change ⇒ no write channel,
+        //   whatever the domain profile says.
+        return readOnlyTwin(base);
+    }
+
+    /**
+     * The read-only twin of a write-capable domain posture.
+     *
+     * <p>★ WHY A TWIN AND NOT A DERIVED PROFILE ★ a derived profile (the
+     * same text with a different deny set) would put a read-only tool
+     * pool behind a label that says "定位问题" — and the user could not
+     * tell from the UI that this turn was not allowed to write. The twin
+     * has its own name, its own label and its own directive, so the
+     * verdict and the tool pool say the same thing.
+     */
+    private static Profile readOnlyTwin(Profile base) {
+        if (base == DEBUGGER) return INVESTIGATOR;
+        // Every other profile already denies the write tools.
         return base;
     }
 
