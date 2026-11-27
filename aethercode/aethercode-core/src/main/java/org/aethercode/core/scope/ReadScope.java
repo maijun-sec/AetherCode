@@ -63,6 +63,14 @@ import java.util.Locale;
  *       file</b>. A read scope that refused that path would break a
  *       working feature (R377's lesson: a refusal table that denies a
  *       capability the daemon actually has is worse than no table).</li>
+ *   <li><b>R2b — the session's scratch area stays readable.</b> R417: the
+ *       engine owns a per-session scratch directory, and a turn must be
+ *       able to read back what it put there (a script it wrote to verify
+ *       step 1 is often used by step 2). The scratch area is outside the
+ *       tree on purpose, so it is carved out before R1 — the same shape
+ *       as R2, and for the same reason: a read scope that refuses a path
+ *       the engine itself points the model at breaks a working
+ *       feature.</li>
  *   <li><b>R3 — a symlink may not leave the tree.</b> The path says
  *       "inside"; the file it points at does not. A boundary that a
  *       symlink defeats is not a boundary (the same shape as the
@@ -92,6 +100,13 @@ public final class ReadScope {
     /** The session's working directory — the boundary of R1. */
     private final Path root;
 
+    /**
+     * R417: the session's scratch area — readable, because a turn must
+     * be able to read back what it wrote there last turn. null means
+     * "no scratch area is known".
+     */
+    private final Path scratchRoot;
+
     /** Is the boundary switched off? */
     private final boolean escapeActive;
 
@@ -109,7 +124,21 @@ public final class ReadScope {
      * nothing. A test must be able to pin BOTH states.
      */
     public ReadScope(Path root, boolean escapeActive) {
+        this(root, escapeActive, null);
+    }
+
+    /**
+     * R417: a scope that also knows the session's scratch area.
+     *
+     * <p>★ WHY THE SCRATCH IS A CONSTRUCTOR ARGUMENT ★ the scratch area
+     * is a boundary that has to be stated, not discovered — exactly like
+     * the root. A test must be able to pin a scope whose scratch area
+     * is a temp directory, and it must be able to pin one WITHOUT a
+     * scratch area (null), so both states are measurable.
+     */
+    public ReadScope(Path root, boolean escapeActive, Path scratchRoot) {
         this.root = root == null ? null : root.toAbsolutePath().normalize();
+        this.scratchRoot = scratchRoot == null ? null : scratchRoot.toAbsolutePath().normalize();
         this.escapeActive = escapeActive;
     }
 
@@ -124,12 +153,21 @@ public final class ReadScope {
             Object installed = ctx.extra(EXTRAS_KEY);
             if (installed instanceof ReadScope s) return s;
         }
-        return new ReadScope(SessionPaths.cwdOf(ctx));
+        // ★ R417: the scratch area comes with the scope — the scratch
+        // area is per SESSION, and the session is what the call context
+        // carries.
+        return new ReadScope(SessionPaths.cwdOf(ctx), WriteScope.allowAnyPath(),
+                SessionPaths.scratchRoot(ctx));
     }
 
     /** The session's working directory. */
     public Path root() {
         return root;
+    }
+
+    /** R417: the session's scratch area (null when none is known). */
+    public Path scratchRoot() {
+        return scratchRoot;
     }
 
     /** Is THIS scope running with the boundary switched off? */
@@ -165,6 +203,15 @@ public final class ReadScope {
         if (offload != null && SessionPaths.isInside(target, offload)) {
             return null;
         }
+        // ---- R2b: the session's scratch area stays readable --------------
+        // ★ R417 ★ the scratch area is OUTSIDE the tree by design, and a
+        // turn must be able to read back what it put there (a script it
+        // wrote to verify step 1 is often used by step 2). A read scope
+        // that refused it would break a working feature — the same shape
+        // as R2.
+        if (scratchRoot != null && SessionPaths.isInside(target, scratchRoot)) {
+            return null;
+        }
         // ---- R1: the tree is the boundary -------------------------------
         // ★ R1 IS CHECKED BEFORE R3 ★ the ORDER is the diagnosis. R3 is
         // the link rule, and its message says "a link may not lead out
@@ -191,7 +238,13 @@ public final class ReadScope {
         if (real != null && root != null && !SessionPaths.isInside(real, root)) {
             Path offloadReal = offload == null ? null : realPathOf(offload);
             boolean insideOffload = offloadReal != null && SessionPaths.isInside(real, offloadReal);
-            if (!insideOffload) {
+            // ★ R417: THE SCRATCH AREA COUNTS AS INSIDE ★ a link that
+            // points into the session's own scratch area is not an escape
+            // — it points at the engine's own area, which R2b already
+            // allows.
+            Path scratchReal = scratchRoot == null ? null : realPathOf(scratchRoot);
+            boolean insideScratch = scratchReal != null && SessionPaths.isInside(real, scratchReal);
+            if (!insideOffload && !insideScratch) {
                 return ScopeDecision.deny(target, VERB,
                         target + " points at " + real + ", which is outside the working directory ("
                                 + root + "). A link may not lead out of the tree.");

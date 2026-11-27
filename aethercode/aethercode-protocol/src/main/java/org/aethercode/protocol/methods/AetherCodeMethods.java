@@ -1786,6 +1786,13 @@ public class AetherCodeMethods {
         // is the same setter the builder uses.
         dispatcher.register("setLoopDetectorThresholds",
                                                        this::setLoopDetectorThresholds);
+        // ★ R417: THE PER-TURN BUDGET ★ the turn COUNT (R416) and the turn
+        // TIME (R417) — the two knobs that stop a runaway turn. The daemon
+        // published the count read-only until now, and the desktop launches
+        // the daemon with a fixed command line, so before this the only way
+        // to bound a turn was the CLI.
+        dispatcher.register("setTurnBudget",
+                                                       this::setTurnBudget);
         // toggle the daemon-side "auto-approve
         // low risk tool calls" flag. The default is
         // true (R87's init-time heuristic was always-on;
@@ -2939,6 +2946,13 @@ public class AetherCodeMethods {
         r.put("transcriptSize",  target.appState().transcript().size());
         r.put("contextWindow",   target.appState().contextWindow());
         r.put("maxTurns",        target.queryEngine().maxTurnsPerQuery());
+        // ★ R417: THE TURN'S TIME BUDGET ★ published next to the turn
+        // COUNT, because they are the same promise on two axes — and a
+        // client that can read one and not the other will show the user
+        // half the policy. (The desktop's EngineState interface declared
+        // neither: the value was on the wire and unreachable from
+        // TypeScript.)
+        r.put("maxTurnSeconds",  (int) (target.queryEngine().maxTurnMillis() / 1000L));
         r.put("loopWindow",      target.queryEngine().loopDetectWindow());
         r.put("loopThreshold",   target.queryEngine().loopDetectThreshold());
         // surface the per-session skip-confirmation counter
@@ -3937,6 +3951,80 @@ public class AetherCodeMethods {
                 "window", disabled ? -1 : window,
                 "threshold", disabled ? -1 : threshold,
                 "disabled", disabled
+        );
+    }
+
+    /**
+     * R417: set the per-turn budget — the turn COUNT and the turn TIME.
+     *
+     * <p>★ WHY ONE CALL FOR TWO KNOBS ★ they are two faces of one
+     * promise ("this turn will not run forever"), the settings surface
+     * shows them together, and a caller that has to make two round trips
+     * to change one policy can end up with half of it applied. ⇒ one
+     * call, one answer, both effective values echoed back.
+     *
+     * <p>★ THE CONTRACT ★
+     * <ul>
+     *   <li>both fields are OPTIONAL: an absent field leaves that knob
+     *       alone (so a caller can change one without knowing the
+     *       other);</li>
+     *   <li>a value of 0 means UNBOUNDED — a bound the user can turn off
+     *       is part of the bound being real (the same convention the
+     *       engine's own setters use: only a positive value gates);</li>
+     *   <li>a negative value is an error, not a silent "unbounded":
+     *       "I meant to set something" and "I meant to turn it off" are
+     *       different requests;</li>
+     *   <li>the change lands on the NEXT model turn of a running query —
+     *       the budget is read at the start of every turn, so the user
+     *       does not have to wait for the current turn to finish.</li>
+     * </ul>
+     *
+     * <p>★ WHY THIS EXISTS ★ R416's handover: the daemon published
+     * {@code maxTurns} READ-ONLY and there was no way to set it — the
+     * desktop launched the daemon with a fixed command line, so the one
+     * knob that bounds a runaway turn was reachable from the CLI and
+     * from nowhere else. ⇒ a knob the user cannot reach is a knob the
+     * user never finds.
+     *
+     * <p>Return shape: {@code {ok, sessionId, maxTurns, maxTurnSeconds,
+     * disabled}}.
+     */
+    public Object setTurnBudget(Object params) {
+        Map<String, Object> p = asMap(params);
+        String sid = p.get("sessionId") instanceof String s && !s.isBlank() ? s : null;
+        AetherCodeEngine target = resolveRpcTarget(sid);
+        if (target == null) {
+            return Map.of("ok", false, "error", "no such sessionId: " + sid);
+        }
+        // ---- the turn COUNT -------------------------------------------------
+        if (p.containsKey("maxTurns")) {
+            int maxTurns = intOrThrow(p, "maxTurns");
+            if (maxTurns < 0) {
+                return Map.of("ok", false, "error",
+                        "maxTurns must be >= 0 (0 means unbounded)");
+            }
+            // ★ THE ENGINE'S OWN CONVENTION ★ only a POSITIVE value gates
+            // the turn, so "unbounded" is stored as -1 and reported as -1
+            // (the same shape the loop-detector thresholds use).
+            target.queryEngine().setMaxTurnsPerQuery(maxTurns > 0 ? maxTurns : -1);
+        }
+        // ---- the turn TIME --------------------------------------------------
+        if (p.containsKey("maxTurnSeconds")) {
+            int seconds = intOrThrow(p, "maxTurnSeconds");
+            if (seconds < 0) {
+                return Map.of("ok", false, "error",
+                        "maxTurnSeconds must be >= 0 (0 means unbounded)");
+            }
+            target.queryEngine().setMaxTurnMillis(seconds > 0 ? seconds * 1000L : 0L);
+        }
+        int effectiveTurns = target.queryEngine().maxTurnsPerQuery();
+        long effectiveMillis = target.queryEngine().maxTurnMillis();
+        return Map.of(
+                "ok", true,
+                "sessionId", target.appState().sessionId(),
+                "maxTurns", effectiveTurns,
+                "maxTurnSeconds", (int) (effectiveMillis / 1000L),
+                "disabled", effectiveMillis <= 0
         );
     }
 

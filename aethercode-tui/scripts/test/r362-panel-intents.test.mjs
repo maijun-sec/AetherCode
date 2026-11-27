@@ -144,6 +144,11 @@ const INLINE_FAMILIES = [
   "BANK",
   "SDD",
   "MEMORY_AUDIT",
+  // R417: `/turn-budget` — the turn's time / turn-count budget. It is
+  // an INLINE action (it prints the budget), not a panel, so it has no
+  // PANEL_INTENTS row; the stronger contract (an owner on BOTH
+  // renderers) lives in `r385-mode-surface.test.mjs`.
+  "TURN_BUDGET",
 ];
 const INLINE_OK = new RegExp(`__(${INLINE_FAMILIES.join("|")})`);
 

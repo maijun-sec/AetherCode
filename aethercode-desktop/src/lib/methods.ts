@@ -156,6 +156,20 @@ export interface EngineState {
   // pushes back via setLoopDetectorThresholds().
   loopWindow?: number;
   loopThreshold?: number;
+  // ★ R417: THE TURN'S TWO BUDGETS ★ the daemon publishes the turn COUNT
+  // and the turn's wall-clock TIME budget side by side, because they are
+  // the same promise on two axes — and a client that can read one and not
+  // the other shows the user HALF the policy.
+  //
+  // ★ BEFORE R417 THE DESKTOP DECLARED NEITHER ★ both values were on the
+  // wire (getState) and unreachable from TypeScript, so no renderer could
+  // have shown them without changing the interface first.
+  //
+  // - maxTurns: -1 means UNBOUNDED (the engine's own "disabled" sentinel —
+  //   the same shape the loop-detector thresholds use).
+  // - maxTurnSeconds: 0 means UNBOUNDED. The default is 600 (ten minutes).
+  maxTurns?: number;
+  maxTurnSeconds?: number;
   // current provider name (set by
   // listProviders / switchProvider). The Settings
   // panel highlights this row in the picker so the
@@ -819,6 +833,25 @@ export class AetherCodeRpc {
     sessionId?: string;
   }): Promise<{ ok: boolean; sessionId?: string; window: number; threshold: number; disabled: boolean; error?: string }> {
     return this.call('setLoopDetectorThresholds', opts);
+  }
+  /** ★ R417: THE TURN BUDGET KNOB ★ set the turn COUNT and/or the turn's
+   *  wall-clock TIME budget on the live engine.
+   *
+   *  ★ ONLY THE FIELDS YOU PASS ARE CHANGED ★ an absent field leaves that
+   *  axis alone, so the Settings panel can push the time axis without
+   *  disturbing the count axis (and vice versa). `0` means UNBOUNDED on
+   *  both axes; a negative value is rejected by the daemon with a reason
+   *  (the store surfaces that reason inline, like the loop detector's).
+   *
+   *  The daemon answers with the EFFECTIVE values (it normalises the count
+   *  to its own -1 sentinel), so the caller persists what the daemon
+   *  reports rather than what it asked for. */
+  setTurnBudget(opts: {
+    maxTurns?: number;
+    maxTurnSeconds?: number;
+    sessionId?: string;
+  }): Promise<{ ok: boolean; sessionId?: string; maxTurns?: number; maxTurnSeconds?: number; disabled?: boolean; error?: string }> {
+    return this.call('setTurnBudget', opts);
   }
   /** toggle the daemon-side auto-approve-
    *  low-risk flag. The default (true) matches R87

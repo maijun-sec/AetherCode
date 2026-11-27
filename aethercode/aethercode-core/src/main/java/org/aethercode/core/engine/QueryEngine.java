@@ -27,11 +27,13 @@ import org.aethercode.core.llm.ChatClient;
 import org.aethercode.core.message.ContentBlock;
 import org.aethercode.core.message.Message;
 import org.aethercode.core.message.Role;
+import org.aethercode.core.scope.SessionPaths;
 import org.aethercode.core.stream.StreamEvent;
 import org.aethercode.core.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -227,13 +229,61 @@ public class QueryEngine {
      *  {@code AETHERCODE_R719_ANCHOR_STRIDE}. */
     public static final int DEFAULT_ANCHOR_STRIDE = 5;
     private final AtomicInteger anchorTurnCounter = new AtomicInteger();
-    /** hard turn cap is gone. Per-todo adaptive control in
-     *  {@code TodoRunController} replaces both this cap and the
-     *  high-risk tool counter. The field is kept for API compatibility
-     *  with any caller that still reads it (returns the legacy value)
-     *  but no longer gates the engine. */
-    @SuppressWarnings("unused")
+    /** ★ R416/R417: THE TURN-COUNT CAP IS ENFORCED ★ this javadoc used
+     *  to say "hard turn cap is gone … kept for API compatibility with any
+     *  caller that still reads it … but no longer gates the engine" — and
+     *  that was FALSE from R416 on: the engine reads the value and ends
+     *  the turn with {@code max_iterations} when it is reached. ⇒ A stale
+     *  claim about a knob is a claim the next round will cite as fact. */
     private volatile int maxTurnsPerQuery = -1;
+
+    /** R417: the default per-turn wall-clock budget — ten minutes. */
+    public static final long DEFAULT_MAX_TURN_MILLIS = 600_000L;
+
+    /** ★ R417: THE TURN'S TIME BUDGET ★ how long ONE user turn may run,
+     *  in wall-clock milliseconds. 0 (or negative) means unbounded.
+     *
+     *  <p>★ WHY A TIME BUDGET AND NOT ONLY A TURN COUNT ★ the industry
+     *  bounds an agent loop two ways — a turn COUNT ({@code maxTurns})
+     *  and a SPEND budget ({@code maxBudgetUsd}) — and both default to
+     *  "no limit", with the documentation's advice being "setting a
+     *  budget is a good default for production agents". ⇒ R416
+     *  implemented the count. R416's live matrix then measured what the
+     *  count alone CANNOT catch: two scenarios whose work was DONE and
+     *  whose turn kept running anyway (D4: the deliverable landed 5m21s
+     *  in, then ran 9m30s more, 104 calls; K1: the answer was given, 142
+     *  calls, every one of them new). ⇒ A count cannot catch that (the
+     *  calls were all different) and a spend cap cannot either (our price
+     *  table is an ESTIMATE, and the quantity the user feels is time, not
+     *  dollars) ⇒ the missing bound is WALL CLOCK.
+     *
+     *  <p>★ THE DEFAULT IS MEASURED, NOT GUESSED ★ in R416's 25-scenario
+     *  live matrix, 23 scenarios finished within about three minutes and
+     *  the two runaway ones were still running at fifteen. ⇒ ten minutes
+     *  sits in that gap: above every healthy turn, below every runaway
+     *  one. ⇒ And it is a default the user can RAISE — R417 puts it in
+     *  the settings surface, because a knob nobody can reach is a knob
+     *  nobody finds.
+     */
+    private volatile long maxTurnMillis = DEFAULT_MAX_TURN_MILLIS;
+
+    /** ★ R417: THE CLOCK THE TIME BUDGET IS MEASURED ON ★ a test has to
+     *  be able to measure "this turn ran out of time" without waiting for
+     *  real time to pass — and a budget that can only be tested by
+     *  sleeping is a budget nobody tests. ⇒ the clock is a seam; the
+     *  production value is the monotonic system clock.
+     */
+    private volatile java.util.function.LongSupplier turnClockNanos = System::nanoTime;
+
+    /**
+     * R417: replace the clock the time budget is measured on.
+     *
+     * <p>★ A TEST SEAM, NOT A SETTING ★ the user-facing knob is the
+     * budget; this only changes what "now" means for the measurement.
+     */
+    void setTurnClock(java.util.function.LongSupplier clock) {
+        if (clock != null) this.turnClockNanos = clock;
+    }
     /** loop detector config. Default window 8 / threshold 3
      *  (i.e. the same tool call fingerprint appearing 3 times in the
      *  last 8 turns is treated as a loop). Pass any non-positive value
@@ -326,11 +376,20 @@ public class QueryEngine {
         this.onTurnBoundary = hook == null ? s -> {} : hook;
     }
 
-    /** hard turn cap is no longer enforced. Per-todo adaptive control
-     *  in {@code TodoRunController} replaces both this cap and the
-     *  high-risk tool counter. The setter is kept as a no-op for
-     *  backward compatibility with existing callers. */
+    /** ★ R416: THE TURN-COUNT CAP IS ENFORCED ★ this javadoc used to say
+     *  the setter "is kept as a no-op for backward compatibility with
+     *  existing callers" — false since R416, when the engine started
+     *  reading the value and ending the turn with {@code max_iterations}. */
     public void setMaxTurnsPerQuery(int max) { this.maxTurnsPerQuery = max; }
+
+    /**
+     * R417: the per-turn wall-clock budget, in milliseconds.
+     *
+     * <p>0 (or negative) means unbounded. The value is read at the start
+     * of every model turn, so a change lands on the next turn of the
+     * running query — a knob the user can turn while a turn is in flight.
+     */
+    public void setMaxTurnMillis(long millis) { this.maxTurnMillis = millis; }
 
     /** hot-swap the LLM client. Used by
      *  {@code AetherCodeEngine.setChatClient} so the
@@ -350,6 +409,9 @@ public class QueryEngine {
         return chatClient;
     }
     public int maxTurnsPerQuery() { return maxTurnsPerQuery; }
+
+    /** R417: the per-turn wall-clock budget in milliseconds (0 = unbounded). */
+    public long maxTurnMillis() { return maxTurnMillis; }
     public String planModeSuffix() { return planModeSuffix; }
 
     /** configure the loop detector. Pass 0 / negative to
@@ -1897,6 +1959,15 @@ public class QueryEngine {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(posture);
         }
+        // ★ R417: THE SCRATCH AREA ★ where this turn may put the things
+        // that are NOT the user's project. It belongs with the
+        // environment sections (it is "where you are"), not with the
+        // tail directives (which are "what to do now").
+        String scratch = scratchDirective();
+        if (!scratch.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(scratch);
+        }
         // R737: the response-language lock. Appended LAST so it sits
         // at the very end of the prompt — the position closest to the
         // model's "now" attention, same reasoning as planModeSuffix
@@ -1924,26 +1995,130 @@ public class QueryEngine {
     }
 
     /**
-     * R416: the per-turn budget directive, or "" when there is no
+     * R417: how long a turn has been running, in milliseconds.
+     *
+     * <p>★ MONOTONIC, NOT WALL CLOCK ★ {@code nanoTime} is the clock that
+     * does not jump when the user's clock is adjusted or the machine
+     * sleeps; a budget measured on {@code currentTimeMillis} can lose (or
+     * gain) minutes in one step.
+     */
+    private long elapsedMillis(long startedNanos) {
+        return (turnClockNanos.getAsLong() - startedNanos) / 1_000_000L;
+    }
+
+    /**
+     * R417: the scratch directive — where this turn may put the things
+     * that are NOT the user's project.
+     *
+     * <p>★ WHAT R416 MEASURED ★ a turn asked to verify its own work left
+     * nine files in the user's tree: a {@code .verify/} scaffolding
+     * directory, a verification script, a transcript of the run. Every
+     * one of them was scaffolding the model built for itself, and every
+     * one of them is garbage the user has to delete by hand. (The
+     * boundary did its job — the files were INSIDE the tree — so a
+     * boundary alone cannot fix this: the files were legal writes.)
+     *
+     * <p>★ WHY A PROMPT LINE AND NOT ONLY A BOUNDARY ★ the write scope
+     * now ALLOWS the session's scratch area (WriteScope's W0), but a
+     * permission is not an instruction: the model has to be told where
+     * the scratch area is, or it will never choose it. The industry does
+     * the same thing — the sandbox's writable set is the working
+     * directory plus one temporary directory, and the tools are TOLD
+     * about the temporary directory through the environment so that
+     * "tools that write temporary files work without extra
+     * configuration".
+     *
+     * <p>★ THE SHELL GETS THE SAME PATH ★ the directive names the
+     * directory, and the shell gets it as {@code AETHERCODE_SCRATCH} —
+     * two carriers, one value ({@link SessionPaths#scratchRoot(String)}).
+     *
+     * @return the directive, or "" when the engine knows no scratch area
+     */
+    private String scratchDirective() {
+        Path scratch = currentScratchRoot();
+        if (scratch == null) return "";
+        return "# Scratch space\n"
+                + "Temporary files — a verification script, an intermediate output, a scratch "
+                + "build — belong in THIS directory, not in the user's project tree:\n"
+                + "  " + scratch + "\n"
+                + "The shell sees the same path as $AETHERCODE_SCRATCH (%AETHERCODE_SCRATCH% on "
+                + "Windows). The user's tree holds only what the user asked for; this area is "
+                + "the engine's, it is per session, and it goes away with the session.\n"
+                // ★ R417: THE ONE-LINE ALIAS TRAP ★ the live matrix measured a
+                // turn that wrote its whole verification harness into a
+                // directory LITERALLY named "%SCRATCH%" — inside the user's
+                // tree. The cause is cmd's parse-time expansion: in
+                // `set X=%AETHERCODE_SCRATCH% & ... %X% ...` the WHOLE line is
+                // expanded BEFORE `set` runs, so %X% is still undefined and
+                // cmd leaves the TEXT "%X%" in place (an undefined variable is
+                // not an error in cmd — it stays as it was written).
+                //
+                // ⇒ the engine cannot rewrite the model's command, so the
+                // instruction has to say what actually works: use the path
+                // above, or the variable itself, and do not alias it inside
+                // one command line.
+                + "Use that path — or the variable itself — directly. Do not alias it inside a "
+                + "single command line (on Windows, `set X=%AETHERCODE_SCRATCH% & ... %X% ...` "
+                + "expands %X% before `set` runs, and the literal text ends up as a directory name "
+                + "in the user's tree).";
+    }
+
+    /** R417: the session's scratch area, or null when it cannot be resolved. */
+    private Path currentScratchRoot() {
+        if (appState == null) return null;
+        return SessionPaths.scratchRoot(appState.sessionId());
+    }
+
+    /**
+     * R417: create the session's scratch directory.
+     *
+     * <p>★ WHY IT IS CREATED EAGERLY ★ the file tools create the parent
+     * directories they need, but the SHELL does not: {@code echo x >
+     * $AETHERCODE_SCRATCH/x.txt} fails when the directory is missing, and
+     * a model that is told about a directory that does not exist will
+     * make one in the user's tree instead — which is the exact failure
+     * this whole mechanism exists to prevent.
+     */
+    private void ensureScratchDirectory() {
+        Path scratch = currentScratchRoot();
+        if (scratch == null) return;
+        try {
+            Files.createDirectories(scratch);
+        } catch (Exception e) {
+            LOG.warn("could not create the scratch directory {}: {}", scratch, e.toString());
+        }
+    }
+
+    /**
+     * R416/R417: the per-turn budget directive, or "" when there is no
      * budget or the turn is nowhere near it.
      *
      * <p>★ WHY A DIRECTIVE AND NOT JUST A HARD STOP ★ the hard stop
      * ends the user's work mid-step. The directive gives the model a
-     * chance to FINISH first: it says how many model turns are left and
-     * asks it to converge. The countdown shrinks every turn, so the
-     * model can see the wall coming.
+     * chance to FINISH first: it says how much is left and asks it to
+     * converge. The countdown shrinks every turn, so the model can see
+     * the wall coming.
      *
      * <p>★ THE WARNING ZONE ★ the last fifth of the budget. A budget
-     * of 50 warns at turn 41.
+     * of 50 turns warns at turn 41; a budget of ten minutes warns with
+     * two minutes left.
+     *
+     * <p>★ TWO BUDGETS, TWO CLAUSES ★ the turn COUNT and the turn TIME
+     * are different quantities, and a directive that mentions only one
+     * of them lets the model spend the other: a model told "you have 40
+     * model turns left" will happily spend them, however long that
+     * takes. ⇒ each clause says what is left on ITS OWN axis.
      *
      * @param turnNumber the turn that is about to start (1-based)
+     * @param elapsedMillis how long this turn has been running so far
      */
-    private String turnBudgetDirective(int turnNumber) {
+    private String turnBudgetDirective(int turnNumber, long elapsedMillis) {
+        StringBuilder sb = new StringBuilder();
         int cap = maxTurnsPerQuery;
-        if (cap <= 0) return "";
-        int remaining = cap - turnNumber;
-        if (remaining > cap / 5) return "";
-        return """
+        if (cap > 0) {
+            int remaining = cap - turnNumber;
+            if (remaining <= cap / 5) {
+                sb.append("""
                 # Turn budget (R416, per-turn)
 
                 This turn has a hard budget of %d model turns and %d of them are left.
@@ -1951,7 +2126,27 @@ public class QueryEngine {
                 FINISHING, not on exploring: complete the step you are on, then report
                 what is done and what is not. If the work does not fit in the budget, say
                 so plainly — the user can continue the task in a new turn.""".formatted(
-                        cap, Math.max(remaining, 0));
+                        cap, Math.max(remaining, 0)));
+            }
+        }
+        long millis = maxTurnMillis;
+        if (millis > 0) {
+            long remainingMs = millis - elapsedMillis;
+            if (remainingMs <= millis / 5) {
+                if (sb.length() > 0) sb.append("\n\n");
+                sb.append("""
+                # Turn time budget (R417, per-turn)
+
+                This turn has a hard budget of %d seconds of wall-clock time and about %d of
+                them are left. The budget is about WALL CLOCK, not about calls: a long build,
+                a slow network and a long search all spend it.
+                FINISH the step you are on, then report what is done and what is not. If the
+                work does not fit in the time left, say so plainly — the user can continue
+                the task in a new turn. Do NOT start a verification pass you cannot finish.""".formatted(
+                        millis / 1000, Math.max(remainingMs / 1000, 0)));
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -2157,6 +2352,12 @@ public class QueryEngine {
         if (userInput == null || userInput.isBlank()) {
             return Stream.of(new StreamEvent.RunEnd("empty_input", List.of()));
         }
+        // ★ R417: WHEN THIS TURN STARTED ★ the wall-clock budget is
+        // measured from here, so the pre-flight compaction (which is a
+        // model call — time the user pays for) counts against the turn's
+        // budget. It is a LOCAL, not an engine field, so the Spliterator
+        // below sees THIS query's start and never the previous query's.
+        final long queryStartedNanos = turnClockNanos.getAsLong();
         // pre-flight auto-compact. If the transcript
         // is already past 90% of the context window
         // BEFORE the next turn, compact now (don't wait
@@ -2563,9 +2764,42 @@ private Stream<StreamEvent> currentLlmStream;
                             if (!pendingEvents.isEmpty()) return drainOne(action);
                             return false;
                         }
-                        // the per-query turn cap is gone. Per-todo adaptive
-                        // control in TodoRunController is the source of truth
-                        // for "this is taking too long".
+                        // ★ R417: THE TURN'S TIME BUDGET ★ the count above
+                        // bounds the number of model turns; it cannot bound
+                        // a turn whose calls are all DIFFERENT. R416's live
+                        // matrix measured exactly that: D4's deliverable
+                        // landed 5m21s into the turn and the turn then ran
+                        // 9m30s more (104 calls, every one new), and K1's
+                        // answer was given while the turn kept fetching (142
+                        // calls, every one new) — so the stall detector,
+                        // which measures whether a RESULT was already seen,
+                        // correctly did not fire.
+                        //
+                        // ★ WHY THE CHECK IS HERE ★ this branch is "a turn is
+                        // about to start": the budget is not spent on a model
+                        // call that will be cut off anyway, and the model has
+                        // already been told to wrap up (the directive fires in
+                        // the last fifth of the budget).
+                        if (maxTurnMillis > 0 && elapsedMillis(queryStartedNanos) >= maxTurnMillis) {
+                            long seconds = maxTurnMillis / 1000;
+                            emit(new StreamEvent.SideNote(
+                                    "max_duration",
+                                    "R417: this turn reached its time budget of " + seconds
+                                            + " seconds, so it is being stopped. The work is "
+                                            + "unfinished on purpose — nothing was lost. Ask for "
+                                            + "the rest, or narrow the request. Raise the budget "
+                                            + "in the settings if the task legitimately needs "
+                                            + "longer."));
+                            stopReason = "max_duration: the turn reached its time budget of "
+                                    + seconds + " seconds";
+                            finished = true;
+                            emit(new StreamEvent.RunEnd(stopReason, lastAssistantBlocks));
+                            // R750: drain the buffer one event per call BEFORE
+                            // terminating (a RunEnd left buffered strands the
+                            // desktop in the green ● Idle state).
+                            if (!pendingEvents.isEmpty()) return drainOne(action);
+                            return false;
+                        }
                         // Start of a turn.
                         //
                         // R750 (2026-10-22): RunStart is a RUN-scoped
@@ -2609,12 +2843,18 @@ private Stream<StreamEvent> currentLlmStream;
                             // with their own collector, so the signature is
                             // unchanged.
                             emitSubTaskTransitions(stEvent -> emit(stEvent));
+                        // ★ R417: MAKE THE SCRATCH AREA EXIST ★ the model is
+                        // about to be told where it is, and the shell
+                        // cannot write into a directory that does not
+                        // exist.
+                        ensureScratchDirectory();
                         // use the snapshotted memory section for this
                         // query, not the live field. effectiveSystem() reads
                         // the live field; we temporarily swap it in via a
                         // local-only path here.
                         String turnSystem = buildSystemForTurn(snapshotMemory, planModeSuffix, posturePrompt,
-                turnBasePrompt, turnBudgetDirective(turnsTaken + 1));
+                turnBasePrompt, turnBudgetDirective(turnsTaken + 1,
+                        elapsedMillis(queryStartedNanos)));
                         // R716: filter orphan tool results before handing
                         // the transcript to the chat client. Some providers
                         // (notably MiniMax-M3's OpenAI-compat endpoint) strictly

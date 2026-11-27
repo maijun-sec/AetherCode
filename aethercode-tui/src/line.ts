@@ -3346,6 +3346,52 @@ const TODO_MARK: Record<string, string> = {
   pending: "[ ]",
 };
 
+/**
+ * ★ R417: THE TURN BUDGET ★ how long one turn may run, and how many
+ * model turns it may take.
+ *
+ * <p>★ THE NUMBERS COME FROM THE DAEMON ★ the daemon may have been
+ * started with a command line the TUI cannot see (`--max-turn-seconds`),
+ * so the TUI asks rather than guesses.
+ */
+async function panelTurnBudget(ctx: PanelCtx): Promise<void> {
+  const nc = ctx.noColor;
+  const r = await probe(ctx, "getState");
+  if (!r.ok) {
+    emitPanel(
+      ctx,
+      panelMissingEndpoint(nc, {
+        title: "turn budget",
+        endpoint: "getState",
+        status: probeStatus(r),
+        instead: [`the daemon answered: ${r.reason}`],
+      }),
+    );
+    return;
+  }
+  const v = (r.value ?? {}) as Record<string, unknown>;
+  const secs = Number(v.maxTurnSeconds ?? 0);
+  const turns = Number(v.maxTurns ?? -1);
+  const rows: PanelCell[][] = [
+    [{ text: "time", tone: "muted" }, { text: secs > 0 ? `${secs} s` : "unbounded" }],
+    [{ text: "turns", tone: "muted" }, { text: turns > 0 ? `${turns}` : "unbounded" }],
+  ];
+  emitPanel(
+    ctx,
+    renderPanel({
+      title: "turn budget",
+      subtitle: "how long one turn may run",
+      noColor: nc,
+      columns: [
+        { header: "axis", min: 8 },
+        { header: "limit", flex: 1 },
+      ],
+      rows,
+      note: "/turn-budget <minutes> · /turn-budget off · /turn-budget turns <N>",
+    }),
+  );
+}
+
 function panelTodos(ctx: PanelCtx): void {
   const nc = ctx.noColor;
   const done = ctx.todos.filter((t) => t.status === "completed").length;
@@ -4432,6 +4478,12 @@ async function renderPanelSentinel(
     // --- local conveniences -------------------------------------------
     case "__TUTORIAL__":
       panelTutorial(ctx);
+      return true;
+    // ★ R417: the turn budget ★ the line renderer has to claim this
+    // sentinel, or a cmd.exe user would see the raw token. The numbers
+    // come from the daemon's getState — the TUI never guesses them.
+    case "__TURN_BUDGET_SHOW__":
+      await panelTurnBudget(ctx);
       return true;
     case "__BOOKMARK_LAST__":
       panelBookmark(ctx, "");

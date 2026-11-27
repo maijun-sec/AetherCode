@@ -1119,6 +1119,14 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         if (b.maxTurnsPerQuery > 0) {
             this.queryEngine.setMaxTurnsPerQuery(b.maxTurnsPerQuery);
         }
+        // ★ R417: the per-turn TIME budget — the bound for a turn whose
+        // calls are all DIFFERENT (which the count cannot catch).
+        // -1 = not set (the engine's measured default applies); 0 =
+        // unbounded. ⇒ both are forwarded, because "not set" and
+        // "unbounded" are different requests.
+        if (b.maxTurnSeconds >= 0) {
+            this.queryEngine.setMaxTurnMillis(b.maxTurnSeconds * 1000L);
+        }
         // loop detector (sliding window). 0 / negative disables.
         if (b.loopDetectWindow > 0 && b.loopDetectThreshold > 0) {
             this.queryEngine.setLoopDetector(b.loopDetectWindow, b.loopDetectThreshold);
@@ -4726,6 +4734,10 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
          *  stopReason "max_iterations" when the cap is reached. Set to
          *  0 or -1 for no cap. */
         private int maxTurnsPerQuery = 0;
+        /** ★ R417: the per-turn wall-clock budget in seconds.
+         *  {@code -1} = "not set" (the engine's default of ten minutes
+         *  applies); {@code 0} = unbounded. */
+        private int maxTurnSeconds = -1;
         /** loop-detector sliding window. The same tool-call
          *  fingerprint appearing this many times in the window triggers
          *  a stop. Default 8. Pass 0 / negative to disable. */
@@ -4869,6 +4881,16 @@ public class AetherCodeEngine implements Subagent.SubagentEngine {
         public Builder role(String r) { this.role = r == null ? "" : r; return this; }
         /** cap on model turns per query. {@code -1} or {@code 0} disables. */
         public Builder maxTurnsPerQuery(int n) { this.maxTurnsPerQuery = n; return this; }
+        /** ★ R417: cap on the wall-clock seconds one turn may run.
+         *  {@code 0} disables it; a NEGATIVE value means "not set", so
+         *  the engine's own default (ten minutes) applies. ⇒ the two
+         *  are distinguishable: "not set" and "unbounded" are different
+         *  requests, and the CLI, the RPC and this builder all say so
+         *  the same way. */
+        public Builder maxTurnSeconds(int seconds) {
+            this.maxTurnSeconds = seconds;
+            return this;
+        }
         /** configure the loop detector. The same tool-call fingerprint
          *  appearing {@code threshold} times in the last {@code window}
          *  turns triggers an early stop. Pass 0 / negative to disable

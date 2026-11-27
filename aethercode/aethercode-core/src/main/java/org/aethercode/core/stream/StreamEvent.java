@@ -231,7 +231,11 @@ public sealed interface StreamEvent {
                 // R416: the turn ran out of its budget. The engine will
                 // not continue by itself — the user decides whether to
                 // spend more.
-                || "max_iterations".equals(kind);
+                || "max_iterations".equals(kind)
+                // R417: the turn ran out of its TIME budget. Same shape as
+                // the turn-count budget: the engine will not continue by
+                // itself — the user decides whether to spend more.
+                || "max_duration".equals(kind);
     }
 
     /**
@@ -279,6 +283,12 @@ public sealed interface StreamEvent {
             // fault, and it is not a crash; the desktop shows it as a
             // failure because the work is unfinished.)
             case "max_iterations" -> true;
+            // R417: the turn hit its TIME budget. The same shape as the
+            // turn-count budget: the run ENDED, the request was NOT
+            // finished, so it is a failure verdict. (It is not the
+            // model's fault and not a crash — the work is unfinished on
+            // purpose, so the user can continue it.)
+            case "max_duration" -> true;
             // Backpressure is a provider-capacity signal the user retries;
             // reported separately by AetherCodeMethods, so not here.
             default -> false;

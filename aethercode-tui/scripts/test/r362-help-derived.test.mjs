@@ -333,9 +333,16 @@ test("SLASH_COMMANDS (the flat array) is unchanged in size", () => {
   // `addWorktree` / `listWorktrees` / `removeWorktree` RPCs; what was
   // missing was a NAME the user could type, which is what makes a
   // capability reachable at all (the R371 lesson, one layer up).
+  //
+  // R417: 90. The catalogue gained `/turn-budget` — the two limits that
+  // stop a runaway turn (its wall-clock time and its model-turn count).
+  // R416's live matrix measured a turn whose work was DONE and which
+  // then ran for another nine minutes; the daemon published `maxTurns`
+  // read-only, so before R417 no client could bound a turn at all. The
+  // count went up by one on purpose.
   assert.equal(
     SLASH_COMMANDS.length,
-    89,
+    90,
     "SLASH_COMMANDS length changed — update this baseline deliberately, not by accident",
   );
   assert.ok(

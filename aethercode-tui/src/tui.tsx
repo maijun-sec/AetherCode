@@ -2710,6 +2710,38 @@ const App: React.FC<{
       });
       return;
     }
+    if (slash?.local === "__TURN_BUDGET_SHOW__") {
+      // ★ R417: bare `/turn-budget` SHOWS the budget the engine is
+      // actually running with. The numbers come from the daemon's
+      // getState — the TUI never guesses them, because the daemon may
+      // have been started with a command line the TUI cannot see.
+      try {
+        const st = (await client.request("getState")) as Record<string, unknown> | null | undefined;
+        const stObj = (st ?? {}) as Record<string, unknown>;
+        const secs = Number(stObj.maxTurnSeconds ?? 0);
+        const turns = Number(stObj.maxTurns ?? -1);
+        const timeText = secs > 0 ? `${secs} s` : "unbounded";
+        const turnText = turns > 0 ? `${turns}` : "unbounded";
+        dispatch({
+          type: "sideNote",
+          kind: "info",
+          message: [
+            "turn budget",
+            `  time:  ${timeText}`,
+            `  turns: ${turnText}`,
+            "",
+            "change it: /turn-budget <minutes> · /turn-budget off · /turn-budget turns <N>",
+          ].join("\n"),
+        });
+      } catch (e) {
+        dispatch({
+          type: "pushToast",
+          kind: "err",
+          text: `could not read the turn budget: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+      return;
+    }
     if (slash?.local === "__TUTORIAL__") {
       // /tutorial — re-show the welcome overlay.
       dispatch({ type: "setTutorialOpen", open: true });
@@ -3287,6 +3319,43 @@ const App: React.FC<{
           await applyPermissionMode(requested);
           return;
         }
+      }
+      // ★ R417: the turn budget gets a SENTENCE, not a JSON dump. The
+      // daemon answers with the EFFECTIVE values (it normalises the turn
+      // count to its own -1 sentinel), so the message reports what the
+      // engine will actually do — not what the request asked for.
+      if (slash.rpcMethod === "setTurnBudget") {
+        try {
+          const r = (await client.request("setTurnBudget", (slash.rpcParams ?? {}) as RpcValue)) as
+            Record<string, unknown> | null | undefined;
+          const obj = (r ?? {}) as Record<string, unknown>;
+          if (obj.ok === false) {
+            dispatch({
+              type: "pushToast",
+              kind: "err",
+              text: `turn budget rejected: ${String(obj.error ?? "unknown reason")}`,
+            });
+            return;
+          }
+          const secs = Number(obj.maxTurnSeconds ?? 0);
+          const turns = Number(obj.maxTurns ?? -1);
+          dispatch({
+            type: "sideNote",
+            kind: "info",
+            message: [
+              "turn budget",
+              `  time:  ${secs > 0 ? `${secs} s` : "unbounded"}`,
+              `  turns: ${turns > 0 ? `${turns}` : "unbounded"}`,
+            ].join("\n"),
+          });
+        } catch (e) {
+          dispatch({
+            type: "pushToast",
+            kind: "err",
+            text: `turn budget failed: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+        return;
       }
       try {
         const result = await client.request<unknown>(slash.rpcMethod, slash.rpcParams as RpcValue);

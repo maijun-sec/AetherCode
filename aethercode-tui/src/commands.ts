@@ -362,6 +362,21 @@ export const SLASH_COMMANDS_DETAILED: ReadonlyArray<{
 
   { name: "skip-stats", group: "config", description: "show skip-confirmation adoption" },
 
+  {
+    // ★ R417: THE TURN BUDGET ★ the two limits that stop a runaway turn.
+    // The daemon boots with a fixed command line, so before R417 the TUI
+    // (like every other client) could not bound a turn at all.
+    //
+    // NOT `/budget` — that one is the COST budget in USD (a local
+    // progress-bar setting, not a daemon knob). Two different budgets,
+    // two different names: `/budget` spends money, `/turn-budget` spends
+    // TIME and TURNS.
+    name: "turn-budget",
+    group: "config",
+    args: "[minutes|off|turns N]",
+    description: "bound how long / how many turns one turn may take",
+  },
+
   { name: "mcp", group: "mcp & integrations", description: "open the MCP server + tool viewer" },
 
   {
@@ -1007,6 +1022,47 @@ export function routeSlash(input: string): SlashResult | null {
         return { local: "usage: /budget <usd>  (e.g. /budget 1.50, /budget off)" };
       }
       return { local: "__BUDGET__:" + usd };
+    }
+    case "turn-budget": {
+      // ★ R417: BOUND A TURN ★ the wall-clock TIME budget and the model-turn
+      // COUNT. The daemon boots with a fixed command line, so before R417
+      // no client could bound a turn — a runaway turn simply ran until it
+      // finished or the user killed it.
+      //
+      // ★ NOT THE COST BUDGET ★ `/budget` is the USD spend limit (a local
+      // progress-bar setting). Two budgets, two names: `/budget` spends
+      // money, `/turn-budget` spends TIME and TURNS.
+      //
+      // ★ 0 MEANS UNBOUNDED ★ on both axes. The daemon stores the count
+      // as -1 (its own "disabled" sentinel) and the time as 0.
+      if (rest.length === 0) return { local: "__TURN_BUDGET_SHOW__" };
+      const head = String(rest[0]).toLowerCase();
+      if (head === "off" || head === "none" || head === "unbounded") {
+        return { rpcMethod: "setTurnBudget", rpcParams: { maxTurnSeconds: 0 } };
+      }
+      if (head === "turns") {
+        const raw = String(rest[1] ?? "").toLowerCase();
+        if (raw === "") return { local: "usage: /turn-budget turns <N|off>" };
+        if (raw === "off" || raw === "none" || raw === "unbounded") {
+          return { rpcMethod: "setTurnBudget", rpcParams: { maxTurns: 0 } };
+        }
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < 1) {
+          return { local: "usage: /turn-budget turns <N|off>  (N >= 1)" };
+        }
+        return { rpcMethod: "setTurnBudget", rpcParams: { maxTurns: n } };
+      }
+      const minutes = Number(head);
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        return {
+          local:
+            "usage: /turn-budget <minutes|off|turns N>  (e.g. /turn-budget 20, /turn-budget off)",
+        };
+      }
+      return {
+        rpcMethod: "setTurnBudget",
+        rpcParams: { maxTurnSeconds: Math.round(minutes * 60) },
+      };
     }
     case "rewind": {
       // R388n: bare `/rewind` opens the CHECKPOINT MENU — Claude

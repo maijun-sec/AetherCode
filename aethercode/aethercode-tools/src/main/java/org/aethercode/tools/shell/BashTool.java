@@ -69,6 +69,24 @@ public class BashTool {
 
     public static final String NAME = "bash";
     private static final Logger LOG = LoggerFactory.getLogger(BashTool.class);
+
+    /**
+     * ★ R417: THE ENVIRONMENT VARIABLE THAT NAMES THE SCRATCH AREA ★
+     * the shell child is told where the session's own scratch directory
+     * is, so a command that needs a temporary file can put it there
+     * without the model having to invent a path (and without it landing
+     * in the user's tree).
+     *
+     * <p>★ WHY NOT {@code TMPDIR} ★ the industry points the sandbox's
+     * temporary directory at a per-user temp dir through {@code TMPDIR},
+     * because most tools already honour it. Here the variable would have
+     * to be {@code TMPDIR} / {@code TEMP} / {@code TMP} — and on Windows
+     * that silently redirects EVERY tool's temporary directory on the
+     * box, including the JDK's and the build tools'. A name that only
+     * this product understands, plus one prompt line, says the same thing
+     * without moving the whole machine's temp space.
+     */
+    public static final String SCRATCH_ENV = "AETHERCODE_SCRATCH";
     /** process-singleton registry of background bash jobs.
      *  Each entry maps a job id (assigned at spawn time) to a
      *  {@link BashJob} the caller can poll. */
@@ -243,7 +261,7 @@ public class BashTool {
         // AETHERCODE_BASH_ALLOW_SCOPE_ESCAPE env var
         // (set by tests + a few system commands).
         if (!"1".equals(System.getenv("AETHERCODE_BASH_ALLOW_SCOPE_ESCAPE"))) {
-            String scopeViolation = checkScopeEscape(command, cwd);
+            String scopeViolation = checkScopeEscape(command, cwd, ctx);
             if (scopeViolation != null) {
                 return Tool.ToolResult.error("command refused by sandbox: " + scopeViolation
                         + " (set AETHERCODE_BASH_ALLOW_SCOPE_ESCAPE=1 to bypass)");
@@ -316,7 +334,17 @@ public class BashTool {
      * belongs in a future R-round.
      */
     private static String checkScopeEscape(String command, File engineCwd) {
-        return checkScopeEscape(command, engineCwd, shellEnv());
+        return checkScopeEscape(command, engineCwd, shellEnv(), null);
+    }
+
+    /**
+     * R417: the scope check for THIS session — the scratch area is part
+     * of the boundary, and the environment the checker expands against
+     * is the environment the child runs with (R416's one-map rule).
+     */
+    private static String checkScopeEscape(String command, File engineCwd, Tool.CallContext ctx) {
+        java.nio.file.Path scratch = org.aethercode.core.scope.SessionPaths.scratchRoot(ctx);
+        return checkScopeEscape(command, engineCwd, shellEnv(ctx), scratch);
     }
 
     /**
@@ -336,6 +364,22 @@ public class BashTool {
      */
     private static String checkScopeEscape(String command, File engineCwd,
             java.util.Map<String, String> env) {
+        return checkScopeEscape(command, engineCwd, env, null);
+    }
+
+    /**
+     * The scope check with an explicit environment AND an explicit
+     * scratch area.
+     *
+     * <p>★ R417: THE SCRATCH AREA IS PART OF THE BOUNDARY ★ the
+     * scratch directory is outside the tree ON PURPOSE, so a command
+     * that writes there is not an escape. Without this, the shell would
+     * refuse {@code echo x > %AETHERCODE_SCRATCH%\x.txt} while the file
+     * tools happily wrote the same file — two channels, two answers to
+     * one question, and the model would learn that the shell is broken.
+     */
+    private static String checkScopeEscape(String command, File engineCwd,
+            java.util.Map<String, String> env, java.nio.file.Path scratchRoot) {
         if (command == null || engineCwd == null) return null;
         // ★ THE EXPANDED TEXT IS THE TEXT THE SHELL SEES ★
         org.aethercode.core.scope.ScopeEnvExpansion.Result expansion =
@@ -371,7 +415,7 @@ public class BashTool {
             // with the engine cwd.
             boolean absTarget = target.startsWith("/") || target.startsWith("\\")
                     || (target.length() >= 2 && target.charAt(1) == ':');
-            if (absTarget && !isInsideCwd(target, engineCwd)) {
+            if (absTarget && !insideBoundary(target, engineCwd, scratchRoot)) {
                 return "refusing 'cd' to absolute path outside the engine cwd: " + target;
             }
         }
@@ -406,7 +450,7 @@ public class BashTool {
             if (isNullDevice(target)) continue;
             boolean absolute = target.startsWith("/") || target.startsWith("\\")
                     || (target.length() >= 2 && target.charAt(1) == ':');
-            if (absolute && !isInsideCwd(target, engineCwd)) {
+            if (absolute && !insideBoundary(target, engineCwd, scratchRoot)) {
                 return "the command redirects output to '" + target
                         + "', which is outside the working directory";
             }
@@ -451,7 +495,7 @@ public class BashTool {
                 // and is not platform-dependent: a one-character segment
                 // is a flag on every platform.
                 if (isSingleLetterSegment(p)) continue;
-                if (!isInsideCwd(p, engineCwd)) {
+                if (!insideBoundary(p, engineCwd, scratchRoot)) {
                     return "the command names '" + p
                             + "', which is outside the working directory, and a command that can "
                             + "write may not name a path outside the tree"
@@ -506,6 +550,27 @@ public class BashTool {
     static String checkScopeEscapeForTest(String command, File engineCwd,
             java.util.Map<String, String> env) {
         return checkScopeEscape(command, engineCwd, env);
+    }
+
+    /**
+     * R417 test hook: the scope check with an explicit environment AND an
+     * explicit scratch area.
+     *
+     * <p>★ WHY THE SCRATCH IS STATED ★ the scratch area comes from the
+     * ENVIRONMENT (the engine home), and a test cannot set an environment
+     * variable. A test that used the ambient value would measure whatever
+     * this machine happens to say.
+     */
+    static String checkScopeEscapeForTest(String command, File engineCwd,
+            java.util.Map<String, String> env, java.nio.file.Path scratchRoot) {
+        return checkScopeEscape(command, engineCwd, env, scratchRoot);
+    }
+
+    /**
+     * R417 test hook: the environment a session's shell child runs with.
+     */
+    static java.util.Map<String, String> shellEnvForTest(Tool.CallContext ctx) {
+        return shellEnv(ctx);
     }
 
     /**
@@ -677,6 +742,45 @@ public class BashTool {
         }
     }
 
+    /**
+     * R417: is this path inside the BOUNDARY? The tree, or the session's
+     * scratch area.
+     *
+     * <p>★ ONE PREDICATE, THREE CALL SITES ★ the {@code cd} rule, the
+     * redirect rule and the general "a command that can write may not
+     * name a path outside the tree" rule each answer "is this inside?".
+     * Three copies of that answer is three answers to one question, and
+     * they drift (R380's lesson) — the scratch area would be allowed in
+     * one of them and refused in the others.
+     *
+     * @param target the path as it appears in the command (absolute)
+     * @param engineCwd the session's working directory
+     * @param scratchRoot the session's scratch area, or null
+     */
+    private static boolean insideBoundary(String target, File engineCwd,
+            java.nio.file.Path scratchRoot) {
+        if (isInsideCwd(target, engineCwd)) return true;
+        if (scratchRoot == null || target == null || target.isBlank()) return false;
+        try {
+            java.nio.file.Path tgt = new File(target).getCanonicalFile().toPath();
+            // ★ BY SEGMENT, NOT BY PREFIX ★ the same rule the tree check
+            // uses: a sibling whose name merely starts with the
+            // scratch's name is NOT inside it.
+            try {
+                // the real path when the scratch exists (so a link INTO
+                // the scratch counts as inside)
+                return tgt.startsWith(scratchRoot.toRealPath());
+            } catch (Exception notCreatedYet) {
+                // the scratch directory does not exist yet — the first
+                // write of a session creates it. Compare the normalized
+                // absolute paths instead.
+                return tgt.startsWith(scratchRoot.toAbsolutePath().normalize());
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** foreground mode. Runs the command, streams output,
      *  waits for completion, returns the captured output.
      *  Package-private (not just private) so R326's regression
@@ -686,7 +790,7 @@ public class BashTool {
                                         boolean stream, Tool.CallContext ctx) {
         Process process = null;
         try {
-            Process processRef = start(command, cwd);
+            Process processRef = start(command, cwd, ctx);
             process = processRef;
             StringBuilder stdout = new StringBuilder();
             StringBuilder stderr = new StringBuilder();
@@ -740,7 +844,7 @@ public class BashTool {
                                                     boolean stream, Tool.CallContext ctx) {
         Process process;
         try {
-            process = start(command, cwd);
+            process = start(command, cwd, ctx);
         } catch (Exception e) {
             return Tool.ToolResult.error("failed to start background command: " + e.getMessage());
         }
@@ -764,6 +868,15 @@ public class BashTool {
     }
 
     private static Process start(String command, File cwd) throws java.io.IOException {
+        return start(command, cwd, null);
+    }
+
+    /**
+     * R417: start the child with the SESSION's environment — the one
+     * that names the scratch area.
+     */
+    private static Process start(String command, File cwd, Tool.CallContext ctx)
+            throws java.io.IOException {
         // R326: when the agent writes `mkdir -p <path>` (the
         // standard Unix idiom for "create parent dirs and the
         // leaf"), cmd.exe on Windows treats `-p` as a literal
@@ -799,7 +912,7 @@ public class BashTool {
         // scope check expands against the SAME map — so the checker and
         // the shell see one environment, by construction.
         pb.environment().clear();
-        pb.environment().putAll(shellEnv());
+        pb.environment().putAll(shellEnv(ctx));
         return pb.start();
     }
 
@@ -812,15 +925,51 @@ public class BashTool {
      * language than the one that runs (R416's lesson).
      */
     private static java.util.Map<String, String> shellEnv() {
+        return shellEnv(null);
+    }
+
+    /**
+     * The environment the shell child runs with, for THIS session.
+     *
+     * <p>★ R417: THE SCRATCH AREA IS NAMED IN THE ENVIRONMENT ★ the
+     * child is told where the session's scratch directory is, so a
+     * command that needs a temporary file can put it there — and the
+     * scope check expands against the SAME map (R416's one-map rule),
+     * so the checker and the shell see one environment by construction.
+     */
+    private static java.util.Map<String, String> shellEnv(Tool.CallContext ctx) {
         java.util.Map<String, String> env = System.getenv();
         if ("1".equals(env.get("AETHERCODE_BASH_ALLOW_CREDENTIALS"))) {
             // ★ THE OPT-OUT ★ a task that genuinely needs a credential in
             // the shell (a deploy with a token in the environment) can ask
             // for it by name. The model cannot set it: the switch is read
             // from the DAEMON's environment, not from the shell's.
-            return env;
+            //
+            // ★ A COPY ★ System.getenv() is unmodifiable, and the scratch
+            // variable has to be added on top of it.
+            java.util.Map<String, String> copy = new java.util.LinkedHashMap<>(env);
+            putScratch(copy, ctx);
+            return copy;
         }
-        return sanitizedEnv(env);
+        java.util.Map<String, String> out = sanitizedEnv(env);
+        putScratch(out, ctx);
+        return out;
+    }
+
+    /**
+     * R417: name the session's scratch area in the environment.
+     *
+     * <p>★ ABSENT WHEN THERE IS NO SCRATCH ★ an unknown scratch must not
+     * become an empty variable: a shell that expands {@code
+     * %AETHERCODE_SCRATCH%} to the empty string would resolve
+     * {@code %AETHERCODE_SCRATCH%\x.txt} to {@code \x.txt} — a path at
+     * the drive root. Better absent than empty.
+     */
+    private static void putScratch(java.util.Map<String, String> env, Tool.CallContext ctx) {
+        if (env == null || ctx == null) return;
+        java.nio.file.Path scratch = org.aethercode.core.scope.SessionPaths.scratchRoot(ctx);
+        if (scratch == null) return;
+        env.put(SCRATCH_ENV, scratch.toString());
     }
 
     /**

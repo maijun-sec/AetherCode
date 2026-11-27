@@ -303,6 +303,15 @@ async function runHeadless(
           // stderr. A verdict the user cannot see is a verdict that did
           // not happen.
           process.stderr.write(`[consistency] ${ev.message}\n`);
+        } else if (ev.type === "side_note" && ev.kind === "max_duration") {
+          // ★ R417: THE TURN HIT ITS TIME BUDGET ★ the engine stopped the
+          // turn because it ran out of wall-clock budget. This mode writes
+          // the model's answer to stdout and the engine's findings to
+          // stderr — and this finding is the ONE the user most needs: the
+          // answer on stdout is truncated ON PURPOSE, and without this
+          // line the user would read a half-finished answer as the whole
+          // thing.
+          process.stderr.write(`[max_duration] ${ev.message}\n`);
         } else if (ev.type === "run_end") {
           finished = true;
           setTimeout(() => {

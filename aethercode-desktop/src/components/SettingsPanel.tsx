@@ -62,6 +62,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     // canonical state lands via the 15s
     // refreshEngineState() tick in the background).
     setLoopDetectorThresholds,
+    // ★ R417: the turn budget knob (wall-clock time + turn count).
+    // The daemon boots with a fixed command line, so before R417 the
+    // desktop could not bound a turn at all.
+    setTurnBudget,
     // supervisor auto-restart toggle.
     // The boolean is cached in the store so
     // re-opening the panel keeps the value
@@ -186,6 +190,74 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       }
     };
   }, [loopEnabled, loopWindow, loopThreshold, setLoopDetectorThresholds]);
+  // ★ R417: THE TURN BUDGET ★ two axes — the turn's wall-clock TIME and
+  // the turn COUNT. The daemon boots with a fixed command line, so before
+  // R417 the desktop could not bound a turn at all: the one knob that
+  // stops a runaway turn was reachable from the CLI and from nowhere
+  // else.
+  //
+  // ★ WHY THE PUSH IS DIRTY-TRACKED ★ the panel must not push a value the
+  // user never chose. The daemon may have been started with
+  // `--max-turns 30`; a panel that pushed its own default on mount would
+  // silently overwrite that. ⇒ each axis carries a "the user touched
+  // this" flag, and only touched axes are sent — the daemon treats an
+  // absent field as "leave this axis alone".
+  const [budgetTimeEnabled, setBudgetTimeEnabled] = useState((engineState?.maxTurnSeconds ?? 600) > 0);
+  const [budgetSeconds, setBudgetSeconds] = useState(Math.max(30, engineState?.maxTurnSeconds ?? 600));
+  const [budgetTurnsEnabled, setBudgetTurnsEnabled] = useState((engineState?.maxTurns ?? -1) > 0);
+  const [budgetTurnCount, setBudgetTurnCount] = useState(Math.max(1, engineState?.maxTurns ?? 50));
+  const [budgetTimeDirty, setBudgetTimeDirty] = useState(false);
+  const [budgetTurnsDirty, setBudgetTurnsDirty] = useState(false);
+  const budgetTimerRef = useRef<number | null>(null);
+  const [budgetStatus, setBudgetStatus] = useState<'idle' | 'pushing' | 'error'>('idle');
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  // daemon → UI sync. The canonical values land via the 15 s
+  // refreshEngineState() tick; this keeps the sliders from drifting away
+  // from the engine (e.g. after the budget was changed in another
+  // client).
+  useEffect(() => {
+    const secs = engineState?.maxTurnSeconds;
+    if (secs != null) {
+      setBudgetTimeEnabled(secs > 0);
+      if (secs > 0) setBudgetSeconds(Math.max(30, secs));
+    }
+    const turns = engineState?.maxTurns;
+    if (turns != null) {
+      setBudgetTurnsEnabled(turns > 0);
+      if (turns > 0) setBudgetTurnCount(turns);
+    }
+  }, [engineState?.maxTurnSeconds, engineState?.maxTurns]);
+  // debounced push. 250 ms like the loop detector's — long enough that
+  // a drag does not fire one RPC per pixel.
+  useEffect(() => {
+    if (!budgetTimeDirty && !budgetTurnsDirty) return;
+    if (budgetTimerRef.current != null) {
+      window.clearTimeout(budgetTimerRef.current);
+    }
+    budgetTimerRef.current = window.setTimeout(async () => {
+      budgetTimerRef.current = null;
+      // ★ ONLY THE TOUCHED AXES ★ an absent field means "leave this
+      // axis alone" on the daemon side.
+      const payload: { maxTurnSeconds?: number; maxTurns?: number } = {};
+      if (budgetTimeDirty) payload.maxTurnSeconds = budgetTimeEnabled ? budgetSeconds : 0;
+      if (budgetTurnsDirty) payload.maxTurns = budgetTurnsEnabled ? budgetTurnCount : 0;
+      setBudgetStatus('pushing');
+      setBudgetError(null);
+      const r = await setTurnBudget(payload);
+      if (r.ok) {
+        setBudgetStatus('idle');
+      } else {
+        setBudgetStatus('error');
+        setBudgetError(r.error ?? 'unknown');
+      }
+    }, 250);
+    return () => {
+      if (budgetTimerRef.current != null) {
+        window.clearTimeout(budgetTimerRef.current);
+        budgetTimerRef.current = null;
+      }
+    };
+  }, [budgetTimeDirty, budgetTurnsDirty, budgetTimeEnabled, budgetSeconds, budgetTurnsEnabled, budgetTurnCount, setTurnBudget]);
   // provider picker state. The user
   // picks a provider (e.g. "glm") + a model
   // (e.g. "glm-4-flash"). We keep them as two
@@ -508,6 +580,87 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               {loopStatus === 'idle' && <> · ✅ applied</>}
               {loopStatus === 'error' && loopError && (
                 <> · ❌ {loopError}</>
+              )}
+            </small>
+          </div>
+          {/* ★ R417: THE TURN BUDGET ★ the two limits that stop a
+              runaway turn — its wall-clock TIME and its model-turn
+              COUNT. The daemon boots with a fixed command line, so
+              before R417 the desktop had no way to set either one.
+
+              A turn that hits a limit is STOPPED and reported with its
+              own verdict kind (`max_duration` / `max_iterations`), not
+              as a crash and not as a normal ending — the work is
+              unfinished on purpose, so the user can ask for the rest or
+              raise the budget. The status pill mirrors the loop
+              detector's (pushing / idle / error) and the error text is
+              the daemon's own reason. */}
+          <div className="settings-field settings-field-group">
+            <span>Turn budget</span>
+            <label className="settings-field-inline">
+              <input
+                type="checkbox"
+                checked={budgetTimeEnabled}
+                onChange={(e) => {
+                  setBudgetTimeEnabled(e.target.checked);
+                  setBudgetTimeDirty(true);
+                }}
+              />
+              <span>limit how long one turn may run</span>
+            </label>
+            <label className="settings-field-inline">
+              <span className="settings-slider-label">
+                time: <code>{budgetTimeEnabled ? `${budgetSeconds} s` : 'unbounded'}</code>
+              </span>
+              <input
+                type="range"
+                min={30}
+                max={3600}
+                step={30}
+                value={budgetSeconds}
+                disabled={!budgetTimeEnabled}
+                onChange={(e) => {
+                  setBudgetSeconds(Number(e.target.value));
+                  setBudgetTimeDirty(true);
+                }}
+              />
+            </label>
+            <label className="settings-field-inline">
+              <input
+                type="checkbox"
+                checked={budgetTurnsEnabled}
+                onChange={(e) => {
+                  setBudgetTurnsEnabled(e.target.checked);
+                  setBudgetTurnsDirty(true);
+                }}
+              />
+              <span>limit how many model turns one turn may take</span>
+            </label>
+            <label className="settings-field-inline">
+              <span className="settings-slider-label">
+                count: <code>{budgetTurnsEnabled ? `${budgetTurnCount}` : 'unbounded'}</code>
+              </span>
+              <input
+                type="range"
+                min={1}
+                max={500}
+                step={1}
+                value={budgetTurnCount}
+                disabled={!budgetTurnsEnabled}
+                onChange={(e) => {
+                  setBudgetTurnCount(Number(e.target.value));
+                  setBudgetTurnsDirty(true);
+                }}
+              />
+            </label>
+            <small className="settings-hint">
+              a turn that hits either limit is stopped and reported as
+              <code> max_duration </code> or <code> max_iterations </code> — the work is
+              unfinished on purpose, nothing is lost.
+              {budgetStatus === 'pushing' && <> · ⏳ pushing…</>}
+              {budgetStatus === 'idle' && <> · ✅ applied</>}
+              {budgetStatus === 'error' && budgetError && (
+                <> · ❌ {budgetError}</>
               )}
             </small>
           </div>

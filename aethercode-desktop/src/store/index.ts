@@ -885,8 +885,14 @@ let toolsTimer: number | null = null;
 // instead of 30 s because engine state changes
 // faster than the tool pool (e.g. model switches
 // on switchProvider, loop detector thresholds
-// after a Settings tweak, maxTurnsPerQuery after
-// a /set-max-turns command).
+// after a Settings tweak, the turn budget after
+// the R417 Settings tweak).
+// ★ R417 CORRECTION ★ this comment used to say "maxTurnsPerQuery
+// after a /set-max-turns command" — there has NEVER been a
+// /set-max-turns slash command in any renderer, so the comment
+// described a command that does not exist and pointed at a knob
+// (maxTurnsPerQuery) the desktop could not actually change. A stale
+// claim about a knob is a claim the next round will cite as fact.
 let engineStateTimer: number | null = null;
 // RPC event subscription handle. Stored at
 // module scope so a re-init (reconnect) can
@@ -1046,6 +1052,14 @@ interface EnginePrefs {
   permissionMode?: string;
   loopWindow?: number;
   loopThreshold?: number;
+  /** ★ R417: THE TURN BUDGET the user set.
+   *
+   *  `maxTurnSeconds` = 0 means UNBOUNDED; `maxTurns` = 0 means UNBOUNDED.
+   *  Both are OPTIONAL: an absent field means "the user never touched this
+   *  knob", and initialize() then pushes NOTHING on that axis — so the
+   *  daemon keeps whatever it booted with (600 s by default). */
+  maxTurnSeconds?: number;
+  maxTurns?: number;
   autoApproveLowRisk?: boolean;
   // medium+high-risk auto-approve toggle. Off
   // by default — headless opt-in only. Critical
@@ -2686,6 +2700,19 @@ interface AppState {
    *  must be >= threshold") so the UI can surface
    *  it without re-running the call. */
   setLoopDetectorThresholds: (opts: { window: number; threshold: number }) => Promise<{ ok: boolean; error?: string; window?: number; threshold?: number; disabled?: boolean }>;
+  /** ★ R417: THE TURN BUDGET KNOB ★ set the turn COUNT and/or the turn's
+   *  wall-clock TIME budget on the live engine.
+   *
+   *  ★ THIS IS THE DESKTOP'S ONLY WAY TO BOUND A TURN ★ the daemon
+   *  launches with a fixed command line, so until R417 the one knob that
+   *  stops a runaway turn was reachable from the CLI and from nowhere
+   *  else ⇒ a knob the user cannot reach is a knob the user never finds.
+   *
+   *  Only the fields present in `opts` are changed (the daemon treats an
+   *  absent field as "leave this axis alone"); `0` means UNBOUNDED on
+   *  either axis. The error path returns the daemon's reason (e.g.
+   *  "maxTurnSeconds must be >= 0") so the UI can surface it inline. */
+  setTurnBudget: (opts: { maxTurns?: number; maxTurnSeconds?: number }) => Promise<{ ok: boolean; error?: string; maxTurns?: number; maxTurnSeconds?: number; disabled?: boolean }>;
   /** clear the pending terminal-event toast. Called
    *  by <SubagentToast> on auto-dismiss (4s) or on click.
    *  No-op when there's nothing pending (defensive — the
@@ -3530,6 +3557,16 @@ export const useStore = create<AppState>((set, get) => {
           // daemon had NO producer for the kind at all: the rule was
           // about a case that could not happen.
           'max_iterations',
+          // ★ R417: THE TURN'S TIME BUDGET ★ the same shape as the turn
+          // COUNT: the turn ended without finishing the user's request, so
+          // the daemon reports it as a failure and the desktop must show
+          // it as one — not as a green ● Idle.
+          //
+          // ★ A TRUNCATED ANSWER MUST NOT LOOK LIKE A FINISHED ONE ★
+          // this is the kind R416's live matrix produced (a turn whose
+          // work was done, which then ran for nine more minutes and was
+          // cut off), and a run that stops here has NOT delivered.
+          'max_duration',
           'awaiting_user_decision',
           'runtime_exception',
           'stale_force_end',
@@ -4154,6 +4191,30 @@ export const useStore = create<AppState>((set, get) => {
           // to refresh any watchdog / "still alive"
           // indicator — no messages touched.
           set({ lastChunkTs: Date.now() });
+        } else if (kind === 'max_duration') {
+          // ★ R417: THE TURN HIT ITS TIME BUDGET ★ the engine stopped the
+          // turn because it ran out of wall-clock budget — NOT because the
+          // model finished, and NOT because of an error.
+          //
+          // ★ THIS KIND MUST REACH THE USER ★ without an explicit arm it
+          // would fall into the R208 fallback below, which pushes NOTHING
+          // to the transcript: the turn would simply stop, and the user
+          // would see a truncated answer with no explanation. The engine
+          // already says what happened ("the work is unfinished on
+          // purpose — nothing was lost"), so the line is a finding about
+          // the turn, not engine chatter.
+          //
+          // The RunEnd that follows carries `stopKind: "max_duration"`, so
+          // the header's stop label shows the same reason — this line is
+          // the permanent record in the scrollback.
+          set((s) => ({
+            messages: [...s.messages, {
+              id: newId('system'), role: 'system' as const,
+              content: msg,
+              timestamp: Date.now(),
+            }],
+            lastChunkTs: Date.now(),
+          }));
         } else {
           // unknown side_note kind. This is an
           // engine protocol bug — a kind we don't
@@ -5403,7 +5464,42 @@ export const useStore = create<AppState>((set, get) => {
               }
             } catch { /* best-effort */ }
           }
-          // schedule a periodic getSkipStats poll so the
+          // ★ R417: RESTORE THE TURN BUDGET ★ the daemon boots with a
+          // fixed command line, so the user's own budget has to be pushed
+          // here or the desktop would silently run every turn at the
+          // built-in default.
+          //
+          // ★ ONLY THE AXES THE USER SET ARE PUSHED ★ an absent pref
+          // means "never touched", and pushing a value for it would
+          // OVERWRITE a budget the user set in another client (e.g. the
+          // TUI, or a CLI flag on the daemon's command line).
+          if (prefs.maxTurns !== undefined || prefs.maxTurnSeconds !== undefined) {
+            try {
+              const r = await rpc.setTurnBudget({
+                ...(prefs.maxTurns !== undefined ? { maxTurns: prefs.maxTurns } : {}),
+                ...(prefs.maxTurnSeconds !== undefined ? { maxTurnSeconds: prefs.maxTurnSeconds } : {}),
+              });
+              if (r?.ok) {
+                set((s) => ({
+                  engineState: s.engineState
+                    ? {
+                        ...s.engineState,
+                        maxTurns: r.maxTurns ?? s.engineState.maxTurns,
+                        maxTurnSeconds: r.maxTurnSeconds ?? s.engineState.maxTurnSeconds,
+                      }
+                    : null,
+                }));
+              } else {
+                // The daemon rejected it (e.g. a budget left over from a
+                // newer build). Drop the bad pref rather than retry it
+                // on every boot.
+                const next = readEnginePrefs();
+                delete next.maxTurns;
+                delete next.maxTurnSeconds;
+                writeEnginePrefs(next);
+              }
+            } catch { /* best-effort */ }
+          }
           // StatusBar's "skip: 4/7" badge updates without the
           // user opening the Tools panel. The interval is 5s —
           // long enough to not hammer the daemon, short enough
@@ -8881,6 +8977,57 @@ export const useStore = create<AppState>((set, get) => {
         // 0/negative to -1) land in the store.
         void get().refreshEngineState();
         return { ok: true, window: r.window, threshold: r.threshold, disabled: r.disabled };
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? String(e) };
+      }
+    },
+
+    // ★ R417: THE TURN BUDGET KNOB ★ the desktop's only way to bound a
+    // turn. The daemon launches with a fixed command line, so until this
+    // round the turn COUNT was reachable from the CLI and from nowhere
+    // else — and the turn's TIME budget did not exist at all.
+    //
+    // ★ PERSIST THE DAEMON'S VALUES, NOT THE REQUEST'S ★ the daemon
+    // normalises the count to its own -1 "unbounded" sentinel, so a
+    // request of 0 comes back as -1. Persisting the request would leave
+    // the localStorage copy disagreeing with the engine on every boot.
+    setTurnBudget: async (opts) => {
+      try {
+        const r = await rpc.setTurnBudget(opts);
+        if (!r.ok) {
+          // The daemon's reason, surfaced inline (e.g. "maxTurnSeconds
+          // must be >= 0 (0 means unbounded)"). No optimistic update on
+          // the failure path — the engine keeps the prior budget.
+          return { ok: false, error: r.error };
+        }
+        const effectiveTurns = r.maxTurns ?? opts.maxTurns;
+        const effectiveSeconds = r.maxTurnSeconds ?? opts.maxTurnSeconds;
+        // Optimistic engineState update so the Settings panel and the
+        // status pill react before the next getState tick lands.
+        set((s) => ({
+          engineState: s.engineState
+            ? {
+                ...s.engineState,
+                ...(effectiveTurns !== undefined ? { maxTurns: effectiveTurns } : {}),
+                ...(effectiveSeconds !== undefined ? { maxTurnSeconds: effectiveSeconds } : {}),
+              }
+            : null,
+        }));
+        // persist only the axes the user actually set. An axis the user
+        // never touched stays absent in localStorage ⇒ initialize()
+        // pushes nothing on that axis and the daemon keeps its boot
+        // value (600 s by default).
+        const prefs = readEnginePrefs();
+        if (effectiveTurns !== undefined) prefs.maxTurns = effectiveTurns;
+        if (effectiveSeconds !== undefined) prefs.maxTurnSeconds = effectiveSeconds;
+        writeEnginePrefs(prefs);
+        void get().refreshEngineState();
+        return {
+          ok: true,
+          maxTurns: effectiveTurns,
+          maxTurnSeconds: effectiveSeconds,
+          disabled: r.disabled,
+        };
       } catch (e: any) {
         return { ok: false, error: e?.message ?? String(e) };
       }

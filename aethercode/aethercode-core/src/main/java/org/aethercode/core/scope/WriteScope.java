@@ -51,8 +51,16 @@ import java.util.Set;
  * be read, forgotten, or overridden by a plausible-sounding instruction in
  * the conversation; a rule that lives in the tool cannot.
  *
- * <h2>★ THE THREE RULES ★</h2>
+ * <h2>★ THE FOUR RULES ★</h2>
  * <ul>
+ *   <li><b>W0 — the session's scratch area.</b> The engine owns a
+ *       per-session directory ({@code SessionPaths.scratchRoot}) where a
+ *       turn may put the things that are NOT the user's project — a
+ *       verification script, an intermediate output, a scratch build.
+ *       R416's live matrix measured the cost of NOT having it: a turn
+ *       that verified its own work left nine files in the user's tree.
+ *       The scratch area is outside the tree ON PURPOSE, so W0 is
+ *       evaluated before W1.</li>
  *   <li><b>W1 — the tree is the boundary.</b> A write outside the
  *       session's working directory is refused. This is the rule that was
  *       <b>missing</b> from {@code file_edit} and {@code notebook_edit}
@@ -141,6 +149,13 @@ public final class WriteScope {
     /** The session's working directory — the boundary of W1. */
     private final Path root;
 
+    /**
+     * R417: the session's scratch directory — the engine-owned area
+     * where a turn may put its own scaffolding. null means "no scratch
+     * area is known", and then W0 does not exist.
+     */
+    private final Path scratchRoot;
+
     /** The request that is being served, lower-cased (for W3's markers). */
     private final String request;
 
@@ -162,7 +177,21 @@ public final class WriteScope {
      * read one of them cannot.
      */
     public WriteScope(Path root, String request, boolean escapeActive) {
+        this(root, request, escapeActive, null);
+    }
+
+    /**
+     * R417: a scope that also knows the session's scratch area.
+     *
+     * <p>★ WHY THE SCRATCH IS A CONSTRUCTOR ARGUMENT ★ the scratch area
+     * is a boundary that has to be stated, not discovered — exactly like
+     * the root. A test must be able to pin a scope whose scratch area
+     * is a temp directory, and it must be able to pin one WITHOUT a
+     * scratch area (null), so both states are measurable.
+     */
+    public WriteScope(Path root, String request, boolean escapeActive, Path scratchRoot) {
         this.root = root == null ? null : root.toAbsolutePath().normalize();
+        this.scratchRoot = scratchRoot == null ? null : scratchRoot.toAbsolutePath().normalize();
         this.request = request == null ? "" : request.toLowerCase(Locale.ROOT);
         this.escapeActive = escapeActive;
     }
@@ -187,12 +216,22 @@ public final class WriteScope {
             if (installed instanceof WriteScope s) return s;
         }
         Path cwd = SessionPaths.cwdOf(ctx);
-        return new WriteScope(cwd, currentRequest(ctx), allowAnyPath());
+        // ★ R417: THE SCATCH AREA COMES WITH THE SCOPE ★ the scratch area
+        // is per SESSION, and the session is what the call context
+        // carries. Building it here (rather than at each call site) means
+        // one answer for "where may this turn put its own scaffolding".
+        return new WriteScope(cwd, currentRequest(ctx), allowAnyPath(),
+                SessionPaths.scratchRoot(ctx));
     }
 
     /** The session's working directory. */
     public Path root() {
         return root;
+    }
+
+    /** R417: the session's scratch area (null when none is known). */
+    public Path scratchRoot() {
+        return scratchRoot;
     }
 
     /**
@@ -245,6 +284,25 @@ public final class WriteScope {
      * enforced path cannot disagree about what a rule says.
      */
     private ScopeDecision violationOf(Path target) {
+        // ---- W0: the session's scratch area is writable -----------------
+        // ★ BEFORE W1 ★ the scratch area is OUTSIDE the tree by design —
+        // that is the whole point of it — so it has to be carved out
+        // before the tree boundary is applied, or every scratch write
+        // would be refused for being outside.
+        //
+        // ★ W2 STILL APPLIES INSIDE IT ★ a directory named `target` or
+        // `node_modules` inside the scratch is still tool-owned junk;
+        // the scratch is the model's area, not a loophole around the
+        // tooling's own directories.
+        if (scratchRoot != null && SessionPaths.isInside(target, scratchRoot)) {
+            String denied = deniedDirectoryOf(target);
+            if (denied != null) {
+                return ScopeDecision.deny(target, VERB,
+                        target + " is inside '" + denied + "/', which the tooling owns. "
+                                + "Write the change where it belongs instead.");
+            }
+            return null;
+        }
         // ---- W1: the tree is the boundary --------------------------------
         if (root != null && !SessionPaths.isInside(target, root)) {
             return ScopeDecision.deny(target, VERB,

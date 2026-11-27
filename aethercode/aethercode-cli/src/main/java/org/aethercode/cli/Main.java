@@ -161,6 +161,15 @@ public class Main implements Callable<Integer> {
     @Option(names = {"--max-turns"}, description = "Hard cap on model turns per query (default 0 = UNBOUNDED). When it is set, the engine tells the model to wrap up in the last fifth of the budget and ends the turn with stopReason=max_iterations if the cap is reached. The loop detectors (--loop-detect-*) and the stall detector stop pathological repetition regardless of this cap. Env: AETHERCODE_MAX_TURNS.")
     int maxTurns = 0;
 
+    /** ★ R417: the per-turn WALL-CLOCK budget, in seconds.
+     *
+     * <p>★ WHY A SECOND BUDGET ★ a turn COUNT cannot bound a turn whose
+     * calls are all different, and R416's live matrix measured exactly
+     * that: two scenarios whose work was DONE and whose turn kept running
+     * anyway (104 and 142 model calls). ⇒ the missing bound is time. */
+    @Option(names = {"--max-turn-seconds"}, description = "Hard cap on the wall-clock seconds one turn may run (default 600 = ten minutes; 0 = UNBOUNDED). The engine tells the model to wrap up in the last fifth of the budget and ends the turn with stopReason=max_duration if the budget is reached. This is the bound for a turn whose calls are all DIFFERENT, which --max-turns cannot catch. Env: AETHERCODE_MAX_TURN_SECONDS.")
+    int maxTurnSeconds = -1;
+
     @Option(names = {"--loop-detect-window"}, description = "Prior round: sliding-window size for the loop detector (default 8). Set to 0 to disable. The same tool call must appear --loop-detect-threshold times in this many turns to trigger a stop.")
     int loopDetectWindow = 8;
 
@@ -973,6 +982,11 @@ public class Main implements Callable<Integer> {
                 .model(resolveModel(model, providerSpec))
                 .apiKey(apiKey)
                 .maxTurnsPerQuery(effectiveMaxTurns())
+                // ★ R417: the per-turn TIME budget. Always set explicitly
+                // (the CLI resolves the effective value), so 0 really
+                // means "unbounded" and the default is the measured ten
+                // minutes rather than "whatever the builder's default is".
+                .maxTurnSeconds(effectiveMaxTurnSeconds())
                 .loopDetector(loopDetectWindow, loopDetectThreshold)
                 .contextWindow(contextWindow)
                 .permissionMode(permissionMode)
@@ -1197,6 +1211,47 @@ public class Main implements Callable<Integer> {
                     + envValue + ") — ignoring it; the turn budget stays unbounded.");
             return 0;
         }
+    }
+
+    /**
+     * R417: the effective per-turn TIME budget, in seconds.
+     *
+     * <p>★ THE PRECEDENCE ★ the flag wins when it is set (≥ 0), the
+     * environment is next, and the MEASURED default (ten minutes) is
+     * last. ⇒ and the flag's own default is {@code -1} = "not set", so
+     * that an explicit {@code --max-turn-seconds 0} (unbounded) is
+     * distinguishable from "the user said nothing" — the same
+     * distinguishability the RPC and the engine setter have.
+     */
+    int effectiveMaxTurnSeconds() {
+        return resolveMaxTurnSeconds(maxTurnSeconds, System.getenv("AETHERCODE_MAX_TURN_SECONDS"));
+    }
+
+    /**
+     * R417: resolve the per-turn time budget from the flag and the
+     * environment.
+     *
+     * @param cliValue the {@code --max-turn-seconds} value (-1 = not set)
+     * @param envValue the {@code AETHERCODE_MAX_TURN_SECONDS} value (may be null)
+     * @return the budget in seconds (0 = unbounded)
+     */
+    static int resolveMaxTurnSeconds(int cliValue, String envValue) {
+        if (cliValue >= 0) return cliValue;
+        if (envValue != null && !envValue.isBlank()) {
+            try {
+                int v = Integer.parseInt(envValue.trim());
+                if (v >= 0) return v;
+                System.err.println("[aethercode] AETHERCODE_MAX_TURN_SECONDS is negative ("
+                        + envValue + ") — ignoring it.");
+            } catch (NumberFormatException e) {
+                System.err.println("[aethercode] AETHERCODE_MAX_TURN_SECONDS is not an integer ("
+                        + envValue + ") — ignoring it.");
+            }
+        }
+        // ★ THE MEASURED DEFAULT ★ 23 of R416's 25 scenarios finished
+        // within about three minutes; the two runaway ones were still
+        // running at fifteen. Ten minutes sits in that gap.
+        return (int) (org.aethercode.core.engine.QueryEngine.DEFAULT_MAX_TURN_MILLIS / 1000L);
     }
 
     private static Tool prefixMcpTool(Tool original) {

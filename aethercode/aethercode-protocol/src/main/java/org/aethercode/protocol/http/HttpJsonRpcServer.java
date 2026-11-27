@@ -914,6 +914,12 @@ public final class HttpJsonRpcServer {
             // threshold at runtime. The stdio daemon
             // picks it up via AetherCodeMethods.registerAll.
             case "setLoopDetectorThresholds" -> methods.setLoopDetectorThresholds(params);
+            // ★ R417: THE PER-TURN BUDGET ★ the desktop speaks HTTP+WS, so
+            // without this arm the settings panel would get -32601 on the
+            // one transport it actually uses — while the stdio daemon
+            // (the TUI's transport) served it fine. The stdio daemon
+            // picks it up via AetherCodeMethods.registerAll.
+            case "setTurnBudget" -> methods.setTurnBudget(params);
             // the desktop's StatusBar / Settings
             // panel calls this to flip the
             // auto-approve-low-risk flag. Default

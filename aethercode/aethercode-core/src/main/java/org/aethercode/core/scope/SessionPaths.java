@@ -207,12 +207,131 @@ public final class SessionPaths {
      * @return the offload root, or null when no home is known
      */
     public static Path offloadRoot() {
+        Path home = engineHome();
+        if (home == null) return null;
+        return home.resolve("sessions").toAbsolutePath().normalize();
+    }
+
+    /**
+     * R417: the engine's OWN home — the place the engine keeps the
+     * things that are not the user's project.
+     *
+     * <p>★ ONE ANSWER ★ the offload root and the scratch root are both
+     * "the engine's own area", and they are siblings under it. Two
+     * copies of "where does the engine keep its files" drift — and the
+     * drift shows up as a directory the user cannot find.
+     *
+     * <p>Resolution: {@code AETHERCODE_HOME} if set, else
+     * {@code $HOME/.aethercode}.
+     *
+     * @return the engine home, or null when no home is known
+     */
+    public static Path engineHome() {
         String home = System.getenv("AETHERCODE_HOME");
         if (home == null || home.isBlank()) {
             String userHome = System.getProperty("user.home");
             if (userHome == null || userHome.isBlank()) return null;
             home = userHome + "/.aethercode";
         }
-        return Path.of(home, "sessions").toAbsolutePath().normalize();
+        try {
+            return Path.of(home).toAbsolutePath().normalize();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * R417: the SESSION's scratch directory — the engine-owned place
+     * where a turn may put the things that are NOT the user's project.
+     *
+     * <h2>★ WHY THIS EXISTS ★</h2>
+     * <p>R416's live matrix measured it: asked to verify its own work,
+     * a turn left nine files in the user's tree — a {@code .verify/}
+     * scaffolding directory, a verification script, a transcript of the
+     * run. Every one of them was scaffolding the model built for
+     * itself, and every one of them is garbage the user has to delete
+     * by hand.
+     *
+     * <p>★ THE SAME SHAPE AS THE INDUSTRY'S SANDBOX ★ the reference
+     * sandboxing guidance makes the writable set "the working directory
+     * plus one per-user temporary directory", and tells the tools about
+     * the temporary directory through an environment variable so that
+     * "tools that write temporary files work without extra
+     * configuration". ⇒ the scratch area is the temporary directory,
+     * the environment variable is how the tools learn about it, and it
+     * lives in the ENGINE's area — not in the user's tree, and not in
+     * the whole-machine {@code %TEMP%} (which is shared with every
+     * other program on the box).
+     *
+     * <p>★ PER SESSION, NOT PER TURN ★ a turn's leftovers should be
+     * readable by the NEXT turn of the SAME session (that is often the
+     * point — a script written to verify step 1 is used by step 2) and
+     * invisible to every other session.
+     *
+     * @param sessionId the session the scratch belongs to
+     * @return the scratch directory, or null when there is no home or no
+     *         session
+     */
+    public static Path scratchRoot(String sessionId) {
+        return scratchRoot(sessionId, engineHome());
+    }
+
+    /**
+     * R417: the scratch area under a STATED engine home — the seam a
+     * test needs.
+     *
+     * <p>★ WHY THE HOME IS A PARAMETER ★ the engine home comes from the
+     * ENVIRONMENT ({@code AETHERCODE_HOME}), and a test cannot set an
+     * environment variable. A test that used the ambient home would
+     * measure whatever this machine happens to say — and the assertion
+     * would be about the machine, not about the code. The production
+     * path delegates here, so the two cannot disagree.
+     *
+     * @param sessionId the session the scratch belongs to
+     * @param engineHome the engine's own home (null = no home)
+     * @return the scratch directory, or null when there is no home or no
+     *         session
+     */
+    public static Path scratchRoot(String sessionId, Path engineHome) {
+        if (engineHome == null) return null;
+        if (sessionId == null || sessionId.isBlank()) return null;
+        return engineHome.resolve("scratch").resolve(safeDirName(sessionId)).toAbsolutePath().normalize();
+    }
+
+    /**
+     * R417: the scratch directory of the session this call belongs to.
+     *
+     * @param ctx the tool call context (carries the session's app state)
+     * @return the scratch directory, or null when it cannot be resolved
+     */
+    public static Path scratchRoot(Tool.CallContext ctx) {
+        if (ctx == null) return null;
+        Object appState = ctx.extra("app_state");
+        if (appState instanceof AppState st) {
+            return scratchRoot(st.sessionId());
+        }
+        return null;
+    }
+
+    /**
+     * A directory name that is safe to create from an arbitrary id.
+     *
+     * <p>★ WHY THE SANITISING ★ the id comes from the wire (a session id
+     * is chosen by the client in some flows), and a directory name that
+     * can contain a separator would let it name a directory OUTSIDE the
+     * scratch root — which is exactly the boundary this class exists to
+     * hold.
+     *
+     * @param id the raw id
+     * @return a name that is a single, plain path segment
+     */
+    public static String safeDirName(String id) {
+        if (id == null || id.isBlank()) return "_";
+        String s = id.trim().replaceAll("[^A-Za-z0-9._-]", "_");
+        // "." and ".." are not names; they are the current and the parent
+        // directory, and a session id must never be either.
+        if (s.equals(".") || s.equals("..")) return "_";
+        if (s.length() > 64) s = s.substring(0, 64);
+        return s.isEmpty() ? "_" : s;
     }
 }

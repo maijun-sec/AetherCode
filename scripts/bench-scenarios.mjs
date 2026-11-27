@@ -96,6 +96,73 @@ const SUMMARY = join(ROOT, "..", "bench-summary-" + basename(ROOT) + ".json");
 const ONLY = (process.env.SCENARIOS_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 const JAVA = process.env.SCENARIOS_JAVA ?? "java";
 
+// ★ R417: THE BENCH GETS ITS OWN ENGINE HOME ★ the engine keeps the things
+// that are NOT the user's project in its own area (`AETHERCODE_HOME`), and
+// R417 added the SESSION SCRATCH DIRECTORY there: the place a turn may put
+// the scaffolding it builds for itself.
+//
+// ⇒ Two reasons the bench must NOT inherit the user's home:
+//
+//   1. the matrix would write into the user's real `~/.aethercode`;
+//   2. ★ WORSE ★ the contamination guard flags any tool call that names a
+//      path UNDER THE BENCH ROOT which is not the scenario's own. If the
+//      scratch lived under the root, every scratch write would be reported
+//      as "the scenario saw the bench's own artifacts" — the guard would
+//      fire on the PRODUCT WORKING.
+//
+// ⇒ so the bench home is a SIBLING of the root, outside it, and the daemon
+// is told about it explicitly.
+const BENCH_HOME = process.env.SCENARIOS_HOME ?? join(ROOT, "..", "bench-home-" + basename(ROOT));
+
+/**
+ * The files in one scenario's scratch area.
+ *
+ * <p>★ R417: THE SCRATCH IS WHERE THE SCAFFOLDING WENT ★ the tree tells
+ * us what the user has to delete; the scratch tells us WHERE it went
+ * instead. A matrix that only counted the litter in the tree would measure
+ * the absence of harm without measuring the mechanism that prevents it.
+ *
+ * <p>★ WHY THE HOME AND NOT THE SESSION ID ★ the engine names the scratch
+ * directory after the session id, sanitised by its own rule — and a bench
+ * that re-implemented that rule would be a SECOND COPY of it (R380's
+ * lesson: one "list" is several lists, and every one of them drifts).
+ * ⇒ the bench gives EVERY SCENARIO ITS OWN ENGINE HOME and lists what is
+ * under it. The scenario's home holds one session, so "what is under
+ * <home>/scratch" IS "what the session put in its scratch".
+ *
+ * @param {string} home the scenario's engine home
+ * @returns {string[]} the relative paths, or [] when there is no scratch
+ */
+function scratchFiles(home) {
+  if (!home) return [];
+  const dir = join(home, "scratch");
+  if (!existsSync(dir)) return [];
+  try {
+    return filesIn(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The session directories under one scenario's scratch root.
+ *
+ * @param {string} home the scenario's engine home
+ * @returns {string[]} the session directory names, or [] when there is none
+ */
+function scratchDirs(home) {
+  if (!home) return [];
+  const dir = join(home, "scratch");
+  if (!existsSync(dir)) return [];
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------- reporting
 let pass = 0;
 let fail = 0;
@@ -131,10 +198,23 @@ let daemon = null;
  * with `escapeHatch: true`.
  *
  * @param escapeHatch start the daemon WITH AETHERCODE_ALLOW_ANY_PATH
+ * @param home the scenario's OWN engine home (AETHERCODE_HOME)
+ * @param extraArgs extra daemon arguments (e.g. a short turn budget)
  */
-async function startDaemon(dir, sessionsDir, escapeHatch = false) {
+async function startDaemon(dir, sessionsDir, escapeHatch = false, home = BENCH_HOME, extraArgs = []) {
   const env = { ...process.env };
   if (!escapeHatch) delete env.AETHERCODE_ALLOW_ANY_PATH;
+  // ★ R417: THE DAEMON GETS ITS OWN ENGINE HOME ★ the engine keeps what is
+  // NOT the user's project in its own area (`AETHERCODE_HOME`): the session
+  // scratch directory (R417) and the large-tool-result offload directory
+  // (R416). ⇒ without this line the bench wrote into the user's REAL
+  // `~/.aethercode` — the matrix was littering the machine it measures.
+  //
+  // ⇒ and the home is OUTSIDE the bench root on purpose: the contamination
+  // guard flags any path under the root that is not the scenario's own, so
+  // a scratch area inside the root would be reported as "the scenario saw
+  // the bench's own artifacts" — the guard firing on the PRODUCT WORKING.
+  env.AETHERCODE_HOME = home;
   // ★ R415: THE QUESTION TIMEOUT IS SHORTENED ★ nothing in the bench can
   // answer an `ask_user_question`, and the tool waits two minutes for an
   // answer that never comes — and the model asks again. R415's live run
@@ -143,7 +223,7 @@ async function startDaemon(dir, sessionsDir, escapeHatch = false) {
   env.AETHERCODE_ASK_TIMEOUT_MS = env.AETHERCODE_ASK_TIMEOUT_MS ?? "5000";
   daemon = spawn(JAVA,
     ["-Xms512m", "-Xmx2g", "-jar", JAR, "--http-port", String(PORT),
-      "--sessions-dir", sessionsDir, "--cwd", dir],
+      "--sessions-dir", sessionsDir, "--cwd", dir, ...extraArgs],
     { stdio: ["ignore", "pipe", "pipe"], cwd: dir, env });
   daemon.stdout.on("data", () => { });
   daemon.stderr.on("data", () => { });
@@ -364,6 +444,42 @@ const SCENARIOS = [
     id: "V1", cat: "development (change the code)", files: ["lru"], attempts: 2,
     prompt: "给 LruCache 加一个容量上限的字段",
     expect: ["code_change", "builder"], mode: "chg", watch: ["src/LruCache.java"],
+  },
+  {
+    // ★ R417: THE TURN BUDGET, MEASURED DETERMINISTICALLY ★
+    //
+    // ★ WHY THIS SCENARIO EXISTS ★ R416's live matrix measured two turns
+    // that would not stop — but a scenario that waits for a MODEL to
+    // misbehave is a measurement of the model's mood: in R417's own run
+    // D4 finished on its own in 4m30s and the budget never fired. A
+    // mechanism that is only exercised when the model happens to run away
+    // is a mechanism whose evidence is a coin toss.
+    //
+    // ⇒ this scenario gives the daemon a SHORT budget (30 s) and a task
+    // that takes minutes, so the budget MUST fire, every time. What is
+    // measured is the MECHANISM, not the model's behaviour:
+    //   1. the turn ENDED (the whole point — R416's two runaways never
+    //      did, and the bench's 900 s wait was the only thing that stopped
+    //      them);
+    //   2. the wire carries the kind `max_duration`;
+    //   3. the wire says it was a FAILURE (isError) — a turn that was cut
+    //      short has NOT delivered, and a client that shows it as a green
+    //      "Idle" is lying;
+    //   4. the verdict reached the client as a side note;
+    //   5. the wall clock was actually bounded.
+    id: "T1", cat: "the turn budget fires", files: [], attempts: 1,
+    // ★ THE PROMPT MUST NOT STEER THE CLASSIFIER ★ this scenario measures
+    // the BUDGET, so the verdict is not the point — but the bench checks
+    // the verdict on every scenario, and two earlier versions of this
+    // prompt were answered diagnose/debugger ("failure symptom: 异常")
+    // and code_change/builder ("implementation verb: 迁移") — a word in
+    // the prompt moved a verdict that has nothing to do with the budget.
+    // ⇒ the prompt is D4's, verbatim: its verdict is already pinned by
+    // the matrix, and its turn takes minutes, so a 30 s budget is
+    // guaranteed to cut it.
+    prompt: "帮我设计一个订单状态机，保存到 design.md",
+    expect: ["uncertain", "producer"], mode: "budget", watch: [],
+    daemonArgs: ["--max-turn-seconds", "30"],
   },
   {
     id: "G1", cat: "troubleshooting (locate only)", files: ["order"], attempts: 1,
@@ -817,7 +933,13 @@ for (const sc of SCENARIOS) {
     // behaviour. The sandbox must contain the fixture and nothing else.
     const sessionsDir = join(scenarioRoot, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
-    await startDaemon(dir, sessionsDir, sc.escapeHatch === true);
+    // ★ R417: EVERY SCENARIO GETS ITS OWN ENGINE HOME ★ one home per
+    // scenario means the scratch area of THIS scenario cannot be confused
+    // with the scratch area of the previous one, and the offload
+    // directory does not accumulate across the whole run.
+    const scenarioHome = join(BENCH_HOME, sc.id);
+    mkdirSync(scenarioHome, { recursive: true });
+    await startDaemon(dir, sessionsDir, sc.escapeHatch === true, scenarioHome, sc.daemonArgs ?? []);
     await connectWs();
     await sleep(500);
     const created = await rpc("createSession", { cwd: dir });
@@ -826,12 +948,20 @@ for (const sc of SCENARIOS) {
 
     let end = null;
     let attempts = 0;
+    let wallClockMs = 0;
     for (let i = 1; i <= sc.attempts; i++) {
       attempts = i;
       raw = [];
+      // ★ R417: THE WALL CLOCK OF THE TURN ★ the budget is a wall-clock
+      // bound, so the matrix has to MEASURE a wall clock — and until now
+      // the matrix recorded the stop reason only on a failure, so a turn
+      // that ended on `max_duration` looked exactly like a turn that ended
+      // normally.
+      const t0 = Date.now();
       const q = await rpc("query", { sessionId: sid, prompt: sc.prompt });
       check(`${sc.id}: turn ${i} accepted`, q?.accepted === true, `runId=${q?.runId}`);
       end = await waitForRunEnd(900_000);
+      wallClockMs = Date.now() - t0;
       check(`${sc.id}: turn ${i} finished`, !!end, end ? `stopReason=${end.stopReason}` : "NO run_end");
       if (!end) break;
       // ★ WHAT COUNTS AS "DELIVERED" ★ per mode: the file landed, the file
@@ -871,6 +1001,18 @@ for (const sc of SCENARIOS) {
 
     note(`tools=[${[...new Set(tools)].join(", ")}]`);
     note(`created=[${createdFiles.join(", ")}] changed=[${changedFiles.join(", ")}]`);
+    // ★ R417: HOW THE TURN ENDED ★ the stop reason is the outcome of a
+    // turn, and the matrix used to print it only when a check FAILED — so
+    // "the turn ended on its budget" and "the turn ended normally" were
+    // the same line in the log. The reason and the wall clock are the
+    // measurement; they belong in the log for every turn.
+    note(`stopReason=${end?.stopReason} (${Math.round(wallClockMs / 1000)}s)`);
+    // ★ R417: WHERE THE SCAFFOLDING WENT ★ the tree says what the user has
+    // to delete by hand; the scratch says where it went instead. R416's
+    // live run measured nine files of scaffolding in the user's tree; this
+    // line is how the next run says "it went HERE".
+    const scratch = scratchFiles(scenarioHome);
+    note(`scratch=[${scratch.join(", ")}]`);
     note(`text(${text.length}): ${text.slice(0, 300).replace(/\s+/g, " ")}`);
     note(`wire: intent=${state?.intent} profile=${state?.profile} reason=${JSON.stringify(state?.intentReason)}`);
 
@@ -890,7 +1032,12 @@ for (const sc of SCENARIOS) {
       `event=${runStart?.intent}/${runStart?.profile} state=${state?.intent}/${state?.profile}`);
 
     // ---- 2. an answer arrived ----------------------------------------------
-    check(`${sc.id}: an answer arrived`, text.trim().length > 0, "no text");
+    // ★ R417: EXCEPT FOR THE BUDGET SCENARIO ★ a turn that was CUT on its
+    // budget has, by definition, NOT delivered an answer — so demanding
+    // one here would turn the mechanism's success into a failure.
+    if (sc.mode !== "budget") {
+      check(`${sc.id}: an answer arrived`, text.trim().length > 0, "no text");
+    }
 
     // ---- 2b. the subject saw ONLY ITS OWN TREE ----------------------------
     // ★ R415: THE CONTAMINATION GUARD ★ a scenario that can read another
@@ -918,6 +1065,19 @@ for (const sc of SCENARIOS) {
     const contamination = scanContamination(sessionsDir, [dir, sessionsDir, scenarioRoot], ROOT);
     check(`${sc.id}: ★ it never saw another scenario's tree or the bench's own artifacts`,
       contamination.length === 0, `hits=[${contamination.join(" | ")}]`);
+
+    // ---- 2c. THE SCRATCH AREA (R417) ---------------------------------------
+    // ★ THE MECHANISM, NOT ONLY THE ABSENCE OF HARM ★ "no file nobody asked
+    // for" measures that the tree stayed clean. It does NOT measure that
+    // the place where the scaffolding is SUPPOSED to go exists — and a
+    // model told about a directory that does not exist will make one in
+    // the user's tree instead, which is the failure this mechanism exists
+    // to prevent.
+    //
+    // ⇒ the invariant: after a turn, the session HAS a scratch area.
+    check(`${sc.id}: ★ the session has a scratch area`,
+      scratchDirs(scenarioHome).length > 0,
+      `home=${scenarioHome} scratch=[${scratch.join(", ")}]`);
 
     // ---- 3. the OUTCOME, per mode -----------------------------------------
     if (sc.mode === "ro") {
@@ -985,6 +1145,34 @@ for (const sc of SCENARIOS) {
     }
     if (sc.mode === "ops") {
       check(`${sc.id}: ★ it ran a REAL command`, tools.includes("bash"), `tools=[${[...new Set(tools)].join(", ")}]`);
+    }
+    if (sc.mode === "budget") {
+      // ★ R417: THE MECHANISM, MEASURED ★ five things, and each one is a
+      // claim a client depends on.
+      const stopKind = String(end?.stopKind ?? "");
+      const stopReason = String(end?.stopReason ?? "");
+      const budgetNotes = sideNotes().filter((n) => n.kind === "max_duration");
+
+      // 1. the turn ENDED — the whole point. R416's two runaways never did.
+      check(`${sc.id}: ★ the turn ENDED on its budget`, stopReason.startsWith("max_duration"),
+        `stopReason=${stopReason} stopKind=${stopKind} (${Math.round(wallClockMs / 1000)}s)`);
+      // 2. the KIND travels on the wire — a client classifies on the kind,
+      //    never on the decorated string (R383/R384).
+      check(`${sc.id}: ★ the wire carries the kind max_duration`, stopKind === "max_duration",
+        `stopKind=${stopKind} (the wire carries '${stopKind}' — the decorated reason is not a kind)`);
+      // 3. it is a FAILURE. A cut turn has NOT delivered, and a client that
+      //    shows it as a green "Idle" is lying to the user.
+      check(`${sc.id}: ★ the wire says it was a FAILURE`, end?.isError === true,
+        `isError=${end?.isError}`);
+      // 4. the verdict reached the client as a side note — the engine
+      //    computed it, and a client that drops it leaves the user with a
+      //    truncated answer and no explanation.
+      check(`${sc.id}: ★ the verdict reached the client`, budgetNotes.length > 0,
+        `notes=[${sideNotes().map((n) => n.kind).join(", ")}]`);
+      // 5. the wall clock was BOUNDED — the budget has to actually cut the
+      //    turn short, not merely announce that it exists.
+      check(`${sc.id}: ★ the wall clock was bounded`, wallClockMs < 300_000,
+        `elapsed=${Math.round(wallClockMs / 1000)}s with a 30 s budget`);
     }
     if (sc.mode === "new") {
       // ★ THE PATH IS THE AGENT'S CHOICE ★ "写一个单元测试" does not name
@@ -1172,6 +1360,12 @@ for (const sc of SCENARIOS) {
     row.changed = changedFiles;
     row.textLength = text.length;
     row.textHead = text.slice(0, 600);
+    // ★ R417: HOW THE TURN ENDED ★ the outcome of a turn is its stop
+    // reason, and the summary is where a reader looks for it.
+    row.stopReason = end?.stopReason ?? null;
+    row.stopKind = end?.stopKind ?? null;
+    row.isError = end?.isError ?? null;
+    row.wallClockMs = wallClockMs;
   } catch (e) {
     fail += 1;
     console.log(`  FAIL  ${sc.id} threw :: ${e?.message ?? e}`);

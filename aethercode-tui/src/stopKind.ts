@@ -84,6 +84,11 @@ export const ENGINE_ERROR_KINDS = [
   // (This kind had no producer since R83 removed the turn cap; the
   // TUI's `MAX_TURN_KINDS` branch for it was unreachable until now.)
   "max_iterations",
+  // R417: the turn hit its TIME budget. The same shape as the turn
+  // count: the run ended, the request was NOT finished, so it is a
+  // failure verdict. (The engine ends the turn on the wall clock, and
+  // a turn that ran out of time did not deliver what was asked.)
+  "max_duration",
 ] as const;
 
 /**
